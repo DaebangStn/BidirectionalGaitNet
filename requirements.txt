@@ -1,0 +1,7 @@
+gym==0.18.3
+pickle5==0.0.12
+protobuf==3.19.*
+ray[rllib]==1.8.0
+torch==1.10.2
+umap-learn[plot]==0.5.3
+IPython

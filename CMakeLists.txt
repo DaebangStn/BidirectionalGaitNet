@@ -1,35 +1,49 @@
-cmake_minimum_required(VERSION 3.5.1)
+cmake_minimum_required(VERSION 3.12)
 project(mysim)
-set(OpenGL_GL_PREFERENCE LEGACY)
-set(CMAKE_CXX_STANDARD 17)
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
-      "Choose the type of build, options are: Debug Release
-RelWithDebInfo MinSizeRel."
-      FORCE)
-endif(NOT CMAKE_BUILD_TYPE)
-
-link_libraries(stdc++fs)
 
 add_compile_options(-fPIC)
-# add_compile_options(-std=gnu++11)
 add_compile_options(-Wdeprecated-declarations)
-
 add_compile_options(-DHAVE_CSTDDEF)
 
-add_definitions(-DMASS_ROOT_DIR="..")
+set(OpenGL_GL_PREFERENCE LEGACY)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++17")
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(CMAKE_PREFIX_PATH $ENV{ENVDIR})
 set(CMAKE_MODULE_PATH "${CMAKE_HOME_DIRECTORY}/cmake")
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, 
+      options are: Debug Release RelWithDebInfo MinSizeRel." FORCE)
+endif(NOT CMAKE_BUILD_TYPE)
 
-# if(SERVER_BUILD)
-find_package(PythonLibs 3.6 EXACT REQUIRED)
-find_package(PythonInterp 3.6 EXACT REQUIRED)
-# endif()
-
-
-if(NOT SERVER_BUILD)
-find_package(PythonLibs REQUIRED)
-find_package(PythonInterp REQUIRED)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
+  set(CMAKE_C_FLAGS_DEBUG "-g -O0")
 endif()
+
+set(PYTHON_INCLUDE_DIR /usr/include/python${PYTHON_VERSION})
+
+include_directories($ENV{ENVDIR}/include)
+include_directories(${PYTHON_INCLUDE_DIR})
+
+link_libraries(stdc++fs)
+link_directories($ENV{ENVDIR}/lib)
+
+# Common packages
+find_package(DART REQUIRED COMPONENTS gui collision-bullet CONFIG)
+find_package(Python ${PYTHON_VERSION} EXACT REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11 REQUIRED)
+
 add_subdirectory( libs )
 add_subdirectory( sim )
 add_subdirectory( python )

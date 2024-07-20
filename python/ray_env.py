@@ -1,5 +1,4 @@
 from pysim import RayEnvManager
-from IPython import embed
 import numpy as np
 import gym
 import ray

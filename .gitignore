@@ -1,4 +1,5 @@
 build/
+debug
 build_debug/
 *.so
 *.a
@@ -78,3 +79,7 @@ previous_rollout/*
 
 
 *.c3d
+
+
+.venv
+.venv38

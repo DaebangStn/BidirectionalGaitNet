@@ -1,5 +1,3 @@
-
-// #include <pybind11/numpy.h>
 #include "dart/gui/Trackball.hpp"
 #include "Environment.h"
 #include "GLfunctions.h"
@@ -44,6 +42,8 @@ private:
 
     void update(bool isSave = false);
     void reset();
+
+    void setWindowIcon(const char* icon_path);
 
     // Drawing Component
     void setCamera();

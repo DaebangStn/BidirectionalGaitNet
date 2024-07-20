@@ -4,7 +4,7 @@ import numpy as np
 import os
 import time
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict
 from ray_model import SimulationNN_Ray, MuscleNN, RolloutNNRay
 from ray_env import MyEnv
 import ray
@@ -14,7 +14,7 @@ from ray.rllib.models import ModelCatalog
 from ray.rllib.utils.framework import try_import_torch
 from ray.tune.registry import register_env
 from ray.rllib.utils.torch_ops import convert_to_torch_tensor
-import torch.nn.functional as F
+from ray_config import CONFIG
 
 import pickle5 as pickle
 
@@ -334,7 +334,7 @@ def get_config_from_file(filename: str, config: str):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--cluster", action='store_true')
-parser.add_argument("--config", type=str, default="ppo")
+parser.add_argument("--config", type=str, default="ppo_small_pc")
 parser.add_argument("--config-file", type=str,
                     default="../python/ray_config.py")
 parser.add_argument('-n', '--name', type=str)

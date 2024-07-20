@@ -1,7 +1,11 @@
-#include "GLFWApp.h"
+#ifndef STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#endif
 #ifndef STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
+#include "GLFWApp.h"
+#include "stb_image.h"
 #include "stb_image_write.h"
 #include "dart/external/lodepng/lodepng.h"
 const std::vector<std::string> CHANNELS =
@@ -94,6 +98,7 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     }
     glViewport(0, 0, mWidth, mHeight);
     glfwSetWindowUserPointer(mWindow, this); // 창 사이즈 변경
+    setWindowIcon("../figure/icon.png");
 
     auto framebufferSizeCallback = [](GLFWwindow *window, int width, int height)
     {
@@ -179,6 +184,18 @@ GLFWApp::~GLFWApp()
     ImGui::DestroyContext();
     glfwDestroyWindow(mWindow);
     glfwTerminate();
+}
+
+void GLFWApp::setWindowIcon(const char* icon_path)
+{
+    GLFWimage images[1];
+    images[0].pixels = stbi_load(icon_path, &images[0].width, &images[0].height, 0, 4); // RGBA channels
+    if (images[0].pixels) {
+        glfwSetWindowIcon(mWindow, 1, images);
+        stbi_image_free(images[0].pixels);
+    } else {
+        std::cerr << "Failed to load icon" << std::endl;
+    }
 }
 
 void GLFWApp::writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const bool isPos)
@@ -846,7 +863,7 @@ void GLFWApp::drawGaitAnalysisDisplay()
     if (ImGui::CollapsingHeader("Drawn Muscles"))
     {
         for (auto m : mSelectedMuscles)
-            ImGui::Text(m->name.c_str());
+            ImGui::TextUnformatted(m->name.c_str());
     }
     static int joint_selected = 0;
     if (ImGui::CollapsingHeader("Torque Graph"))
@@ -896,8 +913,9 @@ void GLFWApp::drawGaitAnalysisDisplay()
 
         ImPlot::SetNextAxisLimits(3, 500, 0);
         ImPlot::SetNextAxisLimits(0, 0, 1.5, ImGuiCond_Always);
-        if (ImPlot::BeginPlot((m->name + "_force_graph").c_str(), "length", "force", ImVec2(-1, 250)))
+        if (ImPlot::BeginPlot((m->name + "_force_graph").c_str(), ImVec2(-1, 250)))
         {
+            ImPlot::SetupAxes("length", "force");
             std::vector<std::vector<double>> p = m->GetGraphData();
 
             ImPlot::PlotLine("##active", p[1].data(), p[2].data(), 250);
@@ -993,7 +1011,7 @@ void GLFWApp::drawUIDisplay()
     {
         if (ImGui::Button("Print"))
             std::cout << mEnv->getMetadata() << std::endl;
-        ImGui::Text(mEnv->getMetadata().c_str());
+        ImGui::TextUnformatted(mEnv->getMetadata().c_str());
     }
 
     // Reward
@@ -1001,8 +1019,9 @@ void GLFWApp::drawUIDisplay()
     {
         ImPlot::SetNextAxisLimits(0, -3, 0);
         ImPlot::SetNextAxisLimits(3, 0, 4);
-        if (ImPlot::BeginPlot("Reward", "x", "r"))
+        if (ImPlot::BeginPlot("Reward"))
         {
+            ImPlot::SetupAxes("x", "r");
             if (mRewardBuffer.size() > 0)
             {
                 double *x = new double[mRewardBuffer.size()]();
@@ -1837,6 +1856,7 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             mEye = Eigen::Vector3d(0, 0, 2.92526);
             break;
 
+        case GLFW_KEY_3:
         case GLFW_KEY_KP_3: // Muscle Information Rendering
             mFocus = 1;
             mCameraMoving = -400;
