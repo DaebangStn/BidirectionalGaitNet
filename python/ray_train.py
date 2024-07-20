@@ -4,21 +4,20 @@ import numpy as np
 import os
 import time
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict
+import torch
+import pickle
 from ray_model import SimulationNN_Ray, MuscleNN, RolloutNNRay
 from ray_env import MyEnv
+
 import ray
 from ray import tune
-from ray_ppo import CustomPPOTrainer
+from ray.rllib.algorithms.ppo.ppo_torch_policy import PPOTorchPolicy
+from ray.rllib.algorithms.ppo import PPO
 from ray.rllib.models import ModelCatalog
-from ray.rllib.utils.framework import try_import_torch
 from ray.tune.registry import register_env
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
-import torch.nn.functional as F
-
-import pickle5 as pickle
-
-torch, nn = try_import_torch()
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
+from ray_config import CONFIG
 
 
 class MuscleLearner:
@@ -184,146 +183,141 @@ class MuscleLearner:
         }
 
 
-def create_my_trainer(rl_algorithm: str):
-    if rl_algorithm == "PPO":
-        RLTrainer = CustomPPOTrainer
-    else:
-        raise RuntimeError(f"Invalid algorithm {rl_algorithm}!")
+class MyTrainer(PPO):
+    def get_default_policy_class(self, config):
+        return PPOTorchPolicy
 
-    class MyTrainer(RLTrainer):
-        def setup(self, config):
+    def setup(self, config):
 
-            self.device = torch.device(
-                "cuda") if torch.cuda.is_available() else torch.device("cpu")
+        self.device = torch.device(
+            "cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-            self.rollout = config.pop("rollout")
-            self.metadata = config.pop("metadata")
-            self.isTwoLevelActuactor = config.pop("isTwoLevelActuactor")
+        self.rollout = config.pop("rollout")
+        self.metadata = config.pop("metadata")
+        self.isTwoLevelActuactor = config.pop("isTwoLevelActuactor")
 
-            self.trainer_config = config.pop("trainer_config")
-            RLTrainer.setup(self, config=config)
-            self.max_reward = 0
-            self.remote_workers = self.workers.remote_workers()
+        self.trainer_config = config.pop("trainer_config")
+        PPO.setup(self, config=config)
+        self.max_reward = 0
+        self.remote_workers = self.workers.remote_workers()
 
-            self.env_config = config.pop("env_config")
+        self.env_config = config.pop("env_config")
 
-            if self.isTwoLevelActuactor and not self.rollout:
-                self.muscle_learner = MuscleLearner(self.device, self.env_config['num_actuactor_action'], self.env_config['num_muscles'], self.env_config["num_muscle_dofs"], learning_rate=self.trainer_config[
-                                                    "muscle_lr"], num_epochs=self.trainer_config["muscle_num_epochs"], batch_size=self.trainer_config["muscle_sgd_minibatch_size"], is_cascaded=self.env_config["cascading"])
+        if self.isTwoLevelActuactor and not self.rollout:
+            self.muscle_learner = MuscleLearner(self.device, self.env_config['num_actuactor_action'], self.env_config['num_muscles'], self.env_config["num_muscle_dofs"], learning_rate=self.trainer_config[
+                                                "muscle_lr"], num_epochs=self.trainer_config["muscle_num_epochs"], batch_size=self.trainer_config["muscle_sgd_minibatch_size"], is_cascaded=self.env_config["cascading"])
 
-                model_weights = ray.put(
-                    self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-                for worker in self.remote_workers:
-                    worker.foreach_env.remote(
-                        lambda env: env.load_muscle_model_weights(model_weights))
+            model_weights = ray.put(
+                self.muscle_learner.get_model_weights(device=torch.device("cpu")))
+            for worker in self.remote_workers:
+                worker.foreach_env.remote(
+                    lambda env: env.load_muscle_model_weights(model_weights))
 
-            if self.rollout:
-                for worker in self.remote_workers:
-                    worker.foreach_env.remote(lambda env: env.set_is_rollout())
+        if self.rollout:
+            for worker in self.remote_workers:
+                worker.foreach_env.remote(lambda env: env.set_is_rollout())
 
-                def apply_seed_to_worker(worker, callable, _n):
-                    envs = worker.async_env.vector_env.get_unwrapped()
-                    for env in envs:
-                        callable(env, _n)
-                        _n += 1
+            def apply_seed_to_worker(worker, callable, _n):
+                envs = worker.async_env.vector_env.get_unwrapped()
+                for env in envs:
+                    callable(env, _n)
+                    _n += 1
 
-                seed_idx = 0
-                for worker in self.remote_workers:
-                    worker.apply.remote(lambda worker: apply_seed_to_worker(
-                        worker, lambda env, _n: env.set_idx(_n), seed_idx))
-                    seed_idx += config['num_envs_per_worker']
+            seed_idx = 0
+            for worker in self.remote_workers:
+                worker.apply.remote(lambda worker: apply_seed_to_worker(
+                    worker, lambda env, _n: env.set_idx(_n), seed_idx))
+                seed_idx += config['num_envs_per_worker']
 
-        def step(self):
-            # Simulation NN Learning
-            result = RLTrainer.step(self)
-            result["num_tuples"] = {}
-            result["loss"] = {}
+    def step(self):
+        # Simulation NN Learning
+        result = PPO.step(self)
+        result["num_tuples"] = {}
+        result["loss"] = {}
 
-            # For Two Level Controller
-            if self.isTwoLevelActuactor and not self.rollout:
-                start = time.perf_counter()
-                mts = []
-                muscle_transitions = []
+        # For Two Level Controller
+        if self.isTwoLevelActuactor and not self.rollout:
+            start = time.perf_counter()
+            mts = []
+            muscle_transitions = []
 
-                for idx in range(5 if self.env_config["cascading"] else 3):
-                    mts.append(ray.get([worker.foreach_env.remote(
-                        lambda env: env.get_muscle_tuple(idx)) for worker in self.remote_workers]))
-                    muscle_transitions.append([])
+            for idx in range(5 if self.env_config["cascading"] else 3):
+                mts.append(ray.get([worker.foreach_env.remote(
+                    lambda env: env.get_muscle_tuple(idx)) for worker in self.remote_workers]))
+                muscle_transitions.append([])
 
-                idx = 0
-                for mts_i in range(len(mts)):
-                    for worker_i in range(len(mts[mts_i])):
-                        for env_i in range(len(mts[mts_i][worker_i])):
-                            for i in range(len(mts[mts_i][worker_i][env_i])):
-                                muscle_transitions[idx].append(
-                                    mts[mts_i][worker_i][env_i][i])
-                    idx += 1
+            idx = 0
+            for mts_i in range(len(mts)):
+                for worker_i in range(len(mts[mts_i])):
+                    for env_i in range(len(mts[mts_i][worker_i])):
+                        for i in range(len(mts[mts_i][worker_i][env_i])):
+                            muscle_transitions[idx].append(
+                                mts[mts_i][worker_i][env_i][i])
+                idx += 1
 
-                loading_time = (time.perf_counter() - start) * 1000
-                stats = self.muscle_learner.learn(muscle_transitions)
+            loading_time = (time.perf_counter() - start) * 1000
+            stats = self.muscle_learner.learn(muscle_transitions)
 
-                distribute_time = time.perf_counter()
-                model_weights = ray.put(
-                    self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-                for worker in self.remote_workers:
-                    worker.foreach_env.remote(
-                        lambda env: env.load_muscle_model_weights(model_weights))
+            distribute_time = time.perf_counter()
+            model_weights = ray.put(
+                self.muscle_learner.get_model_weights(device=torch.device("cpu")))
+            for worker in self.remote_workers:
+                worker.foreach_env.remote(
+                    lambda env: env.load_muscle_model_weights(model_weights))
 
-                distribute_time = (time.perf_counter() -
-                                   distribute_time) * 1000
-                total_time = (time.perf_counter() - start) * 1000
+            distribute_time = (time.perf_counter() -
+                               distribute_time) * 1000
+            total_time = (time.perf_counter() - start) * 1000
 
-                result['timers']['muscle_learning'] = stats.pop('time')
-                result['num_tuples']['muscle_learning'] = stats.pop(
-                    'num_tuples')
-                result['timers']['muscle_learning']['distribute_time_ms'] = distribute_time
-                result['timers']['muscle_learning']['loading_time_ms'] = loading_time
-                result['timers']['muscle_learning']['total_ms'] = total_time
-                result["loss"].update(stats)
+            result['timers']['muscle_learning'] = stats.pop('time')
+            result['num_tuples']['muscle_learning'] = stats.pop(
+                'num_tuples')
+            result['timers']['muscle_learning']['distribute_time_ms'] = distribute_time
+            result['timers']['muscle_learning']['loading_time_ms'] = loading_time
+            result['timers']['muscle_learning']['total_ms'] = total_time
+            result["loss"].update(stats)
 
-            current_reward = result['episode_reward_mean']
+        current_reward = result['episode_reward_mean']
 
-            if self.max_reward < current_reward:
-                self.max_reward = current_reward
-                self.save_max_checkpoint(self._logdir)
+        if self.max_reward < current_reward:
+            self.max_reward = current_reward
+            self.save_max_checkpoint(self._logdir)
 
-            return result
+        return result
 
-        def __getstate__(self):
-            state = RLTrainer.__getstate__(self)
-            state["metadata"] = self.metadata
-            if self.isTwoLevelActuactor and not self.rollout:
-                state["muscle"] = self.muscle_learner.get_weights()
-                state["muscle_optimizer"] = self.muscle_learner.get_optimizer_weights()
-            if self.env_config["cascading"]:
-                state["cascading"] = True
-            return state
+    def __getstate__(self):
+        state = PPO.__getstate__(self)
+        state["metadata"] = self.metadata
+        if self.isTwoLevelActuactor and not self.rollout:
+            state["muscle"] = self.muscle_learner.get_weights()
+            state["muscle_optimizer"] = self.muscle_learner.get_optimizer_weights()
+        if self.env_config["cascading"]:
+            state["cascading"] = True
+        return state
 
-        def __setstate__(self, state):
-            RLTrainer.__setstate__(self, state)
-            if self.isTwoLevelActuactor and not self.rollout:
-                self.muscle_learner.set_weights(state["muscle"])
-                self.muscle_learner.set_optimizer_weights(
-                    state["muscle_optimizer"])
+    def __setstate__(self, state):
+        PPO.__setstate__(self, state)
+        if self.isTwoLevelActuactor and not self.rollout:
+            self.muscle_learner.set_weights(state["muscle"])
+            self.muscle_learner.set_optimizer_weights(
+                state["muscle_optimizer"])
 
-        def save_checkpoint(self, checkpoint_path):
-            print(f'Saving checkpoint at path {checkpoint_path}')
-            RLTrainer.save_checkpoint(self, checkpoint_path)
-            return checkpoint_path
+    def save_checkpoint(self, checkpoint_path):
+        print(f'Saving checkpoint at path {checkpoint_path}')
+        PPO.save_checkpoint(self, checkpoint_path)
+        return checkpoint_path
 
-        def save_max_checkpoint(self, checkpoint_path) -> str:
-            with open(Path(checkpoint_path) / "max_checkpoint", 'wb') as f:
-                pickle.dump(self.__getstate__(), f)
-            return checkpoint_path
+    def save_max_checkpoint(self, checkpoint_path) -> str:
+        with open(Path(checkpoint_path) / "max_checkpoint", 'wb') as f:
+            pickle.dump(self.__getstate__(), f)
+        return checkpoint_path
 
-        def load_checkpoint(self, checkpoint_path):
-            print(f'Loading checkpoint at path {checkpoint_path}')
-            checkpoint_file = list(Path(checkpoint_path).glob("checkpoint-*"))
-            if len(checkpoint_file) == 0:
-                raise RuntimeError("Missing checkpoint file!")
-            RLTrainer.load_checkpoint(self, checkpoint_file[0])
-
-    return MyTrainer
+    def load_checkpoint(self, checkpoint_path):
+        print(f'Loading checkpoint at path {checkpoint_path}')
+        checkpoint_file = list(Path(checkpoint_path).glob("checkpoint-*"))
+        if len(checkpoint_file) == 0:
+            raise RuntimeError("Missing checkpoint file!")
+        PPO.load_checkpoint(self, checkpoint_file[0])
 
 
 def get_config_from_file(filename: str, config: str):
@@ -334,9 +328,8 @@ def get_config_from_file(filename: str, config: str):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--cluster", action='store_true')
-parser.add_argument("--config", type=str, default="ppo")
-parser.add_argument("--config-file", type=str,
-                    default="../python/ray_config.py")
+parser.add_argument("--config", type=str, default="ppo_small_pc")
+parser.add_argument("--config-file", type=str, default="../python/ray_config.py")
 parser.add_argument('-n', '--name', type=str)
 parser.add_argument("--env", type=str, default="../data/env.xml")
 parser.add_argument("--checkpoint", type=str, default=None)
@@ -356,10 +349,7 @@ if __name__ == "__main__":
         env_xml = f.read()
     print("loading environment done...... ")
 
-    if args.cluster:
-        ray.init(address=os.environ["ip_head"])
-    else:
-        ray.init()
+    ray.init(address="auto")
 
     print("Nodes in the Ray cluster:")
     print(ray.nodes())
@@ -387,7 +377,6 @@ if __name__ == "__main__":
 
     local_dir = "./ray_results"
     algorithm = config["trainer_config"]["algorithm"]
-    MyTrainer = create_my_trainer(algorithm)
 
     with MyEnv(env_xml) as env:
         config["metadata"] = env.metadata

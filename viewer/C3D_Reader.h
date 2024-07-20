@@ -1,12 +1,10 @@
 // Read C3D Data and extract the gait and skeleton conditions
 // This is naive implementation of C3D to BVH conversion, we recommend the usage of other softwars for conversion.
-
+#ifndef C3D_READER_H
+#define C3D_READER_H
 #include "Environment.h"
 #include "GLfunctions.h"
 #include "Character.h"
-
-#ifndef C3D_READER_H
-#define C3D_READER_H
 
 // Marker Structure
 struct MocapMarker

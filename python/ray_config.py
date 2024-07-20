@@ -1,5 +1,3 @@
-import os
-from ray import tune
 import copy
 
 CONFIG = dict()
@@ -129,7 +127,7 @@ CONFIG["ppo_medium_pc"]["num_workers"] = 32
 
 # Small Set
 CONFIG["ppo_small_server"] = copy.deepcopy(CONFIG["ppo_small"])
-CONFIG["ppo_small_server"]["num_workers"] = 128 * 4
+CONFIG["ppo_small_server"]["num_workers"] = 128 * 2
 
 CONFIG["ppo_small_node"] = copy.deepcopy(CONFIG["ppo_small"])
 CONFIG["ppo_small_node"]["num_workers"] = 128

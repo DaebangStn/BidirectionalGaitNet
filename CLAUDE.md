@@ -1,0 +1,1 @@
+- before run the binary, check the micromamba environment is active. otherwise, use 'micromamba activate bidir'

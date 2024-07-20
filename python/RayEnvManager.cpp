@@ -93,7 +93,6 @@ public:
         }
         return py_mt;
     }
-    // void setAction(py::object action) { Environment::setAction(action.cast<Eigen::VectorXd>()); }
     void setAction(py::array_t<float> action) { Environment::setAction(toEigenVector(action)); }
     void step() { Environment::step(Environment::getSimulationHz() / Environment::getControlHz()); }
     int getNumMuscles() { return Environment::getCharacter(0)->getMuscles().size(); }
@@ -137,7 +136,6 @@ public:
 
 PYBIND11_MODULE(pysim, m)
 {
-    // py::class_<dart::dynamics::Skeleton, dart::dynamics::SkeletonPtr>(m, "Skeleton");
     py::class_<RayEnvManager>(m, "RayEnvManager")
         .def(py::init<std::string>())
         // .def("initialize", &RayEnvManager::initialize)
@@ -166,6 +164,7 @@ PYBIND11_MODULE(pysim, m)
 
         .def("getParamState", &RayEnvManager::getParamState)
         .def("updateParamState", &RayEnvManager::updateParamState)
+         
         // For Rollout (Forward GaitNet)
         .def("getNormalizedParamState", &RayEnvManager::getNormalizedParamState)
         .def("getNormalizedPhase", &RayEnvManager::getNormalizedPhase)

@@ -145,7 +145,8 @@ void Environment::
     }
     // Ground Loading
     if (doc.FirstChildElement("ground") != NULL)
-        addObject(Trim(std::string(doc.FirstChildElement("ground")->GetText())));
+        addObject("data/ground.xml");
+        // addObject(Trim(std::string(doc.FirstChildElement("ground")->GetText())));
 
     // Cyclic Mode
     if (doc.FirstChildElement("cyclicbvh") != NULL)
@@ -246,7 +247,12 @@ void Environment::
     // World Setting 후에 함. 왜냐하면 Height Calibration 을 위해서는 충돌 감지를 필요로 하기 때문.
     if (doc.FirstChildElement("bvh") != NULL)
     {
-        BVH *new_bvh = new BVH(Trim(std::string(doc.FirstChildElement("bvh")->GetText())));
+        std::string bvh_path = Trim(std::string(doc.FirstChildElement("bvh")->GetText()));
+        // Fix hardcoded BVH path from checkpoint metadata
+        if (bvh_path == "../data/motion/walk.bvh") {
+            bvh_path = "data/motion/walk.bvh";
+        }
+        BVH *new_bvh = new BVH(bvh_path);
         new_bvh->setMode(std::string(doc.FirstChildElement("bvh")->Attribute("symmetry")) == "true");
         new_bvh->setHeightCalibration(std::string(doc.FirstChildElement("bvh")->Attribute("heightCalibration")) == "true");
 
@@ -271,7 +277,7 @@ void Environment::
     if (isTwoLevelController())
     {
         Character *character = mCharacters[0];
-        mMuscleNN = py::module::import("ray_model").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
+        mMuscleNN = py::module::import("python.ray_model").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
     }
 
     if (doc.FirstChildElement("Horizon") != NULL)
@@ -386,7 +392,7 @@ void Environment::
         mChildNetworks.clear();
         if (mUseCascading)
         {
-            loading_network = py::module::import("ray_model").attr("loading_network");
+            loading_network = py::module::import("python.ray_model").attr("loading_network");
             auto networks = doc.FirstChildElement("cascading")->FirstChildElement();
             auto edges = doc.FirstChildElement("cascading")->LastChildElement();
             int idx = 0;
@@ -1703,8 +1709,22 @@ Network Environment::
     loadPrevNetworks(std::string path, bool isFirst)
 {
     Network nn;
+    
+    // Fix hardcoded network paths from checkpoint metadata
+    if (path == "../data/trained_nn/skel_no_mesh_lbs") {
+        path = "data/trained_nn/skel_no_mesh_lbs";
+    } else if (path == "../data/trained_nn/hip_no_mesh_lbs") {
+        path = "data/trained_nn/hip_no_mesh_lbs";
+    } else if (path == "../data/trained_nn/ankle_no_mesh_lbs") {
+        path = "data/trained_nn/ankle_no_mesh_lbs";
+    } else if (path == "../data/trained_nn/merge_no_mesh_lbs") {
+        path = "data/trained_nn/merge_no_mesh_lbs";
+    }
     // path, state size, action size, acuator type
-    std::string metadata = py::module::import("ray_model").attr("loading_metadata")(path).cast<std::string>();
+    py::object py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(path);
+    std::string metadata = "";
+    if (!py_metadata.is_none())
+        metadata = py_metadata.cast<std::string>();
     std::pair<Eigen::VectorXd, Eigen::VectorXd> space = getSpace(metadata);
 
     Eigen::VectorXd projState = getProjState(space.first, space.second).first;

@@ -1,5 +1,4 @@
-import torch
-import pickle5 as pickle
+import pickle
 
 ## Checkpoint Path
 path = None 

@@ -1,17 +1,15 @@
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
-import pandas as pd
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 import matplotlib.pyplot as plt
 import umap.plot
 import umap
 import numpy as np
 import math
+import pickle
 import torch
-from typing import List, Callable, Union, Any, TypeVar, Tuple
+from typing import List
 from torch import nn
-from torch.nn import functional as F
-import pickle5 as pickle
 
-Tensor = TypeVar('torch.tensor')
+
 
 class AdvancedVAE(nn.Module):
     def __init__(self,
@@ -89,7 +87,7 @@ class AdvancedVAE(nn.Module):
         if torch.cuda.is_available():
             self.cuda()
 
-    def encode(self, input: Tensor, isRender=False) -> List[Tensor]:
+    def encode(self, input: torch.Tensor, isRender=False) -> List[torch.Tensor]:
 
         if isRender:
             input = torch.tensor(input, device="cuda")
@@ -118,7 +116,7 @@ class AdvancedVAE(nn.Module):
 
         return param_state
 
-    def gaitnet(self, z: Tensor, isRender=False) -> Tensor:
+    def gaitnet(self, z: torch.Tensor, isRender=False) -> torch.Tensor:
         if isRender:
             z = torch.tensor([z], device="cuda")
 
@@ -144,7 +142,7 @@ class AdvancedVAE(nn.Module):
         result = result.transpose(0, 1).flatten(1, 2)
         return result if not isRender else result[0].cpu().detach().numpy()
 
-    def decode(self, z_: Tensor, isRender=False) -> Tensor:
+    def decode(self, z_: torch.Tensor, isRender=False) -> torch.Tensor:
         if isRender:
             z_ = torch.tensor([z_], device="cuda")
 
@@ -175,7 +173,7 @@ class AdvancedVAE(nn.Module):
 
         return result if not isRender else result[0].cpu().detach().numpy()
 
-    def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return eps * std + mu
@@ -239,7 +237,7 @@ class AdvancedVAE(nn.Module):
 
     def sample(self,
                num_samples: int,
-               current_device: int, **kwargs) -> Tensor:
+               current_device: int, **kwargs) -> torch.Tensor:
         z = torch.randn(num_samples,
                         self.latent_dim)
 
@@ -248,7 +246,7 @@ class AdvancedVAE(nn.Module):
         samples = self.decode(z)
         return samples
 
-    def generate(self, x: Tensor, **kwargs) -> Tensor:
+    def generate(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         return self.forward(x)[0]
 
     def load(self, path):

@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "release",
+      "hidden": false,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+          "CMAKE_BUILD_TYPE": "Release",
+          "SERVER_BUILD": false
+      }
+  },
+  {
+      "name": "debug",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+          "CMAKE_BUILD_TYPE": "Debug"
+      }
+  },
+  {
+    "name": "gait",
+    "inherits": "release",
+    "cacheVariables": {
+        "SERVER_BUILD": true
+    }
+  }
+  ]
+}

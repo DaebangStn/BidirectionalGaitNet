@@ -81,7 +81,7 @@ public:
 
     Eigen::VectorXd heightCalibration(dart::simulation::WorldPtr _world, bool isStrict = true);
     std::vector<Eigen::Matrix3d> getBodyNodeTransform() { return mBodyNodeTransform; }
-    void setMuscles(const std::string path, bool useVelocityForce = false, bool meshLbsWeight = false);
+    void setMuscles(std::string path, bool useVelocityForce = false, bool meshLbsWeight = false);
     const std::vector<Muscle *> &getMuscles() { return mMuscles; }
 
     void clearLogs();

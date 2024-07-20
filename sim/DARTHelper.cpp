@@ -414,7 +414,7 @@ BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d co
 
 		if (obj_file != "None")
 		{
-			std::string obj_path = fs::current_path().string() + "/../data/OBJ/" + obj_file;
+			std::string obj_path = fs::current_path().string() + "/data/OBJ/" + obj_file;
 			const aiScene *scene = MeshShape::loadMesh(std::string(obj_path));
 
 			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(Eigen::Vector3d(0.01, 0.01, 0.01), scene));

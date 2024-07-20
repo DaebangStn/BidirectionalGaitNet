@@ -1,9 +1,8 @@
 from pysim import RayEnvManager
-from IPython import embed
 import numpy as np
 import gym
 import ray
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 
 
 class MyEnv(gym.Env):
@@ -131,5 +130,5 @@ def createEnv():
 
 if __name__ == "__main__":
     print("MAIN")
-    e = MyEnv("../data/env.xml")
+    e = MyEnv("data/env.xml")
     e.reset()

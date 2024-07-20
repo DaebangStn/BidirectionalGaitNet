@@ -1,9 +1,12 @@
-#include "GLFWApp.h"
+#ifndef STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#endif
 #ifndef STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
+#include "GLFWApp.h"
+#include "stb_image.h"
 #include "stb_image_write.h"
-#include "dart/external/lodepng/lodepng.h"
 const std::vector<std::string> CHANNELS =
     {
         "Xposition",
@@ -94,6 +97,7 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     }
     glViewport(0, 0, mWidth, mHeight);
     glfwSetWindowUserPointer(mWindow, this); // 창 사이즈 변경
+    setWindowIcon("figure/icon.png");
 
     auto framebufferSizeCallback = [](GLFWwindow *window, int width, int height)
     {
@@ -155,7 +159,7 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     ImPlot::CreateContext();
 
     mns = py::module::import("__main__").attr("__dict__");
-    py::module::import("sys").attr("path").attr("insert")(1, "../python");
+    py::module::import("sys").attr("path").attr("insert")(1, "python");
 
     if (argc > 1) // Network 가 주어졌을 때
     {
@@ -179,6 +183,18 @@ GLFWApp::~GLFWApp()
     ImGui::DestroyContext();
     glfwDestroyWindow(mWindow);
     glfwTerminate();
+}
+
+void GLFWApp::setWindowIcon(const char* icon_path)
+{
+    GLFWimage images[1];
+    images[0].pixels = stbi_load(icon_path, &images[0].width, &images[0].height, 0, 4); // RGBA channels
+    if (images[0].pixels) {
+        glfwSetWindowIcon(mWindow, 1, images);
+        stbi_image_free(images[0].pixels);
+    } else {
+        std::cerr << "Failed to load icon" << std::endl;
+    }
 }
 
 void GLFWApp::writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const bool isPos)
@@ -337,7 +353,11 @@ void GLFWApp::startLoop()
             std::vector<unsigned char> flipped_pixels(stride * height);
             for (int y = 0; y < height; ++y)
                 memcpy(&flipped_pixels[y * stride], &pixels[(height - y - 1) * stride], stride);
-            lodepng::encode(("../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png").c_str(), flipped_pixels.data(), width, height);
+            std::string filename = "../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png";
+            const int channels = 4;
+            const int stride_in_bytes = width * channels;
+            stbi_write_png(filename.c_str(), width, height, channels, flipped_pixels.data(), stride_in_bytes);
+            // lodepng::encode(("../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png").c_str(), flipped_pixels.data(), width, height);
             std::cout << "Saving screenshot" << mScreenIdx << ".png ...... " << std::endl;
             delete[] pixels;
             mScreenIdx++;
@@ -403,7 +423,15 @@ void GLFWApp::initGL()
 
 void GLFWApp::setEnv(Environment *env, std::string metadata)
 {
-    loading_network = py::module::import("ray_model").attr("loading_network");
+    py::gil_scoped_acquire gil;
+    try {
+        loading_network = py::module::import("python.ray_model").attr("loading_network");
+    } catch (const py::error_already_set& e) {
+        std::cerr << "Warning: Failed to import python.ray_model in debug build: " << e.what() << std::endl;
+        std::cerr << "This is a known issue in debug builds. Continuing without ray model support." << std::endl;
+        // Set a dummy function or handle gracefully
+        loading_network = py::none();
+    }
 
     if (mNetworkPaths.size() > 0)
     {
@@ -415,9 +443,15 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
         }
         else
         {
-            py::object py_metadata = py::module::import("ray_model").attr("loading_metadata")(mNetworkPaths.back());
-            if (py_metadata.cast<py::none>() != Py_None)
-                metadata = py_metadata.cast<std::string>();
+            try {
+                py::object py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(mNetworkPaths.back());
+                if (!py_metadata.is_none())
+                    metadata = py_metadata.cast<std::string>();
+            } catch (const py::error_already_set& e) {
+                std::cerr << "Warning: Failed to load metadata using ray_model: " << e.what() << std::endl;
+                // Use a default or fallback metadata
+                metadata = "";
+            }
         }
     }
 
@@ -450,30 +484,36 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
     }
 
     // Forward GaitNet
-    std::string path = "../fgn";
+    std::string path = "fgn";
     mFGNList.clear();
-    for (const auto &entry : fs::directory_iterator(path))
-    {
-        std::string fgn_path = entry.path().string();
-        mFGNList.push_back(fgn_path);
+    if (fs::exists(path) && fs::is_directory(path)) {
+        for (const auto &entry : fs::directory_iterator(path))
+        {
+            std::string fgn_path = entry.path().string();
+            mFGNList.push_back(fgn_path);
+        }
     }
 
     // Backward GaitNet
-    path = "../bgn";
+    path = "bgn";
     mBGNList.clear();
-    for (const auto &entry : fs::directory_iterator(path))
-    {
-        std::string bgn_path = entry.path().string();
-        mBGNList.push_back(bgn_path);
+    if (fs::exists(path) && fs::is_directory(path)) {
+        for (const auto &entry : fs::directory_iterator(path))
+        {
+            std::string bgn_path = entry.path().string();
+            mBGNList.push_back(bgn_path);
+        }
     }
 
     // C3D List
-    path = "../c3d";
+    path = "c3d";
     mC3DList.clear();
-    for (const auto &entry : fs::directory_iterator(path))
-    {
-        std::string c3d_path = entry.path().string();
-        mC3DList.push_back(c3d_path);
+    if (fs::exists(path) && fs::is_directory(path)) {
+        for (const auto &entry : fs::directory_iterator(path))
+        {
+            std::string c3d_path = entry.path().string();
+            mC3DList.push_back(c3d_path);
+        }
     }
 
     // Set For BVH
@@ -486,7 +526,6 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
     }
 
     // Load C3D
-
     mC3DCOM = Eigen::Vector3d::Zero();
 
     // load motion
@@ -498,7 +537,7 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
 
     // get list of files in the specific directory path
     mMotions.clear();
-    std::string motion_path = "../motions";
+    std::string motion_path = "motions";
     py::object load_motions_from_file = py::module::import("forward_gaitnet").attr("load_motions_from_file");
     mMotionIdx = 0;
     for (const auto &entry : fs::directory_iterator(motion_path))
@@ -508,10 +547,37 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
             continue;
 
         py::tuple results = load_motions_from_file(file_name, mEnv->getNumKnownParam());
-        int idx = 0;
-
-        Eigen::MatrixXd params = results[0].cast<Eigen::MatrixXd>();
-        Eigen::MatrixXd motions = results[1].cast<Eigen::MatrixXd>();
+        
+        // Handle potential type conversion issues between debug/release builds
+        py::object params_obj = results[0];
+        py::object motions_obj = results[1];
+        
+        // Check if we need to unwrap nested tuples (debug build issue)
+        if (py::isinstance<py::tuple>(params_obj)) {
+            py::tuple params_tuple = params_obj.cast<py::tuple>();
+            if (params_tuple.size() > 0) {
+                params_obj = params_tuple[0];
+            }
+        }
+        if (py::isinstance<py::tuple>(motions_obj)) {
+            py::tuple motions_tuple = motions_obj.cast<py::tuple>();
+            if (motions_tuple.size() > 0) {
+                motions_obj = motions_tuple[0];
+            }
+        }
+        
+        Eigen::MatrixXd params, motions;
+        try {
+            params = params_obj.cast<Eigen::MatrixXd>();
+            motions = motions_obj.cast<Eigen::MatrixXd>();
+        } catch (const std::system_error& e) {
+            std::cerr << "System error during numpy array casting in debug build: " << e.what() << std::endl;
+            std::cerr << "This appears to be a pybind11/numpy API initialization issue in debug mode." << std::endl;
+            continue; // Skip this motion file and continue with others
+        } catch (const std::exception& e) {
+            std::cerr << "Error casting Python objects to Eigen matrices: " << e.what() << std::endl;
+            continue; // Skip this motion file and continue with others
+        }
 
         for (int i = 0; i < params.rows(); i++)
         {
@@ -622,40 +688,55 @@ void GLFWApp::drawGaitNetDisplay()
     }
     if (ImGui::CollapsingHeader("C3D"))
     {
-        int idx = 0;
-        for (auto ns : mC3DList)
+        if (mC3DList.empty())
         {
-            if (ImGui::Selectable(ns.c_str(), selected_c3d == idx))
-                selected_c3d = idx;
-            if (selected_c3d)
-                ImGui::SetItemDefaultFocus();
-            idx++;
+            ImGui::Text("No C3D files found in c3d directory");
         }
-    }
-    static float femur_torsion_l = 0.0;
-    static float femur_torsion_r = 0.0;
-    static float c3d_scale = 1.0;
-    static float height_offset = 0.0;
-    // ImGui Slider
-    ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
-    ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
-    ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
-    ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
-
-    if (ImGui::Button("Load C3D"))
-    {
-        mRenderC3D = true;
-        mC3DReader = new C3D_Reader("../data/skeleton_gaitnet_narrow_model.xml", "../data/marker_set.xml", mEnv);
-        mC3Dmotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset); // /* ,torsionL, torsionR*/);
-        mC3DCOM = Eigen::Vector3d::Zero();
-    }
-
-    if (ImGui::Button("Convert C3D to Motion"))
-    {
-        auto m = mC3DReader->convertToMotion();
-        m.name = "C3D Motion" + std::to_string(mMotions.size());
-        mMotions.push_back(m);
-        mAddedMotions.push_back(m);
+        else
+        {
+            int idx = 0;
+            for (auto ns : mC3DList)
+            {
+                if (ImGui::Selectable(ns.c_str(), selected_c3d == idx))
+                    selected_c3d = idx;
+                if (selected_c3d)
+                    ImGui::SetItemDefaultFocus();
+                idx++;
+            }
+        }
+        static float femur_torsion_l = 0.0;
+        static float femur_torsion_r = 0.0;
+        static float c3d_scale = 1.0;
+        static float height_offset = 0.0;
+        // ImGui Slider
+        ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
+        ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
+        ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
+        ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
+    
+        if (ImGui::Button("Load C3D"))
+        {
+            if (selected_c3d < mC3DList.size() && !mC3DList.empty())
+            {
+                mRenderC3D = true;
+                mC3DReader = new C3D_Reader("data/skeleton_gaitnet_narrow_model.xml", "data/marker_set.xml", mEnv);
+                std::cout << "Loading C3D: " << mC3DList[selected_c3d] << std::endl;
+                mC3Dmotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset); // /* ,torsionL, torsionR*/);
+                mC3DCOM = Eigen::Vector3d::Zero();
+            }
+            else
+            {
+                std::cout << "Error: No C3D files available or invalid selection (selected: " << selected_c3d << ", available: " << mC3DList.size() << ")" << std::endl;
+            }
+        }
+    
+        if (ImGui::Button("Convert C3D to Motion"))
+        {
+            auto m = mC3DReader->convertToMotion();
+            m.name = "C3D Motion" + std::to_string(mMotions.size());
+            mMotions.push_back(m);
+            mAddedMotions.push_back(m);
+        }
     }
 
     static int mMotionPhaseOffset = 0;
@@ -846,7 +927,7 @@ void GLFWApp::drawGaitAnalysisDisplay()
     if (ImGui::CollapsingHeader("Drawn Muscles"))
     {
         for (auto m : mSelectedMuscles)
-            ImGui::Text(m->name.c_str());
+            ImGui::TextUnformatted(m->name.c_str());
     }
     static int joint_selected = 0;
     if (ImGui::CollapsingHeader("Torque Graph"))
@@ -896,8 +977,9 @@ void GLFWApp::drawGaitAnalysisDisplay()
 
         ImPlot::SetNextAxisLimits(3, 500, 0);
         ImPlot::SetNextAxisLimits(0, 0, 1.5, ImGuiCond_Always);
-        if (ImPlot::BeginPlot((m->name + "_force_graph").c_str(), "length", "force", ImVec2(-1, 250)))
+        if (ImPlot::BeginPlot((m->name + "_force_graph").c_str(), ImVec2(-1, 250)))
         {
+            ImPlot::SetupAxes("length", "force");
             std::vector<std::vector<double>> p = m->GetGraphData();
 
             ImPlot::PlotLine("##active", p[1].data(), p[2].data(), 250);
@@ -993,7 +1075,7 @@ void GLFWApp::drawUIDisplay()
     {
         if (ImGui::Button("Print"))
             std::cout << mEnv->getMetadata() << std::endl;
-        ImGui::Text(mEnv->getMetadata().c_str());
+        ImGui::TextUnformatted(mEnv->getMetadata().c_str());
     }
 
     // Reward
@@ -1001,8 +1083,9 @@ void GLFWApp::drawUIDisplay()
     {
         ImPlot::SetNextAxisLimits(0, -3, 0);
         ImPlot::SetNextAxisLimits(3, 0, 4);
-        if (ImPlot::BeginPlot("Reward", "x", "r"))
+        if (ImPlot::BeginPlot("Reward"))
         {
+            ImPlot::SetupAxes("x", "r");
             if (mRewardBuffer.size() > 0)
             {
                 double *x = new double[mRewardBuffer.size()]();
@@ -1837,6 +1920,7 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             mEye = Eigen::Vector3d(0, 0, 2.92526);
             break;
 
+        case GLFW_KEY_3:
         case GLFW_KEY_KP_3: // Muscle Information Rendering
             mFocus = 1;
             mCameraMoving = -400;

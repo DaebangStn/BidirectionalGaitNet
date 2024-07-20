@@ -2,8 +2,9 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import pickle5 as pickle
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
+
+import pickle
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 from pysim import RayEnvManager
 
 MultiVariateNormal = torch.distributions.Normal

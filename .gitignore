@@ -1,4 +1,7 @@
 build/
+release
+server
+debug
 build_debug/
 *.so
 *.a
@@ -6,7 +9,6 @@ build_debug/
 legacy_data/
 
 nn/
-.vscode
 python/CMakeFiles/
 python/core
 python/python
@@ -78,3 +80,9 @@ previous_rollout/*
 
 
 *.c3d
+
+imgui.ini
+.venv
+
+*.egg-info/
+.serena/

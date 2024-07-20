@@ -4,6 +4,7 @@
 #include "BVH_Parser.h"
 #include "Character.h"
 #include "dart/collision/bullet/bullet.hpp"
+#include "export.h"
 
 // Struct Motion (include motion (eigen vectorxd) and param (eigen vectorxd)
 struct Motion
@@ -22,7 +23,7 @@ struct param_group
     bool is_uniform;
 };
 
-struct Network
+struct DLL_PUBLIC Network
 {
     std::string name; // Actually Path
     py::object joint;
@@ -46,7 +47,7 @@ enum EOEType
     tuple
 };
 
-class Environment
+class DLL_PUBLIC Environment
 {
 public:
     Environment();

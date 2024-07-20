@@ -362,8 +362,8 @@
 <cascading>
     <networks>
         <nn0>../data/trained_nn/skel_no_mesh_lbs</nn0>
-        <nn1>../data/trained_nn/generative_gaitnet_hip_v2</nn1>
-        <nn2>../data/trained_nn/generative_gaitnet_ankle_v2</nn2>
+        <nn1>../data/trained_nn/hip_no_mesh_lbs</nn1>
+        <nn2>../data/trained_nn/ankle_no_mesh_lbs</nn2>
     </networks>
     <edges>
         <edge0 start="0" end="1" />

@@ -1,13 +1,13 @@
-from IPython import embed
-from math import fabs
 import torch
 import torch.nn as nn
 import numpy as np
-import pickle5 as pickle
+import dill
+from dill import Unpickler
+from io import BytesIO
+from python.dummy import Dummy
 
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
-import torch.nn.functional as F
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 
 MultiVariateNormal = torch.distributions.Normal
 temp = MultiVariateNormal.log_prob
@@ -374,17 +374,43 @@ def generating_muscle_nn(num_total_muscle_related_dofs, num_dof, num_muscles, is
 
 
 def loading_metadata(path):
-    state = pickle.load(open(path, "rb"))
+    state = dill.load(open(path, "rb"))
     # print(state["metadata"])
     return state["metadata"] if "metadata" in state.keys() else None
+
+
+class SelectiveUnpickler(Unpickler):
+    def __init__(self, file):
+        super().__init__(file)
+        self._allowed_classes = {
+            ('builtins', 'dict'),
+            ('builtins', 'list'),
+            ('builtins', 'str'),
+            ('builtins', 'int'),
+            ('builtins', 'float'),
+            ('builtins', 'bool'),
+            ('torch', 'Tensor'),
+            ('numpy', 'ndarray'),
+            ('numpy.core.numeric', '_frombuffer'),
+            ('numpy', 'dtype'),
+            ('ray.rllib.utils.filter', 'NoFilter'),
+        }
+
+    def find_class(self, module, name):
+        if (module, name) in self._allowed_classes:
+            return super().find_class(module, name)
+        else:
+            # print(f"Class {module}.{name} is not allowed to be unpickled.")
+            return Dummy
 
 
 def loading_network(path, num_states=0, num_actions=0,
                     use_musclenet=False, num_actuator_action=0, num_muscles=0, num_total_muscle_related_dofs=0,
                     device="cpu"):
 
-    state = pickle.load(open(path, "rb"))
-    worker_state = pickle.loads(state["worker"])
+    print("Loading network from {}".format(path))
+    state = dill.load(open(path, "rb"))
+    worker_state = SelectiveUnpickler(BytesIO(state['worker'])).load()
     policy_state = worker_state["state"]['default_policy']['weights']
     filter_state = worker_state["filters"]['default_policy']
 

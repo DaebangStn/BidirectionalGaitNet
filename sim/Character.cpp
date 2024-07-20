@@ -110,13 +110,16 @@ Character::
     Character(std::string path, double defaultKp, double defaultKv, double defaultDamping)
 {
     mActuactorType = tor;
+    path = "data/skeleton_gaitnet_narrow_model.xml";
+    std::cout << "[Character] Using Hardcoded Path: " << path << std::endl;
+    
     mSkeleton = BuildFromFile(path, defaultDamping);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
 
     mTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
     mPDTarget = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
-    mLocalTime = 0.0;
+    mLocalTime = 0.0; 
 
     mKp = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
     mKv = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
@@ -124,7 +127,6 @@ Character::
 
     mActivations = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
-    // Kp, Kv 값에 있는 Joint 에 대해서 그 값을 적용.
     TiXmlDocument doc;
     doc.LoadFile(path.c_str());
     TiXmlElement *skel_elem = doc.FirstChildElement("Skeleton");
@@ -376,14 +378,17 @@ Eigen::VectorXd Character::heightCalibration(dart::simulation::WorldPtr _world, 
 
 // Muscle
 void Character::
-    setMuscles(const std::string path, bool useVelocityForce, bool meshLbsWeight)
+    setMuscles(std::string path, bool useVelocityForce, bool meshLbsWeight)
 {
     TiXmlDocument doc;
-    if (doc.LoadFile(path.c_str()))
-    {
-        std::cout << "Can't open file : " << path << std::endl;
-        return;
+    path = "data/muscle_gaitnet.xml";
+    std::cout << "[Character] Using Hardcoded Muscle Path: " << path << std::endl;
+    
+    if (doc.LoadFile(path.c_str())) {
+        std::cerr << "Failed to load muscle file: " << path << std::endl;
+        exit(-1);
     }
+    
     bool uselegacy = false;
     TiXmlElement *muscledoc = doc.FirstChildElement("Muscle");
     for (TiXmlElement *unit = muscledoc->FirstChildElement("Unit"); unit != nullptr; unit = unit->NextSiblingElement("Unit"))
