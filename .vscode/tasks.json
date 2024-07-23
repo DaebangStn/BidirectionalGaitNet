@@ -1,0 +1,129 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Install Script",
+			"type": "shell",
+			"command": "./install.sh",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": [],
+			"options": {
+				"env": {
+					"ENVDIR": "${env:HOME}/pkgenv",
+					"SRCDIR": "${env:HOME}/pkgsrc"
+				}
+			}
+		},
+		{
+			"label": "Create Build Directory",
+			"type": "shell",
+			"command": "mkdir",
+			"args": [
+				"-p",
+				"${workspaceFolder}/build"
+			],
+			"problemMatcher": [],
+			"dependsOn": []
+		},
+		{
+			"label": "Configure CMake",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--preset default",
+				".."
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/build",
+			},
+			"problemMatcher": [],
+			"dependsOn": [
+				"Create Build Directory"
+			]
+		},
+		{
+			"label": "Configure CMake (Debug)",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--preset debug",
+				".."
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/build",
+			},
+			"problemMatcher": [],
+			"dependsOn": [
+				"Create Build Directory",
+			]
+		},
+		{
+			"label": "Build",
+			"type": "shell",
+			"command": "ninja",
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			},
+			"options": {
+				"cwd": "${workspaceFolder}/build"
+			},
+			"problemMatcher": [],
+			"dependsOn": "Configure CMake"
+		},
+		{
+			"label": "Build (Debug)",
+			"type": "shell",
+			"command": "ninja",
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			},
+			"options": {
+				"cwd": "${workspaceFolder}/build"
+			},
+			"problemMatcher": [],
+			"dependsOn": "Configure CMake (Debug)"
+		},
+		{
+			"label": "Clean",
+			"type": "shell",
+			"command": "rm",
+			"args": [
+				"-rf",
+				"${workspaceFolder}/build"
+			],
+			"problemMatcher": [],
+			"group": {
+				"kind": "none",
+				"isDefault": true
+			}	
+		},
+		{
+			"label": "Run Viewer",
+			"type": "process",
+			"command": "${workspaceFolder}/build/viewer/viewer",
+			"args": [
+				"${workspaceFolder}/data/env_merge.xml"
+			],
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"problemMatcher": [],
+			"options": {
+				"cwd": "${workspaceFolder}/build"
+			},
+			"dependsOn": "Activate Venv"
+		},
+		{
+			"label": "Activate Venv",
+			"type": "shell",
+			"command": "source ${workspaceFolder}/.venv/bin/activate",
+		}
+	]
+  }
+  

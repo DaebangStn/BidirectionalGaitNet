@@ -1,0 +1,32 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "(gdb) Launch",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/viewer/viewer",
+        "args": ["../data/env_merge.xml"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}/build",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ],
+        "miDebuggerPath": "/usr/bin/gdb",
+        "preLaunchTask": "Build (Debug)",
+        "logging": {
+          "engineLogging": false,
+          "trace": false,
+          "traceResponse": false
+        }
+      }
+    ]
+  }
+  

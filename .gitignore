@@ -7,7 +7,6 @@ build_debug/
 legacy_data/
 
 nn/
-.vscode
 python/CMakeFiles/
 python/core
 python/python
