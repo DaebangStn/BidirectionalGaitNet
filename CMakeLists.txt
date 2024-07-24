@@ -5,6 +5,9 @@ add_compile_options(-fPIC)
 add_compile_options(-Wdeprecated-declarations)
 add_compile_options(-DHAVE_CSTDDEF)
 
+set(CMAKE_AR gcc-ar)
+set(CMAKE_RANLIB gcc-ranlib)
+
 set(OpenGL_GL_PREFERENCE LEGACY)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -43,7 +46,7 @@ link_libraries(stdc++fs)
 link_directories($ENV{ENVDIR}/lib)
 
 # Common packages
-find_package(Python ${PYTHON_VERSION} EXACT REQUIRED COMPONENTS Interpreter Development)
+find_package(Python REQUIRED COMPONENTS Interpreter Development)
 find_package(pybind11 REQUIRED)
 
 add_subdirectory( libs )

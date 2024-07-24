@@ -24,8 +24,7 @@ install_library() {
     mkdir $1/build
     pushd $1/build
     if [ -f ../CMakeLists.txt ]; then
-        cmake -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
+        cmake -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_PREFIX_PATH=$ENVDIR \
               -DCMAKE_INSTALL_PREFIX=$ENVDIR \
               -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE \
@@ -36,7 +35,7 @@ install_library() {
     elif [ -f Makefile ]; then
         cd ..
     fi
-    ninja install
+    make -j$(nproc) install
     popd
 }
 
@@ -54,8 +53,8 @@ install_dart() {
           -DDART_BUILD_DARTPY=false \
           -DBUILD_SHARED_LIBS=true \
           -DDART_ENABLE_SIMD=true \
-          -DDART_BUILD_GUI_OSG=false \
           -DFCL_INCLUDE_DIRS=$ENVDIR/include/fcl \
+          -DBULLET_INCLUDE_DIRS=$ENVDIR/include/bullet \
           ..
     ninja install
     popd

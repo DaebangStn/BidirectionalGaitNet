@@ -4,7 +4,7 @@ project(sim)
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR})
 
 find_package(TinyXML2 REQUIRED)
-find_package(DART REQUIRED COMPONENTS dart gui collision-bullet)
+find_package(DART REQUIRED COMPONENTS dart collision-bullet)
 
 file(GLOB srcs "*.h" "*.cpp")
 
