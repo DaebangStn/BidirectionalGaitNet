@@ -2,7 +2,7 @@
 
 ENVDIR=${ENVDIR:-~/pkgenv}
 SRCDIR=${SRCDIR:-~/pkgsrc}
-DARTSIM_VERSION=v6.12.0
+DARTSIM_VERSION=v6.11.2
 
 mkdir -p $ENVDIR
 mkdir -p $ENVDIR/include
@@ -52,6 +52,7 @@ install_dart() {
           -DCMAKE_INSTALL_RPATH=$ENVDIR \
           -DDART_BUILD_DARTPY=false \
           -DBUILD_SHARED_LIBS=true \
+          -DDART_BUILD_GUI_OSG=false \
           -DDART_ENABLE_SIMD=true \
           -DFCL_INCLUDE_DIRS=$ENVDIR/include/fcl \
           -DBULLET_INCLUDE_DIRS=$ENVDIR/include/bullet \
