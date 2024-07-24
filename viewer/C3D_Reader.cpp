@@ -1,3 +1,4 @@
+#include <tinyxml2.h>
 #include "C3D_Reader.h"
 
 Eigen::MatrixXd getRotationMatrixFromPoints(Eigen::Vector3d p0, Eigen::Vector3d p1, Eigen::Vector3d p2)

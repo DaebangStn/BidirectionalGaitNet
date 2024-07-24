@@ -1,4 +1,6 @@
 build/
+release
+server
 debug
 build_debug/
 *.so

@@ -12,36 +12,19 @@
 			"problemMatcher": [],
 			"options": {
 				"env": {
-					"ENVDIR": "${env:HOME}/pkgenv",
-					"SRCDIR": "${env:HOME}/pkgsrc"
 				}
 			}
-		},
-		{
-			"label": "Create Build Directory",
-			"type": "shell",
-			"command": "mkdir",
-			"args": [
-				"-p",
-				"${workspaceFolder}/build"
-			],
-			"problemMatcher": [],
-			"dependsOn": []
 		},
 		{
 			"label": "Configure CMake",
 			"type": "shell",
 			"command": "cmake",
 			"args": [
-				"--preset default",
+				"--preset release",
 				".."
 			],
-			"options": {
-				"cwd": "${workspaceFolder}/build",
-			},
 			"problemMatcher": [],
 			"dependsOn": [
-				"Create Build Directory"
 			]
 		},
 		{
@@ -52,12 +35,8 @@
 				"--preset debug",
 				".."
 			],
-			"options": {
-				"cwd": "${workspaceFolder}/build",
-			},
 			"problemMatcher": [],
 			"dependsOn": [
-				"Create Build Directory",
 			]
 		},
 		{
@@ -69,7 +48,7 @@
 				"isDefault": false
 			},
 			"options": {
-				"cwd": "${workspaceFolder}/build"
+				"cwd": "${workspaceFolder}/release"
 			},
 			"problemMatcher": [],
 			"dependsOn": "Configure CMake"
@@ -83,7 +62,7 @@
 				"isDefault": false
 			},
 			"options": {
-				"cwd": "${workspaceFolder}/build"
+				"cwd": "${workspaceFolder}/debug"
 			},
 			"problemMatcher": [],
 			"dependsOn": "Configure CMake (Debug)"
@@ -94,7 +73,9 @@
 			"command": "rm",
 			"args": [
 				"-rf",
-				"${workspaceFolder}/build"
+				"${workspaceFolder}/release",
+				"${workspaceFolder}/debug",
+				"${workspaceFolder}/server"
 			],
 			"problemMatcher": [],
 			"group": {
@@ -105,7 +86,7 @@
 		{
 			"label": "Run Viewer",
 			"type": "process",
-			"command": "${workspaceFolder}/build/viewer/viewer",
+			"command": "${workspaceFolder}/release/viewer/viewer",
 			"args": [
 				"${workspaceFolder}/data/env_merge.xml"
 			],
@@ -115,14 +96,14 @@
 			},
 			"problemMatcher": [],
 			"options": {
-				"cwd": "${workspaceFolder}/build"
+				"cwd": "${workspaceFolder}/release"
 			},
 			"dependsOn": "Activate Venv"
 		},
 		{
 			"label": "Activate Venv",
 			"type": "shell",
-			"command": "source ${workspaceFolder}/.venv/bin/activate",
+			"command": "source ${workspaceFolder}/.venv/bin/activate"
 		}
 	]
   }

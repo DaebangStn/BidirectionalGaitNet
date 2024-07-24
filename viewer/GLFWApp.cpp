@@ -7,7 +7,6 @@
 #include "GLFWApp.h"
 #include "stb_image.h"
 #include "stb_image_write.h"
-#include "dart/external/lodepng/lodepng.h"
 const std::vector<std::string> CHANNELS =
     {
         "Xposition",
@@ -354,7 +353,11 @@ void GLFWApp::startLoop()
             std::vector<unsigned char> flipped_pixels(stride * height);
             for (int y = 0; y < height; ++y)
                 memcpy(&flipped_pixels[y * stride], &pixels[(height - y - 1) * stride], stride);
-            lodepng::encode(("../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png").c_str(), flipped_pixels.data(), width, height);
+            std::string filename = "../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png";
+            const int channels = 4;
+            const int stride_in_bytes = width * channels;
+            stbi_write_png(filename.c_str(), width, height, channels, flipped_pixels.data(), stride_in_bytes);
+            // lodepng::encode(("../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png").c_str(), flipped_pixels.data(), width, height);
             std::cout << "Saving screenshot" << mScreenIdx << ".png ...... " << std::endl;
             delete[] pixels;
             mScreenIdx++;
@@ -525,8 +528,6 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
             continue;
 
         py::tuple results = load_motions_from_file(file_name, mEnv->getNumKnownParam());
-        int idx = 0;
-
         Eigen::MatrixXd params = results[0].cast<Eigen::MatrixXd>();
         Eigen::MatrixXd motions = results[1].cast<Eigen::MatrixXd>();
 

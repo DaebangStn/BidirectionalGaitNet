@@ -10,7 +10,7 @@
       "name": "release",
       "hidden": false,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
+      "binaryDir": "${sourceDir}/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "PYTHON_VERSION": "3.6",
@@ -31,14 +31,10 @@
     {
       "name": "server",
       "inherits": "release",
-      "hidden": true,
+      "hidden": false,
       "binaryDir": "${sourceDir}/server",
       "cacheVariables": {
         "SERVER_BUILD": true
-      },
-      "environment": {
-        "CC": "/opt/ohpc/pub/compiler/gcc/8.3.0/bin/gcc",
-        "CXX": "/opt/ohpc/pub/compiler/gcc/8.3.0/bin/g++"
       }
     }
   ]

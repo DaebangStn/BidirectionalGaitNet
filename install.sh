@@ -2,6 +2,7 @@
 
 ENVDIR=${ENVDIR:-~/pkgenv}
 SRCDIR=${SRCDIR:-~/pkgsrc}
+DARTSIM_VERSION=v6.12.0
 
 mkdir -p $ENVDIR
 mkdir -p $ENVDIR/include
@@ -12,8 +13,8 @@ mkdir -p $SRCDIR
 
 # If CentOS server, set C++ compiler manually
 if [ -f /etc/redhat-release ]; then
-    export CC=/opt/ohpc/pub/compiler/gcc/8.3.0/bin/gcc
-    export CXX=/opt/ohpc/pub/compiler/gcc/8.3.0/bin/g++
+    export CC=/opt/ohpc/pub/compiler/gcc/11.5.0/bin/gcc
+    export CXX=/opt/ohpc/pub/compiler/gcc/11.5.0/bin/g++
 fi
 
 
@@ -23,7 +24,8 @@ install_library() {
     mkdir $1/build
     pushd $1/build
     if [ -f ../CMakeLists.txt ]; then
-        cmake -DCMAKE_BUILD_TYPE=Release \
+        cmake -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_PREFIX_PATH=$ENVDIR \
               -DCMAKE_INSTALL_PREFIX=$ENVDIR \
               -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE \
@@ -34,8 +36,28 @@ install_library() {
     elif [ -f Makefile ]; then
         cd ..
     fi
+    ninja install
+    popd
+}
 
-    make -j$(nproc) install
+install_dart() {
+    git clone --depth 1 --branch $DARTSIM_VERSION https://github.com/dartsim/dart dart
+    echo "==== Installing dartsim($DARTSIM_VERSION) at $ENVDIR ===="
+    mkdir dart/build
+    pushd dart/build
+    cmake -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH=$ENVDIR \
+          -DCMAKE_INSTALL_PREFIX=$ENVDIR \
+          -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE \
+          -DCMAKE_INSTALL_RPATH=$ENVDIR \
+          -DDART_ENABLE_SIMD=true \
+          -DFCL_INCLUDE_DIRS=$ENVDIR/include/fcl \
+          -DBULLET_INCLUDE_DIRS=$ENVDIR/include/bullet \
+          -DBUILD_SHARED_LIBS=false \
+          -DDART_VERBOSE=true \
+          ..
+    ninja install
     popd
 }
 
@@ -67,12 +89,11 @@ install_library pybind11 https://github.com/pybind/pybind11 v2.12.0 "-DPYBIND11_
 install_library eigen3 https://gitlab.com/libeigen/eigen 3.3.7
 install_library libccd https://github.com/danfis/libccd v2.0
 install_library assimp https://github.com/assimp/assimp v4.0.1
-install_library octomap https://github.com/OctoMap/octomap v1.8.1
+install_library octomap https://github.com/OctoMap/octomap v1.10.0
 install_library osg https://github.com/openscenegraph/OpenSceneGraph OpenSceneGraph-3.6.5
 install_library fcl https://github.com/flexible-collision-library/fcl 0.6.1 "-DFCL_BUILD_TESTS=OFF"
 install_library bullet3 https://github.com/bulletphysics/bullet3 2.89 \
     "-DBUILD_SHARED_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
-install_library dart https://github.com/dartsim/dart v6.12.0 \
-    "-DDART_ENABLE_SIMD=ON -DFCL_INCLUDE_DIRS=$ENVDIR/include/fcl -DBULLET_INCLUDE_DIRS=$ENVDIR/include/bullet"
+install_dart
 
 popd

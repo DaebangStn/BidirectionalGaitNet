@@ -29,6 +29,9 @@ endif(NOT CMAKE_BUILD_TYPE)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
   set(CMAKE_C_FLAGS_DEBUG "-g -O0")
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -funroll-loops -flto")
+  set(CMAKE_C_FLAGS_RELEASE "-O3 -march=native -funroll-loops -flto")
 endif()
 
 set(PYTHON_INCLUDE_DIR /usr/include/python${PYTHON_VERSION})
@@ -40,7 +43,6 @@ link_libraries(stdc++fs)
 link_directories($ENV{ENVDIR}/lib)
 
 # Common packages
-find_package(DART REQUIRED COMPONENTS gui collision-bullet CONFIG)
 find_package(Python ${PYTHON_VERSION} EXACT REQUIRED COMPONENTS Interpreter Development)
 find_package(pybind11 REQUIRED)
 
