@@ -51,11 +51,11 @@ install_dart() {
           -DCMAKE_INSTALL_PREFIX=$ENVDIR \
           -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE \
           -DCMAKE_INSTALL_RPATH=$ENVDIR \
+          -DDART_BUILD_DARTPY=false \
+          -DBUILD_SHARED_LIBS=true \
           -DDART_ENABLE_SIMD=true \
+          -DDART_BUILD_GUI_OSG=false \
           -DFCL_INCLUDE_DIRS=$ENVDIR/include/fcl \
-          -DBULLET_INCLUDE_DIRS=$ENVDIR/include/bullet \
-          -DBUILD_SHARED_LIBS=false \
-          -DDART_VERBOSE=true \
           ..
     ninja install
     popd
@@ -89,7 +89,8 @@ install_library pybind11 https://github.com/pybind/pybind11 v2.12.0 "-DPYBIND11_
 install_library eigen3 https://gitlab.com/libeigen/eigen 3.3.7
 install_library libccd https://github.com/danfis/libccd v2.0
 install_library assimp https://github.com/assimp/assimp v4.0.1
-install_library octomap https://github.com/OctoMap/octomap v1.10.0
+install_library octomap https://github.com/OctoMap/octomap v1.10.0 \
+    "-DBUILD_DYNAMICETD3D_SUBPROJECT=OFF -DBUILD_DYNAMICETD3D_SUBPROJECT=OFF"
 install_library osg https://github.com/openscenegraph/OpenSceneGraph OpenSceneGraph-3.6.5
 install_library fcl https://github.com/flexible-collision-library/fcl 0.6.1 "-DFCL_BUILD_TESTS=OFF"
 install_library bullet3 https://github.com/bulletphysics/bullet3 2.89 \
