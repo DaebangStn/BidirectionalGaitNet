@@ -13,7 +13,7 @@
       "binaryDir": "${sourceDir}/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "PYTHON_INCLUDE_DIR": "/usr/include/python3.6",
+        "Python_ROOT": "/usr/include/python3.6",
         "SERVER_BUILD": false
       },
       "environment": {
@@ -35,7 +35,7 @@
       "binaryDir": "${sourceDir}/server",
       "cacheVariables": {
         "SERVER_BUILD": true,
-        "PYTHON_INCLUDE_DIR": "/usr/include/python3.6m"
+        "Python_ROOT": "/usr/include/python3.6m"
       },
       "environment": {
         "CC": "/opt/ohpc/pub/compiler/gcc/11.5.0/bin/gcc",

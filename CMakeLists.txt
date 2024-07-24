@@ -37,8 +37,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
   set(CMAKE_C_FLAGS_RELEASE "-O3 -march=native -funroll-loops -flto")
 endif()
 
-set(PYTHON_INCLUDE_DIR /usr/include/python${PYTHON_VERSION})
-
 include_directories($ENV{ENVDIR}/include)
 include_directories(${PYTHON_INCLUDE_DIR})
 
