@@ -42,6 +42,7 @@ include_directories(${PYTHON_INCLUDE_DIR})
 
 link_libraries(stdc++fs)
 link_directories($ENV{ENVDIR}/lib)
+link_directories($ENV{ENVDIR}/lib64)
 
 # Common packages
 find_package(Python REQUIRED COMPONENTS Interpreter Development)
