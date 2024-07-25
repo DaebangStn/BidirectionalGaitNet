@@ -35,7 +35,7 @@
       "binaryDir": "${sourceDir}/server",
       "cacheVariables": {
         "SERVER_BUILD": true,
-        "Python_ROOT": "/home/geon/.conda/envs/gait/bin/python3.6"
+        "Python_EXECUTABLE": "/home/geon/.conda/envs/gait/bin/python3.6"
       },
       "environment": {
         "CC": "/opt/ohpc/pub/compiler/gcc/11.5.0/bin/gcc",
