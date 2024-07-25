@@ -13,6 +13,7 @@
       "binaryDir": "${sourceDir}/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "Python_EXECUTABLE": "/home/geon/BidirectionalGaitNet/.venv/bin/python3.6",
         "PYTHON_INCLUDE_DIR": "/usr/include/python3.6m",
         "SERVER_BUILD": false
       },
@@ -34,7 +35,8 @@
       "hidden": false,
       "binaryDir": "${sourceDir}/server",
       "cacheVariables": {
-        "SERVER_BUILD": true
+        "SERVER_BUILD": true,
+        "Python_EXECUTABLE": "/home/geon/.conda/envs/gait/bin/python3.6"
       },
       "environment": {
         "CC": "/opt/ohpc/pub/compiler/gcc/11.5.0/bin/gcc",
