@@ -2,7 +2,7 @@ from pysim import RayEnvManager
 import numpy as np
 import gym
 import ray
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 
 
 class MyEnv(gym.Env):

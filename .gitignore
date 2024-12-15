@@ -81,6 +81,5 @@ previous_rollout/*
 
 *.c3d
 
-
+imgui.ini
 .venv
-.venv38

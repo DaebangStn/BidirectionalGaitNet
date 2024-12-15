@@ -1,13 +1,8 @@
-find_package(OpenGL REQUIRED COMPONENTS OpenGL EGL)
-# Build glad library
-add_library(glad STATIC glad/src/glad.c glad/include/glad/glad.h glad/include/KHR/khrplatform.h)
-target_include_directories(glad PUBLIC glad/include)
-target_link_libraries(glad PUBLIC OpenGL::OpenGL)
-add_library(glad_egl STATIC glad_egl/src/glad_egl.c glad_egl/include/glad/glad_egl.h glad_egl/include/KHR/khrplatform.h)
-target_include_directories(glad_egl PUBLIC glad_egl/include)
-target_link_libraries(glad PUBLIC OpenGL::EGL)
+find_package(glfw3 REQUIRED)
+find_package(glad REQUIRED)
 
 # Build imgui / implot library
+add_definitions(-DIMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 
 add_library(imgui STATIC
         imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_widgets.cpp imgui/imgui_demo.cpp

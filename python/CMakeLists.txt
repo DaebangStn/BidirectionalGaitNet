@@ -1,7 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
-project(pysim)
-
-set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR})
+set(LIBRARY_OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(OPENMP_FOUND)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
@@ -16,5 +13,9 @@ file(GLOB srcs "*.h" "*.cpp")
 
 add_library(pysim SHARED ${srcs})
 
-target_link_libraries(pysim ${DART_LIBRARIES} ${Python_LIBRARIES} sim pybind11::embed)
+target_link_libraries(pysim
+        ${Python3_LIBRARIES}
+        sim
+        pybind11::embed
+)
 set_target_properties(pysim PROPERTIES PREFIX "" )

@@ -1,12 +1,13 @@
 import argparse
+import pickle
 from pysim import RayEnvManager
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 import numpy as np
 import torch
 import os
 import math
 from forward_gaitnet import RefNN
-import pickle5 as pickle
+
 import random
 from torch.utils.tensorboard import SummaryWriter
 from typing import List, Dict

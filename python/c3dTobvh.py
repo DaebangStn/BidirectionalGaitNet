@@ -6,7 +6,6 @@ import numpy as np
 import math
 import bvh
 import c3d
-from IPython import embed
 import copy
 
 def load_c3d(c3d_path):

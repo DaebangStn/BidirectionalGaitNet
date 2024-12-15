@@ -10,21 +10,24 @@
       "name": "release",
       "hidden": false,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/release",
+      "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "Python_EXECUTABLE": "/home/geon/BidirectionalGaitNet/.venv/bin/python3.6",
-        "PYTHON_INCLUDE_DIR": "/usr/include/python3.6m",
+        "Python3_EXECUTABLE": "/opt/miniconda3/envs/exo38/bin/python3.8",
+        "Python3_INCLUDE_DIRS": "/opt/miniconda3/envs/exo38/include/python3.8",
         "SERVER_BUILD": false
       },
       "environment": {
-        "ENVDIR": "$env{HOME}/pkgenv"
+        "ENVDIR": "$env{HOME}/pkgenv38",
+        "CONDA_PREFIX": "/opt/miniconda3/envs/exo38",
+        "CC": "/opt/miniconda3/envs/exo38/bin/x86_64-conda-linux-gnu-gcc",
+        "CXX": "/opt/miniconda3/envs/exo38/bin/x86_64-conda-linux-gnu-g++"
       }
     },
     {
       "name": "debug",
       "inherits": "release",
-      "binaryDir": "${sourceDir}/debug",
+      "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
@@ -33,14 +36,16 @@
       "name": "server",
       "inherits": "release",
       "hidden": false,
-      "binaryDir": "${sourceDir}/server",
+      "binaryDir": "${sourceDir}/build/server",
       "cacheVariables": {
         "SERVER_BUILD": true,
-        "Python_EXECUTABLE": "/home/geon/.conda/envs/gait/bin/python3.6"
+        "Python3_EXECUTABLE": "/home/geon/.conda/envs/exo38/bin/python",
+        "Python3_INCLUDE_DIRS": "/home/geon/.conda/envs/exo38/include/python3.8"
       },
       "environment": {
-        "CC": "/opt/ohpc/pub/compiler/gcc/11.5.0/bin/gcc",
-        "CXX": "/opt/ohpc/pub/compiler/gcc/11.5.0/bin/g++"
+        "CONDA_PREFIX": "/home/geon/.conda/envs/exo38",
+        "CC": "/home/geon/.conda/envs/exo38/bin/x86_64-conda-linux-gnu-gcc",
+        "CXX": "/home/geon/.conda/envs/exo38/bin/x86_64-conda-linux-gnu-g++"
       }
     }
   ]

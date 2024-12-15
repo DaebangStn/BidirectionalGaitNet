@@ -469,6 +469,8 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
         mRelatedDofs.push_back(false);
     }
 
+    std::cout << "CWD: " << fs::current_path() << std::endl;
+
     // Forward GaitNet
     std::string path = "../fgn";
     mFGNList.clear();

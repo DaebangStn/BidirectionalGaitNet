@@ -348,8 +348,6 @@
         <Waypoint body="ArmR" p="-0.324100 1.456900 -0.011200 " />
     </Unit>
 
-
-
     <Unit name="L_Extensor_Carpi_Radialis_Longus" f0="337.300000" lm="0.700000" lt="0.500000" pen_angle="0.000000" lmax="-0.100000">
         <Waypoint body="ArmL" p="0.478900 1.470500 -0.017300 " />
         <Waypoint body="ArmL" p="0.501100 1.489700 -0.001000 " />
