@@ -349,10 +349,7 @@ if __name__ == "__main__":
         env_xml = f.read()
     print("loading environment done...... ")
 
-    if args.cluster:
-        ray.init(address=os.environ["ip_head"])
-    else:
-        ray.init()
+    ray.init(address="auto")
 
     print("Nodes in the Ray cluster:")
     print(ray.nodes())

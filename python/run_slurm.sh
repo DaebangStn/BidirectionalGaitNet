@@ -3,18 +3,24 @@
 #SBATCH --cpus-per-task=128
 #SBATCH --nodes=2
 #SBATCH --tasks-per-node=1
-#SBATCH --partition=all
+#SBATCH --partition=exo
+
+let "num_pending_trials=(${SLURM_NNODES} * 64)"
+export TUNE_MAX_PENDING_TRIALS_PG=${num_pending_trials}
+
 let "worker_num=(${SLURM_NTASKS} - 1)"
 let "total_cores=${SLURM_NTASKS} * ${SLURM_CPUS_PER_TASK}"
-suffix='6379'
-ip_head=$1:$suffix
+
 allocated_nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
 head_node=$(echo "$allocated_nodes" | head -n1)
+suffix='6379'
+ip_head_wo_port=$(getent hosts "${head_node}" | awk '{print $1}')
+ip_head=${ip_head_wo_port}:$suffix
+echo "head: ${head_node} with ip: ${ip_head}"
 
-export ip_head # Exporting for latter access by trainer.py
 ulimit -n 65536
 srun --nodes=1 --ntasks=1 --cpus-per-task=${SLURM_CPUS_PER_TASK} --export=ALL,NCCL_SOCKET_IFNAME=ib0 \
-  ray start --head --block --dashboard-host 0.0.0.0 --port=6379 --num-cpus ${SLURM_CPUS_PER_TASK} &
+  ray start --head --block --port=6379 --num-cpus ${SLURM_CPUS_PER_TASK} &
 
 sleep 3
 
@@ -22,5 +28,9 @@ srun --nodes=${worker_num} --ntasks=${worker_num} --cpus-per-task=${SLURM_CPUS_P
   --export=ALL,NCCL_SOCKET_IFNAME=ib0 ray start --address $ip_head --block --num-cpus ${SLURM_CPUS_PER_TASK} &
 
 sleep 3
-python3 -u ray_train.py --config=ppo_small_node --name=test --cluster
+python3 -u ray_train.py --config=ppo_small_server --name=test --cluster
 
+srun --nodes=${SLURM_NNODES} --ntasks=${SLURM_NNODES} --cpus-per-task="${SLURM_CPUS_PER_TASK}" \
+  --export=ALL ray stop
+
+echo "Ray stopped"
