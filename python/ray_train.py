@@ -329,9 +329,9 @@ def get_config_from_file(filename: str, config: str):
 parser = argparse.ArgumentParser()
 parser.add_argument("--cluster", action='store_true')
 parser.add_argument("--config", type=str, default="ppo_small_pc")
-parser.add_argument("--config-file", type=str, default="../python/ray_config.py")
+parser.add_argument("--config-file", type=str, default="python/ray_config.py")
 parser.add_argument('-n', '--name', type=str)
-parser.add_argument("--env", type=str, default="../data/env.xml")
+parser.add_argument("--env", type=str, default="data/env_merge.xml")
 parser.add_argument("--checkpoint", type=str, default=None)
 
 parser.add_argument("--rollout", action='store_true')
@@ -360,7 +360,7 @@ if __name__ == "__main__":
         config["num_sgd_iter"] = 0
         config["kl_coeff"] = 0
         ModelCatalog.register_custom_model("MyModel", RolloutNNRay)
-        with open('../rollout/env.xml', 'w') as f:
+        with open('rollout/env.xml', 'w') as f:
             f.write(env_xml)
     else:
         config["rollout"] = False
@@ -397,6 +397,6 @@ if __name__ == "__main__":
              local_dir=local_dir,
              restore=checkpoint_path,
              progress_reporter=CLIReporter(max_report_frequency=60),
-             checkpoint_freq=25)
+             checkpoint_freq=500)
 
     ray.shutdown()

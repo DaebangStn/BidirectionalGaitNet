@@ -1,9 +1,9 @@
 <!-- actuactor : 'pd', 'torque', 'muscle', 'mass'  -->
-<skeleton defaultKp="200" defaultKv="40" actuactor="mass" damping="0.1">../data/skeleton_gaitnet_narrow_model.xml</skeleton>
-<ground>../data/ground.xml</ground>
+<skeleton defaultKp="200" defaultKv="40" actuactor="mass" damping="0.1">data/skeleton_gaitnet_narrow_model.xml</skeleton>
+<ground>data/ground.xml</ground>
 
 <!-- symmetry : making BVH symmetry , heightCalibration : calibration of the motion's height based on height of the character in the first frame  -->
-<bvh symmetry="true" heightCalibration="true">../data/motion/walk.bvh</bvh>
+<bvh symmetry="true" heightCalibration="true">data/motion/walk.bvh</bvh>
 
 <!-- Making BVH Cyclic -->
 <cyclicbvh>true</cyclicbvh>
@@ -16,7 +16,7 @@
 <controlHz>30</controlHz>
 
 <!-- Muscle Control  -->
-<muscle>../data/muscle_gaitnet.xml</muscle>
+<muscle>data/muscle_gaitnet.xml</muscle>
 <inferencepersim>1</inferencepersim>
 
 <!-- Advanced Option -->
@@ -361,9 +361,9 @@
 
 <cascading>
     <networks>
-        <nn0>../data/trained_nn/skel_no_mesh_lbs</nn0>
-        <nn1>../data/trained_nn/generative_gaitnet_hip_v2</nn1>
-        <nn2>../data/trained_nn/generative_gaitnet_ankle_v2</nn2>
+        <nn0>data/trained_nn/skel_no_mesh_lbs</nn0>
+        <nn1>data/trained_nn/generative_gaitnet_hip_v2</nn1>
+        <nn2>data/trained_nn/generative_gaitnet_ankle_v2</nn2>
     </networks>
     <edges>
         <edge0 start="0" end="1" />

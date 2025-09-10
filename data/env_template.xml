@@ -6,13 +6,13 @@
     damping : damping for the joints
     actuactor : 'pd', 'torque', 'muscle', 'mass'  
 -->
-<skeleton defaultKp="200" defaultKv="40" actuactor="mass" damping="0.1">../data/skeleton_gaitnet_narrow_model.xml</skeleton>
+<skeleton defaultKp="200" defaultKv="40" actuactor="mass" damping="0.1">data/skeleton_gaitnet_narrow_model.xml</skeleton>
 
 <!-- ground : XML file path for the floor -->
-<ground>../data/ground.xml</ground>
+<ground>data/ground.xml</ground>
 
 <!-- Muscle : XML file path for the muscle -->
-<muscle>../data/muscle_gaitnet.xml</muscle>
+<muscle>data/muscle_gaitnet.xml</muscle>
 
 <!-- meshLbsWeight : Whether to perform LBS (Linear Blend Skinning) weighting based on the bone mesh or not -->
 <meshLbsWeight>false</meshLbsWeight>
@@ -34,7 +34,7 @@
     symmetry : making BVH symmetry 
     heightCalibration : calibration of the motion's height based on height of the character in the first frame  
 -->
-<bvh symmetry="true" heightCalibration="true">../data/motion/walk.bvh</bvh>
+<bvh symmetry="true" heightCalibration="true">data/motion/walk.bvh</bvh>
 
 <!-- Making BVH Cyclic -->
 <cyclicbvh>true</cyclicbvh>
