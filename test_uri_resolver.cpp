@@ -1,4 +1,4 @@
-#include "sim/core/uri_resolver.h"
+#include "sim/UriResolver.h"
 #include <iostream>
 #include <vector>
 #include <string>

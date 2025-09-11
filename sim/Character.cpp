@@ -1,5 +1,5 @@
 #include "Character.h"
-#include "core/uri_resolver.h"
+#include "UriResolver.h"
 
 static std::map<std::string, int> skeletonAxis = {
     {"Pelvis", 1},

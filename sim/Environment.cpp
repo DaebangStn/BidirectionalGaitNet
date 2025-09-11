@@ -1,5 +1,5 @@
 #include "Environment.h"
-#include "core/uri_resolver.h"
+#include "UriResolver.h"
 
 Environment::
     Environment()

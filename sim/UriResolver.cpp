@@ -1,4 +1,4 @@
-#include "core/uri_resolver.h"
+#include "UriResolver.h"
 #include <filesystem>
 #include <iostream>
 
