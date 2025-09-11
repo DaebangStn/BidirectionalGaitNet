@@ -48,7 +48,7 @@ CONFIG["ppo"].update({
     "normalize_actions": False,
     "clip_actions": True,
 
-    # Device Configuration
+    # Device Configuration  
     "create_env_on_driver": False,
     "num_cpus_for_driver": 0,
     "num_gpus": 1,

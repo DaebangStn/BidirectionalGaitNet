@@ -9,6 +9,19 @@ from python.dummy import Dummy
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 
+# Configure device-aware tensor loading for Ray workers
+if not torch.cuda.is_available():
+    # Fallback to CPU if no GPU available - avoid duplicate map_location
+    original_torch_load = torch.load
+    def safe_cpu_load(*args, **kwargs):
+        # Remove any existing map_location to avoid conflicts
+        kwargs.pop('map_location', None)
+        return original_torch_load(*args, **kwargs, map_location='cpu')
+    torch.load = safe_cpu_load
+    print("Ray worker: No GPU detected - using CPU tensor loading")
+else:
+    print("Ray worker: GPU detected - using GPU tensor loading")
+
 MultiVariateNormal = torch.distributions.Normal
 temp = MultiVariateNormal.log_prob
 MultiVariateNormal.log_prob = lambda self, val: temp(
@@ -374,6 +387,7 @@ def generating_muscle_nn(num_total_muscle_related_dofs, num_dof, num_muscles, is
 
 
 def loading_metadata(path):
+    # Load with global CPU mapping for Ray workers without GPU
     state = dill.load(open(path, "rb"))
     # print(state["metadata"])
     return state["metadata"] if "metadata" in state.keys() else None
@@ -409,6 +423,7 @@ def loading_network(path, num_states=0, num_actions=0,
                     device="cpu"):
 
     print("Loading network from {}".format(path))
+    # Load with global CPU mapping for Ray workers without GPU
     state = dill.load(open(path, "rb"))
     worker_state = SelectiveUnpickler(BytesIO(state['worker'])).load()
     policy_state = worker_state["state"]['default_policy']['weights']

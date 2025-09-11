@@ -4,6 +4,7 @@
 #include <tinyxml2.h>
 
 #include <experimental/filesystem>
+#include "UriResolver.h"
 
 using namespace dart::dynamics;
 

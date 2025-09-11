@@ -256,6 +256,9 @@ Trim(std::string str)
 dart::dynamics::SkeletonPtr
 BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d color_filter, bool isContact, bool isBVH)
 {
+	// Initialize UriResolver for mesh path resolution
+	PMuscle::URIResolver::getInstance().initialize();
+	
 	TiXmlDocument doc;
 	if (doc.LoadFile(path.c_str()))
 	{
@@ -414,7 +417,8 @@ BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d co
 
 		if (obj_file != "None")
 		{
-			std::string obj_path = fs::current_path().string() + "/data/OBJ/" + obj_file;
+			std::string obj_uri = "@data/OBJ/" + obj_file;
+			std::string obj_path = PMuscle::URIResolver::getInstance().resolve(obj_uri);
 			const aiScene *scene = MeshShape::loadMesh(std::string(obj_path));
 
 			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(Eigen::Vector3d(0.01, 0.01, 0.01), scene));

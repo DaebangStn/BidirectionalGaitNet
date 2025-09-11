@@ -1,2 +1,3 @@
-- before run the binary, check the micromamba environment is active. otherwise, use 'micromamba activate bidir'
+- before run the binary, check the micromamba environment is active. otherwise, use '/opt/miniconda3/bin/micromamba run -n bidir [command]' to run commands in the environment
+- For interactive activation, first run: eval "$(/opt/miniconda3/bin/micromamba shell hook --shell zsh)" then: micromamba activate bidir
 - You can build the release mode with 'ninja -C build/release'

@@ -3,6 +3,7 @@ import numpy as np
 import gym
 import ray
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
+from uri_resolver import resolve_path, ensure_directory_exists
 
 
 class MyEnv(gym.Env):
@@ -52,21 +53,23 @@ class MyEnv(gym.Env):
         if self.is_rollout:
             self.rollout_count = 0
             if (len(self.episode_buffer[1]) > 0):
-                self.file_buffer.append(
-                    [np.array(self.episode_buffer[0]), np.array(self.episode_buffer[1])])
+                self.file_buffer.append([np.array(self.episode_buffer[0]), np.array(self.episode_buffer[1])])
             self.episode_buffer = [self.env.getParamState(), []]
 
         if len(self.file_buffer) > 10:
             params = np.array([p[0] for p in self.file_buffer])
             lengths = np.array([len(p[1]) for p in self.file_buffer])
-            motions = np.concatenate([np.array(p[1])
-                                     for p in self.file_buffer])
-
-            path = './rollout/' + str(self.idx) + '_' + str(self.save_iter)
+            motions = np.concatenate([np.array(p[1]) for p in self.file_buffer])
+            
+            # Use URI resolver for proper path resolution
+            rollout_path = './rollout/' + str(self.idx) + '_' + str(self.save_iter)
+            resolved_path = resolve_path(rollout_path)
+            # Ensure the directory exists
+            # ensure_directory_exists(resolved_path)
+            
             self.save_iter += 1
-            print('Saving the file ' + path + '.....')
-            np.savez_compressed(path, lengths=lengths,
-                                params=params, motions=motions)
+            print('Saving the file ' + resolved_path + '.....')
+            np.savez_compressed(resolved_path, lengths=lengths, params=params, motions=motions)
             self.file_buffer = []
 
         return self.obs

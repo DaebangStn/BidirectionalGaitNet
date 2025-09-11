@@ -139,7 +139,7 @@ class RefLearner:
 parser = argparse.ArgumentParser()
 
 # Raw Motion Path
-parser.add_argument("--motion", type=str, default="motion.txt")
+parser.add_argument("--motion", type=str, default="python/motion.txt")
 parser.add_argument("--env", type=str, default="/home/gait/BidirectionalGaitNet_Data/GridSampling/3rd_rollout/env.xml")
 parser.add_argument("--name", type=str, default="distillation")
 parser.add_argument("--validation", action='store_true')

@@ -328,7 +328,7 @@ def get_config_from_file(filename: str, config: str):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--cluster", action='store_true')
-parser.add_argument("--config", type=str, default="ppo_small_pc")
+parser.add_argument("--config", type=str, default="ppo_mini")
 parser.add_argument("--config-file", type=str, default="python/ray_config.py")
 parser.add_argument('-n', '--name', type=str)
 parser.add_argument("--env", type=str, default="data/env_ankle.xml")
