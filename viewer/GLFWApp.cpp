@@ -40,7 +40,7 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mScreenIdx = 0;
 
     // Rendering Option
-    mDrawReferenceSkeleton = true;
+    mDrawReferenceSkeleton = false;
     mDrawCharacter = true;
     mDrawPDTarget = false;
     mDrawJointSphere = false;
@@ -484,24 +484,35 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
     }
 
     // Forward GaitNet
-    std::string path = "fgn";
+    std::string path = "distillation";
     mFGNList.clear();
     if (fs::exists(path) && fs::is_directory(path)) {
-        for (const auto &entry : fs::directory_iterator(path))
-        {
-            std::string fgn_path = entry.path().string();
-            mFGNList.push_back(fgn_path);
+        for (const auto &entry : fs::recursive_directory_iterator(path)) {
+            if (fs::is_regular_file(entry)) {
+                std::string file_path = entry.path().string();
+                std::string filename = entry.path().filename().string();
+                
+                // Filter for *.fgn.pt files
+                if (filename.size() > 7 && filename.substr(filename.size() - 7) == ".fgn.pt") {
+                    mFGNList.push_back(file_path);
+                }
+            }
         }
     }
 
     // Backward GaitNet
-    path = "bgn";
     mBGNList.clear();
     if (fs::exists(path) && fs::is_directory(path)) {
-        for (const auto &entry : fs::directory_iterator(path))
-        {
-            std::string bgn_path = entry.path().string();
-            mBGNList.push_back(bgn_path);
+        for (const auto &entry : fs::recursive_directory_iterator(path)) {
+            if (fs::is_regular_file(entry)) {
+                std::string file_path = entry.path().string();
+                std::string filename = entry.path().filename().string();
+                
+                // Filter for *.bgn.pt files
+                if (filename.size() > 7 && filename.substr(filename.size() - 7) == ".bgn.pt") {
+                    mBGNList.push_back(file_path);
+                }
+            }
         }
     }
 
@@ -640,9 +651,10 @@ void GLFWApp::drawGaitNetDisplay()
     {
 
         int idx = 0;
-        for (auto ns : mFGNList)
+        for (const auto &ns : mFGNList)
         {
-            if (ImGui::Selectable(ns.c_str(), selected_fgn == idx))
+            std::string filename = fs::path(ns).filename().string();
+            if (ImGui::Selectable(filename.c_str(), selected_fgn == idx))
                 selected_fgn = idx;
             if (selected_fgn)
                 ImGui::SetItemDefaultFocus();
@@ -666,9 +678,10 @@ void GLFWApp::drawGaitNetDisplay()
     if (ImGui::CollapsingHeader("BGN"))
     {
         int idx = 0;
-        for (auto ns : mBGNList)
+        for (const auto &ns : mBGNList)
         {
-            if (ImGui::Selectable(ns.c_str(), selected_bgn == idx))
+            std::string filename = fs::path(ns).filename().string();
+            if (ImGui::Selectable(filename.c_str(), selected_bgn == idx))
                 selected_bgn = idx;
             if (selected_bgn)
                 ImGui::SetItemDefaultFocus();

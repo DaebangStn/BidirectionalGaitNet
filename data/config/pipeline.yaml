@@ -1,0 +1,30 @@
+# Full Training Pipeline Configuration
+experiment:
+  name: "full_pipeline"
+  description: "Complete FGN -> BGN training pipeline"
+
+pipeline:
+  stages:
+    - name: "forward_gaitnet"
+      config: "data/config/fgn_default.yaml"
+      output_path: "distillation/fgn"
+      
+    - name: "backward_gaitnet"
+      config: "data/config/bgn_default.yaml"
+      output_path: "distillation/bgn"
+      depends_on: "forward_gaitnet"
+      fgn_checkpoint: "{forward_gaitnet.best_checkpoint}"
+
+# Override settings for pipeline mode
+overrides:
+  forward_gaitnet:
+    trainer:
+      max_iterations: 5000  # Shorter for pipeline
+    experiment:
+      name: "fgn_pipeline"
+      
+  backward_gaitnet:
+    trainer:
+      max_iterations: 3000  # Shorter for pipeline
+    experiment:
+      name: "bgn_pipeline"

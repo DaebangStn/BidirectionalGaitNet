@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import torch.optim as optim
 from symbol import parameters
 from forward_gaitnet import RefNN
@@ -8,7 +8,7 @@ import argparse
 
 import torch.nn.utils as torch_utils
 from pysim import RayEnvManager
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 import numpy as np
 import torch
 import torch.nn as nn
@@ -17,6 +17,11 @@ import random
 from advanced_vae import AdvancedVAE
 from torch.utils.tensorboard import SummaryWriter
 import os
+import pickle
+import heapq
+from datetime import datetime
+import hashlib
+import json
 
 # Network Loading Function, f : (path) -> pi
 
@@ -27,6 +32,111 @@ w_mse = 50.0
 w_regul = 1
 w_kl = 1E-3
 w_weakness = 0.5
+
+class HybridCheckpointer:
+    """Hybrid checkpointing system with top-K best + uniform interval saving for BGN."""
+    
+    def __init__(self, save_dir: str, top_k: int = 5, uniform_interval: int = 500):
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.top_k = top_k
+        self.uniform_interval = uniform_interval
+        
+        # Track best K checkpoints by total loss (lower is better)
+        self.best_checkpoints = []  # [(loss, iteration, filepath), ...]
+        self.uniform_checkpoints = []  # [filepath, ...]
+        
+    def should_save_checkpoint(self, iteration: int, total_loss: float) -> Tuple[bool, str]:
+        """Determine if checkpoint should be saved and return save type."""
+        uniform_save = iteration % self.uniform_interval == 0
+        
+        # Check if this belongs in top-K (lower loss is better)
+        is_top_k = (len(self.best_checkpoints) < self.top_k or 
+                   total_loss < self.best_checkpoints[0][0])  # heap max is at [0]
+        
+        save_type = []
+        if uniform_save:
+            save_type.append("uniform")
+        if is_top_k:
+            save_type.append("top_k")
+            
+        return len(save_type) > 0, "_".join(save_type)
+    
+    def save_checkpoint(self, state: dict, iteration: int, total_loss: float, 
+                       exp_name: str) -> str:
+        """Save checkpoint and manage storage."""
+        should_save, save_type = self.should_save_checkpoint(iteration, total_loss)
+        
+        if not should_save:
+            return None
+            
+        # Generate checkpoint filename
+        checkpoint_name = f"{exp_name}_{iteration:06d}_{save_type}_{total_loss:.6f}.bgn.pt"
+        checkpoint_path = self.save_dir / checkpoint_name
+        
+        # Save checkpoint
+        with open(checkpoint_path, 'wb') as f:
+            pickle.dump(state, f)
+            
+        # Update top-K tracking
+        if "top_k" in save_type:
+            if len(self.best_checkpoints) >= self.top_k:
+                # Remove worst checkpoint if at capacity
+                old_loss, old_iter, old_path = heapq.heappop(self.best_checkpoints)
+                if os.path.exists(old_path) and "uniform" not in old_path:
+                    os.remove(old_path)  # Only remove if not also uniform checkpoint
+                    
+            heapq.heappush(self.best_checkpoints, (total_loss, iteration, str(checkpoint_path)))
+            
+        # Update uniform tracking  
+        if "uniform" in save_type:
+            self.uniform_checkpoints.append(str(checkpoint_path))
+            
+        print(f"Checkpoint saved: {checkpoint_path} (type: {save_type}, total_loss: {total_loss:.6f})")
+        return str(checkpoint_path)
+    
+    def get_best_checkpoint(self) -> str:
+        """Get path to best checkpoint."""
+        if not self.best_checkpoints:
+            return None
+        # Best is the one with minimum loss
+        return min(self.best_checkpoints, key=lambda x: x[0])[2]
+
+def get_gpu_memory_usage() -> float:
+    """Get current GPU memory usage in MB."""
+    if torch.cuda.is_available():
+        return torch.cuda.memory_allocated() / 1024 / 1024
+    return 0.0
+
+def get_experiment_id(name: str, config: dict) -> str:
+    """Generate unique experiment ID with timestamp and config hash."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    config_str = json.dumps(config, sort_keys=True)
+    config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
+    return f"{name}_{timestamp}_{config_hash}"
+
+def log_comprehensive_vae_metrics(writer: SummaryWriter, iteration: int, 
+                                train_stats: dict, learning_rate: float = None):
+    """Log comprehensive VAE training metrics to TensorBoard."""
+    # VAE-specific training metrics
+    if 'loss_total' in train_stats:
+        writer.add_scalar('Loss/Total', train_stats['loss_total'], iteration)
+    if 'loss_recon' in train_stats:
+        writer.add_scalar('Loss/Reconstruction', train_stats['loss_recon'], iteration)
+    if 'loss_kld' in train_stats:
+        writer.add_scalar('Loss/KL_Divergence', train_stats['loss_kld'], iteration)
+    if 'regul_loss' in train_stats:
+        writer.add_scalar('Loss/Regularization', train_stats['regul_loss'], iteration)
+    
+    # Data metrics
+    if 'num_tuples' in train_stats:
+        writer.add_scalar('Data/Num_Tuples', train_stats['num_tuples'], iteration)
+    
+    # System metrics
+    writer.add_scalar('System/GPU_Memory_MB', get_gpu_memory_usage(), iteration)
+    
+    if learning_rate is not None:
+        writer.add_scalar('System/Learning_Rate', learning_rate, iteration)
 
 
 def loading_distilled_network(path, device):
@@ -215,19 +325,89 @@ class VAELearner:
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--fgn", type=str)
-parser.add_argument("--motion", type=str, default="motion.txt")
-parser.add_argument("--name", type=str, default="gvae_training")
+parser.add_argument("--fgn", type=str, required=True, help="Path to forward GaitNet checkpoint")
+parser.add_argument("--motion", type=str, default="python/motion.txt", help="Motion file list")
+parser.add_argument("--name", type=str, default="gvae_training", help="Experiment name")
+
+# Enhanced BGN training arguments
+parser.add_argument("--top_k_checkpoints", type=int, default=5, help="Number of best checkpoints to keep")
+parser.add_argument("--uniform_checkpoint_interval", type=int, default=500, help="Interval for uniform checkpoints")
+parser.add_argument("--checkpoint_interval", type=int, default=50, help="Base checkpointing frequency")
 
 # Main
-if __name__ == "__main__":
-    device = torch.device(
-        "cuda") if torch.cuda.is_available() else torch.device("cpu")
-
+def main(fgn_checkpoint=None, motion_file=None, name=None, max_iterations=None, exp_dir=None):
+    """Main training function that can be called from unified training interface."""
+    import sys
+    from pathlib import Path
+    
+    # Add project root to Python path for imports
+    sys.path.append(str(Path(__file__).parent.parent))
+    
+    # Set up arguments for the training
+    sys.argv = ['train_backward_gaitnet.py']
+    if fgn_checkpoint:
+        sys.argv.extend(['--fgn', fgn_checkpoint])
+    if motion_file:
+        sys.argv.extend(['--motion', motion_file])
+    if name:
+        sys.argv.extend(['--name', name])
+    # Note: BGN doesn't use max_iterations the same way, it uses epochs
+        
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     args = parser.parse_args()
-    fgn = args.fgn
+    
+    # Create experiment configuration for unique ID generation
+    experiment_config = {
+        'fgn_checkpoint': args.fgn,
+        'motion_file': args.motion,
+        'learning_rate': 1E-5,
+        'batch_size_vae': 32,
+        'batch_size_data': 4096,
+        'num_epochs': 10,
+        'top_k_checkpoints': args.top_k_checkpoints,
+        'uniform_checkpoint_interval': args.uniform_checkpoint_interval,
+        'checkpoint_interval': args.checkpoint_interval,
+        'weights': {
+            'w_v': w_v, 'w_arm': w_arm, 'w_toe': w_toe,
+            'w_mse': w_mse, 'w_regul': w_regul, 'w_kl': w_kl, 'w_weakness': w_weakness
+        }
+    }
+    
+    # Generate unique experiment ID and setup distillation directory
+    exp_id = get_experiment_id(args.name, experiment_config)
+    print(f"Starting BGN experiment: {exp_id}")
+    
+    # Use provided exp_dir or create default
+    if exp_dir:
+        exp_dir = Path(exp_dir)
+        exp_id = exp_dir.name
+        print(f"Using unified interface directory: {exp_dir}")
+    else:
+        # Use distillation directory structure as requested
+        exp_dir = Path("distillation") / exp_id
+        exp_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save experiment configuration
+    with open(exp_dir / "config.json", 'w') as f:
+        json.dump(experiment_config, f, indent=2)
 
-    fgn, env = loading_distilled_network(fgn, device)
+    fgn, env = loading_distilled_network(args.fgn, device)
+    
+    # Validate motion path compatibility between FGN checkpoint and BGN config
+    try:
+        fgn_state = pickle.load(open(args.fgn, "rb"))
+        fgn_motion_path = fgn_state.get("augmented_data_path", "unknown")
+        bgn_motion_path = args.motion
+        
+        if fgn_motion_path != bgn_motion_path:
+            print(f"⚠️  Motion Path Mismatch Warning:")
+            print(f"   FGN trained on: {fgn_motion_path}")
+            print(f"   BGN using:      {bgn_motion_path}")
+            print(f"   This may affect training quality and consistency")
+        else:
+            print(f"✅ Motion path validated: {fgn_motion_path}")
+    except Exception as e:
+        print(f"⚠️  Could not validate motion paths: {e}")
 
     # (1) Declare VAE Learner
     vae_learner = VAELearner(device, len(env.posToSixDof(env.getPositions())), 60, len(
@@ -241,12 +421,28 @@ if __name__ == "__main__":
         motion = motion.replace('\n', '')
         train_filenames = train_filenames + \
             [motion + '/' + fn for fn in os.listdir(motion)]
+    
+    print(f"🔧 Debug: Processing {len(train_filenames)} training files")
 
-    # (3) (Validation Dataset Loading)
-
-    # (4) Training
-    writer = SummaryWriter("gvae/" + args.name)
+    # (3) Enhanced Training Infrastructure
+    writer = SummaryWriter(exp_dir / "tensorboard")
+    checkpointer = HybridCheckpointer(
+        save_dir=exp_dir / "checkpoints",
+        top_k=args.top_k_checkpoints,
+        uniform_interval=args.uniform_checkpoint_interval
+    )
     batch_size = 4096
+    buffer_scale = 100
+    
+    # Adaptive buffer sizing for small datasets
+    estimated_total_samples = len(train_filenames) * 1000  # Rough estimate
+    target_buffer_size = batch_size * buffer_scale
+    if estimated_total_samples < target_buffer_size:
+        # Use smaller scale for small datasets
+        buffer_scale = max(1, estimated_total_samples // batch_size)
+        target_buffer_size = batch_size * buffer_scale
+        print(f"📊 BGN Adaptive buffer: Using scale {buffer_scale} for small dataset ({estimated_total_samples} est. samples)")
+    
     training_iter = 0
     used_episode = 0
     num_known_param = env.getNumKnownParam()
@@ -278,7 +474,7 @@ if __name__ == "__main__":
 
                 file_idx += 1
 
-                if len(buffers) > batch_size * 100:
+                if len(buffers) > target_buffer_size:
                     random.shuffle(buffers)
                     break
 
@@ -290,14 +486,36 @@ if __name__ == "__main__":
         stat = vae_learner.learn(training_data)
         print("Buffer Size : ", len(buffers), "\tIteration : ",
               training_iter, "\tUsed Episode : ", used_episode, '\t', stat)
-        for v in stat:
-            writer.add_scalar(v, stat[v], training_iter)
 
-        if training_iter % 50 == 0:
-            with open("gvae/" + args.name + "/" + args.name + "_" + str(training_iter), 'wb') as f:
-                state = {}
-                state["metadata"] = env.getMetadata()
-                state["gvae"] = vae_learner.get_weights()
-                pickle.dump(state, f)
+        # Enhanced logging with comprehensive VAE metrics
+        current_lr = vae_learner.optimizer.param_groups[0]['lr']
+        log_comprehensive_vae_metrics(writer, training_iter, stat, current_lr)
+
+        # Enhanced checkpointing with hybrid system
+        if training_iter % args.checkpoint_interval == 0:
+            total_loss = stat.get('loss_total', float('inf'))
+            
+            checkpoint_state = {
+                "metadata": env.getMetadata(),
+                "gvae": vae_learner.get_weights(),
+                "optimizer": vae_learner.get_optimizer_weights(),
+                "iteration": training_iter,
+                "total_loss": total_loss,
+                "config": experiment_config,
+                "training_stats": {
+                    "used_episode": used_episode,
+                    "buffer_size": len(buffers)
+                }
+            }
+            
+            saved_path = checkpointer.save_checkpoint(
+                checkpoint_state, training_iter, total_loss, args.name
+            )
+            
+            if saved_path:
+                print(f"Best checkpoint path: {checkpointer.get_best_checkpoint()}")
 
         training_iter += 1
+
+if __name__ == "__main__":
+    main()

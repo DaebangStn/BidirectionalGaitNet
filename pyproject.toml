@@ -1,0 +1,31 @@
+[project]
+name = "bidirectional-gaitnet"
+version = "0.1.0"
+description = "Bidirectional GaitNet training system with unified configuration"
+authors = [
+    {name = "Geon", email = "geon@example.com"}
+]
+dependencies = [
+    "torch>=1.9.0",
+    "numpy>=1.20.0", 
+    "pyyaml>=6.0",
+    "tensorboard>=2.0.0",
+    "ray[rllib]>=2.0.0",
+]
+requires-python = ">=3.8"
+
+[project.scripts]
+# Unified training interface
+train = "python.train:main"
+
+# Quick training commands
+train-fgn = "python.scripts:train_fgn"
+train-bgn = "python.scripts:train_bgn" 
+train-pipeline = "python.scripts:train_pipeline"
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+dev-dependencies = []

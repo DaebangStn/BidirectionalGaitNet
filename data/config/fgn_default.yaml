@@ -1,0 +1,40 @@
+# Forward GaitNet Default Configuration
+experiment:
+  name: "forward_gaitnet"
+  description: "Forward GaitNet distillation training"
+
+data:
+  augmented_data_path: "augment_test"  # Direct path to augmented motion data
+  env_file: "data/env_merge.xml"
+  batch_size: 65536
+  large_batch_scale: 100
+  validation_split: 0.1
+
+model:
+  architecture: "RefNN"
+  learning_rate: 1e-5
+  num_epochs: 5
+  batch_size: 128
+  hidden_layers: [512, 512, 512]
+  
+loss_weights:
+  root_position: 2.0  # w_root_pos - critical for locomotion stability
+  arm_motion: 0.5     # w_arm - less critical for gait quality
+  base_mse: 5.0       # base MSE scaling factor
+
+checkpointing:
+  save_interval: 50
+  top_k: 5
+  uniform_interval: 500
+  validation_interval: 100
+
+trainer:
+  max_iterations: 3000
+  log_every_n_steps: 1
+  gradient_clipping: 1.0
+  device: "auto"  # cuda if available
+  
+# Directory structure
+directories:
+  output: "distillation"
+  experiments: "experiments"

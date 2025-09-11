@@ -1,1 +1,1 @@
-/home/geon/BidirectionalGaitNet/augment
+augment

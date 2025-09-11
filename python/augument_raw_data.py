@@ -84,8 +84,8 @@ def convertToRefinedMotion(f, num_known_param, resolution=30, min_length=140, st
                     p[6] = v[0]
                     p[8] = v[2]
 
-                    # concatenate 'p' and 'param'
-                    refined_motion[0].append(np.concatenate((p, param[:num_known_param]), axis=0))
+                    # Store pure motion data only (p) - parameters are handled separately
+                    refined_motion[0].append(p)
                     phi_idx += 1
                 else:
                     motion_idx += 1

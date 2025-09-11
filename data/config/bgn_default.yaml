@@ -1,0 +1,43 @@
+# Backward GaitNet Default Configuration  
+experiment:
+  name: "backward_gaitnet"
+  description: "Backward GaitNet VAE training"
+
+data:
+  augmented_data_path: "augment_test"  # Direct path to augmented motion data
+  fgn_checkpoint: null  # Required: path to FGN checkpoint
+  batch_size: 4096
+  buffer_scale: 100
+
+model:
+  architecture: "AdvancedVAE"
+  pose_dof: "auto"  # determined from environment
+  frame_num: 60
+  learning_rate: 1e-5
+  num_epochs: 10
+  batch_size: 32
+
+loss_weights:
+  velocity: 0.1          # w_v - root velocity weight
+  arm: 0.01             # w_arm - arm motion weight
+  toe: 0.01             # w_toe - toe position weight
+  mse: 50.0             # w_mse - reconstruction weight
+  regularization: 1.0    # w_regul - condition regularization  
+  kl_divergence: 0.001  # w_kl - KL divergence weight
+  weakness: 0.5         # w_weakness - parameter weakness weight
+
+checkpointing:
+  save_interval: 50
+  top_k: 5
+  uniform_interval: 500
+
+trainer:
+  max_iterations: 3000
+  log_every_n_steps: 1
+  gradient_clipping: 0.5  # Different from FGN
+  device: "auto"
+
+# Directory structure
+directories:
+  output: "distillation"
+  experiments: "experiments"
