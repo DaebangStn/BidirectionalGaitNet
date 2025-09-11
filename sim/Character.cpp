@@ -1,4 +1,5 @@
 #include "Character.h"
+#include "core/uri_resolver.h"
 
 static std::map<std::string, int> skeletonAxis = {
     {"Pelvis", 1},
@@ -110,10 +111,17 @@ Character::
     Character(std::string path, double defaultKp, double defaultKv, double defaultDamping)
 {
     mActuactorType = tor;
-    path = "data/skeleton_gaitnet_narrow_model.xml";
-    std::cout << "[Character] Using Hardcoded Path: " << path << std::endl;
     
-    mSkeleton = BuildFromFile(path, defaultDamping);
+    // If path is empty, use default
+    if (path.empty()) {
+        path = "@data/skeleton_gaitnet_narrow_model.xml";
+    }
+    
+    // Always resolve paths through UriResolver for backwards compatibility
+    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+    std::cout << "[Character] Using Path: " << resolvedPath << std::endl;
+    
+    mSkeleton = BuildFromFile(resolvedPath, defaultDamping);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
 
     mTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
@@ -381,8 +389,14 @@ void Character::
     setMuscles(std::string path, bool useVelocityForce, bool meshLbsWeight)
 {
     TiXmlDocument doc;
-    path = "data/muscle_gaitnet.xml";
-    std::cout << "[Character] Using Hardcoded Muscle Path: " << path << std::endl;
+    
+    // If path is empty, use default
+    if (path.empty()) {
+        path = "@data/muscle_gaitnet.xml";
+        path = PMuscle::URIResolver::getInstance().resolve(path);
+    }
+    
+    std::cout << "[Character] Using Muscle Path: " << path << std::endl;
     
     if (doc.LoadFile(path.c_str())) {
         std::cerr << "Failed to load muscle file: " << path << std::endl;

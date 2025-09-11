@@ -74,7 +74,8 @@ class MyEnv(gym.Env):
     def step(self, action):
 
         if self.is_rollout:
-            action *= 0.0
+            action = np.zeros_like(action)
+            # action *= 0.0
         self.env.setAction(action)
         self.env.step()
         self.param_count += 1

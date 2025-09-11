@@ -1,1 +1,2 @@
 - before run the binary, check the micromamba environment is active. otherwise, use 'micromamba activate bidir'
+- You can build the release mode with 'ninja -C build/release'

@@ -9,6 +9,9 @@ add_compile_options(-fPIC)
 add_compile_options(-Wdeprecated-declarations)
 add_compile_options(-DHAVE_CSTDDEF)
 
+# Define PROJECT_ROOT for URI resolution
+add_compile_definitions(PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
+
 set(CMAKE_AR gcc-ar)
 set(CMAKE_RANLIB gcc-ranlib)
 

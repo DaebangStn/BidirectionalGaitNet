@@ -1,9 +1,13 @@
 #include "Environment.h"
+#include "core/uri_resolver.h"
 
 Environment::
     Environment()
     : mPhaseUpdateInContolHz(false), mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1), mHeightCalibration(0), mEnforceSymmetry(false), isRender(false), mIsStanceLearning(false), mLimitY(0.6), mLearningStd(false)
 {
+    // Initialize URI resolver for path resolution
+    PMuscle::URIResolver::getInstance().initialize();
+    
     mWorld = std::make_shared<dart::simulation::World>();
     mCyclic = true;
     mIsResidual = true;
@@ -83,7 +87,9 @@ void Environment::
         if (doc.FirstChildElement("skeleton")->Attribute("damping") != NULL)
             defaultDamping = std::stod(doc.FirstChildElement("skeleton")->Attribute("damping"));
 
-        addCharacter(Trim(std::string(doc.FirstChildElement("skeleton")->GetText())), defaultKp, defaultKv, defaultDamping);
+        std::string skeletonPath = Trim(std::string(doc.FirstChildElement("skeleton")->GetText()));
+        std::string resolvedSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skeletonPath);
+        addCharacter(resolvedSkeletonPath, defaultKp, defaultKv, defaultDamping);
 
         ActuactorType _actType;
 
@@ -119,7 +125,8 @@ void Environment::
             mUseJointState = doc.FirstChildElement("useJointState")->BoolText();
 
         std::string muscle_path = Trim(std::string(doc.FirstChildElement("muscle")->GetText()));
-        mCharacters[0]->setMuscles(muscle_path, useVelocityForce, meshLbsWeight);
+        std::string resolvedMusclePath = PMuscle::URIResolver::getInstance().resolve(muscle_path);
+        mCharacters[0]->setMuscles(resolvedMusclePath, useVelocityForce, meshLbsWeight);
         mUseMuscle = true;
     }
 
@@ -144,9 +151,11 @@ void Environment::
         mNumActuatorAction = mCharacters.back()->getMuscles().size();
     }
     // Ground Loading
-    if (doc.FirstChildElement("ground") != NULL)
-        addObject("data/ground.xml");
-        // addObject(Trim(std::string(doc.FirstChildElement("ground")->GetText())));
+    if (doc.FirstChildElement("ground") != NULL) {
+        std::string groundPath = Trim(std::string(doc.FirstChildElement("ground")->GetText()));
+        std::string resolvedGroundPath = PMuscle::URIResolver::getInstance().resolve(groundPath);
+        addObject(resolvedGroundPath);
+    }
 
     // Cyclic Mode
     if (doc.FirstChildElement("cyclicbvh") != NULL)
@@ -248,11 +257,9 @@ void Environment::
     if (doc.FirstChildElement("bvh") != NULL)
     {
         std::string bvh_path = Trim(std::string(doc.FirstChildElement("bvh")->GetText()));
-        // Fix hardcoded BVH path from checkpoint metadata
-        if (bvh_path == "../data/motion/walk.bvh") {
-            bvh_path = "data/motion/walk.bvh";
-        }
-        BVH *new_bvh = new BVH(bvh_path);
+        std::string resolvedBvhPath = PMuscle::URIResolver::getInstance().resolve(bvh_path);
+        std::cout << "[Environment] BVH Path resolved: " << bvh_path << " -> " << resolvedBvhPath << std::endl;
+        BVH *new_bvh = new BVH(resolvedBvhPath);
         new_bvh->setMode(std::string(doc.FirstChildElement("bvh")->Attribute("symmetry")) == "true");
         new_bvh->setHeightCalibration(std::string(doc.FirstChildElement("bvh")->Attribute("heightCalibration")) == "true");
 
@@ -396,8 +403,11 @@ void Environment::
             auto networks = doc.FirstChildElement("cascading")->FirstChildElement();
             auto edges = doc.FirstChildElement("cascading")->LastChildElement();
             int idx = 0;
-            for (TiXmlElement *network = networks->FirstChildElement(); network != NULL; network = network->NextSiblingElement())
-                mPrevNetworks.push_back(loadPrevNetworks(network->GetText(), (idx++ == 0)));
+            for (TiXmlElement *network = networks->FirstChildElement(); network != NULL; network = network->NextSiblingElement()) {
+                std::string networkPath = network->GetText();
+                std::string resolvedNetworkPath = PMuscle::URIResolver::getInstance().resolve(networkPath);
+                mPrevNetworks.push_back(loadPrevNetworks(resolvedNetworkPath, (idx++ == 0)));
+            }
 
             for (TiXmlElement *edge_ = edges->FirstChildElement(); edge_ != NULL; edge_ = edge_->NextSiblingElement())
             {

@@ -37,7 +37,7 @@
 <meshLbsWeight>false</meshLbsWeight>
 <useVelocityForce>false</useVelocityForce>
 <useJointState>true</useJointState>
-<learningStd>false</learningStd>
+<learningStd>true</learningStd>
 <hardPhaseClipping>true</hardPhaseClipping>
 <softPhaseClipping>false</softPhaseClipping>
 <torqueClipping>false</torqueClipping>
@@ -148,70 +148,6 @@
         <R_iliacus1 min= "0.75"  max = "1.0" group = "R_iliacus"/> 
         <L_iliacus2 min= "0.75"  max = "1.0" group = "L_iliacus"/> 
         <R_iliacus2 min= "0.75"  max = "1.0" group = "R_iliacus"/> 
-   
-        <L_Bicep_Femoris_Short min= "0.635"  max = "1.0" group = "L_Bicep_Femoris_Short"/> 
-        <R_Bicep_Femoris_Short min= "0.635"  max = "1.0" group = "R_Bicep_Femoris_Short"/> 
-        <L_Bicep_Femoris_Short1 min= "0.635"  max = "1.0" group = "L_Bicep_Femoris_Short"/> 
-        <R_Bicep_Femoris_Short1 min= "0.635"  max = "1.0" group = "R_Bicep_Femoris_Short"/> 
-        <L_Extensor_Digitorum_Longus min= "0.74"  max = "1.0" group = "L_Extensor_Digitorum_Longus"/> 
-        <R_Extensor_Digitorum_Longus min= "0.74"  max = "1.0" group = "R_Extensor_Digitorum_Longus"/> 
-        <L_Extensor_Digitorum_Longus2 min= "0.74"  max = "1.0" group = "L_Extensor_Digitorum_Longus"/> 
-        <R_Extensor_Digitorum_Longus2 min= "0.74"  max = "1.0" group = "R_Extensor_Digitorum_Longus"/> 
-        <L_Extensor_Digitorum_Longus3 min= "0.74"  max = "1.0" group = "L_Extensor_Digitorum_Longus"/> 
-        <R_Extensor_Digitorum_Longus3 min= "0.74"  max = "1.0" group = "R_Extensor_Digitorum_Longus"/> 
-        <L_Extensor_Hallucis_Longus min= "0.74"  max = "1.0" /> 
-        <R_Extensor_Hallucis_Longus min= "0.74"  max = "1.0" /> 
-        <L_Flexor_Digiti_Minimi_Brevis_Foot min= "0.75"  max = "1.0" /> 
-        <R_Flexor_Digiti_Minimi_Brevis_Foot min= "0.75"  max = "1.0" /> 
-        <L_Flexor_Digitorum_Longus min= "0.75"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus min= "0.75"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Digitorum_Longus1 min= "0.75"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus1 min= "0.75"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Digitorum_Longus2 min= "0.75"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus2 min= "0.75"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Digitorum_Longus3 min= "0.75"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus3 min= "0.75"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Hallucis min= "0.76"  max = "1.0" group = "L_Flexor_Hallucis"/> 
-        <R_Flexor_Hallucis min= "0.76"  max = "1.0" group = "R_Flexor_Hallucis"/> 
-        <L_Flexor_Hallucis1 min= "0.76"  max = "1.0" group = "L_Flexor_Hallucis"/> 
-        <R_Flexor_Hallucis1 min= "0.76"  max = "1.0" group = "R_Flexor_Hallucis"/> 
-        <L_Gastrocnemius_Lateral_Head min= "0.76"  max = "1.0" group = "L_Gastrocnemius"/> 
-        <R_Gastrocnemius_Lateral_Head min= "0.76"  max = "1.0" group = "R_Gastrocnemius"/> 
-        <L_Gastrocnemius_Medial_Head min= "0.76"  max = "1.0" group = "L_Gastrocnemius"/> 
-        <R_Gastrocnemius_Medial_Head min= "0.76"  max = "1.0" group = "R_Gastrocnemius"/> 
-        <L_Peroneus_Brevis min= "0.75"  max = "1.0" /> 
-        <R_Peroneus_Brevis min= "0.75"  max = "1.0" /> 
-        <L_Peroneus_Longus min= "0.75"  max = "1.0" /> 
-        <R_Peroneus_Longus min= "0.75"  max = "1.0" /> 
-        <L_Peroneus_Tertius min= "0.72"  max = "1.0" group = "L_Peroneus_Tertius"/> 
-        <R_Peroneus_Tertius min= "0.72"  max = "1.0" group = "R_Peroneus_Tertius"/> 
-        <L_Peroneus_Tertius1 min= "0.72"  max = "1.0" group = "L_Peroneus_Tertius"/> 
-        <R_Peroneus_Tertius1 min= "0.72"  max = "1.0" group = "R_Peroneus_Tertius"/> 
-        <L_Plantaris min= "0.8"  max = "1.0" /> 
-        <R_Plantaris min= "0.8"  max = "1.0" /> 
-        <L_Popliteus min= "0.8"  max = "1.0" /> 
-        <R_Popliteus min= "0.8"  max = "1.0" /> 
-        <L_Soleus min= "0.83"  max = "1.0" group = "L_Soleus"/> 
-        <R_Soleus min= "0.83"  max = "1.0" group = "R_Soleus"/> 
-        <L_Soleus1 min= "0.83"  max = "1.0" group = "L_Soleus"/> 
-        <R_Soleus1 min= "0.83"  max = "1.0" group = "R_Soleus"/> 
-        <L_Tibialis_Anterior min= "0.74"  max = "1.0" /> 
-        <R_Tibialis_Anterior min= "0.74"  max = "1.0" /> 
-        <L_Tibialis_Posterior min= "0.75"  max = "1.0" /> 
-        <R_Tibialis_Posterior min= "0.75"  max = "1.0" />
-        <L_Vastus_Intermedius min= "0.78"  max = "1.0" group = "L_Vastus_Intermedius"/> 
-        <R_Vastus_Intermedius min= "0.78"  max = "1.0" group = "R_Vastus_Intermedius"/> 
-        <L_Vastus_Intermedius1 min= "0.78"  max = "1.0" group = "L_Vastus_Intermedius"/>
-        <R_Vastus_Intermedius1 min= "0.78"  max = "1.0" group = "R_Vastus_Intermedius"/> 
-        <L_Vastus_Lateralis1 min= "0.78"  max = "1.0" />
-        <R_Vastus_Lateralis1 min= "0.78"  max = "1.0" />
-        <L_Vastus_Medialis min= "0.78"  max = "1.0" group = "L_Vastus_Medialis"/> 
-        <R_Vastus_Medialis min= "0.78"  max = "1.0" group = "R_Vastus_Medialis"/> 
-        <L_Vastus_Medialis1 min= "0.78"  max = "1.0" group = "L_Vastus_Medialis"/> 
-        <R_Vastus_Medialis1 min= "0.78"  max = "1.0" group = "R_Vastus_Medialis"/> 
-        <L_Vastus_Medialis2 min= "0.78"  max = "1.0" group = "L_Vastus_Medialis"/> 
-        <R_Vastus_Medialis2 min= "0.78"  max = "1.0" group = "R_Vastus_Medialis"/> 
-
     </muscle_length> 
     <muscle_force>
         <L_Adductor_Brevis min= "0.05"  max = "1.0" group = "L_Adductor_Part1"/> 
@@ -284,87 +220,13 @@
         <R_iliacus1 min= "0.05"  max = "1.0" group = "R_iliacus"/> 
         <L_iliacus2 min= "0.05"  max = "1.0" group = "L_iliacus"/> 
         <R_iliacus2 min= "0.05"  max = "1.0" group = "R_iliacus"/>
-
-        <L_Bicep_Femoris_Short min= "0.05"  max = "1.0" group = "L_Bicep_Femoris_Short"/> 
-        <R_Bicep_Femoris_Short min= "0.05"  max = "1.0" group = "R_Bicep_Femoris_Short"/> 
-        <L_Bicep_Femoris_Short1 min= "0.05"  max = "1.0" group = "L_Bicep_Femoris_Short"/> 
-        <R_Bicep_Femoris_Short1 min= "0.05"  max = "1.0" group = "R_Bicep_Femoris_Short"/> 
-        <L_Extensor_Digitorum_Longus min= "0.05"  max = "1.0" group = "L_Extensor_Digitorum_Longus"/> 
-        <R_Extensor_Digitorum_Longus min= "0.05"  max = "1.0" group = "R_Extensor_Digitorum_Longus"/> 
-        <L_Extensor_Digitorum_Longus1 min= "0.05"  max = "1.0" group = "L_Extensor_Digitorum_Longus"/> 
-        <R_Extensor_Digitorum_Longus1 min= "0.05"  max = "1.0" group = "R_Extensor_Digitorum_Longus"/> 
-        <L_Extensor_Digitorum_Longus2 min= "0.05"  max = "1.0" group = "L_Extensor_Digitorum_Longus"/> 
-        <R_Extensor_Digitorum_Longus2 min= "0.05"  max = "1.0" group = "R_Extensor_Digitorum_Longus"/> 
-        <L_Extensor_Digitorum_Longus3 min= "0.05"  max = "1.0" group = "L_Extensor_Digitorum_Longus"/> 
-        <R_Extensor_Digitorum_Longus3 min= "0.05"  max = "1.0" group = "R_Extensor_Digitorum_Longus"/> 
-        <L_Extensor_Hallucis_Longus min= "0.05"  max = "1.0" /> 
-        <R_Extensor_Hallucis_Longus min= "0.05"  max = "1.0" /> 
-        <L_Flexor_Digiti_Minimi_Brevis_Foot min= "0.05"  max = "1.0" /> 
-        <R_Flexor_Digiti_Minimi_Brevis_Foot min= "0.05"  max = "1.0" /> 
-        <L_Flexor_Digitorum_Longus min= "0.05"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus min= "0.05"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Digitorum_Longus1 min= "0.05"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus1 min= "0.05"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Digitorum_Longus2 min= "0.05"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus2 min= "0.05"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Digitorum_Longus3 min= "0.05"  max = "1.0" group = "L_Flexor_Digitorum_Longus"/> 
-        <R_Flexor_Digitorum_Longus3 min= "0.05"  max = "1.0" group = "R_Flexor_Digitorum_Longus"/> 
-        <L_Flexor_Hallucis min= "0.05"  max = "1.0" group = "L_Flexor_Hallucis"/> 
-        <R_Flexor_Hallucis min= "0.05"  max = "1.0" group = "R_Flexor_Hallucis"/> 
-        <L_Flexor_Hallucis1 min= "0.05"  max = "1.0" group = "L_Flexor_Hallucis"/> 
-        <R_Flexor_Hallucis1 min= "0.05"  max = "1.0" group = "R_Flexor_Hallucis"/> 
-        <L_Gastrocnemius_Lateral_Head min= "0.05"  max = "1.0" group = "L_Gastrocnemius"/> 
-        <R_Gastrocnemius_Lateral_Head min= "0.05"  max = "1.0" group = "R_Gastrocnemius"/> 
-        <L_Gastrocnemius_Medial_Head min= "0.05"  max = "1.0" group = "L_Gastrocnemius"/> 
-        <R_Gastrocnemius_Medial_Head min= "0.05"  max = "1.0" group = "R_Gastrocnemius"/> 
-        <L_Peroneus_Brevis min= "0.05"  max = "1.0" /> 
-        <R_Peroneus_Brevis min= "0.05"  max = "1.0" /> 
-        <L_Peroneus_Longus min= "0.05"  max = "1.0" /> 
-        <R_Peroneus_Longus min= "0.05"  max = "1.0" /> 
-        <L_Peroneus_Tertius min= "0.05"  max = "1.0" group = "L_Peroneus_Tertius"/> 
-        <R_Peroneus_Tertius min= "0.05"  max = "1.0" group = "R_Peroneus_Tertius"/> 
-        <L_Peroneus_Tertius1 min= "0.05"  max = "1.0" group = "L_Peroneus_Tertius"/> 
-        <R_Peroneus_Tertius1 min= "0.05"  max = "1.0" group = "R_Peroneus_Tertius"/> 
-        <L_Plantaris min= "0.05"  max = "1.0" /> 
-        <R_Plantaris min= "0.05"  max = "1.0" /> 
-        <L_Popliteus min= "0.05"  max = "1.0" /> 
-        <R_Popliteus min= "0.05"  max = "1.0" /> 
-        <L_Soleus min= "0.05"  max = "1.0" group = "L_Soleus"/> 
-        <R_Soleus min= "0.05"  max = "1.0" group = "R_Soleus"/> 
-        <L_Soleus1 min= "0.05"  max = "1.0" group = "L_Soleus"/> 
-        <R_Soleus1 min= "0.05"  max = "1.0" group = "R_Soleus"/> 
-        <L_Tibialis_Anterior min= "0.05"  max = "1.0" /> 
-        <R_Tibialis_Anterior min= "0.05"  max = "1.0" /> 
-        <L_Tibialis_Posterior min= "0.05"  max = "1.0" /> 
-        <R_Tibialis_Posterior min= "0.05"  max = "1.0" />
-        <L_Vastus_Intermedius min= "0.05"  max = "1.0" group = "L_Vastus_Intermedius"/> 
-        <R_Vastus_Intermedius min= "0.05"  max = "1.0" group = "R_Vastus_Intermedius"/> 
-        <L_Vastus_Intermedius1 min= "0.05"  max = "1.0" group = "L_Vastus_Intermedius"/>
-        <R_Vastus_Intermedius1 min= "0.05"  max = "1.0" group = "R_Vastus_Intermedius"/> 
-        <L_Vastus_Lateralis1 min= "0.05"  max = "1.0" />
-        <R_Vastus_Lateralis1 min= "0.05"  max = "1.0" />
-        <L_Vastus_Medialis min= "0.05"  max = "1.0" group = "L_Vastus_Medialis"/> 
-        <R_Vastus_Medialis min= "0.05"  max = "1.0" group = "R_Vastus_Medialis"/> 
-        <L_Vastus_Medialis1 min= "0.05"  max = "1.0" group = "L_Vastus_Medialis"/> 
-        <R_Vastus_Medialis1 min= "0.05"  max = "1.0" group = "R_Vastus_Medialis"/> 
-        <L_Vastus_Medialis2 min= "0.05"  max = "1.0" group = "L_Vastus_Medialis"/> 
-        <R_Vastus_Medialis2 min= "0.05"  max = "1.0" group = "R_Vastus_Medialis"/>
     </muscle_force>
 </parameter>
 
 <cascading>
     <networks>
-        <nn0>@data/trained_nn/skel_no_mesh_lbs</nn0>
-        <nn1>@data/trained_nn/hip_no_mesh_lbs</nn1>
-        <nn2>@data/trained_nn/ankle_no_mesh_lbs</nn2>
-	    <nn3>@data/trained_nn/merge_no_mesh_lbs</nn3>
+        <nn0>@data/trained_nn/base</nn0>
     </networks>
     <edges>
-        <edge0 start="0" end="1" />
-        <edge1 start="0" end="2" />
-        
-        <edge2 start="0" end="3" />
-        <edge3 start="1" end="3" />
-	    <edge4 start="2" end="3" />
     </edges>
 </cascading>
