@@ -320,6 +320,7 @@ void Character::
         break;
     case mus:
     case mass:
+    case mass_lower:
     {
         if (mActuactorType == mus)
             mActivationLogs.push_back(mActivations);
@@ -335,6 +336,29 @@ void Character::
         }
         muscleTorque = mSkeleton->getExternalForces() - muscleTorque;
         mMuscleTorqueLogs.push_back(muscleTorque);
+
+        // For mass_lower: Add PD control for upper body
+        if (mActuactorType == mass_lower)
+        {
+            // Compute full PD torque
+            Eigen::VectorXd pdTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
+
+            // Apply PD torque only to upper body DOFs
+            int rootDof = mSkeleton->getRootJoint()->getNumDofs();
+            int lowerBodyDof = 18;  // First 18 DOFs after root are lower body
+            int upperBodyStart = rootDof + lowerBodyDof;
+
+            Eigen::VectorXd upperBodyTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
+
+            // Zero out root and lower body DOFs, keep upper body
+            upperBodyTorque.head(upperBodyStart).setZero();
+            upperBodyTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart) =
+                pdTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart);
+
+            // Apply upper body PD torque
+            mSkeleton->setForces(mSkeleton->getForces() + upperBodyTorque);
+        }
+
         break;
     }
     default:

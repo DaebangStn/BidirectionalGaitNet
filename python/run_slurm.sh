@@ -28,7 +28,7 @@ srun --nodes=${worker_num} --ntasks=${worker_num} --cpus-per-task=${SLURM_CPUS_P
   --export=ALL,NCCL_SOCKET_IFNAME=ib0 ray start --address $ip_head --block --num-cpus ${SLURM_CPUS_PER_TASK} &
 
 sleep 3
-python3 -u python/ray_train.py --config=ppo_small_server --name=test --cluster
+python3 -u python/ray_train.py --config=ppo_small_server --name="${SLURM_JOB_NAME}" --env "data/${SLURM_JOB_NAME}.xml" --cluster
 
 srun --nodes=${SLURM_NNODES} --ntasks=${SLURM_NNODES} --cpus-per-task="${SLURM_CPUS_PER_TASK}" \
   --export=ALL ray stop

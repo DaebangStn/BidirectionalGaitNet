@@ -99,6 +99,8 @@ void Environment::
             _actType = pd;
         else if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "mass")
             _actType = mass;
+        else if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "mass_lower")
+            _actType = mass_lower;
         else if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "muscle")
             _actType = mus;
 
@@ -140,7 +142,7 @@ void Environment::
 
     // mAction Setting
     ActuactorType _actType = mCharacters.back()->getActuactorType();
-    if (_actType == tor || _actType == pd || _actType == mass)
+    if (_actType == tor || _actType == pd || _actType == mass || _actType == mass_lower)
     {
         mAction = Eigen::VectorXd::Zero(mCharacters.back()->getSkeleton()->getNumDofs() - mCharacters.back()->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
         mNumActuatorAction = mCharacters.back()->getSkeleton()->getNumDofs() - mCharacters.back()->getSkeleton()->getRootJoint()->getNumDofs();
@@ -557,7 +559,7 @@ void Environment::
 
     updateTargetPosAndVel();
 
-    if (mCharacters[0]->getActuactorType() == pd || mCharacters[0]->getActuactorType() == mass)
+    if (mCharacters[0]->getActuactorType() == pd || mCharacters[0]->getActuactorType() == mass || mCharacters[0]->getActuactorType() == mass_lower)
     {
         Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
         action.tail(actuactorAction.rows()) = actuactorAction;
@@ -910,7 +912,7 @@ void Environment::
 
     for (int i = 0; i < _step; i++)
     {
-        if (mCharacters[0]->getActuactorType() == mass)
+        if (mCharacters[0]->getActuactorType() == mass || mCharacters[0]->getActuactorType() == mass_lower)
         {
             MuscleTuple mt = mCharacters[0]->getMuscleTuple(isMirror());
 

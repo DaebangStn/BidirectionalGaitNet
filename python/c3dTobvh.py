@@ -1,10 +1,6 @@
 ## This is code for converting from c3d file to bvh file.
 
-import sys
-import os
 import numpy as np
-import math
-import bvh
 import c3d
 import copy
 

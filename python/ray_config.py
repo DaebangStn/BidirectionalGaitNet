@@ -9,6 +9,7 @@ common_config = {
 
 
     },
+    "batch_mode": "truncate_episodes",
     "framework": "torch",
     "extra_python_environs_for_driver": {},
     "extra_python_environs_for_worker": {},
@@ -52,7 +53,7 @@ CONFIG["ppo"].update({
     "create_env_on_driver": False,
     "num_cpus_for_driver": 0,
     "num_gpus": 1,
-    "num_gpus_per_worker": 0.,
+    "num_gpus_per_worker": 0,
     "num_envs_per_worker": 1,
     "num_cpus_per_worker": 1,
 })
@@ -131,6 +132,9 @@ CONFIG["ppo_small_server"]["num_workers"] = 128 * 2
 
 CONFIG["ppo_small_node"] = copy.deepcopy(CONFIG["ppo_small"])
 CONFIG["ppo_small_node"]["num_workers"] = 128
+
+CONFIG["ppo_small_a6000"] = copy.deepcopy(CONFIG["ppo_small"])
+CONFIG["ppo_small_a6000"]["num_workers"] = 96
 
 CONFIG["ppo_small_pc"] = copy.deepcopy(CONFIG["ppo_small"])
 CONFIG["ppo_small_pc"]["num_workers"] = 32

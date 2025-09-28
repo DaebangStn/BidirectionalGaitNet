@@ -467,7 +467,7 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
     {
         Network new_elem;
         new_elem.name = p;
-        py::tuple res = loading_network(p.c_str(), mEnv->getState().rows(), mEnv->getAction().rows(), (character->getActuactorType() == mass), mEnv->getNumActuatorAction(), character->getNumMuscles(), character->getNumMuscleRelatedDof());
+        py::tuple res = loading_network(p.c_str(), mEnv->getState().rows(), mEnv->getAction().rows(), (character->getActuactorType() == mass || character->getActuactorType() == mass_lower), mEnv->getNumActuatorAction(), character->getNumMuscles(), character->getNumMuscleRelatedDof());
         new_elem.joint = res[0];
         new_elem.muscle = res[1];
         mNetworks.push_back(new_elem);

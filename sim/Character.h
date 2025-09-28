@@ -35,7 +35,8 @@ enum ActuactorType
     pd,
     mus,
     mass,
-    neuromus
+    neuromus,
+    mass_lower
 };
 struct MuscleTuple
 {

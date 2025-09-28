@@ -331,7 +331,7 @@ parser.add_argument("--cluster", action='store_true')
 parser.add_argument("--config", type=str, default="ppo_mini")
 parser.add_argument("--config-file", type=str, default="python/ray_config.py")
 parser.add_argument('-n', '--name', type=str)
-parser.add_argument("--env", type=str, default="data/env_ankle.xml")
+parser.add_argument("--env", type=str, default="data/base.xml")
 parser.add_argument("--checkpoint", type=str, default=None)
 
 parser.add_argument("--rollout", action='store_true')
@@ -369,8 +369,7 @@ if __name__ == "__main__":
     register_env("MyEnv", lambda config: MyEnv(env_xml))
     print(f'Loading config {args.config} from config file {args.config_file}.')
 
-    config["rollout_fragment_length"] = config["train_batch_size"] / \
-        (config["num_workers"] * config["num_envs_per_worker"])
+    config["rollout_fragment_length"] = int(config["train_batch_size"] / (config["num_workers"] * config["num_envs_per_worker"]))
 
     if args.rollout:
         config["batch_mode"] = "complete_episodes"
