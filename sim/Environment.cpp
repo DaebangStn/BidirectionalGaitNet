@@ -131,7 +131,7 @@ void Environment::
         mCharacters[0]->setMuscles(resolvedMusclePath, useVelocityForce, meshLbsWeight);
         mUseMuscle = true;
     }
-
+    
     // Learning Std
     if (doc.FirstChildElement("learningStd") != NULL)
         mLearningStd = doc.FirstChildElement("learningStd")->BoolText();

@@ -16,14 +16,14 @@ struct MocapMarker
     Eigen::Vector3d getGlobalPos()
     {
         // Body node size
-        Eigen::Vector3d size = (dynamic_cast<const BoxShape *>(bn->getShapeNodesWith<VisualAspect>()[0]->getShape().get()))->getSize();
+        Eigen::Vector3d size = (dynamic_cast<const BoxShape *>(bn->getShapeNodeWith<VisualAspect>(0)->getShape().get()))->getSize();
         Eigen::Vector3d p = Eigen::Vector3d(std::abs(size[0]) * 0.5 * offset[0], std::abs(size[1]) * 0.5 * offset[1], std::abs(size[2]) * 0.5 * offset[2]);
         return bn->getTransform() * p;
     }
 
     void convertToOffset(Eigen::Vector3d pos)
     {
-        Eigen::Vector3d size = (dynamic_cast<const BoxShape *>(bn->getShapeNodesWith<VisualAspect>()[0]->getShape().get()))->getSize();
+        Eigen::Vector3d size = (dynamic_cast<const BoxShape *>(bn->getShapeNodeWith<VisualAspect>(0)->getShape().get()))->getSize();
         Eigen::Vector3d p = bn->getTransform().inverse() * pos;
         offset = Eigen::Vector3d(p[0] / (std::abs(size[0]) * 0.5), p[1] / (std::abs(size[1]) * 0.5), p[2] / (std::abs(size[2]) * 0.5));
     }

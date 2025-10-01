@@ -16,7 +16,7 @@ const std::vector<std::string> CHANNELS =
         "Yrotation",
         "Zrotation",
 };
-
+ 
 GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 {
     mGVAELoaded = false;
@@ -617,16 +617,14 @@ void GLFWApp::
     glPushMatrix();
     glMultMatrixd(bn->getTransform().data());
 
-    auto sns = bn->getShapeNodesWith<VisualAspect>();
-    for (const auto &sn : sns)
-    {
+    bn->eachShapeNodeWith<VisualAspect>([this, &color](const dart::dynamics::ShapeNode* sn) {
         if (!sn)
-            return;
+            return true;
 
         const auto &va = sn->getVisualAspect();
 
         if (!va || va->isHidden())
-            return;
+            return true;
 
         glPushMatrix();
         Eigen::Affine3d tmp = sn->getRelativeTransform();
@@ -636,7 +634,8 @@ void GLFWApp::
         drawShape(sn->getShape().get(), color);
 
         glPopMatrix();
-    }
+        return true;
+    });
     glPopMatrix();
 }
 

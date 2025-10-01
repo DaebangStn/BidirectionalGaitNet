@@ -99,7 +99,11 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
         }
         rtgShape->setShape(newShape);
     }
-    ShapePtr shape = rtgBody->getShapeNodesWith<DynamicsAspect>()[0]->getShape();
+    ShapePtr shape;
+    rtgBody->eachShapeNodeWith<DynamicsAspect>([&shape](dart::dynamics::ShapeNode* sn) {
+        shape = sn->getShape();
+        return false;
+    });
     double mass = stdBody->getMass() * l[0] * l[1] * l[2] * s * s * s;
     dart::dynamics::Inertia inertia;
     inertia.setMass(mass);

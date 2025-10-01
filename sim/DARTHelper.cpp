@@ -413,7 +413,13 @@ BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d co
 		else
 			bn->createShapeNodeWith<VisualAspect, DynamicsAspect>(shape);
 
-		bn->getShapeNodesWith<VisualAspect>().back()->getVisualAspect()->setColor(color);
+		dart::dynamics::ShapeNode* lastShapeNode = nullptr;
+		bn->eachShapeNodeWith<VisualAspect>([&lastShapeNode](dart::dynamics::ShapeNode* sn) {
+			lastShapeNode = sn;
+			return true;
+		});
+		if (lastShapeNode)
+			lastShapeNode->getVisualAspect()->setColor(color);
 
 		if (obj_file != "None")
 		{

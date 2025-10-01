@@ -63,7 +63,7 @@ void Muscle::
         {
             double min_distance = 100000000.0;
             BodyNode *bn_current = skel->getBodyNode(index_sort_by_distance[0]);
-            for (auto &sn : bn_current->getShapeNodes())
+            bn_current->eachShapeNodeWith<VisualAspect>([&](dart::dynamics::ShapeNode* sn) {
                 if (sn->getShape()->is<MeshShape>())
                 {
                     auto shape = std::dynamic_pointer_cast<MeshShape>(sn->getShape());
@@ -78,6 +78,8 @@ void Muscle::
                             min_distance = (glob_pos - pos).norm(); // pow((glob_pos - pos).squaredNorm(), 2);
                     }
                 }
+                return true;
+            });
             distance[bn_current->getIndexInSkeleton()] = min_distance;
         }
 
@@ -94,7 +96,7 @@ void Muscle::
             if (meshLbsWeight)
             {
                 double min_distance = 100000000.0;
-                for (auto &sn : bn_current->getShapeNodes())
+                bn_current->eachShapeNodeWith<VisualAspect>([&](dart::dynamics::ShapeNode* sn) {
                     if (sn->getShape()->is<MeshShape>())
                     {
                         auto shape = std::dynamic_pointer_cast<MeshShape>(sn->getShape());
@@ -109,6 +111,8 @@ void Muscle::
                                 min_distance = (glob_pos - pos).norm();
                         }
                     }
+                    return true;
+                });
                 distance[bn_current->getIndexInSkeleton()] = min_distance;
             }
 
