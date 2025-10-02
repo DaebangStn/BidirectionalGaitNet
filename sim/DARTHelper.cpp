@@ -254,7 +254,7 @@ Trim(std::string str)
 }
 
 dart::dynamics::SkeletonPtr
-BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d color_filter, bool isContact, bool isBVH)
+BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d color_filter, bool isContact, bool collide_all, bool isBVH)
 {
 	// Initialize UriResolver for mesh path resolution
 	PMuscle::URIResolver::getInstance().initialize();
@@ -315,8 +315,9 @@ BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d co
 		if (body->Attribute("contact") != nullptr)
 		{
 			std::string c = body->Attribute("contact");
-			if (c == "On")
-				contact = true & isContact;
+			if (c == "On") contact = true & isContact;
+
+			contact |= collide_all;
 		}
 		Eigen::Vector4d color = Eigen::Vector4d::Constant(0.2);
 		if (body->Attribute("color") != nullptr)

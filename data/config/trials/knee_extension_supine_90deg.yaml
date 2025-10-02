@@ -1,0 +1,29 @@
+# Trial: Knee extension from supine position with 90° flexion
+
+name: "supine_90deg"
+description: "Supine (lying on back) position with knee flexed 90 degrees"
+
+# Supine pose: lying on back, knee flexed 90°
+pose:
+  Pelvis: [-1.5708, 0, 0, 0, 0.75, 0]  # Supine position (laying on back)
+  FemurR: [-1.5708, 0, 0]  # 90° hip flexion
+  FemurL: [-1.5708, 0, 0]
+  TibiaR: 1.5708  # 90° knee flexion
+  TibiaL: 1.5708
+  TalusR: 0
+  TalusL: 0
+
+# Apply downward force on lower tibia to extend knee
+force:
+  body_node: "TibiaR"
+  position_offset: [0, -0.3, 0]  # Lower part of tibia
+  direction: [0, -1, 0]  # Downward force
+  magnitude_min: 0
+  magnitude_max: 50
+  magnitude_steps: 15
+  settle_time: 1.0
+
+recording:
+  joints: ["TibiaR", "TalusR"]
+  output_file: "./results/knee_extension_supine_90deg.csv"
+

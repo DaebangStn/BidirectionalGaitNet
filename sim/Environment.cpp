@@ -94,20 +94,11 @@ void Environment::
         std::string resolvedSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skeletonPath);
         addCharacter(resolvedSkeletonPath, defaultKp, defaultKv, defaultDamping);
 
-        ActuactorType _actType;
-
-        if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "torque")
-            _actType = tor;
-        else if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "pd")
-            _actType = pd;
-        else if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "mass")
-            _actType = mass;
-        else if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "mass_lower")
-            _actType = mass_lower;
-        else if (Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor")) == "muscle")
-            _actType = mus;
-
-        mCharacters.back()->setActuactorType(_actType);
+        std::string _actTypeString;
+        if (doc.FirstChildElement("skeleton")->Attribute("actuator") != NULL) _actTypeString = Trim(doc.FirstChildElement("skeleton")->Attribute("actuator"));
+        else if (doc.FirstChildElement("skeleton")->Attribute("actuactor") != NULL) _actTypeString = Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor"));
+        ActuatorType _actType = getActuatorType(_actTypeString);
+        mCharacters.back()->setActuatorType(_actType);
 
         mTargetPositions = mCharacters.back()->getSkeleton()->getPositions();
         mTargetVelocities = mCharacters.back()->getSkeleton()->getVelocities();
@@ -144,7 +135,7 @@ void Environment::
         mPhaseDisplacementScale = doc.FirstChildElement("timeWarping")->DoubleText();
 
     // mAction Setting
-    ActuactorType _actType = mCharacters.back()->getActuactorType();
+    ActuatorType _actType = mCharacters.back()->getActuatorType();
     if (_actType == tor || _actType == pd || _actType == mass || _actType == mass_lower)
     {
         mAction = Eigen::VectorXd::Zero(mCharacters.back()->getSkeleton()->getNumDofs() - mCharacters.back()->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
@@ -562,7 +553,7 @@ void Environment::
 
     updateTargetPosAndVel();
 
-    if (mCharacters[0]->getActuactorType() == pd || mCharacters[0]->getActuactorType() == mass || mCharacters[0]->getActuactorType() == mass_lower)
+    if (mCharacters[0]->getActuatorType() == pd || mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower)
     {
         Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
         action.tail(actuactorAction.rows()) = actuactorAction;
@@ -574,7 +565,7 @@ void Environment::
 
         mCharacters[0]->setPDTarget(action);
     }
-    else if (mCharacters[0]->getActuactorType() == tor)
+    else if (mCharacters[0]->getActuatorType() == tor)
     {
         Eigen::VectorXd torque = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
         torque.tail(actuactorAction.rows()) = actuactorAction;
@@ -582,7 +573,7 @@ void Environment::
             torque = mCharacters[0]->getMirrorPosition(torque);
         mCharacters[0]->setTorque(torque);
     }
-    else if (mCharacters[0]->getActuactorType() == mus)
+    else if (mCharacters[0]->getActuatorType() == mus)
     {
         Eigen::VectorXd activation = (!isMirror() ? actuactorAction : mCharacters[0]->getMirrorActivation(actuactorAction));
         // Clipping Function
@@ -723,7 +714,7 @@ double Environment::
         }
     }
 
-    if (mCharacters[0]->getActuactorType() == mus)
+    if (mCharacters[0]->getActuatorType() == mus)
     {
        // Design the reward function for musculo-skeletal system
         r = 1.0;
@@ -915,7 +906,7 @@ void Environment::
 
     for (int i = 0; i < _step; i++)
     {
-        if (mCharacters[0]->getActuactorType() == mass || mCharacters[0]->getActuactorType() == mass_lower)
+        if (mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower)
         {
             MuscleTuple mt = mCharacters[0]->getMuscleTuple(isMirror());
 

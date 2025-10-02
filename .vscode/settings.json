@@ -31,6 +31,14 @@
         "concepts": "cpp",
         "cstdio": "cpp",
         "limits": "cpp",
-        "typeinfo": "cpp"
+        "typeinfo": "cpp",
+        "deque": "cpp",
+        "array": "cpp",
+        "forward_list": "cpp",
+        "list": "cpp",
+        "unordered_set": "cpp",
+        "ranges": "cpp",
+        "span": "cpp",
+        "format": "cpp"
     }
 }

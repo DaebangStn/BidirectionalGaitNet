@@ -160,7 +160,7 @@ public:
 
     bool getUseCascading() { return mUseCascading; }
     bool getUseMuscle() { return mUseMuscle; }
-    bool isTwoLevelController() { return mCharacters[0]->getActuactorType() == mass || mCharacters[0]->getActuactorType() == mass_lower; }
+    bool isTwoLevelController() { return mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower; }
 
     // get Reward Term
     void updateFootStep(bool isInit = false);

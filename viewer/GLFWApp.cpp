@@ -619,7 +619,7 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
     {
         Network new_elem;
         new_elem.name = p;
-        py::tuple res = loading_network(p.c_str(), mEnv->getState().rows(), mEnv->getAction().rows(), (character->getActuactorType() == mass || character->getActuactorType() == mass_lower), mEnv->getNumActuatorAction(), character->getNumMuscles(), character->getNumMuscleRelatedDof());
+        py::tuple res = loading_network(p.c_str(), mEnv->getState().rows(), mEnv->getAction().rows(), (character->getActuatorType() == mass || character->getActuatorType() == mass_lower), mEnv->getNumActuatorAction(), character->getNumMuscles(), character->getNumMuscleRelatedDof());
         new_elem.joint = res[0];
         new_elem.muscle = res[1];
         mNetworks.push_back(new_elem);
@@ -1570,7 +1570,7 @@ void GLFWApp::drawControlPanel()
     }
 
     // Joint Control
-    if (ImGui::CollapsingHeader("Joint Control"))
+    if (ImGui::CollapsingHeader("Joint Control")) 
     {
         // Joint Position
         Eigen::VectorXd pos_lower_limit = mEnv->getCharacter(0)->getSkeleton()->getPositionLowerLimits();

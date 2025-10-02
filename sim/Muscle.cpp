@@ -163,8 +163,7 @@ void Muscle::
 
     mCachedAnchorPositions.resize(n);
 }
-void Muscle::
-    SetMuscle()
+void Muscle::SetMuscle()
 {
     int n = mAnchors.size();
     l_mt0 = 0;
@@ -224,8 +223,7 @@ void Muscle::
     }
 }
 
-void Muscle::
-    ApplyForceToBody()
+void Muscle::ApplyForceToBody()
 {
     double f = GetForce();
 
@@ -250,23 +248,19 @@ double Muscle::
 {
     return l_m / l_m0;
 }
-bool Muscle::
-    Update()
+bool Muscle::Update()
 {
-    for (int i = 0; i < mAnchors.size(); i++)
-        mCachedAnchorPositions[i] = mAnchors[i]->GetPoint();
+    for (int i = 0; i < mAnchors.size(); i++) mCachedAnchorPositions[i] = mAnchors[i]->GetPoint();
     l_mt = Getl_mt();
 
     l_m = l_mt - l_t0;
-    if (mUseVelocityForce)
-        UpdateVelocities();
+    if (mUseVelocityForce) UpdateVelocities();
 
     return ((l_m / l_m0) < 1.5); // Return whether the joint angle is in ROM
 }
 
 // Should be called after Update called
-void Muscle::
-    UpdateVelocities()
+void Muscle::UpdateVelocities()
 {
     const auto &skel = mAnchors[0]->bodynodes[0]->getSkeleton();
     // ComputeJacobians();
@@ -286,8 +280,7 @@ void Muscle::
     }
 }
 double
-Muscle::
-    GetForce()
+Muscle::GetForce()
 {
     return Getf_A() * activation + Getf_p();
 }

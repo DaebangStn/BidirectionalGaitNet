@@ -1,0 +1,226 @@
+#ifndef __PHYSICAL_EXAM_H__
+#define __PHYSICAL_EXAM_H__
+
+#include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <implot.h>
+#include <vector>
+#include <map>
+#include <string>
+#include "dart/dart.hpp"
+#include "dart/gui/Trackball.hpp"
+#include "Character.h"
+#include "ShapeRenderer.h"
+#include "CBufferData.h"
+
+namespace PMuscle {
+
+struct ROMDataPoint {
+    double force_magnitude;
+    std::map<std::string, Eigen::VectorXd> joint_angles;
+    double passive_force_total;
+};
+
+// Posture control target
+struct PostureTarget {
+    std::string bodyNodeName;
+    Eigen::Vector3d referencePosition;
+    Eigen::Array3i controlDimensions;  // X, Y, Z booleans (0 or 1)
+    double kp;  // Proportional gain
+    double ki;  // Integral gain
+    Eigen::Vector3d integralError;  // Accumulated error for integral term
+};
+
+// Trial configuration
+struct TrialConfig {
+    std::string name;
+    std::string description;
+    std::map<std::string, Eigen::VectorXd> pose;
+
+    // Force parameters
+    std::string force_body_node;
+    Eigen::Vector3d force_offset;
+    Eigen::Vector3d force_direction;
+    double force_min;
+    double force_max;
+    int force_steps;
+    double settle_time;
+
+    // Recording
+    std::vector<std::string> record_joints;
+    std::string output_file;
+};
+
+class PhysicalExam {
+public:
+    PhysicalExam(int width = 1920, int height = 1080);
+    ~PhysicalExam();
+
+    // Initialization
+    void initialize();
+    void loadCharacter(const std::string& skel_path, const std::string& muscle_path, ActuatorType _actType);
+    void createGround();
+
+    // Pose and force control
+    void applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles);
+    void applyForce(const std::string& body_node,
+                   const Eigen::Vector3d& offset,
+                   const Eigen::Vector3d& direction,
+                   double magnitude);
+    void applyConfinementForces(double magnitude);
+
+    // Posture control
+    void printBodyNodePositions();
+    void parseAndPrintPostureConfig(const std::string& pastedData);
+    void setupPostureTargets();
+    void applyPostureControl();
+    void drawPostureForces();
+    void drawGraphPanel();
+
+    // Simulation
+    void stepSimulation(int steps);
+
+    // Recording
+    std::map<std::string, Eigen::VectorXd> recordJointAngles(
+        const std::vector<std::string>& joint_names);
+    double computePassiveForce();
+
+    // Examination execution
+    void loadExamSetting(const std::string& config_path);
+    void runExamination(const std::string& config_path);  // Deprecated - loads and runs all trials
+    void startNextTrial();
+    void runCurrentTrial();
+    void saveToCSV(const std::string& output_path);
+
+    // Rendering
+    void render();
+    void mainLoop();
+    void reset();  // Reset camera and scene
+
+    // UI
+    void drawControlPanel();  // Left panel - force controls
+    void drawVisualizationPanel();  // Right panel - plots and data
+    void drawSimFrame();
+    void drawGround();
+    void drawSkeleton(const dart::dynamics::SkeletonPtr& skel);
+    void drawSingleBodyNode(const dart::dynamics::BodyNode* bn, const Eigen::Vector4d& color);
+    void drawShape(const dart::dynamics::Shape* shape, const Eigen::Vector4d& color);
+    void drawMuscles();
+    void drawForceArrow();
+    void drawJointPassiveForces();
+    void drawConfinementForces();
+
+    // Camera control
+    void setCamera();
+    void mouseMove(double xpos, double ypos);
+    void mousePress(int button, int action, int mods);
+    void mouseScroll(double xoffset, double yoffset);
+    void keyboardPress(int key, int scancode, int action, int mods);
+    
+    // Camera presets
+    void printCameraInfo();
+    void saveCameraPreset(int index);
+    void loadCameraPreset(int index);
+    void initializeCameraPresets();
+
+private:
+    // DART simulation
+    dart::simulation::WorldPtr mWorld;
+    Character* mCharacter;
+    dart::dynamics::SkeletonPtr mGround;
+
+    // GLFW/ImGui
+    GLFWwindow* mWindow;
+    int mWidth, mHeight;
+
+    // Camera
+    Eigen::Vector3d mEye;
+    Eigen::Vector3d mUp;
+    Eigen::Vector3d mTrans;
+    double mZoom;
+    dart::gui::Trackball mTrackball;
+    bool mMouseDown;
+    bool mRotate;
+    bool mTranslate;
+    double mMouseX, mMouseY;
+    
+    // Camera presets
+    struct CameraPreset {
+        std::string description;
+        Eigen::Vector3d eye;
+        Eigen::Vector3d up;
+        Eigen::Vector3d trans;
+        double zoom;
+        Eigen::Quaterniond quat;
+        bool isSet;
+    };
+    CameraPreset mCameraPresets[3];
+    int mCurrentCameraPreset;  // Track which preset is currently active
+
+    // Force state
+    std::string mForceBodyNode;
+    Eigen::Vector3d mForceOffset;
+    Eigen::Vector3d mForceDirection;
+    double mForceMagnitude;
+
+    // Interactive controls
+    float mForceX, mForceY, mForceZ;
+    float mOffsetX, mOffsetY, mOffsetZ;
+    bool mApplyingForce;
+    int mSelectedBodyNode;
+
+    // Confinement force
+    bool mApplyConfinementForce;
+
+    // Posture control
+    bool mApplyPostureControl;
+    std::vector<PostureTarget> mPostureTargets;
+    CBufferData<double>* mGraphData;
+    Eigen::VectorXd mPostureForces;
+
+    // Examination state
+    bool mRunning;
+    bool mSimulationPaused;
+    bool mSingleStep;  // Flag for single-step simulation mode
+    std::string mCurrentExamName;
+    std::vector<ROMDataPoint> mRecordedData;
+    std::map<std::string, Eigen::VectorXd> mInitialPose;
+    
+    // Trial management
+    std::string mExamName;
+    std::string mExamDescription;
+    std::vector<TrialConfig> mTrials;
+    int mCurrentTrialIndex;
+    bool mTrialRunning;
+    int mCurrentForceStep;
+    bool mExamSettingLoaded;
+
+    // Pose presets
+    int mCurrentPosePreset;  // 0=standing, 1=supine, 2=prone, 3=supine_knee_flexed
+    float mPresetKneeAngle;  // For supine with knee flexion
+
+    // Examination table
+    dart::dynamics::SkeletonPtr mExamTable;
+
+    // Simulation parameters
+    int mSimulationHz;
+    int mControlHz;
+
+    // Rendering
+    ShapeRenderer mShapeRenderer;
+    float mPassiveForceNormalizer;  // Normalization factor for passive force visualization
+    bool mShowJointPassiveForces;   // Toggle for joint passive force arrows
+    float mJointForceScale;          // Scale factor for joint force arrow visualization
+    bool mShowJointForceLabels;      // Toggle for joint passive force text labels
+    bool mShowPostureDebug;          // Toggle for posture control debug output
+
+    // Pose preset methods
+    void setPoseStanding();
+    void setPoseSupine();
+    void setPoseProne();
+    void setPoseSupineKneeFlexed(double knee_angle);
+};
+
+} // namespace PMuscle
+
+#endif // __PHYSICAL_EXAM_H__

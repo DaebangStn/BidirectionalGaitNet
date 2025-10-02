@@ -1,0 +1,29 @@
+# Trial: Knee extension from seated position with 45° flexion
+
+name: "seated_45deg"
+description: "Seated position with knee flexed 45 degrees"
+
+# Seated pose: hips flexed 90°, knees flexed 45°
+pose:
+  Pelvis: [0, 0.5, 0, 0, 0, 0]  # Lower pelvis for seated position
+  FemurR: [1.5708, 0, 0]  # 90° hip flexion (1.5708 rad = 90°)
+  FemurL: [1.5708, 0, 0]
+  TibiaR: 0.7854  # 45° knee flexion (0.7854 rad = 45°)
+  TibiaL: 0.7854
+  TalusR: 0
+  TalusL: 0
+
+# Apply downward force on lower tibia to extend knee
+force:
+  body_node: "TibiaR"
+  position_offset: [0, -0.3, 0]  # Lower part of tibia
+  direction: [0, -1, 0]  # Downward force
+  magnitude_min: 0
+  magnitude_max: 50
+  magnitude_steps: 15
+  settle_time: 1.0
+
+recording:
+  joints: ["TibiaR", "TalusR"]
+  output_file: "./results/knee_extension_seated_45deg.csv"
+

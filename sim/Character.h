@@ -29,15 +29,16 @@ struct ModifyInfo
 };
 using BoneInfo = std::tuple<std::string, ModifyInfo>;
 
-enum ActuactorType
+enum ActuatorType
 {
     tor,
     pd,
     mus,
     mass,
-    neuromus,
     mass_lower
 };
+
+ActuatorType getActuatorType(std::string type);
 struct MuscleTuple
 {
     // Eigen::VectorXd dt;
@@ -48,7 +49,7 @@ struct MuscleTuple
 class Character
 {
 public:
-    Character(std::string path, double defaultKp, double defaultKv, double defaultDamping);
+    Character(std::string path, double defaultKp, double defaultKv, double defaultDamping, bool collide_all = false);
     ~Character();
 
     dart::dynamics::SkeletonPtr getSkeleton() { return mSkeleton; }
@@ -70,13 +71,13 @@ public:
 
     void setTorque(Eigen::VectorXd _torque) { mTorque = _torque; }
     Eigen::VectorXd getTorque() { return mTorque; }
-
+    void setZeroForces();
     void setActivations(Eigen::VectorXd _activation) { mActivations = _activation; }
     Eigen::VectorXd getActivations() { return mActivations; }
     void step();
 
-    void setActuactorType(ActuactorType _act) { mActuactorType = _act; }
-    ActuactorType getActuactorType() { return mActuactorType; }
+    void setActuatorType(ActuatorType _act) { mActuatorType = _act; }
+    ActuatorType getActuatorType() { return mActuatorType; }
 
     std::vector<dart::dynamics::BodyNode *> getEndEffectors() { return mEndEffectors; }
 
@@ -156,7 +157,7 @@ private:
 
     double mLocalTime;
 
-    ActuactorType mActuactorType;
+    ActuatorType mActuatorType;
     Eigen::VectorXd mTorque;
     Eigen::VectorXd mPDTarget;
 

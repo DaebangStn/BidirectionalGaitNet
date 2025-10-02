@@ -28,6 +28,23 @@ static std::map<std::string, int> skeletonAxis = {
     {"ForeArmL", 0},
     {"HandL", 0},
 };
+
+static std::unordered_map<std::string, ActuatorType> ActuatorTypeMap = {
+    {"torque", tor},
+    {"pd", pd},
+    {"muscle", mus},
+    {"mass", mass},
+    {"mass_lower", mass_lower}
+};
+
+ActuatorType getActuatorType(std::string type) { 
+    auto it = ActuatorTypeMap.find(type);
+    if (it == ActuatorTypeMap.end()) {
+        throw std::runtime_error("Invalid actuactor type: " + type);
+    }
+    return it->second;
+}
+
 static std::tuple<Eigen::Vector3d, double, double> UnfoldModifyInfo(const ModifyInfo &info)
 {
     return std::make_tuple(Eigen::Vector3d(info[0], info[1], info[2]), info[3], info[4]);
@@ -112,20 +129,20 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
 }
 
 Character::
-    Character(std::string path, double defaultKp, double defaultKv, double defaultDamping)
+    Character(std::string path, double defaultKp, double defaultKv, double defaultDamping, bool collide_all)
 {
-    mActuactorType = tor;
-    
+    mActuatorType = tor;
+
     // If path is empty, use default
     if (path.empty()) {
         path = "@data/skeleton_gaitnet_narrow_model.xml";
     }
-    
+
     // Always resolve paths through UriResolver for backwards compatibility
     std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
     std::cout << "[Character] Using Path: " << resolvedPath << std::endl;
-    
-    mSkeleton = BuildFromFile(resolvedPath, defaultDamping);
+
+    mSkeleton = BuildFromFile(resolvedPath, defaultDamping, Eigen::Vector4d(1,1,1,1), true, collide_all);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
 
     mTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
@@ -305,10 +322,9 @@ Character::
     return tau;
 }
 
-void Character::
-    step()
+void Character::step()
 {
-    switch (mActuactorType)
+    switch (mActuatorType)
     {
     case tor:
         mTorqueLogs.push_back(mTorque);
@@ -326,10 +342,8 @@ void Character::
     case mass:
     case mass_lower:
     {
-        if (mActuactorType == mus)
-            mActivationLogs.push_back(mActivations);
-        else
-            mActivationLogs.push_back(dart::math::clip(mActivations, Eigen::VectorXd::Zero(mActivations.rows()), Eigen::VectorXd::Ones(mActivations.rows())));
+        if (mActuatorType == mus) mActivationLogs.push_back(mActivations);
+        else mActivationLogs.push_back(dart::math::clip(mActivations, Eigen::VectorXd::Zero(mActivations.rows()), Eigen::VectorXd::Ones(mActivations.rows())));
         Eigen::VectorXd muscleTorque = mSkeleton->getExternalForces();
         for (int i = 0; i < mMuscles.size(); i++)
         {
@@ -342,7 +356,7 @@ void Character::
         mMuscleTorqueLogs.push_back(muscleTorque);
 
         // For mass_lower: Add PD control for upper body
-        if (mActuactorType == mass_lower)
+        if (mActuatorType == mass_lower)
         {
             // Compute full PD torque
             Eigen::VectorXd pdTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
@@ -362,7 +376,6 @@ void Character::
             // Apply upper body PD torque
             mSkeleton->setForces(mSkeleton->getForces() + upperBodyTorque);
         }
-
         break;
     }
     default:
@@ -370,6 +383,15 @@ void Character::
     }
     mCOMLogs.push_back(mSkeleton->getCOM());
     mHeadVelLogs.push_back(mSkeleton->getBodyNode("Head")->getCOMLinearVelocity());
+}
+
+void Character::setZeroForces()
+{
+    mSkeleton->setForces(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
+    for (auto bn : mSkeleton->getBodyNodes()) {
+        bn->setExtForce(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), false, true);
+        bn->setExtTorque(Eigen::Vector3d::Zero());
+    }
 }
 
 // Height Calibration

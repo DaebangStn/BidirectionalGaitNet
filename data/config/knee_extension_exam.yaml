@@ -1,0 +1,20 @@
+# Knee Extension ROM Examination
+# Character in various positions with force applied to tibia for knee extension
+
+name: "knee_extension_exam"
+description: "Right knee extension ROM examination with multiple trials"
+
+character:
+  skeleton: "@data/skeleton_gaitnet_narrow_model.xml"
+  muscle: "@data/muscle_gaitnet_lower_only.xml"
+
+# Trials can be referenced from external files or defined inline
+trials:
+  # Trial 1: Load from external file
+  - file: "@data/config/trials/knee_extension_seated_90deg.yaml"
+  
+  # Trial 2: Load from external file
+  - file: "@data/config/trials/knee_extension_seated_45deg.yaml"
+  
+  # Trial 3: Load from external file
+  - file: "@data/config/trials/knee_extension_supine_90deg.yaml"

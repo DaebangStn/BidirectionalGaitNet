@@ -7,13 +7,41 @@ find_package(GLUT REQUIRED)
 find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS gui)
 
-file(GLOB srcs "*.h" "*.cpp")
-
-add_executable(viewer "main.cpp" ${srcs})
+add_executable(viewer
+    "main.cpp"
+    "GLFWApp.h"
+    "GLFWApp.cpp"
+    "ShapeRenderer.h"
+    "ShapeRenderer.cpp"
+    "GLfunctions.h"
+    "GLfunctions.cpp"
+    "C3D_Reader.h"
+    "C3D_Reader.cpp"
+)
 target_link_libraries(viewer
         ${Python3_LIBRARIES}
         tinyxml2::tinyxml2
         GL GLU glut glad pybind11::embed glfw imgui
         sim
         dart-gui
+)
+
+# Physical Examination executable (standalone, no GLFWApp dependency)
+add_executable(physical_exam
+    "PhysicalExam.h"
+    "PhysicalExam.cpp"
+    "physical_exam_main.cpp"
+    "ShapeRenderer.h"
+    "ShapeRenderer.cpp"
+    "GLfunctions.h"
+    "GLfunctions.cpp"
+)
+
+target_link_libraries(physical_exam
+    ${Python3_LIBRARIES}
+    tinyxml2::tinyxml2
+    GL GLU glut glad pybind11::embed glfw imgui
+    sim
+    dart-gui
+    yaml-cpp
 )
