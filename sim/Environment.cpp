@@ -1,5 +1,6 @@
 #include "Environment.h"
 #include "UriResolver.h"
+#include "CBufferData.h"
 
 Environment::
     Environment()
@@ -40,6 +41,8 @@ Environment::
     mHardPhaseClipping = false;
     mPhaseCount = 0;
     mWorldPhaseCount = 0;
+    mPrevWorldPhaseCount = 0;
+    mPrevContact = Eigen::Vector2i(0, 0);
     mGlobalTime = 0.0;
     mWorldTime = 0.0;
 
@@ -901,7 +904,7 @@ Eigen::VectorXd Environment::
 }
 
 void Environment::
-    step(int _step)
+    step(int _step, CBufferData<double>* pGraphData)
 {
     if (_step == 0)
         _step = mSimulationHz / mControlHz;
@@ -994,7 +997,99 @@ void Environment::
         mWorld->step();
 
         if (isRender)
-            mContactLogs.push_back(getIsContact());
+        {
+            Eigen::Vector2i contact = getIsContact();
+            Eigen::Vector2d grf = getFootGRF();
+            mContactLogs.push_back(contact);
+
+            // Contact-based gait cycle detection: detect right foot heel strike (swing→stance transition)
+            // This replaces time-based mWorldPhaseCount update for more accurate cycle tracking
+            // GRF threshold (0.2 * body weight) ensures the foot is actually bearing weight
+            const double grf_threshold = 0.2;  // 20% of body weight
+            if (mPrevContact[1] == 0 && contact[1] == 1 && grf[1] > grf_threshold)  // Right foot: swing→stance with weight
+            {
+                mWorldPhaseCount++;
+                mWorldTime = mCharacters[0]->getLocalTime();
+            }
+            mPrevContact = contact;
+
+            // Log to graph data if available
+            if (pGraphData)
+            {
+                if (pGraphData->key_exists("contact_left"))
+                    pGraphData->push("contact_left", static_cast<double>(contact[0]));
+                if (pGraphData->key_exists("contact_right"))
+                    pGraphData->push("contact_right", static_cast<double>(contact[1]));
+
+                // Log contact phase for right foot
+                if (pGraphData->key_exists("contact_phaseR"))
+                    pGraphData->push("contact_phaseR", static_cast<double>(contact[1]));
+
+                // Log GRF data
+                if (pGraphData->key_exists("grf_left"))
+                    pGraphData->push("grf_left", grf[0]);
+                if (pGraphData->key_exists("grf_right"))
+                    pGraphData->push("grf_right", grf[1]);
+
+                // Log kinematic data
+                auto skel = mCharacters[0]->getSkeleton();
+
+                if (pGraphData->key_exists("sway_Torso_X"))
+                {
+                    const double rootx = skel->getRootBodyNode()->getCOM()[0];
+                    const double torsoX = skel->getBodyNode("Torso")->getCOM()[0] - rootx;
+                    pGraphData->push("sway_Torso_X", torsoX);
+                }
+
+                if (pGraphData->key_exists("angle_HipR"))
+                {
+                    const double angleHipR = skel->getJoint("FemurR")->getPosition(0) * 180.0 / M_PI;
+                    pGraphData->push("angle_HipR", -angleHipR);
+                }
+
+                if (pGraphData->key_exists("angle_HipIRR"))
+                {
+                    const double angleHipIRR = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
+                    pGraphData->push("angle_HipIRR", -angleHipIRR);
+                }
+
+                if (pGraphData->key_exists("angle_HipAbR"))
+                {
+                    const double angleHipAbR = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
+                    pGraphData->push("angle_HipAbR", -angleHipAbR);
+                }
+
+                if (pGraphData->key_exists("angle_KneeR"))
+                {
+                    const double angleKneeR = skel->getJoint("TibiaR")->getPosition(0) * 180.0 / M_PI;
+                    pGraphData->push("angle_KneeR", angleKneeR);
+                }
+
+                if (pGraphData->key_exists("angle_AnkleR"))
+                {
+                    const double angleAnkleR = skel->getJoint("TalusR")->getPosition(0) * 180.0 / M_PI;
+                    pGraphData->push("angle_AnkleR", -angleAnkleR);
+                }
+
+                if (pGraphData->key_exists("angle_Rotation"))
+                {
+                    const double angleRotation = skel->getJoint("Pelvis")->getPosition(1) * 180.0 / M_PI;
+                    pGraphData->push("angle_Rotation", angleRotation);
+                }
+
+                if (pGraphData->key_exists("angle_Obliquity"))
+                {
+                    const double angleObliquity = skel->getJoint("Pelvis")->getPosition(2) * 180.0 / M_PI;
+                    pGraphData->push("angle_Obliquity", angleObliquity);
+                }
+
+                if (pGraphData->key_exists("angle_Tilt"))
+                {
+                    const double angleTilt = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
+                    pGraphData->push("angle_Tilt", angleTilt);
+                }
+            }
+        }
 
         if(!mPhaseUpdateInContolHz)
         {
@@ -1025,16 +1120,8 @@ void Environment::
             }
         }
 
-        // World Time Clipping
-        {
-            int currentCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
-            // int currentCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
-            if (mWorldPhaseCount != currentCount)
-            {
-                mWorldTime = mCharacters[0]->getLocalTime();
-                mWorldPhaseCount = currentCount;
-            }
-        }
+        // World Time Clipping (disabled - now using contact-based cycle detection above)
+        // Contact-based detection at heel strike is more accurate than time-based estimation
 
         mSimulationConut++; // Should be called with mWorld Step
     }
@@ -1169,7 +1256,9 @@ void Environment::
 {
     mPhaseCount = 0;
     mWorldPhaseCount = 0;
+    mPrevWorldPhaseCount = 0;
     mSimulationConut = 0;
+    mPrevContact = Eigen::Vector2i(0, 0); // Initialize contact state
 
     // Reset Initial Time
     double time = 0.0;
@@ -1715,6 +1804,49 @@ Eigen::Vector2i Environment::getIsContact()
             result[1] = 1;
     }
     return result;
+}
+
+Eigen::Vector2d Environment::getFootGRF()
+{
+    Eigen::Vector2d grf = Eigen::Vector2d::Zero();
+    const auto results = mWorld->getConstraintSolver()->getLastCollisionResult();
+    const double mass = mCharacters[0]->getSkeleton()->getMass();
+    const double g = 9.81;
+
+    for (std::size_t i = 0; i < results.getNumContacts(); ++i)
+    {
+        const auto& contact = results.getContact(i);
+        const std::string name1 = contact.collisionObject1->getShapeFrame()->getName();
+        const std::string name2 = contact.collisionObject2->getShapeFrame()->getName();
+
+        // Check left foot contact
+        if (name1.find("TalusL") != std::string::npos || name1.find("FootPinkyL") != std::string::npos || name1.find("FootThumbL") != std::string::npos ||
+            name2.find("TalusL") != std::string::npos || name2.find("FootPinkyL") != std::string::npos || name2.find("FootThumbL") != std::string::npos)
+        {
+            grf[0] += contact.force.norm();
+        }
+
+        // Check right foot contact
+        if (name1.find("TalusR") != std::string::npos || name1.find("FootPinkyR") != std::string::npos || name1.find("FootThumbR") != std::string::npos ||
+            name2.find("TalusR") != std::string::npos || name2.find("FootPinkyR") != std::string::npos || name2.find("FootThumbR") != std::string::npos)
+        {
+            grf[1] += contact.force.norm();
+        }
+    }
+
+    // Normalize by body weight (mass * g)
+    grf /= (mass * g);
+
+    return grf;
+}
+
+bool Environment::isGaitCycleComplete()
+{
+    if (mWorldPhaseCount > mPrevWorldPhaseCount){
+        mPrevWorldPhaseCount = mWorldPhaseCount;
+        return true;
+    }
+    return false;
 }
 
 Network Environment::

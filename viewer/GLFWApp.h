@@ -2,6 +2,7 @@
 #include "Environment.h"
 #include "GLfunctions.h"
 #include "ShapeRenderer.h"
+#include "CBufferData.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -21,6 +22,40 @@ enum MuscleRenderingType
     weakness
 };
 
+struct RolloutStatus
+{
+    std::string name, settingPath, fileContents, storeKey;
+    char memo[64];
+    int cycle; // Remaining gait cycles. if -1, rollout continues indefinitely, if 0, rollout is finished
+    bool pause;
+    bool modulate;
+    bool isAlarmed;
+    bool store;
+    bool fake_assist;
+
+    RolloutStatus() { reset(); }
+
+    void reset()
+    {
+        cycle = -1;
+        pause = true;
+        modulate = false;
+        isAlarmed = false;
+        store = false;
+        fake_assist = false;
+        name = "";
+        settingPath = "";
+        fileContents = "";
+        storeKey = "";
+        std::memset(memo, 0, sizeof(memo));
+    }
+
+    void step()
+    {
+        if (cycle > 0) cycle--;
+        if (cycle == 0) pause = true;
+    }
+};
 
 class GLFWApp
 {
@@ -36,6 +71,11 @@ public:
     void writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const bool isPos = false); // Pose Or Hierarchy
     void exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::dynamics::SkeletonPtr &skel);
 
+    void plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis = ImAxis_Y1,
+                       bool show_phase = true, bool plot_avg_copy = false, std::string postfix = "");
+
+    void plotPhaseBar(double x_min, double x_max, double y_min, double y_max);
+
 private:
     py::object mns;
     py::object loading_network;
@@ -50,10 +90,9 @@ private:
 
     void drawSimFrame();
     void drawUIFrame();
-    void drawUIDisplay();
+    void drawControlPanel();
     void drawGaitNetDisplay();
-
-    void drawGaitAnalysisDisplay();
+    void drawVisualizationPanel();
     void drawGround(double height);
     void drawCollision();
 
@@ -90,7 +129,6 @@ private:
 
     ShapeRenderer mShapeRenderer;
     bool mDrawOBJ;
-    bool mSimulation;
 
     // Trackball/Camera variables
     dart::gui::Trackball mTrackball;
@@ -104,8 +142,11 @@ private:
     std::vector<std::string> mNetworkPaths;
     std::vector<Network> mNetworks;
 
-    // Reward Map
-    std::vector<std::map<std::string, double>> mRewardBuffer;
+    // Graph Data Buffer
+    CBufferData<double>* mGraphData;
+
+    // Rollout Control
+    RolloutStatus mRolloutStatus;
 
     // Rendering Option
     bool mDrawReferenceSkeleton;

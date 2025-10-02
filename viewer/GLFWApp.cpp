@@ -21,7 +21,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 {
     mGVAELoaded = false;
     mRenderConditions = false;
-    mSimulation = false;
     mWidth = 1920;
     mHeight = 1080;
     mZoom = 1.0;
@@ -53,6 +52,38 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mMuscleResolution = 0.0;
 
     mC3DCount = 0;
+
+    // Initialize Graph Data Buffer
+    mGraphData = new CBufferData<double>();
+
+    // Register reward keys (for both deepmimic and gaitnet reward types)
+    mGraphData->register_key("r", 500);
+    mGraphData->register_key("r_p", 500);
+    mGraphData->register_key("r_v", 500);
+    mGraphData->register_key("r_com", 500);
+    mGraphData->register_key("r_ee", 500);
+    mGraphData->register_key("r_metabolic", 500);
+    mGraphData->register_key("r_loco", 500);
+    mGraphData->register_key("r_avg", 500);
+    mGraphData->register_key("r_step", 500);
+
+    // Register contact keys
+    mGraphData->register_key("contact_left", 500);
+    mGraphData->register_key("contact_right", 500);
+    mGraphData->register_key("contact_phaseR", 500);
+    mGraphData->register_key("grf_left", 500);
+    mGraphData->register_key("grf_right", 500);
+
+    // Register kinematic keys
+    mGraphData->register_key("sway_Torso_X", 500);
+    mGraphData->register_key("angle_HipR", 500);
+    mGraphData->register_key("angle_HipIRR", 500);
+    mGraphData->register_key("angle_HipAbR", 500);
+    mGraphData->register_key("angle_KneeR", 500);
+    mGraphData->register_key("angle_AnkleR", 500);
+    mGraphData->register_key("angle_Rotation", 500);
+    mGraphData->register_key("angle_Obliquity", 500);
+    mGraphData->register_key("angle_Tilt", 500);
 
     // Forward GaitNEt
     selected_fgn = 0;
@@ -295,11 +326,22 @@ void GLFWApp::exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::
 
 void GLFWApp::update(bool _isSave)
 {
+    // Rollout control: check if rollout is complete or paused
+    if (mRolloutStatus.cycle == 0 || mRolloutStatus.pause)
+        return;
+
     if (mEnv->isActionTime())
     {
         // Reward Update
         mEnv->getReward();
-        mRewardBuffer.push_back(mEnv->getRewardMap());
+
+        // Log reward map to graph data
+        std::map<std::string, double> rewardMap = mEnv->getRewardMap();
+        for (const auto& pair : rewardMap)
+        {
+            if (mGraphData->key_exists(pair.first))
+                mGraphData->push(pair.first, pair.second);
+        }
 
         Eigen::VectorXf action = (mNetworks.size() > 0 ? mNetworks[0].joint.attr("get_action")(mEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>() : mEnv->getAction().cast<float>());
 
@@ -307,11 +349,22 @@ void GLFWApp::update(bool _isSave)
     }
     if (_isSave)
     {
-        mEnv->step(mEnv->getSimulationHz() / 120);
+        mEnv->step(mEnv->getSimulationHz() / 120, mGraphData);
         mMotionBuffer.push_back(mEnv->getCharacter(0)->getSkeleton()->getPositions());
     }
     else
-        mEnv->step(mEnv->getSimulationHz() / mEnv->getControlHz() / 2);
+        mEnv->step(mEnv->getSimulationHz() / mEnv->getControlHz() / 2, mGraphData);
+
+    // Check for gait cycle completion AFTER step (when phase counters are updated)
+    if (mEnv->isGaitCycleComplete())
+    {
+        mRolloutStatus.step();
+        if (mRolloutStatus.cycle == 0)
+        {
+            mRolloutStatus.pause = true; // Pause simulation when rollout completes
+            return;
+        }
+    }
     // mEnv->step(1);
 
     if (mC3Dmotion.size() > 0)
@@ -325,6 +378,105 @@ void GLFWApp::update(bool _isSave)
     }
 }
 
+void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
+                            bool show_phase, bool plot_avg_copy, std::string postfix)
+{
+    if (keys.empty() || !mGraphData)
+        return;
+
+    ImPlot::SetAxis(y_axis);
+
+    for (const auto &key : keys)
+    {
+        if (!mGraphData->key_exists(key))
+        {
+            std::cerr << "Key " << key << " not found in mGraphData" << std::endl;
+            continue;
+        }
+
+        // Get buffer data
+        std::vector<double> values = mGraphData->get(key);
+        if (values.empty())
+            continue;
+
+        int bufferSize = static_cast<int>(values.size());
+
+        // Create x-axis data
+        std::vector<float> x(bufferSize);
+        for (int i = 0; i < bufferSize; ++i)
+        {
+            x[i] = -(bufferSize - 1 - i);  // Most recent at 0, oldest at -N
+            if (show_phase && mEnv)
+                x[i] *= mEnv->getWorld()->getTimeStep();
+        }
+
+        // Create y-axis data
+        std::vector<float> y(bufferSize);
+        for (int i = 0; i < bufferSize; ++i)
+        {
+            y[i] = static_cast<float>(values[i]);
+        }
+
+        // Format key name
+        std::string selected_key = key;
+        size_t underscore_pos = key.find('_');
+        if (underscore_pos != std::string::npos)
+        {
+            selected_key = key.substr(underscore_pos + 1);
+        }
+        selected_key = selected_key + postfix;
+
+        // Plot the line
+        ImPlot::PlotLine(selected_key.c_str(), x.data(), y.data(), bufferSize);
+    }
+}
+
+void GLFWApp::plotPhaseBar(double x_min, double x_max, double y_min, double y_max)
+{
+    if (!mGraphData || !mEnv)
+        return;
+
+    if (!mGraphData->key_exists("contact_phaseR"))
+    {
+        std::cerr << "[GUI] Key contact_phaseR not found in mGraphData" << std::endl;
+        return;
+    }
+
+    // Get phase buffer data
+    std::vector<double> phase_values = mGraphData->get("contact_phaseR");
+
+    // Ensure there are at least two points to compare
+    if (phase_values.size() < 2)
+        return;
+
+    bool prev_phase = static_cast<bool>(phase_values[0]);
+    ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, 2.0f); // Thicker line
+
+    for (size_t i = 1; i < phase_values.size(); ++i)
+    {
+        bool current_phase = static_cast<bool>(phase_values[i]);
+        bool phase_change = (prev_phase != current_phase);
+        prev_phase = current_phase;
+
+        if (phase_change)
+        {
+            const double x_val = -(static_cast<int>(phase_values.size()) - 1 - static_cast<int>(i)) * mEnv->getWorld()->getTimeStep();
+
+            // Red: Heel strike (stance phase), Blue: Toe off (swing phase)
+            const auto color = current_phase ? IM_COL32(127, 0, 0, 255) : IM_COL32(0, 0, 127, 255);
+            ImPlot::PushStyleColor(ImPlotCol_Line, color);
+
+            const double x_vals[2] = {x_val, x_val};
+            const double y_vals[2] = {y_min, y_max};
+            ImPlot::PlotLine("##phase", x_vals, y_vals, 2);
+
+            ImPlot::PopStyleColor();
+        }
+    }
+
+    ImPlot::PopStyleVar();
+}
+
 void GLFWApp::startLoop()
 {
     while (!glfwWindowShouldClose(mWindow))
@@ -335,7 +487,7 @@ void GLFWApp::startLoop()
         }
 
         // Simulation Step
-        if (mSimulation)
+        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
             update();
 
         // Rendering
@@ -930,19 +1082,155 @@ void GLFWApp::drawGaitNetDisplay()
     mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
 }
 
-void GLFWApp::drawGaitAnalysisDisplay()
+void GLFWApp::drawVisualizationPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(400, 100), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
-    ImGui::Begin("Gait Analysis");
-
-    if (ImGui::CollapsingHeader("Drawn Muscles"))
+    ImGui::SetNextWindowSize(ImVec2(400, 800), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(mWidth - 410, 10), ImGuiCond_Once);
+    ImGui::Begin("Plots");
+    
+    // Status & Metadata
+    if (ImGui::CollapsingHeader("Status & Metadata", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        for (auto m : mSelectedMuscles)
-            ImGui::TextUnformatted(m->name.c_str());
+        ImGui::Text("Elapsed Time    : %.3f s", mEnv->getWorld()->getTime());
+        ImGui::Text("Phase           : %.3f", std::fmod(mEnv->getCharacter(0)->getLocalTime(), (mEnv->getBVH(0)->getMaxTime() / mEnv->getCadence())) / (mEnv->getBVH(0)->getMaxTime() / mEnv->getCadence()));
+        ImGui::Text("Target Vel      : %.3f m/s", mEnv->getTargetCOMVelocity());
+        ImGui::Text("Average Vel     : %.3f m/s", mEnv->getAvgVelocity()[2]);
+        ImGui::Text("Current Vel     : %.3f m/s", mEnv->getCharacter(0)->getSkeleton()->getCOMLinearVelocity()[2]);
+
+        ImGui::Separator();
+
+        // Rollout status display
+        if (mRolloutStatus.cycle == -1)
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Rollout: Infinite Mode");
+        else if (mRolloutStatus.cycle == 0)
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Rollout: Completed");
+        else
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Rollout: %d cycles remaining", mRolloutStatus.cycle);
     }
+
+    // Rewards
+    if (ImGui::CollapsingHeader("Rewards"))
+    {
+        ImPlot::SetNextAxisLimits(0, -3, 0);
+        ImPlot::SetNextAxisLimits(3, 0, 4);
+        if (ImPlot::BeginPlot("Reward"))
+        {
+            ImPlot::SetupAxes("Time (s)", "Reward");
+
+            // Plot reward data using common plotting function
+            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_metabolic", "r_loco", "r_avg", "r_step"};
+            plotGraphData(rewardKeys, ImAxis_Y1, true, false, "");
+
+            // Overlay phase bars
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+            ImPlot::EndPlot();
+        }
+    }
+
+    // Kinematics
+    if (ImGui::CollapsingHeader("Kinematics"))
+    {
+        // Joint Angles Plot
+        ImPlot::SetNextAxisLimits(0, -3, 0);
+        ImPlot::SetNextAxisLimits(3, -60, 60);
+        if (ImPlot::BeginPlot("Joint Angles (deg)"))
+        {
+            ImPlot::SetupAxes("Time (s)", "Angle (deg)");
+
+            std::vector<std::string> jointKeys = {"angle_HipR", "angle_HipIRR", "angle_HipAbR",
+                                                    "angle_KneeR", "angle_AnkleR"};
+            plotGraphData(jointKeys, ImAxis_Y1, true, false, "");
+
+            // Overlay phase bars
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+            ImPlot::EndPlot();
+        }
+
+        ImGui::Separator();
+
+        // Pelvis Angles Plot
+        ImPlot::SetNextAxisLimits(0, -3, 0);
+        ImPlot::SetNextAxisLimits(3, -20, 20);
+        if (ImPlot::BeginPlot("Pelvis Angles (deg)"))
+        {
+            ImPlot::SetupAxes("Time (s)", "Angle (deg)");
+
+            std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
+            plotGraphData(pelvisKeys, ImAxis_Y1, true, false, "");
+
+            // Overlay phase bars
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+            ImPlot::EndPlot();
+        }
+
+        ImGui::Separator();
+
+        // Torso Sway Plot
+        ImPlot::SetNextAxisLimits(0, -3, 0);
+        ImPlot::SetNextAxisLimits(3, -0.2, 0.2);
+        if (ImPlot::BeginPlot("Torso Sway (m)"))
+        {
+            ImPlot::SetupAxes("Time (s)", "Sway (m)");
+
+            std::vector<std::string> swayKeys = {"sway_Torso_X"};
+            plotGraphData(swayKeys, ImAxis_Y1, true, false, "");
+
+            // Overlay phase bars
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+            ImPlot::EndPlot();
+        }
+    }
+
+    // State
+    if (ImGui::CollapsingHeader("State"))
+    {
+        auto state = mEnv->getState();
+        ImPlot::SetNextAxisLimits(0, -0.5, state.rows() + 0.5, ImGuiCond_Always);
+        ImPlot::SetNextAxisLimits(3, -5, 5);
+
+        double *x = new double[state.rows()]();
+        double *y = new double[state.rows()]();
+        for (int i = 0; i < state.rows(); i++)
+        {
+            x[i] = i;
+            y[i] = state[i];
+        }
+        if (ImPlot::BeginPlot("state"))
+        {
+            ImPlot::PlotBars("", x, y, state.rows(), 1.0);
+            ImPlot::EndPlot();
+        }
+
+        ImGui::Separator();
+
+        // Constraint Force
+        Eigen::VectorXd cf = mEnv->getCharacter(0)->getSkeleton()->getConstraintForces();
+        ImPlot::SetNextAxisLimits(0, -0.5, cf.rows() + 0.5, ImGuiCond_Always);
+        ImPlot::SetNextAxisLimits(3, -5, 5);
+        double *x_cf = new double[cf.rows()]();
+        double *y_cf = cf.data();
+
+        for (int i = 0; i < cf.rows(); i++)
+            x_cf[i] = i;
+
+        if (ImPlot::BeginPlot("Constraint Force"))
+        {
+            ImPlot::PlotBars("dt", x_cf, y_cf, cf.rows(), 1.0);
+            ImPlot::EndPlot();
+        }
+    }
+
+    // Torques
     static int joint_selected = 0;
-    if (ImGui::CollapsingHeader("Torque Graph"))
+    if (ImGui::CollapsingHeader("Torques"))
     {
         if (ImGui::ListBoxHeader("Joint", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
         {
@@ -979,10 +1267,77 @@ void GLFWApp::drawGaitAnalysisDisplay()
             ImPlot::PlotLine("##activation_graph", p[0].data(), p[1].data(), p[0].size());
             ImPlot::EndPlot();
         }
+
+        ImGui::Separator();
+
+        // Torque bars
+        if (mEnv->getUseMuscle())
+        {
+            MuscleTuple tp = mEnv->getCharacter(0)->getMuscleTuple(false);
+
+            Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mEnv->getCharacter(0)->getSkeleton()->getNumDofs());
+            if (mEnv->getCharacter(0)->getIncludeJtPinSPD())
+                fullJtp.tail(fullJtp.rows() - mEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getNumDofs()) = tp.JtP;
+            Eigen::VectorXd dt = mEnv->getCharacter(0)->getSPDForces(mEnv->getCharacter(0)->getPDTarget(), fullJtp).tail(tp.JtP.rows());
+
+            auto mtl = mEnv->getCharacter(0)->getMuscleTorqueLogs();
+
+            Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
+            Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
+
+            for (int i = 0; i < tp.JtA.rows(); i++)
+            {
+                for (int j = 0; j < tp.JtA.cols(); j++)
+                {
+                    if (tp.JtA(i, j) > 0)
+                        max_tau[i] += tp.JtA(i, j);
+                    else
+                        min_tau[i] += tp.JtA(i, j);
+                }
+            }
+
+            ImPlot::SetNextAxisLimits(0, -0.5, dt.rows() + 0.5, ImGuiCond_Always);
+            ImPlot::SetNextAxisLimits(3, -5, 5);
+            double *x_tau = new double[dt.rows()]();
+            double *y_tau = dt.data();
+            double *y_min = min_tau.data();
+            double *y_max = max_tau.data();
+            double *y_passive = tp.JtP.data();
+
+            for (int i = 0; i < dt.rows(); i++)
+                x_tau[i] = i;
+
+            if (ImPlot::BeginPlot("torque"))
+            {
+                ImPlot::PlotBars("min", x_tau, y_min, dt.rows(), 1.0);
+                ImPlot::PlotBars("max", x_tau, y_max, dt.rows(), 1.0);
+                ImPlot::PlotBars("dt", x_tau, y_tau, dt.rows(), 1.0);
+                ImPlot::PlotBars("passive", x_tau, y_passive, dt.rows(), 1.0);
+                if (mtl.size() > 0)
+                    ImPlot::PlotBars("exact", x_tau, mtl.back().tail(mtl.back().rows() - 6).data(), dt.rows(), 1.0);
+
+                ImPlot::EndPlot();
+            }
+        }
+        else
+        {
+            Eigen::VectorXd dt = mEnv->getCharacter(0)->getTorque();
+            ImPlot::SetNextAxisLimits(0, -0.5, dt.rows() + 0.5, ImGuiCond_Always);
+            ImPlot::SetNextAxisLimits(3, -5, 5);
+            double *x_tau = new double[dt.rows()]();
+            for (int i = 0; i < dt.rows(); i++)
+                x_tau[i] = i;
+            if (ImPlot::BeginPlot("torque"))
+            {
+                ImPlot::PlotBars("dt", x_tau, dt.data(), dt.rows(), 1.0);
+                ImPlot::EndPlot();
+            }
+        }
     }
 
+    // Muscles
     static int selected = 0;
-    if (ImGui::CollapsingHeader("Muscle Graph"))
+    if (ImGui::CollapsingHeader("Muscles"))
     {
 
         auto m = mEnv->getCharacter(0)->getMuscles()[selected];
@@ -1026,6 +1381,32 @@ void GLFWApp::drawGaitAnalysisDisplay()
             ImPlot::EndPlot();
         }
 
+        ImGui::Separator();
+
+        // Activation bars
+        if (mEnv->getUseMuscle())
+        {
+            Eigen::VectorXd acitvation = mEnv->getCharacter(0)->getActivations();
+
+            ImPlot::SetNextAxisLimits(0, -0.5, acitvation.rows() + 0.5, ImGuiCond_Always);
+            ImPlot::SetNextAxisLimits(3, 0, 1);
+            double *x_act = new double[acitvation.rows()]();
+            double *y_act = new double[acitvation.rows()]();
+
+            for (int i = 0; i < acitvation.rows(); i++)
+            {
+                x_act[i] = i;
+                y_act[i] = acitvation[i];
+            }
+            if (ImPlot::BeginPlot("activation"))
+            {
+                ImPlot::PlotBars("activation_level", x_act, y_act, acitvation.rows(), 1.0);
+                ImPlot::EndPlot();
+            }
+        }
+
+        ImGui::Separator();
+
         ImGui::Text("Muscle Name");
         if (ImGui::ListBoxHeader("Muscle", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
         {
@@ -1042,27 +1423,84 @@ void GLFWApp::drawGaitAnalysisDisplay()
         }
     }
 
-    // Muscle Activation
-    if (ImGui::CollapsingHeader("Activation"))
+    // Gait
+    if (ImGui::CollapsingHeader("Gait"))
     {
+        int horizon = (mEnv->getBVH(0)->getMaxTime() / (mEnv->getCadence() / sqrt(mEnv->getCharacter(0)->getGlobalRatio()))) * mEnv->getSimulationHz();
 
-        if (mEnv->getUseMuscle())
+        ImPlot::SetNextAxisLimits(0, 0, horizon * 0.01, ImGuiCond_Always);
+        ImPlot::SetNextAxisLimits(3, 0, 1.5);
+
+        if (ImPlot::BeginPlot("Contact Graph"))
         {
-            Eigen::VectorXd acitvation = mEnv->getCharacter(0)->getActivations();
+            std::vector<double> px_l;
+            std::vector<double> px_r;
+            std::vector<double> py_l;
+            std::vector<double> py_r;
 
-            ImPlot::SetNextAxisLimits(0, -0.5, acitvation.rows() + 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, 0, 1);
-            double *x = new double[acitvation.rows()]();
-            double *y = new double[acitvation.rows()]();
+            px_l.clear();
+            px_r.clear();
+            py_l.clear();
+            py_r.clear();
 
-            for (int i = 0; i < acitvation.rows(); i++)
+            std::vector<Eigen::Vector2i> c_logs = mEnv->getContactLogs();
+            for (int i = 0; i < c_logs.size(); i++)
             {
-                x[i] = i;
-                y[i] = acitvation[i];
+                px_l.push_back(0.01 * i - c_logs.size() * 0.01 + horizon * 0.01);
+                px_r.push_back(0.01 * i - (c_logs.size() + horizon * 0.5) * 0.01 + horizon * 0.01);
+
+                py_l.push_back(c_logs[i][0]);
+                py_r.push_back(c_logs[i][1]);
             }
-            if (ImPlot::BeginPlot("activation"))
+            ImPlot::PlotLine("Left_Contact", px_l.data(), py_l.data(), px_l.size());
+            ImPlot::PlotLine("Right_Contact", px_r.data(), py_r.data(), px_r.size());
+            ImPlot::EndPlot();
+        }
+    }
+
+    // Network Weights
+    if (ImGui::CollapsingHeader("Network Weights"))
+    {
+        if (mEnv->getWeights().size() > 0)
+        {
+            auto weight = mEnv->getWeights().data();
+            ImPlot::SetNextAxisLimits(0, -0.5, mEnv->getWeights().size() - 0.5, ImGuiCond_Always);
+            ImPlot::SetNextAxisLimits(3, 0.0, 1.0);
+
+            double *x_w = new double[mEnv->getWeights().size()]();
+            for (int i = 0; i < mEnv->getWeights().size(); i++)
+                x_w[i] = i;
+
+            if (ImPlot::BeginPlot("weight"))
             {
-                ImPlot::PlotBars("activation_level", x, y, acitvation.rows(), 1.0);
+                ImPlot::PlotBars("", x_w, weight, mEnv->getWeights().size(), 0.6);
+                ImPlot::EndPlot();
+            }
+        }
+
+        ImGui::Separator();
+
+        if (mEnv->getDmins().size() > 0)
+        {
+            auto dmins = mEnv->getDmins().data();
+            auto betas = mEnv->getBetas().data();
+
+            ImPlot::SetNextAxisLimits(0, -0.5, mEnv->getDmins().size() - 0.5, ImGuiCond_Always);
+            ImPlot::SetNextAxisLimits(3, 0.0, 1.0);
+
+            double *x_dmin = new double[mEnv->getDmins().size()]();
+            double *x_beta = new double[mEnv->getBetas().size()]();
+
+            for (int i = 0; i < mEnv->getDmins().size(); i++)
+            {
+                x_dmin[i] = (i - 0.15);
+                x_beta[i] = (i + 0.15);
+            }
+            if (ImPlot::BeginPlot("dmins_and_betas"))
+            {
+                ImPlot::PlotBars("dmin", x_dmin, dmins, mEnv->getDmins().size(), 0.3);
+                ImPlot::PlotBars("beta", x_beta, betas, mEnv->getBetas().size(), 0.3);
+
                 ImPlot::EndPlot();
             }
         }
@@ -1071,160 +1509,55 @@ void GLFWApp::drawGaitAnalysisDisplay()
     ImGui::End();
 }
 
-void GLFWApp::drawUIDisplay()
+void GLFWApp::drawControlPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 410, 10), ImGuiCond_Once);
-    ImGui::Begin("Information");
-    ImGui::Text("Elapsed     Time       :  %.3f s", mEnv->getWorld()->getTime());
-    ImGui::Text("Current    Phase       :  %.3f  ", std::fmod(mEnv->getCharacter(0)->getLocalTime(), (mEnv->getBVH(0)->getMaxTime() / mEnv->getCadence())) / (mEnv->getBVH(0)->getMaxTime() / mEnv->getCadence()));
-    ImGui::Text("Target     Velocity    :  %.3f m/s", mEnv->getTargetCOMVelocity());
-    ImGui::Text("Average    Velocity    :  %.3f m/s", mEnv->getAvgVelocity()[2]);
-    ImGui::Text("Current    Velocity    :  %.3f m/s", mEnv->getCharacter(0)->getSkeleton()->getCOMLinearVelocity()[2]);
+    ImGui::SetNextWindowSize(ImVec2(400, 800), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
+    ImGui::Begin("Controls");
 
-    // Metadata
-    if (ImGui::CollapsingHeader("Metadata"))
+    // Rollout Control
+    if (ImGui::CollapsingHeader("Rollout Control", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        if (ImGui::Button("Print"))
-            std::cout << mEnv->getMetadata() << std::endl;
-        ImGui::TextUnformatted(mEnv->getMetadata().c_str());
-    }
+        static int rolloutInput = 10; // Static variable to store user input
 
-    // Reward
-    if (ImGui::CollapsingHeader("Reward"))
-    {
-        ImPlot::SetNextAxisLimits(0, -3, 0);
-        ImPlot::SetNextAxisLimits(3, 0, 4);
-        if (ImPlot::BeginPlot("Reward"))
+        ImGui::Text("Remaining Cycles: %d", mRolloutStatus.cycle);
+
+        ImGui::Separator();
+
+        // Cycle input
+        ImGui::SetNextItemWidth(90);
+        ImGui::InputInt("Rollout Cycles", &rolloutInput);
+        if (rolloutInput < 1) rolloutInput = 1;
+
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Infinite")) rolloutInput = -1;
+        ImGui::SameLine();
+
+        // Run button
+        if (ImGui::Button("Run"))
         {
-            ImPlot::SetupAxes("x", "r");
-            if (mRewardBuffer.size() > 0)
-            {
-                double *x = new double[mRewardBuffer.size()]();
-                int idx = 0;
-                for (int i = mRewardBuffer.size() - 1; i > 0; i--)
-                    x[idx++] = -i * (1.0 / mEnv->getControlHz());
-                for (auto rs : mRewardBuffer[0])
-                {
-
-                    double *v = new double[mRewardBuffer.size()]();
-                    for (int i = 0; i < mRewardBuffer.size(); i++)
-                        v[i] = (mRewardBuffer[i].find(rs.first)->second);
-                    ImPlot::PlotLine(rs.first.c_str(), x, v, mRewardBuffer.size());
-                }
-            }
-            ImPlot::EndPlot();
+            mRolloutStatus.cycle = rolloutInput;
+            mRolloutStatus.pause = false;
         }
-    }
 
-    // State
-    if (ImGui::CollapsingHeader("State"))
-    {
-        auto state = mEnv->getState();
-        ImPlot::SetNextAxisLimits(0, -0.5, state.rows() + 0.5, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, -5, 5);
-
-        // ImPlot::SetNextPlotLimitsY(-5,5);
-        double *x = new double[state.rows()]();
-        double *y = new double[state.rows()]();
-        for (int i = 0; i < state.rows(); i++)
+        ImGui::SameLine();
+        if (ImGui::Button("Stop"))
         {
-            x[i] = i;
-            y[i] = state[i];
+            mRolloutStatus.pause = true;
         }
-        if (ImPlot::BeginPlot("state"))
+
+        ImGui::SameLine();
+        if (ImGui::Button("Reset"))
         {
-            ImPlot::PlotBars("", x, y, state.rows(), 1.0);
-            ImPlot::EndPlot();
+            mRolloutStatus.reset();
+            mEnv->reset();
+            mGraphData->clear_all();
+            rolloutInput = 10;
         }
     }
 
-    if (ImGui::CollapsingHeader("Constraint Force"))
-    {
-        Eigen::VectorXd cf = mEnv->getCharacter(0)->getSkeleton()->getConstraintForces();
-        ImPlot::SetNextAxisLimits(0, -0.5, cf.rows() + 0.5, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, -5, 5);
-        double *x = new double[cf.rows()]();
-        double *y = cf.data();
-
-        for (int i = 0; i < cf.rows(); i++)
-            x[i] = i;
-
-        if (ImPlot::BeginPlot("Constraint Force"))
-        {
-            ImPlot::PlotBars("dt", x, y, cf.rows(), 1.0);
-            ImPlot::EndPlot();
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Torque"))
-    {
-        if (mEnv->getUseMuscle())
-        {
-            MuscleTuple tp = mEnv->getCharacter(0)->getMuscleTuple(false);
-
-            Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mEnv->getCharacter(0)->getSkeleton()->getNumDofs());
-            if (mEnv->getCharacter(0)->getIncludeJtPinSPD())
-                fullJtp.tail(fullJtp.rows() - mEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getNumDofs()) = tp.JtP;
-            Eigen::VectorXd dt = mEnv->getCharacter(0)->getSPDForces(mEnv->getCharacter(0)->getPDTarget(), fullJtp).tail(tp.JtP.rows());
-
-            auto mtl = mEnv->getCharacter(0)->getMuscleTorqueLogs();
-
-            Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
-            Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
-
-            for (int i = 0; i < tp.JtA.rows(); i++)
-            {
-                for (int j = 0; j < tp.JtA.cols(); j++)
-                {
-                    if (tp.JtA(i, j) > 0)
-                        max_tau[i] += tp.JtA(i, j);
-                    else
-                        min_tau[i] += tp.JtA(i, j);
-                }
-            }
-
-            // Drawing
-            ImPlot::SetNextAxisLimits(0, -0.5, dt.rows() + 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, -5, 5);
-            double *x = new double[dt.rows()]();
-            double *y = dt.data();
-            double *y_min = min_tau.data();
-            double *y_max = max_tau.data();
-            double *y_passive = tp.JtP.data();
-
-            for (int i = 0; i < dt.rows(); i++)
-                x[i] = i;
-
-            if (ImPlot::BeginPlot("torque"))
-            {
-                ImPlot::PlotBars("min", x, y_min, dt.rows(), 1.0);
-                ImPlot::PlotBars("max", x, y_max, dt.rows(), 1.0);
-                ImPlot::PlotBars("dt", x, y, dt.rows(), 1.0);
-                ImPlot::PlotBars("passive", x, y_passive, dt.rows(), 1.0);
-                if (mtl.size() > 0)
-                    ImPlot::PlotBars("exact", x, mtl.back().tail(mtl.back().rows() - 6).data(), dt.rows(), 1.0);
-
-                ImPlot::EndPlot();
-            }
-        }
-        else
-        {
-            Eigen::VectorXd dt = mEnv->getCharacter(0)->getTorque();
-            ImPlot::SetNextAxisLimits(0, -0.5, dt.rows() + 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, -5, 5);
-            double *x = new double[dt.rows()]();
-            for (int i = 0; i < dt.rows(); i++)
-                x[i] = i;
-            if (ImPlot::BeginPlot("torque"))
-            {
-                ImPlot::PlotBars("dt", x, dt.data(), dt.rows(), 1.0);
-                ImPlot::EndPlot();
-            }
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Muscle Activation"))
+    // Muscle Control
+    if (ImGui::CollapsingHeader("Muscle Control"))
     {
         Eigen::VectorXf activation = mEnv->getCharacter(0)->getActivations().cast<float>(); // * mEnv->getActionScale();
         int idx = 0;
@@ -1236,20 +1569,88 @@ void GLFWApp::drawUIDisplay()
         mEnv->getCharacter(0)->setActivations((activation.cast<double>()));
     }
 
-    // Rendering Option
-    if (ImGui::CollapsingHeader("Rendering Option"))
+    // Joint Control
+    if (ImGui::CollapsingHeader("Joint Control"))
     {
-        ImGui::SliderFloat("Muscle Resolution\t", &mMuscleResolution, 0.0, 1000.0);
-        ImGui::Checkbox("Draw Reference Motion\t", &mDrawReferenceSkeleton);
-        ImGui::Checkbox("Draw PD Target Motion\t", &mDrawPDTarget);
-        ImGui::Checkbox("Draw Joint Sphere\t", &mDrawJointSphere);
-        ImGui::Checkbox("Stochastic Policy\t", &mStochasticPolicy);
-        ImGui::Checkbox("Draw Foot Step\t", &mDrawFootStep);
-        ImGui::Checkbox("Draw EOE\t", &mDrawEOE);
-        ImGui::Checkbox("Draw C3D\t", &mRenderC3D);
+        // Joint Position
+        Eigen::VectorXd pos_lower_limit = mEnv->getCharacter(0)->getSkeleton()->getPositionLowerLimits();
+        Eigen::VectorXd pos_upper_limit = mEnv->getCharacter(0)->getSkeleton()->getPositionUpperLimits();
+        Eigen::VectorXf pos = mEnv->getCharacter(0)->getSkeleton()->getPositions().cast<float>();
+
+        for (int i = 0; i < pos.rows(); i++)
+        {
+            if (i < 6)
+            {
+                pos_lower_limit[i] = -10;
+                pos_upper_limit[i] = 10;
+            }
+            ImGui::SliderFloat((std::to_string(i) + " Pos").c_str(), &pos[i], pos_lower_limit[i], pos_upper_limit[i]);
+        }
+        mEnv->getCharacter(0)->getSkeleton()->setPositions(pos.cast<double>());
+
+        ImGui::Separator();
+
+        // Joint Velocity
+        Eigen::VectorXd vel_lower_limit = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setOnes() * -5;
+        Eigen::VectorXd vel_upper_limit = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setOnes() * 5;
+        Eigen::VectorXf vel = mEnv->getCharacter(0)->getSkeleton()->getVelocities().cast<float>();
+
+        for (int i = 0; i < vel.rows(); i++)
+            ImGui::SliderFloat((std::to_string(i) + " Vel").c_str(), &vel[i], vel_lower_limit[i], vel_upper_limit[i]);
+
+        mEnv->getCharacter(0)->getSkeleton()->setVelocities(vel.cast<double>());
     }
-    if (ImGui::CollapsingHeader("Muscle Rendering Option"))
+
+    // Gait Parameters
+    if (ImGui::CollapsingHeader("Gait Parameters"))
     {
+        Eigen::VectorXf ParamState = mEnv->getParamState().cast<float>();
+        Eigen::VectorXf ParamMin = mEnv->getParamMin().cast<float>();
+        Eigen::VectorXf ParamMax = mEnv->getParamMax().cast<float>();
+
+        int idx = 0;
+        for (auto c : mEnv->getParamName())
+        {
+            ImGui::SliderFloat(c.c_str(), &ParamState[idx], ParamMin[idx], ParamMax[idx] + 1E-10);
+            idx++;
+        }
+        mEnv->setParamState(ParamState.cast<double>(), false, true);
+        mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+    }
+
+    // Body Parameters
+    if (ImGui::CollapsingHeader("Body Parameters"))
+    {
+        Eigen::VectorXf group_v = Eigen::VectorXf::Ones(mEnv->getGroupParam().size());
+        int idx = 0;
+
+        for (auto p_g : mEnv->getGroupParam())
+            group_v[idx++] = p_g.v;
+
+        idx = 0;
+        for (auto p_g : mEnv->getGroupParam())
+        {
+            ImGui::SliderFloat(p_g.name.c_str(), &group_v[idx], 0.0, 1.0);
+            idx++;
+        }
+        mEnv->setGroupParam(group_v.cast<double>());
+        mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+    }
+
+    // Rendering
+    if (ImGui::CollapsingHeader("Rendering"))
+    {
+        ImGui::SliderFloat("Muscle Resolution", &mMuscleResolution, 0.0, 1000.0);
+        ImGui::Checkbox("Draw Reference Motion", &mDrawReferenceSkeleton);
+        ImGui::Checkbox("Draw PD Target Motion", &mDrawPDTarget);
+        ImGui::Checkbox("Draw Joint Sphere", &mDrawJointSphere);
+        ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
+        ImGui::Checkbox("Draw Foot Step", &mDrawFootStep);
+        ImGui::Checkbox("Draw EOE", &mDrawEOE);
+        ImGui::Checkbox("Draw C3D", &mRenderC3D);
+
+        ImGui::Separator();
+
         ImGui::RadioButton("PassiveForce", &mMuscleRenderTypeInt, 0);
         ImGui::RadioButton("ContractileForce", &mMuscleRenderTypeInt, 1);
         ImGui::RadioButton("ActivatonLevel", &mMuscleRenderTypeInt, 2);
@@ -1258,12 +1659,15 @@ void GLFWApp::drawUIDisplay()
 
         mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
     }
+
     if (mEnv->getUseMuscle())
         mEnv->getCharacter(0)->getMuscleTuple(false);
+
     // Related Dof Muscle Rendering
     mSelectedMuscles.clear();
 
-    if (ImGui::CollapsingHeader("Related Dof Muscle"))
+    // Muscle Selection
+    if (ImGui::CollapsingHeader("Muscle Selection"))
     {
         for (int i = 0; i < mRelatedDofs.size(); i += 2)
         {
@@ -1297,110 +1701,8 @@ void GLFWApp::drawUIDisplay()
         }
     }
 
-    if (ImGui::CollapsingHeader("Joint Position"))
-    {
-        Eigen::VectorXd pos_lower_limit = mEnv->getCharacter(0)->getSkeleton()->getPositionLowerLimits();
-        Eigen::VectorXd pos_upper_limit = mEnv->getCharacter(0)->getSkeleton()->getPositionUpperLimits();
-        Eigen::VectorXf pos = mEnv->getCharacter(0)->getSkeleton()->getPositions().cast<float>();
-
-        for (int i = 0; i < pos.rows(); i++)
-        {
-            if (i < 6)
-            {
-                pos_lower_limit[i] = -10;
-                pos_upper_limit[i] = 10;
-            }
-            ImGui::SliderFloat((std::to_string(i) + " Joint ").c_str(), &pos[i], pos_lower_limit[i], pos_upper_limit[i]);
-        }
-        mEnv->getCharacter(0)->getSkeleton()->setPositions(pos.cast<double>());
-    }
-
-    if (ImGui::CollapsingHeader("Joint Velocity"))
-    {
-        Eigen::VectorXd vel_lower_limit = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setOnes() * -5;
-        Eigen::VectorXd vel_upper_limit = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setOnes() * 5;
-        Eigen::VectorXf vel = mEnv->getCharacter(0)->getSkeleton()->getVelocities().cast<float>();
-
-        for (int i = 0; i < vel.rows(); i++)
-            ImGui::SliderFloat((std::to_string(i) + " Joint Velocity").c_str(), &vel[i], vel_lower_limit[i], vel_upper_limit[i]);
-
-        mEnv->getCharacter(0)->getSkeleton()->setVelocities(vel.cast<double>());
-    }
-
-    // Parameters
-    if (ImGui::CollapsingHeader("Parameters"))
-    {
-        Eigen::VectorXf ParamState = mEnv->getParamState().cast<float>();
-        Eigen::VectorXf ParamMin = mEnv->getParamMin().cast<float>();
-        Eigen::VectorXf ParamMax = mEnv->getParamMax().cast<float>();
-
-        int idx = 0;
-        for (auto c : mEnv->getParamName())
-        {
-            ImGui::SliderFloat(c.c_str(), &ParamState[idx], ParamMin[idx], ParamMax[idx] + 1E-10);
-            idx++;
-        }
-        mEnv->setParamState(ParamState.cast<double>(), false, true);
-        mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-    }
-
-    // Parameters (Group)
-    if (ImGui::CollapsingHeader("Parameters (Group)"))
-    {
-        Eigen::VectorXf group_v = Eigen::VectorXf::Ones(mEnv->getGroupParam().size());
-        int idx = 0;
-
-        for (auto p_g : mEnv->getGroupParam())
-            group_v[idx++] = p_g.v;
-
-        idx = 0;
-        for (auto p_g : mEnv->getGroupParam())
-        {
-            ImGui::SliderFloat(p_g.name.c_str(), &group_v[idx], 0.0, 1.0);
-            idx++;
-        }
-        mEnv->setGroupParam(group_v.cast<double>());
-        mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-    }
-
-    if (ImGui::CollapsingHeader("Gait Analysis"))
-    {
-        int horizon = (mEnv->getBVH(0)->getMaxTime() / (mEnv->getCadence() / sqrt(mEnv->getCharacter(0)->getGlobalRatio()))) * mEnv->getSimulationHz();
-
-        ImPlot::SetNextAxisLimits(0, 0, horizon * 0.01, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, 0, 1.5);
-
-        if (ImPlot::BeginPlot("Contact Graph"))
-        {
-
-            // std::vector<std::vector<double>> p; // = m->GetGraphData();
-            std::vector<double> px_l;
-            std::vector<double> px_r;
-
-            std::vector<double> py_l;
-            std::vector<double> py_r;
-
-            px_l.clear();
-            px_r.clear();
-
-            py_l.clear();
-            py_r.clear();
-            std::vector<Eigen::Vector2i> c_logs = mEnv->getContactLogs();
-            for (int i = 0; i < c_logs.size(); i++)
-            {
-                px_l.push_back(0.01 * i - c_logs.size() * 0.01 + horizon * 0.01);
-                px_r.push_back(0.01 * i - (c_logs.size() + horizon * 0.5) * 0.01 + horizon * 0.01);
-
-                py_l.push_back(c_logs[i][0]);
-                py_r.push_back(c_logs[i][1]);
-            }
-            ImPlot::PlotLine("Left_Contact", px_l.data(), py_l.data(), px_l.size());
-            ImPlot::PlotLine("Right_Contact", px_r.data(), py_r.data(), px_r.size());
-            ImPlot::EndPlot();
-        }
-    }
-    // For Cascading
-    if (ImGui::CollapsingHeader("Weights"))
+    // Network
+    if (ImGui::CollapsingHeader("Network"))
     {
         if (mEnv->getWeights().size() > 0)
         {
@@ -1418,52 +1720,15 @@ void GLFWApp::drawUIDisplay()
             }
             mEnv->setUseWeights(mUseWeights);
             ImGui::NewLine();
-            auto weight = mEnv->getWeights().data();
-            ImPlot::SetNextAxisLimits(0, -0.5, mEnv->getWeights().size() - 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, 0.0, 1.0);
-
-            // X Axis
-            double *x = new double[mEnv->getWeights().size()]();
-            for (int i = 0; i < mEnv->getWeights().size(); i++)
-                x[i] = i;
-
-            if (ImPlot::BeginPlot("weight"))
-            {
-                ImPlot::PlotBars("", x, weight, mEnv->getWeights().size(), 0.6);
-                ImPlot::EndPlot();
-            }
         }
     }
 
-    if (ImGui::CollapsingHeader("BetasAndDmins"))
+    // Metadata
+    if (ImGui::CollapsingHeader("Metadata"))
     {
-        if (mEnv->getDmins().size() > 0)
-        {
-            auto dmins = mEnv->getDmins().data();
-            auto betas = mEnv->getBetas().data();
-
-            ImPlot::SetNextAxisLimits(0, -0.5, mEnv->getDmins().size() - 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, 0.0, 1.0);
-
-            // X Axis
-            double *x_dmin = new double[mEnv->getDmins().size()]();
-            double *x_beta = new double[mEnv->getBetas().size()]();
-
-            // double *x_beta = new double[mEnv->getBetas().size()]();
-
-            for (int i = 0; i < mEnv->getDmins().size(); i++)
-            {
-                x_dmin[i] = (i - 0.15);
-                x_beta[i] = (i + 0.15);
-            }
-            if (ImPlot::BeginPlot("dmins_and_betas"))
-            {
-                ImPlot::PlotBars("dmin", x_dmin, dmins, mEnv->getDmins().size(), 0.3);
-                ImPlot::PlotBars("beta", x_beta, betas, mEnv->getBetas().size(), 0.3);
-
-                ImPlot::EndPlot();
-            }
-        }
+        if (ImGui::Button("Print"))
+            std::cout << mEnv->getMetadata() << std::endl;
+        ImGui::TextUnformatted(mEnv->getMetadata().c_str());
     }
 
     ImGui::End();
@@ -1474,8 +1739,8 @@ void GLFWApp::drawUIFrame()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    drawUIDisplay();
-    drawGaitAnalysisDisplay();
+    drawControlPanel();
+    drawVisualizationPanel();
     drawGaitNetDisplay();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -1699,7 +1964,7 @@ void GLFWApp::drawSimFrame()
             motion_pos = mEnv->getCharacter(0)->sixDofToPos(mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60))) + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60)));
 
             // Root Offset
-            if (mSimulation)
+            if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
             {
                 mMotionRootOffset[0] += motion_pos[3] * 0.5;
                 mMotionRootOffset[1] = motion_pos[4];
@@ -1730,7 +1995,7 @@ void GLFWApp::drawSimFrame()
         FGN_in << mEnv->getNormalizedParamState(mEnv->getParamMin(), mEnv->getParamMax()), phase;
 
         Eigen::VectorXd res = mFGN.attr("get_action")(FGN_in).cast<Eigen::VectorXd>();
-        if (mSimulation)
+        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
         {
             // Because of display Hz
             mFGNRootOffset[0] += res[6] * 0.5;
@@ -1835,7 +2100,7 @@ void GLFWApp::reset()
     mC3DCount = 0;
     mEnv->reset();
     mFGNRootOffset = mEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getPositions().tail(3);
-    mRewardBuffer.clear();
+    mGraphData->clear_all();
     mUseWeights = mEnv->getUseWeights();
 
     mMotionRootOffset = Eigen::Vector3d::Zero();
@@ -1897,7 +2162,8 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             mDrawOBJ = !mDrawOBJ;
             break;
         case GLFW_KEY_SPACE:
-            mSimulation = !mSimulation;
+            mRolloutStatus.pause = !mRolloutStatus.pause;
+            mRolloutStatus.cycle = -1;
             break;
         // Camera Setting
         case GLFW_KEY_F:

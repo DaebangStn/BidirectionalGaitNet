@@ -6,6 +6,9 @@
 #include "dart/collision/bullet/bullet.hpp"
 #include "export.h"
 
+// Forward declaration
+template <typename T> class CBufferData;
+
 // Struct Motion (include motion (eigen vectorxd) and param (eigen vectorxd)
 struct Motion
 {
@@ -66,7 +69,7 @@ public:
 
     void setAction(Eigen::VectorXd _action);
 
-    void step(int _step = 0);
+    void step(int _step = 0, CBufferData<double>* pGraphData = nullptr);
     void reset();
 
     int isEOE();
@@ -224,6 +227,7 @@ public:
     void poseOptimiziation(int iter = 100);
 
     Eigen::Vector2i getIsContact();
+    Eigen::Vector2d getFootGRF(); // Get normalized GRF for left and right foot
     const std::vector<Eigen::Vector2i> &getContactLogs() { return mContactLogs; }
 
     // For Cascading
@@ -260,6 +264,10 @@ public:
     }
     int getNumKnownParam() {return mNumKnownParam;}
     double getGlobalTime() { return mGlobalTime; }
+
+    // Gait cycle completion detection
+    bool isGaitCycleComplete();
+    int getGaitCycleCount() const { return mWorldPhaseCount; }
 
 private : 
      bool mPhaseUpdateInContolHz;
@@ -361,6 +369,7 @@ private :
     bool mHardPhaseClipping;
     int mPhaseCount;
     int mWorldPhaseCount;
+    int mPrevWorldPhaseCount;
 
     int mSimulationStep;
     EOEType mEOEType;
@@ -373,6 +382,7 @@ private :
 
     // Gait Analysis (only work for render mode)
     std::vector<Eigen::Vector2i> mContactLogs;
+    Eigen::Vector2i mPrevContact; // Previous contact state for heel strike detection
 
     // nFor Cascading
     bool mUseCascading;
