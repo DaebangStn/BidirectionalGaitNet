@@ -1,7 +1,6 @@
 import torch.optim as optim
 import argparse
 import numpy as np
-import os
 import time
 from pathlib import Path
 from typing import Dict
@@ -9,9 +8,11 @@ import torch
 import pickle
 from ray_model import SimulationNN_Ray, MuscleNN, RolloutNNRay
 from ray_env import MyEnv
+from util import timestamp
 
 import ray
 from ray import tune
+from ray.tune import CLIReporter
 from ray.rllib.algorithms.ppo.ppo_torch_policy import PPOTorchPolicy
 from ray.rllib.algorithms.ppo import PPO
 from ray.rllib.models import ModelCatalog
@@ -303,9 +304,12 @@ class MyTrainer(PPO):
                 state["muscle_optimizer"])
 
     def save_checkpoint(self, checkpoint_path):
-        print(f'Saving checkpoint at path {checkpoint_path}')
-        PPO.save_checkpoint(self, checkpoint_path)
-        return checkpoint_path
+        checkpoint_dir = Path(checkpoint_path)
+        trial_timestamp = checkpoint_dir.parent.name
+        checkpoint_path = checkpoint_dir / f'ckpt-{self.iteration:06d}-{trial_timestamp}'
+        with open(checkpoint_path, 'wb') as f:
+            pickle.dump(self.__getstate__(), f)
+        return checkpoint_path.as_posix()
 
     def save_max_checkpoint(self, checkpoint_path) -> str:
         with open(Path(checkpoint_path) / "max_checkpoint", 'wb') as f:
@@ -330,10 +334,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--cluster", action='store_true')
 parser.add_argument("--config", type=str, default="ppo_mini")
 parser.add_argument("--config-file", type=str, default="python/ray_config.py")
-parser.add_argument('-n', '--name', type=str)
-parser.add_argument("--env", type=str, default="data/base.xml")
+parser.add_argument("--env", type=str, default="data/base_lonly.xml")
 parser.add_argument("--checkpoint", type=str, default=None)
-
 parser.add_argument("--rollout", action='store_true')
 
 if __name__ == "__main__":
@@ -374,9 +376,6 @@ if __name__ == "__main__":
     if args.rollout:
         config["batch_mode"] = "complete_episodes"
 
-    local_dir = "./ray_results"
-    algorithm = config["trainer_config"]["algorithm"]
-
     with MyEnv(env_xml) as env:
         config["metadata"] = env.metadata
         config["isTwoLevelActuactor"] = env.isTwoLevelActuactor
@@ -387,15 +386,13 @@ if __name__ == "__main__":
 
         config["env_config"]["num_muscles"] = env.env.getNumMuscles()
         config["env_config"]["num_muscle_dofs"] = env.env.getNumMuscleDof()
-
-    from ray.tune import CLIReporter
-
+    
     tune.run(MyTrainer,
-             name=args.name,
+             name=Path(args.env).stem,
              config=config,
-             local_dir=local_dir,
+             trial_dirname_creator=(lambda trial: timestamp()),
+             local_dir="ray_results",
              restore=checkpoint_path,
-             progress_reporter=CLIReporter(max_report_frequency=60),
+             progress_reporter=CLIReporter(max_report_frequency=500),
              checkpoint_freq=500)
-
     ray.shutdown()
