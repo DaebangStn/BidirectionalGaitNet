@@ -7,4 +7,9 @@
 let "num_pending_trials=(${SLURM_NNODES} * 64)"
 export TUNE_MAX_PENDING_TRIALS_PG=${num_pending_trials}
 
-python3 -u ray_train.py --config=ppo_small_node --env "data/${SLURM_JOB_NAME}.xml"
+ray stop
+ray start --head --num-cpus=${SLURM_CPUS_PER_TASK} --num-gpus=1 \
+  --ray-client-server-port=19999 --min-worker-port=20000 --max-worker-port=21000
+
+python3 -u python/ray_train.py --config=ppo_small_node --env "data/${SLURM_JOB_NAME}.xml"
+ray stop

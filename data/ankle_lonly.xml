@@ -216,7 +216,10 @@
 
 <cascading>
     <networks>
-        <nn0>@data/trained_nn/base_lonly</nn0>
+        <!-- <nn0>@data/trained_nn/base_lonly</nn0> -->
+        <!-- <nn0>@ftp:imo-geon/mnt/blue8T/bidir_ckpt/base_lonly/1002_110139/checkpoint_000004/ckpt-000004-1002_110139</nn0> -->
+        <nn0>@ftp:imo-geon/mnt/blue8T/bidir_ckpt/base_lonly/#2/ckpt*</nn0>
+        <!-- <nn0>@ftp:imo-geon/mnt/blue8T/bidir_ckpt/base_lonly/1002_110139/@</nn0> -->
     </networks>
     <edges>
     </edges>

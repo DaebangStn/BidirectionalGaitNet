@@ -331,7 +331,6 @@ def get_config_from_file(filename: str, config: str):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--cluster", action='store_true')
 parser.add_argument("--config", type=str, default="ppo_mini")
 parser.add_argument("--config-file", type=str, default="python/ray_config.py")
 parser.add_argument("--env", type=str, default="data/base_lonly.xml")
@@ -394,5 +393,5 @@ if __name__ == "__main__":
              local_dir="ray_results",
              restore=checkpoint_path,
              progress_reporter=CLIReporter(max_report_frequency=500),
-             checkpoint_freq=500)
+             checkpoint_freq=1)
     ray.shutdown()

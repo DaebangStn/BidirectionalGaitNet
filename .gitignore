@@ -61,6 +61,7 @@ python/gvae_prior_training*
 python/Result
 
 tmp/
+*temp/
 distillation*
 experiment*
 gaitnet/
@@ -89,3 +90,5 @@ imgui.ini
 
 augment/
 augment_test/
+
+secret.yaml

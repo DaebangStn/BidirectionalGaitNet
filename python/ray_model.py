@@ -387,8 +387,12 @@ def generating_muscle_nn(num_total_muscle_related_dofs, num_dof, num_muscles, is
 
 
 def loading_metadata(path):
+    # Resolve URI before loading
+    from uri_resolver import resolve_path
+    resolved_path = resolve_path(path)
+
     # Load with global CPU mapping for Ray workers without GPU
-    state = dill.load(open(path, "rb"))
+    state = dill.load(open(resolved_path, "rb"))
     # print(state["metadata"])
     return state["metadata"] if "metadata" in state.keys() else None
 
@@ -422,9 +426,13 @@ def loading_network(path, num_states=0, num_actions=0,
                     use_musclenet=False, num_actuator_action=0, num_muscles=0, num_total_muscle_related_dofs=0,
                     device="cpu"):
 
-    print("Loading network from {}".format(path))
+    # Resolve URI before loading
+    from uri_resolver import resolve_path
+    resolved_path = resolve_path(path)
+
+    print("Loading network from {}".format(resolved_path))
     # Load with global CPU mapping for Ray workers without GPU
-    state = dill.load(open(path, "rb"))
+    state = dill.load(open(resolved_path, "rb"))
     worker_state = SelectiveUnpickler(BytesIO(state['worker'])).load()
     policy_state = worker_state["state"]['default_policy']['weights']
     filter_state = worker_state["filters"]['default_policy']
