@@ -28,14 +28,16 @@ Anchor::
     return p;
 }
 
-Muscle::
-    Muscle(std::string _name, double _f0, double _lm0, double _lt0, double _pen_angle, double lmax, double _type1_fraction, bool useVelocityForce)
-    : pen_angle(_pen_angle), selected(false), mUseVelocityForce(useVelocityForce), name(_name), f0_original(_f0), f0(_f0), v_m(0.0), l_m0(_lm0), l_m(l_mt - l_t0), l_t0(_lt0), l_mt0(0.0), l_mt(1.0), activation(0.0), f_toe(0.33), k_toe(3.0), k_lin(51.878788), e_toe(0.02), e_t0(0.033), k_pe(5.5), e_mo(0.3), gamma(0.45), l_mt_max(lmax), type1_fraction(_type1_fraction)
+Muscle::Muscle(std::string _name, double _f0, double _lm0, double _lt0, double _pen_angle, 
+    double lmax, double _type1_fraction, bool useVelocityForce)
+    : pen_angle(_pen_angle), selected(false), mUseVelocityForce(useVelocityForce), name(_name), f0_original(_f0), f0(_f0), v_m(0.0), 
+    l_m0(_lm0), l_m(l_mt - l_t0), l_t0(_lt0), l_mt0(0.0), l_mt(1.0), activation(0.0), f_toe(0.33), k_toe(3.0), k_lin(51.878788), 
+    e_toe(0.02), e_t0(0.033), k_pe(5.5), e_mo(0.3), gamma(0.45), l_mt_max(lmax), type1_fraction(_type1_fraction), 
+    l_t0_original(_lt0), l_t0_offset(0.0)
 {
 }
 
-void Muscle::
-    AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos, int num_related_bodies, bool meshLbsWeight)
+void Muscle::AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos, int num_related_bodies, bool meshLbsWeight)
 {
     std::vector<double> distance;
     std::vector<Eigen::Vector3d> local_positions;
@@ -142,8 +144,7 @@ void Muscle::
 
     mCachedAnchorPositions.resize(n);
 }
-void Muscle::
-    AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos)
+void Muscle::AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos)
 {
     std::vector<dart::dynamics::BodyNode *> lbs_body_nodes;
     std::vector<Eigen::Vector3d> lbs_local_positions;
@@ -167,8 +168,7 @@ void Muscle::SetMuscle()
 {
     int n = mAnchors.size();
     l_mt0 = 0;
-    for (int i = 1; i < n; i++)
-        l_mt0 += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
+    for (int i = 1; i < n; i++) l_mt0 += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
     l_mt0_original = l_mt0;
 
     Update();
@@ -221,6 +221,13 @@ void Muscle::SetMuscle()
         std::cout << "MUSCLE RELATED DOF CHANGED " << name << std::endl;
         exit(-1);
     }
+}
+
+void Muscle::RefreshMuscleParams()
+{
+    l_t0 = l_t0_original + l_t0_offset;
+    l_mt0 = (l_mt0_original + l_t0_offset) * l_ratio;
+    f0 = f0_original * f_ratio;
 }
 
 void Muscle::ApplyForceToBody()

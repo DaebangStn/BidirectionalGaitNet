@@ -65,15 +65,29 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mJointForceScale(0.01f)          // Default scale for force arrows
     , mShowJointForceLabels(true)     // Labels off by default
     , mShowPostureDebug(false)        // Posture control debug off by default
-    , mApplyPostureControl(false)
+    , mApplyPostureControl(true)
     , mGraphData(nullptr)
+    , mEnableInterpolation(false)
+    , mJointKp(500.0)               // Proportional gain
+    , mJointKi(50.0)                // Integral gain
+    , mInterpolationThreshold(0.01)   // 0.01 radians threshold
 {
     mForceBodyNode = "FemurR";  // Default body node
+    mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
+    mShowSweepLegend = true;  // Show legend by default
 
     // Initialize camera presets from preset definitions below
     initializeCameraPresets();
     // Initialize graph data for posture control
     mGraphData = new CBufferData<double>();
+
+    // Initialize sweep configuration
+    mSweepConfig.joint_index = 0;
+    mSweepConfig.angle_min = -1.57;  // -90 degrees
+    mSweepConfig.angle_max = 1.57;   // +90 degrees
+    mSweepConfig.num_steps = 50;
+    mSweepRunning = false;
+    mSweepCurrentStep = 0;
 }
 
 PhysicalExam::~PhysicalExam() {
@@ -300,6 +314,12 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     // Setup posture control targets (must be called after character is loaded)
     setupPostureTargets();
 
+    // Initialize marked joint targets and PI controller state (all unmarked initially)
+    auto skel = mCharacter->getSkeleton();
+    mMarkedJointTargets.resize(skel->getNumDofs(), std::nullopt);
+    mJointIntegralError.resize(skel->getNumDofs(), 0.0);
+    std::cout << "Initialized joint PI controller system (" << skel->getNumDofs() << " DOFs)" << std::endl;
+
     std::cout << "Character loaded successfully in supine position" << std::endl;
 }
 
@@ -373,6 +393,26 @@ void PhysicalExam::stepSimulation(int steps) {
     for (int i = 0; i < steps; ++i) {
         mCharacter->step();
         mWorld->step();
+    }
+}
+
+void PhysicalExam::setPaused(bool paused) {
+    if (mSimulationPaused == paused) return;  // No change
+
+    mSimulationPaused = paused;
+    std::cout << "Simulation " << (mSimulationPaused ? "PAUSED" : "RESUMED") << std::endl;
+
+    // When pausing with PI controller enabled, update marked targets and reset integral errors
+    if (mSimulationPaused && mEnableInterpolation && mCharacter) {
+        auto skel = mCharacter->getSkeleton();
+        Eigen::VectorXd currentPos = skel->getPositions();
+        for (int i = 0; i < mMarkedJointTargets.size(); ++i) {
+            if (mMarkedJointTargets[i].has_value()) {
+                mMarkedJointTargets[i] = currentPos[i];
+                mJointIntegralError[i] = 0.0;  // Reset integral error on pause
+            }
+        }
+        std::cout << "Updated marked target angles to current positions and reset integral errors" << std::endl;
     }
 }
 
@@ -507,7 +547,7 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     mExamSettingLoaded = true;
     mCurrentTrialIndex = -1;
     mTrialRunning = false;
-    mSimulationPaused = true;
+    setPaused(true);
     
     if (mTrials.empty()) {
         std::cout << "Exam setting loaded (no trials defined - interactive mode)" << std::endl;
@@ -763,6 +803,45 @@ void PhysicalExam::render() {
 
 void PhysicalExam::mainLoop() {
     while (!glfwWindowShouldClose(mWindow)) {
+        // Execute one sweep step if sweep is running
+        if (mSweepRunning && mCharacter) {
+            auto skel = mCharacter->getSkeleton();
+            auto joint = skel->getJoint(mSweepConfig.joint_index);
+
+            if (mSweepCurrentStep <= mSweepConfig.num_steps) {
+                // Calculate current angle
+                double angle = mSweepConfig.angle_min +
+                    (mSweepConfig.angle_max - mSweepConfig.angle_min) *
+                    mSweepCurrentStep / (double)mSweepConfig.num_steps;
+
+                // Set joint position
+                Eigen::VectorXd pos = joint->getPositions();
+                pos[0] = angle;  // Assumes 1-DOF joint (can be extended for multi-DOF)
+                joint->setPositions(pos);
+
+                // Update muscle state (recalculate muscle lengths and forces)
+                mCharacter->getMuscleTuple();
+
+                // Collect muscle data at this angle
+                collectSweepData(angle);
+
+                mSweepCurrentStep++;
+            } else {
+                // Sweep complete - restore original position
+                joint->setPositions(mSweepOriginalPos);
+                mSweepRunning = false;
+                std::cout << "Sweep completed. Collected " << mSweepAngles.size()
+                          << " data points" << std::endl;
+            }
+
+            // Check for user interruption (ESC key)
+            if (glfwGetKey(mWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+                joint->setPositions(mSweepOriginalPos);
+                mSweepRunning = false;
+                std::cout << "Sweep interrupted by user" << std::endl;
+            }
+        }
+
         // Apply force if enabled
         for (int step=0; step<5; step++) {
             // Step simulation
@@ -771,6 +850,38 @@ void PhysicalExam::mainLoop() {
             // Check if simulation should advance
             bool shouldStep = !mSimulationPaused || mSingleStep;
             if (shouldStep) {
+                // Apply PI controller for marked joints (only when simulation is running)
+                if (mEnableInterpolation && mCharacter) {
+                    auto skel = mCharacter->getSkeleton();
+                    Eigen::VectorXd currentPos = skel->getPositions();
+                    Eigen::VectorXd currentForces = skel->getForces();
+                    double dt = mWorld->getTimeStep();
+
+                    // Apply PI controller to marked joints (those with target angles)
+                    for (int i = 0; i < mMarkedJointTargets.size(); ++i) {
+                        if (!mMarkedJointTargets[i].has_value()) continue;  // Skip unmarked joints
+
+                        double targetAngle = mMarkedJointTargets[i].value();
+                        double error = targetAngle - currentPos[i];
+
+                        if (std::abs(error) > mInterpolationThreshold) {
+                            // Update integral error
+                            mJointIntegralError[i] += error * dt;
+
+                            // PI control: torque = Kp * error + Ki * integral_error
+                            double torque = mJointKp * error + mJointKi * mJointIntegralError[i];
+
+                            // Apply torque to joint
+                            currentForces[i] += torque;
+                        } else {
+                            // Target reached - unmark the joint and reset integral error
+                            mMarkedJointTargets[i] = std::nullopt;
+                            mJointIntegralError[i] = 0.0;
+                        }
+                    }
+                    skel->setForces(currentForces);
+                }
+
                 if (mApplyingForce && mForceMagnitude > 0.0) {
                     Eigen::Vector3d offset(mOffsetX, mOffsetY, mOffsetZ);
                     Eigen::Vector3d direction(mForceX, mForceY, mForceZ);
@@ -793,240 +904,15 @@ void PhysicalExam::drawControlPanel() {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
     ImGui::Begin("Physical Examination Controls");
 
-    // Pose Presets
-    if (ImGui::CollapsingHeader("Pose Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (!mCharacter) {
-            ImGui::TextDisabled("Load character first");
-        } else {
-            ImGui::Text("Select pose:"); 
-            if (ImGui::Button("Standing")) setPoseStanding();
-            ImGui::SameLine();
-            if (ImGui::Button("Supine")) setPoseSupine();
-            ImGui::SameLine();
-            if (ImGui::Button("Prone")) setPoseProne();
-            if (ImGui::Button("Knee Flexion")) setPoseSupineKneeFlexed(mPresetKneeAngle); ImGui::SameLine();
-            ImGui::SetNextItemWidth(150);
-            ImGui::SliderFloat("Knee Angle (deg)", &mPresetKneeAngle, 0.0f, 135.0f);
-            ImGui::Separator();
-            const char* poseNames[] = {"Standing", "Supine", "Prone", "Supine+KneeFlex"};
-            ImGui::Text("Current Pose: %s", poseNames[mCurrentPosePreset]);
-        }
-    }
+    drawPosePresetsSection();
+    drawForceApplicationSection();
+    drawPrintInfoSection();
+    drawRecordingSection();
+    drawRenderOptionsSection();
+    drawJointControlSection();
+    drawJointAngleSweepSection();
+    drawTrialManagementSection();
 
-    // Force Application Control
-    if (ImGui::CollapsingHeader("Force Application", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (!mCharacter) {
-            ImGui::TextDisabled("Load character first");
-        } else {
-            // Body node selection
-            ImGui::Text("Target Body:"); ImGui::SameLine();
-            const char* bodyNodes[] = {"Pelvis", "FemurR", "FemurL", "TibiaR", "TibiaL", "TalusR", "TalusL"};
-            ImGui::SetNextItemWidth(100);
-            ImGui::Combo("##BodyNode", &mSelectedBodyNode, bodyNodes, IM_ARRAYSIZE(bodyNodes));
-            mForceBodyNode = bodyNodes[mSelectedBodyNode];
-
-            // Confinement force toggle
-            ImGui::Checkbox("Confinement", &mApplyConfinementForce);
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Apply 500N downward (-Y) force to Pelvis, Torso, ShoulderR, ShoulderL");
-            }
-
-            // Posture control toggle
-            ImGui::SameLine();
-            ImGui::Checkbox("Posture", &mApplyPostureControl);
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Apply PI controller to maintain body node positions");
-            }
-
-            ImGui::Separator();
-
-            // Force direction
-            ImGui::Text("Direction:"); ImGui::SameLine();
-            ImGui::SetNextItemWidth(75);
-            ImGui::DragFloat("X##ForceDir", &mForceX, 0.01f, -1.0f, 1.0f);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(75);
-            ImGui::DragFloat("Y##ForceDir", &mForceY, 0.01f, -1.0f, 1.0f);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(75);
-            ImGui::DragFloat("Z##ForceDir", &mForceZ, 0.01f, -1.0f, 1.0f);
-
-            // Force magnitude
-            ImGui::Text("Magnitude:"); ImGui::SameLine();
-            ImGui::SetNextItemWidth(100);
-            float forceMag = static_cast<float>(mForceMagnitude);
-            if (ImGui::DragFloat("N", &forceMag, 1.0f, 0.0f, 2000.0f)) mForceMagnitude = forceMag;
-
-            ImGui::Separator();
-
-            // Force offset
-            ImGui::Text("Application Point Offset:");
-            ImGui::SetNextItemWidth(100);
-            ImGui::DragFloat("X##Offset", &mOffsetX, 0.01f, -1.0f, 1.0f);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(100);
-            ImGui::DragFloat("Y##Offset", &mOffsetY, 0.01f, -1.0f, 1.0f);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(100);
-            ImGui::DragFloat("Z##Offset", &mOffsetZ, 0.01f, -1.0f, 1.0f);
-
-            // Apply/Remove force buttons
-            if (!mApplyingForce) {
-                if (ImGui::Button("Apply Force")) {
-                    mApplyingForce = true;
-                }
-            } else {
-                if (ImGui::Button("Remove Force")) {
-                    mApplyingForce = false;
-                    mForceMagnitude = 0.0;
-                }
-            }
-        }
-    }
-
-    // Print Info
-    if (ImGui::CollapsingHeader("Print Info")) {
-        if (!mCharacter) {
-            ImGui::TextDisabled("Load character first");
-        } else {
-            if (ImGui::Button("Capture Positions", ImVec2(180, 30))) {
-                printBodyNodePositions();
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Print all body node positions to console");
-            }
-
-            if (ImGui::Button("Print Camera to stdout", ImVec2(180, 30))) {
-                printCameraInfo();
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Print current camera parameters to console");
-            }
-        }
-    }
-
-    // Recording Control
-    if (ImGui::CollapsingHeader("Recording")) {
-        ImGui::Text("Recorded Data Points: %zu", mRecordedData.size());
-
-        if (ImGui::Button("Record Current State")) {
-            if (mCharacter) {
-                ROMDataPoint data;
-                data.force_magnitude = mForceMagnitude;
-                std::vector<std::string> joints = {"FemurR", "TibiaR", "TalusR"};
-                data.joint_angles = recordJointAngles(joints);
-                data.passive_force_total = computePassiveForce();
-                mRecordedData.push_back(data);
-            }
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Clear Data")) {
-            mRecordedData.clear();
-        }
-
-        if (!mRecordedData.empty() && ImGui::Button("Export to CSV")) {
-            saveToCSV("./results/interactive_exam.csv");
-            ImGui::OpenPopup("Export Complete");
-        }
-
-        if (ImGui::BeginPopupModal("Export Complete", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Data exported to ./results/interactive_exam.csv");
-            if (ImGui::Button("OK", ImVec2(120, 0))) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        }
-    }
-
-    // Render Options
-    if (ImGui::CollapsingHeader("Render Options")) {
-        ImGui::SetNextItemWidth(100);
-        ImGui::DragFloat("Passive Force Normalizer", &mPassiveForceNormalizer, 1.0f, 5.0f, 100.0f);
-        ImGui::Checkbox("Show Joint Forces", &mShowJointPassiveForces);
-        if (mShowJointPassiveForces) {
-            ImGui::SetNextItemWidth(100);
-            ImGui::SliderFloat("Force Arrow Scale", &mJointForceScale, 0.001f, 0.1f, "%.4f");
-            ImGui::Checkbox("Show Force Labels", &mShowJointForceLabels);
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Display numeric force values at arrow tips");
-            }
-        }
-        
-        ImGui::Separator();
-        ImGui::Checkbox("Posture Control Debug", &mShowPostureDebug);
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Print posture control debug info to console (positions, errors, forces)");
-        }
-    }
-    
-    // Joint Control UI (from GLFWApp.cpp)
-    if (ImGui::CollapsingHeader("Joint Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (!mCharacter) {
-            ImGui::TextDisabled("Load character first");
-        } else {
-            auto skel = mCharacter->getSkeleton();
-
-            // Joint Position Control
-            Eigen::VectorXd pos_lower_limit = skel->getPositionLowerLimits();
-            Eigen::VectorXd pos_upper_limit = skel->getPositionUpperLimits();
-            Eigen::VectorXf pos = skel->getPositions().cast<float>();
-
-            // DOF direction labels
-            const char* dof_labels[] = {"X", "Y", "Z", "tX", "tY", "tZ"};
-
-            int dof_idx = 0;
-            for (size_t j = 0; j < skel->getNumJoints(); j++) {
-                auto joint = skel->getJoint(j);
-                std::string joint_name = joint->getName();
-                int num_dofs = joint->getNumDofs();
-
-                if (num_dofs == 0) continue;
-
-                // Display joint name as a header
-                ImGui::Text("%s:", joint_name.c_str());
-                ImGui::Indent();
-
-                for (int d = 0; d < num_dofs; d++) {
-                    // Expand limits for root joint (first 6 DOFs)
-                    if (dof_idx < 6) {
-                        pos_lower_limit[dof_idx] = -2;
-                        pos_upper_limit[dof_idx] = 2;
-                    }
-
-                    // Create label: "JointName Direction" or just "JointName" for single DOF
-                    std::string label;
-                    if (num_dofs > 1 && d < 6) {
-                        label = std::string(dof_labels[d]) + "##" + joint_name;
-                    } else if (num_dofs > 1) {
-                        label = "DOF " + std::to_string(d) + "##" + joint_name;
-                    } else {
-                        label = "##" + joint_name;
-                    }
-
-                    ImGui::SliderFloat(label.c_str(), &pos[dof_idx],
-                                     pos_lower_limit[dof_idx], pos_upper_limit[dof_idx]);
-                    dof_idx++;
-                }
-
-                ImGui::Unindent();
-            }
-
-            skel->setPositions(pos.cast<double>());
-        }
-    }
     ImGui::End();
 }
 
@@ -1036,241 +922,17 @@ void PhysicalExam::drawVisualizationPanel() {
     ImGui::SetNextWindowPos(ImVec2(mWidth - 410, 10), ImGuiCond_Once);
     ImGui::Begin("Visualization & Data");
 
-    // Trial Management
-    if (ImGui::CollapsingHeader("Trial Management", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (mExamSettingLoaded) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Exam: %s", mExamName.c_str());
-            if (!mExamDescription.empty()) {
-                ImGui::TextWrapped("%s", mExamDescription.c_str());
-            }
-            
-            ImGui::Separator();
-            ImGui::Text("Total Trials: %zu", mTrials.size());
-            
-            if (mCurrentTrialIndex >= 0 && mCurrentTrialIndex < static_cast<int>(mTrials.size())) {
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), 
-                                  "Current Trial: %d / %zu", 
-                                  mCurrentTrialIndex + 1, 
-                                  mTrials.size());
-                ImGui::Text("Name: %s", mTrials[mCurrentTrialIndex].name.c_str());
-                if (!mTrials[mCurrentTrialIndex].description.empty()) {
-                    ImGui::TextWrapped("  %s", mTrials[mCurrentTrialIndex].description.c_str());
-                }
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "No trial selected");
-            }
-            
-            ImGui::Separator();
-            
-            // Remaining trials
-            int remaining = mTrials.size() - (mCurrentTrialIndex + 1);
-            if (remaining > 0) {
-                ImGui::Text("Remaining Trials: %d", remaining);
-                ImGui::Indent();
-                for (int i = mCurrentTrialIndex + 1; i < static_cast<int>(mTrials.size()); ++i) {
-                    ImGui::BulletText("%d. %s", i + 1, mTrials[i].name.c_str());
-                }
-                ImGui::Unindent();
-            } else if (mCurrentTrialIndex >= 0) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "All trials completed!");
-            }
-            
-            ImGui::Separator();
-            
-            // Start trial button
-            bool canStartNext = (mCurrentTrialIndex + 1) < static_cast<int>(mTrials.size());
-            if (canStartNext) {
-                if (ImGui::Button("Start Next Trial", ImVec2(180, 40))) {
-                    startNextTrial();
-                }
-            } else if (mCurrentTrialIndex < 0) {
-                if (ImGui::Button("Start First Trial", ImVec2(180, 40))) {
-                    startNextTrial();
-                }
-            } else {
-                ImGui::TextDisabled("All trials completed");
-            }
-            
-            ImGui::SameLine();
-            if (ImGui::Button("Reset Trials", ImVec2(120, 40))) {
-                mCurrentTrialIndex = -1;
-                mTrialRunning = false;
-                mRecordedData.clear();
-                std::cout << "Trials reset" << std::endl;
-            }
-            
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No exam setting loaded");
-            ImGui::TextWrapped("Load an exam setting config to start trials");
-        }
-    }
-
-    // Current State Display
-    if (ImGui::CollapsingHeader("Current State", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (mCharacter) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Character Loaded");
-            ImGui::Text("Skeleton DOFs: %zu", mCharacter->getSkeleton()->getNumDofs());
-            ImGui::Text("Body Nodes: %zu", mCharacter->getSkeleton()->getNumBodyNodes());
-            ImGui::Text("Muscles: %zu", mCharacter->getMuscles().size());
-            ImGui::Separator();
-            ImGui::Text("Simulation Time: %.3f s", mWorld->getTime());
-            ImGui::Separator();
-
-            ImGui::Text("Applied Force:");
-            if (mApplyingForce) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  Magnitude: %.2f N", mForceMagnitude);
-                ImGui::Text("  Body: %s", mForceBodyNode.c_str());
-                ImGui::Text("  Direction: [%.2f, %.2f, %.2f]", mForceX, mForceY, mForceZ);
-                ImGui::Text("  Offset: [%.2f, %.2f, %.2f]", mOffsetX, mOffsetY, mOffsetZ);
-            } else {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  No force applied");
-            }
-
-            ImGui::Separator();
-
-            // Muscle passive forces
-            ImGui::Text("Muscle Forces:");
-            double total_passive = 0.0;
-            std::vector<std::pair<double, std::string>> muscle_forces;
-
-            auto muscles = mCharacter->getMuscles();
-            for (auto& muscle : muscles) {
-                double f_p = muscle->Getf_p();
-                total_passive += f_p;
-                muscle_forces.push_back({f_p, muscle->GetName()});
-            }
-
-            // Sort by passive force (descending)
-            std::sort(muscle_forces.begin(), muscle_forces.end(),
-                     [](const auto& a, const auto& b) { return a.first > b.first; });
-
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "  Total Passive: %.2f N", total_passive);
-
-            // Show top 3 muscles with highest passive force
-            ImGui::Text("  Top 3 Passive Forces:");
-            for (int i = 0; i < std::min(3, (int)muscle_forces.size()); i++) {
-                ImGui::Text("    %d. %s: %.2f N", i+1,
-                           muscle_forces[i].second.c_str(),
-                           muscle_forces[i].first);
-            }
-
-            ImGui::Separator();
-
-            // Current joint angles
-            ImGui::Text("Joint Angles:");
-            std::vector<std::string> joints = {"FemurR", "TibiaR", "TalusR"};
-            auto angles = recordJointAngles(joints);
-            for (const auto& [joint, angle] : angles) {
-                ImGui::Text("  %s: %.3f rad (%.1f deg)", joint.c_str(), angle[0], angle[0] * 180.0 / M_PI);
-            }
-        } else {
-            ImGui::TextDisabled("Load character to see state");
-        }
-    }
-
-    // Recorded Data Table
-    if (ImGui::CollapsingHeader("Recorded Data", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Total data points: %zu", mRecordedData.size());
-
-        if (!mRecordedData.empty()) {
-            ImGui::Separator();
-
-            // Table header
-            ImGui::Columns(3, "romdata");
-            ImGui::Text("Force (N)");
-            ImGui::NextColumn();
-            ImGui::Text("Passive (N)");
-            ImGui::NextColumn();
-            ImGui::Text("Joints");
-            ImGui::NextColumn();
-            ImGui::Separator();
-
-            // Show last 10 data points
-            size_t start = mRecordedData.size() > 10 ? mRecordedData.size() - 10 : 0;
-            for (size_t i = start; i < mRecordedData.size(); ++i) {
-                ImGui::Text("%.2f", mRecordedData[i].force_magnitude);
-                ImGui::NextColumn();
-                ImGui::Text("%.2f", mRecordedData[i].passive_force_total);
-                ImGui::NextColumn();
-                ImGui::Text("%zu", mRecordedData[i].joint_angles.size());
-                ImGui::NextColumn();
-            }
-
-            ImGui::Columns(1);
-        } else {
-            ImGui::TextDisabled("No data recorded yet");
-        }
-    }
-
-    // ROM Plot (simple text-based for now)
-    if (ImGui::CollapsingHeader("ROM Analysis")) {
-        if (mRecordedData.size() >= 2) {
-            ImGui::Text("Data Range:");
-            double minForce = mRecordedData[0].force_magnitude;
-            double maxForce = mRecordedData.back().force_magnitude;
-            ImGui::Text("  Force: %.2f - %.2f N", minForce, maxForce);
-
-            // Find min/max joint angles
-            if (!mRecordedData.empty() && !mRecordedData[0].joint_angles.empty()) {
-                std::string firstJoint = mRecordedData[0].joint_angles.begin()->first;
-                double minAngle = mRecordedData[0].joint_angles.begin()->second[0];
-                double maxAngle = minAngle;
-
-                for (const auto& data : mRecordedData) {
-                    if (data.joint_angles.count(firstJoint)) {
-                        double angle = data.joint_angles.at(firstJoint)[0];
-                        minAngle = std::min(minAngle, angle);
-                        maxAngle = std::max(maxAngle, angle);
-                    }
-                }
-
-                ImGui::Text("  %s ROM: %.2f\u00b0", firstJoint.c_str(), (maxAngle - minAngle) * 180.0 / M_PI);
-            }
-        } else {
-            ImGui::TextDisabled("Record at least 2 data points");
-        }
-    }
-
-    // Camera Status
-    if (ImGui::CollapsingHeader("Camera Status", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Current preset description
-        if (mCurrentCameraPreset >= 0 && mCurrentCameraPreset < 3 && 
-            mCameraPresets[mCurrentCameraPreset].isSet) {
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Current View:");
-            ImGui::SameLine();
-            ImGui::Text("%s", mCameraPresets[mCurrentCameraPreset].description.c_str());
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Current View: Custom");
-        }
-        
-        ImGui::Separator();
-        ImGui::Text("Camera Settings:");
-        
-        ImGui::Text("Eye: [%.3f, %.3f, %.3f]", mEye[0], mEye[1], mEye[2]);
-        ImGui::Text("Up:  [%.3f, %.3f, %.3f]", mUp[0], mUp[1], mUp[2]);
-        ImGui::Text("Trans: [%.3f, %.3f, %.3f]", mTrans[0], mTrans[1], mTrans[2]);
-        ImGui::Text("Zoom: %.3f", mZoom);
-        
-        Eigen::Quaterniond quat = mTrackball.getCurrQuat();
-        ImGui::Text("Quaternion: [%.3f, %.3f, %.3f, %.3f]",
-                    quat.w(), quat.x(), quat.y(), quat.z());
-
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Camera Presets:");
-        for (int i = 0; i < 3; ++i) {
-            if (mCameraPresets[i].isSet) {
-                ImGui::Text("Press %d: %s", (i == 0 ? 8 : (i == 1 ? 9 : 0)),
-                           mCameraPresets[i].description.c_str());
-            }
-        }
-    }
+    drawCurrentStateSection();
+    drawRecordedDataSection();
+    drawROMAnalysisSection();
+    drawCameraStatusSection();
+    drawSweepMusclePlotsSection();
 
     // Posture control graphs
     drawGraphPanel();
 
     ImGui::End();
 }
-
 void PhysicalExam::drawSimFrame() {
     glEnable(GL_LIGHTING);
 
@@ -1708,8 +1370,7 @@ void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
         glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
     }
     else if (key == GLFW_KEY_SPACE) {
-        mSimulationPaused = !mSimulationPaused;
-        std::cout << "Simulation " << (mSimulationPaused ? "PAUSED" : "RESUMED") << std::endl;
+        setPaused(!mSimulationPaused);
     }
     else if (key == GLFW_KEY_S) {
         if (mSimulationPaused) mSingleStep = true;
@@ -2047,11 +1708,10 @@ void PhysicalExam::setupPostureTargets() {
     };
 
     std::vector<PostureControlConfig> controlConfig = {
-        // {"Pelvis",     true,  true,  true,  500.0, 50.0},
-        {"TalusR",     true,  false,  false,  500.0, 50.0},
-        {"TalusL",     true,  false,  false,  500.0, 50.0},
+        {"TibiaR",     true,  false,  false,  500.0, 50.0},  // Control all XYZ for TibiaR
+        {"TalusR",     true,  false,  false,  500.0, 50.0},  // Control all XYZ for TalusR
         // Add more body nodes here as needed
-        // Example: {"TibiaR", true, false, true, 500.0, 50.0},  // Only control X and Z
+        // Example: {"Pelvis", true, true, false, 500.0, 50.0},  // Only control X and Y
     };
 
     // PASTE YOUR CAPTURED POSITIONS HERE (from "Capture Positions" button output)
@@ -2453,6 +2113,966 @@ void PhysicalExam::initializeCameraPresets() {
                 
                 std::cout << "Camera preset " << (i + 1) << " parsed: " << tokens[1] << std::endl;
             }
+        }
+    }
+}
+
+// ============================================================================
+// JOINT ANGLE SWEEP SYSTEM
+// ============================================================================
+
+void PhysicalExam::setupSweepMuscles() {
+    // Store old visibility state to preserve user preferences
+    std::map<std::string, bool> oldVisibility = mMuscleVisibility;
+
+    mTrackedMuscles.clear();
+    if (!mCharacter) return;
+
+    auto skel = mCharacter->getSkeleton();
+    if (mSweepConfig.joint_index >= skel->getNumJoints()) {
+        std::cerr << "Invalid joint index: " << mSweepConfig.joint_index << std::endl;
+        return;
+    }
+
+    auto joint = skel->getJoint(mSweepConfig.joint_index);
+    auto muscles = mCharacter->getMuscles();
+
+    for (auto muscle : muscles) {
+        auto related_joints = muscle->GetRelatedJoints();
+        if (std::find(related_joints.begin(), related_joints.end(), joint)
+            != related_joints.end()) {
+            std::string muscleName = muscle->GetName();
+            mTrackedMuscles.push_back(muscleName);
+
+            // Register graph data keys for this muscle
+            mGraphData->register_key(muscleName + "_fp", 500);
+            mGraphData->register_key(muscleName + "_lm", 500);
+
+            // Initialize visibility: preserve old state if muscle was tracked before, otherwise default to true
+            if (oldVisibility.find(muscleName) != oldVisibility.end()) {
+                mMuscleVisibility[muscleName] = oldVisibility[muscleName];
+            } else {
+                mMuscleVisibility[muscleName] = true;  // New muscles visible by default
+            }
+        }
+    }
+
+    // Remove visibility entries for muscles no longer tracked
+    std::map<std::string, bool> newVisibility;
+    for (const auto& muscleName : mTrackedMuscles) {
+        newVisibility[muscleName] = mMuscleVisibility[muscleName];
+    }
+    mMuscleVisibility = newVisibility;
+
+    std::cout << "Detected " << mTrackedMuscles.size()
+              << " muscles crossing joint: "
+              << joint->getName() << std::endl;
+}
+
+void PhysicalExam::runSweep() {
+    if (!mCharacter) {
+        std::cerr << "No character loaded" << std::endl;
+        return;
+    }
+
+    // Initialize sweep
+    clearSweepData();
+    setupSweepMuscles();
+
+    if (mTrackedMuscles.empty()) {
+        std::cout << "No muscles cross this joint" << std::endl;
+        return;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    auto joint = skel->getJoint(mSweepConfig.joint_index);
+
+    std::cout << "Starting sweep: " << joint->getName()
+              << " from " << mSweepConfig.angle_min
+              << " to " << mSweepConfig.angle_max
+              << " rad (" << mSweepConfig.num_steps << " steps)" << std::endl;
+
+    // Store original joint position for restoration
+    mSweepOriginalPos = joint->getPositions();
+
+    // Start sweep (will execute incrementally in mainLoop)
+    mSweepRunning = true;
+    mSweepCurrentStep = 0;
+}
+
+void PhysicalExam::collectSweepData(double angle) {
+    mSweepAngles.push_back(angle);
+
+    auto muscles = mCharacter->getMuscles();
+    for (auto muscle : muscles) {
+        std::string name = muscle->GetName();
+
+        // Only collect data for tracked muscles
+        if (std::find(mTrackedMuscles.begin(), mTrackedMuscles.end(), name)
+            != mTrackedMuscles.end()) {
+
+            double f_p = muscle->Getf_p();    // Passive force
+            double l_m = muscle->l_m;          // Muscle length
+
+            mGraphData->push(name + "_fp", f_p);
+            mGraphData->push(name + "_lm", l_m);
+        }
+    }
+}
+
+void PhysicalExam::renderMusclePlots() {
+    if (mSweepAngles.empty()) return;
+
+    // Display options
+    ImGui::Checkbox("Show Legend", &mShowSweepLegend);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Toggle legend display in muscle plots");
+    }
+
+    std::vector<double> x_data = mSweepAngles;
+
+    // Plot 1: Passive Forces vs Joint Angle
+    ImPlotFlags plot_flags = mShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
+    if (ImPlot::BeginPlot("Passive Forces vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
+        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min,
+            mSweepConfig.angle_max, ImGuiCond_Always);
+        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (rad)");
+        ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
+        
+        // Only plot visible muscles
+        for (const auto& muscle_name : mTrackedMuscles) {
+            // Check if muscle should be visible
+            auto vis_it = mMuscleVisibility.find(muscle_name);
+            if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                continue;  // Skip invisible muscles
+            }
+
+            auto fp_data = mGraphData->get(muscle_name + "_fp");
+            if (!fp_data.empty() && fp_data.size() == x_data.size()) {
+                ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                    fp_data.data(), fp_data.size());
+            }
+        }
+        ImPlot::EndPlot();
+    }
+
+    ImGui::Spacing();
+
+    // Plot 2: Muscle Lengths vs Joint Angle
+    if (ImPlot::BeginPlot("Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
+        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min,
+            mSweepConfig.angle_max, ImGuiCond_Always);
+        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (rad)");
+        ImPlot::SetupAxis(ImAxis_Y1, "Muscle Length (m)");
+        
+        // Only plot visible muscles
+        for (const auto& muscle_name : mTrackedMuscles) {
+            // Check if muscle should be visible
+            auto vis_it = mMuscleVisibility.find(muscle_name);
+            if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                continue;  // Skip invisible muscles
+            }
+
+            auto lm_data = mGraphData->get(muscle_name + "_lm");
+            if (!lm_data.empty() && lm_data.size() == x_data.size()) {
+                ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                    lm_data.data(), lm_data.size());
+            }
+        }
+        ImPlot::EndPlot();
+    }
+}
+
+void PhysicalExam::clearSweepData() {
+    mSweepAngles.clear();
+    mTrackedMuscles.clear();
+    mMuscleVisibility.clear();
+    if (mGraphData) {
+        mGraphData->clear_all();
+    }
+    std::cout << "Sweep data cleared" << std::endl;
+}
+
+// ============================================================================
+// Control Panel Section Methods
+// ============================================================================
+
+void PhysicalExam::drawPosePresetsSection() {
+    if (ImGui::CollapsingHeader("Pose Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!mCharacter) {
+            ImGui::TextDisabled("Load character first");
+        } else {
+            ImGui::Text("Select pose:");
+            if (ImGui::Button("Standing")) setPoseStanding();
+            ImGui::SameLine();
+            if (ImGui::Button("Supine")) setPoseSupine();
+            ImGui::SameLine();
+            if (ImGui::Button("Prone")) setPoseProne();
+            if (ImGui::Button("Knee Flexion")) setPoseSupineKneeFlexed(mPresetKneeAngle); ImGui::SameLine();
+            ImGui::SetNextItemWidth(150);
+            ImGui::SliderFloat("Knee Angle (deg)", &mPresetKneeAngle, 0.0f, 135.0f);
+            ImGui::Separator();
+            const char* poseNames[] = {"Standing", "Supine", "Prone", "Supine+KneeFlex"};
+            ImGui::Text("Current Pose: %s", poseNames[mCurrentPosePreset]);
+        }
+    }
+}
+
+void PhysicalExam::drawForceApplicationSection() {
+    if (ImGui::CollapsingHeader("Force Application", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!mCharacter) {
+            ImGui::TextDisabled("Load character first");
+        } else {
+            // Body node selection
+            ImGui::Text("Target Body:"); ImGui::SameLine();
+            const char* bodyNodes[] = {"Pelvis", "FemurR", "FemurL", "TibiaR", "TibiaL", "TalusR", "TalusL"};
+            ImGui::SetNextItemWidth(100);
+            ImGui::Combo("##BodyNode", &mSelectedBodyNode, bodyNodes, IM_ARRAYSIZE(bodyNodes));
+            mForceBodyNode = bodyNodes[mSelectedBodyNode];
+
+            // Confinement force toggle
+            ImGui::Checkbox("Confinement", &mApplyConfinementForce);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Apply 500N downward (-Y) force to Pelvis, Torso, ShoulderR, ShoulderL");
+            }
+
+            // Posture control toggle
+            ImGui::SameLine();
+            ImGui::Checkbox("Posture", &mApplyPostureControl);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Apply PI controller to maintain body node positions");
+            }
+
+            ImGui::Separator();
+
+            // Force direction
+            ImGui::Text("Direction:"); ImGui::SameLine();
+            ImGui::SetNextItemWidth(75);
+            ImGui::DragFloat("X##ForceDir", &mForceX, 0.01f, -1.0f, 1.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(75);
+            ImGui::DragFloat("Y##ForceDir", &mForceY, 0.01f, -1.0f, 1.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(75);
+            ImGui::DragFloat("Z##ForceDir", &mForceZ, 0.01f, -1.0f, 1.0f);
+
+            // Force magnitude
+            ImGui::Text("Magnitude:"); ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            float forceMag = static_cast<float>(mForceMagnitude);
+            if (ImGui::DragFloat("N", &forceMag, 1.0f, 0.0f, 2000.0f)) mForceMagnitude = forceMag;
+
+            ImGui::Separator();
+
+            // Force offset
+            ImGui::Text("Application Point Offset:");
+            ImGui::SetNextItemWidth(100);
+            ImGui::DragFloat("X##Offset", &mOffsetX, 0.01f, -1.0f, 1.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            ImGui::DragFloat("Y##Offset", &mOffsetY, 0.01f, -1.0f, 1.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            ImGui::DragFloat("Z##Offset", &mOffsetZ, 0.01f, -1.0f, 1.0f);
+
+            // Apply/Remove force buttons
+            if (!mApplyingForce) {
+                if (ImGui::Button("Apply Force")) {
+                    mApplyingForce = true;
+                }
+            } else {
+                if (ImGui::Button("Remove Force")) {
+                    mApplyingForce = false;
+                    mForceMagnitude = 0.0;
+                }
+            }
+        }
+    }
+}
+
+void PhysicalExam::drawPrintInfoSection() {
+    if (ImGui::CollapsingHeader("Print Info")) {
+        if (!mCharacter) {
+            ImGui::TextDisabled("Load character first");
+        } else {
+            if (ImGui::Button("Capture Positions", ImVec2(180, 30))) {
+                printBodyNodePositions();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Print all body node positions to console");
+            }
+
+            if (ImGui::Button("Print Camera to stdout", ImVec2(180, 30))) {
+                printCameraInfo();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Print current camera parameters to console");
+            }
+        }
+    }
+}
+
+void PhysicalExam::drawRecordingSection() {
+    if (ImGui::CollapsingHeader("Recording")) {
+        ImGui::Text("Recorded Data Points: %zu", mRecordedData.size());
+
+        if (ImGui::Button("Record Current State")) {
+            if (mCharacter) {
+                ROMDataPoint data;
+                data.force_magnitude = mForceMagnitude;
+                std::vector<std::string> joints = {"FemurR", "TibiaR", "TalusR"};
+                data.joint_angles = recordJointAngles(joints);
+                data.passive_force_total = computePassiveForce();
+                mRecordedData.push_back(data);
+            }
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Clear Data")) {
+            mRecordedData.clear();
+        }
+
+        if (!mRecordedData.empty() && ImGui::Button("Export to CSV")) {
+            saveToCSV("./results/interactive_exam.csv");
+            ImGui::OpenPopup("Export Complete");
+        }
+
+        if (ImGui::BeginPopupModal("Export Complete", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Data exported to ./results/interactive_exam.csv");
+            if (ImGui::Button("OK", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+}
+
+void PhysicalExam::drawRenderOptionsSection() {
+    if (ImGui::CollapsingHeader("Render Options")) {
+        ImGui::SetNextItemWidth(100);
+        ImGui::DragFloat("Passive Force Normalizer", &mPassiveForceNormalizer, 1.0f, 5.0f, 100.0f);
+        ImGui::Checkbox("Show Joint Forces", &mShowJointPassiveForces);
+        if (mShowJointPassiveForces) {
+            ImGui::SetNextItemWidth(100);
+            ImGui::SliderFloat("Force Arrow Scale", &mJointForceScale, 0.001f, 0.1f, "%.4f");
+            ImGui::Checkbox("Show Force Labels", &mShowJointForceLabels);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Display numeric force values at arrow tips");
+            }
+        }
+
+        ImGui::Separator();
+        ImGui::Checkbox("Posture Control Debug", &mShowPostureDebug);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Print posture control debug info to console (positions, errors, forces)");
+        }
+    }
+}
+
+void PhysicalExam::drawJointControlSection() {
+    if (ImGui::CollapsingHeader("Joint Control")) {
+        if (!mCharacter) {
+            ImGui::TextDisabled("Load character first");
+        } else {
+            auto skel = mCharacter->getSkeleton();
+
+            // PI Controller mode toggle
+            ImGui::Checkbox("Enable PI Controller", &mEnableInterpolation);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, uses PI controller to apply torques to reach target joint angles");
+            }
+
+            if (mEnableInterpolation) {
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Kp (Proportional)", (float*)&mJointKp, 10.0f, 2000.0f);
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Ki (Integral)", (float*)&mJointKi, 1.0f, 200.0f);
+
+                // Reset button - clear all marked targets
+                ImGui::SameLine();
+                if (ImGui::Button("Reset All")) {
+                    for (int i = 0; i < mMarkedJointTargets.size(); ++i) {
+                        mMarkedJointTargets[i] = std::nullopt;
+                    }
+                }
+
+                // Show completion status
+                Eigen::VectorXd currentPos = skel->getPositions();
+                int marked = 0;
+                int completed = 0;
+                for (int i = 0; i < mMarkedJointTargets.size(); ++i) {
+                    if (mMarkedJointTargets[i].has_value()) {
+                        marked++;
+                        double targetAngle = mMarkedJointTargets[i].value();
+                        if (std::abs(targetAngle - currentPos[i]) <= mInterpolationThreshold) {
+                            completed++;
+                        }
+                    }
+                }
+                if (marked == 0) {
+                    ImGui::Text("No joints marked for interpolation");
+                } else if (completed == marked) {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Interpolation: Complete (%d/%d marked)", completed, marked);
+                } else {
+                    ImGui::Text("Interpolation: %d/%d marked DOFs", completed, marked);
+                }
+            }
+
+            ImGui::Separator();
+
+            // Show warning if interpolation is on and simulation is running
+            if (mEnableInterpolation && !mSimulationPaused) {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Sliders are read-only during simulation");
+            }
+
+            // Joint Position Control
+            Eigen::VectorXd pos_lower_limit = skel->getPositionLowerLimits();
+            Eigen::VectorXd pos_upper_limit = skel->getPositionUpperLimits();
+
+            // When interpolation is enabled and paused, show marked target angles or current positions
+            // This allows user to change targets without them being reset by current positions
+            Eigen::VectorXd currentPos = skel->getPositions();
+            Eigen::VectorXf pos(currentPos.size());
+            if (mEnableInterpolation && mSimulationPaused) {
+                // Show target angle if marked, otherwise current position
+                for (int i = 0; i < pos.size(); ++i) {
+                    pos[i] = mMarkedJointTargets[i].has_value() ?
+                             mMarkedJointTargets[i].value() : currentPos[i];
+                }
+            } else {
+                pos = currentPos.cast<float>();
+            }
+
+            // DOF direction labels
+            const char* dof_labels[] = {"X", "Y", "Z", "tX", "tY", "tZ"};
+
+            int dof_idx = 0;
+            for (size_t j = 0; j < skel->getNumJoints(); j++) {
+                auto joint = skel->getJoint(j);
+                std::string joint_name = joint->getName();
+                int num_dofs = joint->getNumDofs();
+
+                if (num_dofs == 0) continue;
+
+                // Display joint name as a header
+                ImGui::Text("%s:", joint_name.c_str());
+                ImGui::Indent();
+
+                for (int d = 0; d < num_dofs; d++) {
+                    // Expand limits for root joint (first 6 DOFs)
+                    if (dof_idx < 6) {
+                        pos_lower_limit[dof_idx] = -2;
+                        pos_upper_limit[dof_idx] = 2;
+                    }
+
+                    // Create label: "JointName Direction" or just "JointName" for single DOF
+                    std::string label;
+                    if (num_dofs > 1 && d < 6) {
+                        label = std::string(dof_labels[d]);
+                    } else if (num_dofs > 1) {
+                        label = "DOF " + std::to_string(d);
+                    } else {
+                        label = "";
+                    }
+
+                    // Add asterisk and target angle if joint is marked for interpolation
+                    if (mEnableInterpolation && mMarkedJointTargets[dof_idx].has_value()) {
+                        double targetAngle = mMarkedJointTargets[dof_idx].value();
+                        char targetStr[32];
+                        snprintf(targetStr, sizeof(targetStr), " * (→%.3f)", targetAngle);
+                        label += targetStr;
+                    }
+                    label += "##" + joint_name + std::to_string(d);
+
+                    // Store previous value to detect changes
+                    float prev_value = pos[dof_idx];
+
+                    ImGui::SliderFloat(label.c_str(), &pos[dof_idx],
+                                     pos_lower_limit[dof_idx], pos_upper_limit[dof_idx]);
+
+                    // Mark joint with target angle if value changed and interpolation is enabled and paused
+                    if (mEnableInterpolation && mSimulationPaused && prev_value != pos[dof_idx]) {
+                        mMarkedJointTargets[dof_idx] = pos[dof_idx];  // Store target angle
+                    }
+
+                    dof_idx++;
+                }
+
+                ImGui::Unindent();
+            }
+
+            // Update positions if interpolation is disabled
+            if (!mEnableInterpolation) {
+                skel->setPositions(pos.cast<double>());
+            }
+            // With interpolation enabled, targets are set when sliders change (marked automatically)
+        }
+    }
+}
+
+void PhysicalExam::drawJointAngleSweepSection() {
+    if (ImGui::CollapsingHeader("Joint Angle Sweep", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!mCharacter) {
+            ImGui::TextDisabled("Load character first");
+        } else {
+            auto skel = mCharacter->getSkeleton();
+
+            // Joint selection
+            ImGui::Text("Sweep Joint:");
+            ImGui::SetNextItemWidth(100);
+            int joint_idx = mSweepConfig.joint_index;
+            if (ImGui::InputInt("##JointIdx", &joint_idx, 1, 1)) {
+                if (joint_idx >= 0 && joint_idx < static_cast<int>(skel->getNumJoints())) {
+                    mSweepConfig.joint_index = joint_idx;
+                    
+                    // Auto-update angle range from joint limits
+                    auto joint = skel->getJoint(joint_idx);
+                    if (joint->getNumDofs() > 0) {
+                        Eigen::VectorXd pos_lower = skel->getPositionLowerLimits();
+                        Eigen::VectorXd pos_upper = skel->getPositionUpperLimits();
+                        
+                        // Get DOF index for this joint
+                        int dof_idx = 0;
+                        for (size_t j = 0; j < joint_idx; ++j) {
+                            dof_idx += skel->getJoint(j)->getNumDofs();
+                        }
+                        
+                        mSweepConfig.angle_min = pos_lower[dof_idx];
+                        mSweepConfig.angle_max = pos_upper[dof_idx];
+                        
+                        std::cout << "Joint " << joint->getName() 
+                                  << " limits: [" << mSweepConfig.angle_min 
+                                  << ", " << mSweepConfig.angle_max << "] rad" << std::endl;
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (mSweepConfig.joint_index < static_cast<int>(skel->getNumJoints())) {
+                ImGui::Text("%s", skel->getJoint(mSweepConfig.joint_index)->getName().c_str());
+            }
+
+            ImGui::Separator();
+
+            // Angle range configuration
+            ImGui::Text("Angle Range:");
+            ImGui::SetNextItemWidth(120);
+            float min_deg = mSweepConfig.angle_min * 180.0 / M_PI;
+            if (ImGui::DragFloat("Min (deg)##SweepMin", &min_deg, 1.0f, -180.0f, 180.0f)) {
+                mSweepConfig.angle_min = min_deg * M_PI / 180.0;
+            }
+            ImGui::SameLine();
+            ImGui::Text("(%.3f rad)", mSweepConfig.angle_min);
+
+            ImGui::SetNextItemWidth(120);
+            float max_deg = mSweepConfig.angle_max * 180.0 / M_PI;
+            if (ImGui::DragFloat("Max (deg)##SweepMax", &max_deg, 1.0f, -180.0f, 180.0f)) {
+                mSweepConfig.angle_max = max_deg * M_PI / 180.0;
+            }
+            ImGui::SameLine();
+            ImGui::Text("(%.3f rad)", mSweepConfig.angle_max);
+            
+            // Button to reset to joint limits
+            if (ImGui::Button("Use Joint Limits", ImVec2(140, 0))) {
+                auto joint = skel->getJoint(mSweepConfig.joint_index);
+                if (joint->getNumDofs() > 0) {
+                    Eigen::VectorXd pos_lower = skel->getPositionLowerLimits();
+                    Eigen::VectorXd pos_upper = skel->getPositionUpperLimits();
+                    
+                    // Get DOF index for this joint
+                    int dof_idx = 0;
+                    for (size_t j = 0; j < mSweepConfig.joint_index; ++j) {
+                        dof_idx += skel->getJoint(j)->getNumDofs();
+                    }
+                    
+                    mSweepConfig.angle_min = pos_lower[dof_idx];
+                    mSweepConfig.angle_max = pos_upper[dof_idx];
+                    
+                    std::cout << "Reset to joint " << joint->getName() 
+                              << " limits: [" << mSweepConfig.angle_min 
+                              << ", " << mSweepConfig.angle_max << "] rad" << std::endl;
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Reset angle range to joint's position limits");
+            }
+
+            // Number of steps
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("Steps##SweepSteps", &mSweepConfig.num_steps, 5, 10);
+            if (mSweepConfig.num_steps < 5) mSweepConfig.num_steps = 5;
+            if (mSweepConfig.num_steps > 200) mSweepConfig.num_steps = 200;
+
+            ImGui::Separator();
+
+            // Control buttons
+            if (ImGui::Button("Run Sweep", ImVec2(120, 30))) {
+                runSweep();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Data", ImVec2(120, 30))) {
+                clearSweepData();
+            }
+
+            // Status display
+            ImGui::Separator();
+            if (!mSweepAngles.empty()) {
+                ImGui::Text("Data points: %zu", mSweepAngles.size());
+                ImGui::Text("Tracked muscles: %zu", mTrackedMuscles.size());
+            } else {
+                ImGui::TextDisabled("No sweep data available");
+            }
+        }
+    }
+}
+// ============================================================================
+// Visualization Panel Section Methods
+// ============================================================================
+
+void PhysicalExam::drawTrialManagementSection() {
+    if (ImGui::CollapsingHeader("Trial Management", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (mExamSettingLoaded) {
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Exam: %s", mExamName.c_str());
+            if (!mExamDescription.empty()) {
+                ImGui::TextWrapped("%s", mExamDescription.c_str());
+            }
+
+            ImGui::Separator();
+            ImGui::Text("Total Trials: %zu", mTrials.size());
+
+            if (mCurrentTrialIndex >= 0 && mCurrentTrialIndex < static_cast<int>(mTrials.size())) {
+                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f),
+                                  "Current Trial: %d / %zu",
+                                  mCurrentTrialIndex + 1,
+                                  mTrials.size());
+                ImGui::Text("Name: %s", mTrials[mCurrentTrialIndex].name.c_str());
+                if (!mTrials[mCurrentTrialIndex].description.empty()) {
+                    ImGui::TextWrapped("  %s", mTrials[mCurrentTrialIndex].description.c_str());
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "No trial selected");
+            }
+
+            ImGui::Separator();
+
+            // Remaining trials
+            int remaining = mTrials.size() - (mCurrentTrialIndex + 1);
+            if (remaining > 0) {
+                ImGui::Text("Remaining Trials: %d", remaining);
+                ImGui::Indent();
+                for (int i = mCurrentTrialIndex + 1; i < static_cast<int>(mTrials.size()); ++i) {
+                    ImGui::BulletText("%d. %s", i + 1, mTrials[i].name.c_str());
+                }
+                ImGui::Unindent();
+            } else if (mCurrentTrialIndex >= 0) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "All trials completed!");
+            }
+
+            ImGui::Separator();
+
+            // Start trial button
+            bool canStartNext = (mCurrentTrialIndex + 1) < static_cast<int>(mTrials.size());
+            if (canStartNext) {
+                if (ImGui::Button("Start Next Trial", ImVec2(180, 40))) {
+                    startNextTrial();
+                }
+            } else if (mCurrentTrialIndex < 0) {
+                if (ImGui::Button("Start First Trial", ImVec2(180, 40))) {
+                    startNextTrial();
+                }
+            } else {
+                ImGui::TextDisabled("All trials completed");
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Reset Trials", ImVec2(120, 40))) {
+                mCurrentTrialIndex = -1;
+                mTrialRunning = false;
+                mRecordedData.clear();
+                std::cout << "Trials reset" << std::endl;
+            }
+
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No exam setting loaded");
+            ImGui::TextWrapped("Load an exam setting config to start trials");
+        }
+    }
+}
+
+void PhysicalExam::drawCurrentStateSection() {
+    if (ImGui::CollapsingHeader("Current State", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (mCharacter) {
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Character Loaded");
+            ImGui::Text("Skeleton DOFs: %zu", mCharacter->getSkeleton()->getNumDofs());
+            ImGui::Text("Body Nodes: %zu", mCharacter->getSkeleton()->getNumBodyNodes());
+            ImGui::Text("Muscles: %zu", mCharacter->getMuscles().size());
+            ImGui::Separator();
+            ImGui::Text("Simulation Time: %.3f s", mWorld->getTime());
+            ImGui::Separator();
+
+            ImGui::Text("Applied Force:");
+            if (mApplyingForce) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "  Magnitude: %.2f N", mForceMagnitude);
+                ImGui::Text("  Body: %s", mForceBodyNode.c_str());
+                ImGui::Text("  Direction: [%.2f, %.2f, %.2f]", mForceX, mForceY, mForceZ);
+                ImGui::Text("  Offset: [%.2f, %.2f, %.2f]", mOffsetX, mOffsetY, mOffsetZ);
+            } else {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  No force applied");
+            }
+
+            ImGui::Separator();
+
+            // Muscle passive forces
+            ImGui::Text("Muscle Forces:");
+            double total_passive = 0.0;
+            std::vector<std::pair<double, std::string>> muscle_forces;
+
+            auto muscles = mCharacter->getMuscles();
+            for (auto& muscle : muscles) {
+                double f_p = muscle->Getf_p();
+                total_passive += f_p;
+                muscle_forces.push_back({f_p, muscle->GetName()});
+            }
+
+            // Sort by passive force (descending)
+            std::sort(muscle_forces.begin(), muscle_forces.end(),
+                     [](const auto& a, const auto& b) { return a.first > b.first; });
+
+            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "  Total Passive: %.2f N", total_passive);
+
+            // Show top 3 muscles with highest passive force
+            ImGui::Text("  Top 3 Passive Forces:");
+            for (int i = 0; i < std::min(3, (int)muscle_forces.size()); i++) {
+                ImGui::Text("    %d. %s: %.2f N", i+1,
+                           muscle_forces[i].second.c_str(),
+                           muscle_forces[i].first);
+            }
+
+            ImGui::Separator();
+
+            // Current joint angles
+            ImGui::Text("Joint Angles:");
+            std::vector<std::string> joints = {"FemurR", "TibiaR", "TalusR"};
+            auto angles = recordJointAngles(joints);
+            for (const auto& [joint, angle] : angles) {
+                ImGui::Text("  %s: %.3f rad (%.1f deg)", joint.c_str(), angle[0], angle[0] * 180.0 / M_PI);
+            }
+        } else {
+            ImGui::TextDisabled("Load character to see state");
+        }
+    }
+}
+
+void PhysicalExam::drawRecordedDataSection() {
+    if (ImGui::CollapsingHeader("Recorded Data")) {
+        ImGui::Text("Total data points: %zu", mRecordedData.size());
+
+        if (!mRecordedData.empty()) {
+            ImGui::Separator();
+
+            // Table header
+            ImGui::Columns(3, "romdata");
+            ImGui::Text("Force (N)");
+            ImGui::NextColumn();
+            ImGui::Text("Passive (N)");
+            ImGui::NextColumn();
+            ImGui::Text("Joints");
+            ImGui::NextColumn();
+            ImGui::Separator();
+
+            // Show last 10 data points
+            size_t start = mRecordedData.size() > 10 ? mRecordedData.size() - 10 : 0;
+            for (size_t i = start; i < mRecordedData.size(); ++i) {
+                ImGui::Text("%.2f", mRecordedData[i].force_magnitude);
+                ImGui::NextColumn();
+                ImGui::Text("%.2f", mRecordedData[i].passive_force_total);
+                ImGui::NextColumn();
+                ImGui::Text("%zu", mRecordedData[i].joint_angles.size());
+                ImGui::NextColumn();
+            }
+
+            ImGui::Columns(1);
+        } else {
+            ImGui::TextDisabled("No data recorded yet");
+        }
+    }
+}
+
+void PhysicalExam::drawROMAnalysisSection() {
+    if (ImGui::CollapsingHeader("ROM Analysis")) {
+        if (mRecordedData.size() >= 2) {
+            ImGui::Text("Data Range:");
+            double minForce = mRecordedData[0].force_magnitude;
+            double maxForce = mRecordedData.back().force_magnitude;
+            ImGui::Text("  Force: %.2f - %.2f N", minForce, maxForce);
+
+            // Find min/max joint angles
+            if (!mRecordedData.empty() && !mRecordedData[0].joint_angles.empty()) {
+                std::string firstJoint = mRecordedData[0].joint_angles.begin()->first;
+                double minAngle = mRecordedData[0].joint_angles.begin()->second[0];
+                double maxAngle = minAngle;
+
+                for (const auto& data : mRecordedData) {
+                    if (data.joint_angles.count(firstJoint)) {
+                        double angle = data.joint_angles.at(firstJoint)[0];
+                        minAngle = std::min(minAngle, angle);
+                        maxAngle = std::max(maxAngle, angle);
+                    }
+                }
+
+                ImGui::Text("  %s ROM: %.2f\u00b0", firstJoint.c_str(), (maxAngle - minAngle) * 180.0 / M_PI);
+            }
+        } else {
+            ImGui::TextDisabled("Record at least 2 data points");
+        }
+    }
+}
+
+void PhysicalExam::drawCameraStatusSection() {
+    if (ImGui::CollapsingHeader("Camera Status")) {
+        // Current preset description
+        if (mCurrentCameraPreset >= 0 && mCurrentCameraPreset < 3 &&
+            mCameraPresets[mCurrentCameraPreset].isSet) {
+            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Current View:");
+            ImGui::SameLine();
+            ImGui::Text("%s", mCameraPresets[mCurrentCameraPreset].description.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Current View: Custom");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Camera Settings:");
+
+        ImGui::Text("Eye: [%.3f, %.3f, %.3f]", mEye[0], mEye[1], mEye[2]);
+        ImGui::Text("Up:  [%.3f, %.3f, %.3f]", mUp[0], mUp[1], mUp[2]);
+        ImGui::Text("Trans: [%.3f, %.3f, %.3f]", mTrans[0], mTrans[1], mTrans[2]);
+        ImGui::Text("Zoom: %.3f", mZoom);
+
+        Eigen::Quaterniond quat = mTrackball.getCurrQuat();
+        ImGui::Text("Quaternion: [%.3f, %.3f, %.3f, %.3f]",
+                    quat.w(), quat.x(), quat.y(), quat.z());
+
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Camera Presets:");
+        for (int i = 0; i < 3; ++i) {
+            if (mCameraPresets[i].isSet) {
+                ImGui::Text("Press %d: %s", (i == 0 ? 8 : (i == 1 ? 9 : 0)),
+                           mCameraPresets[i].description.c_str());
+            }
+        }
+    }
+}
+
+void PhysicalExam::drawSweepMusclePlotsSection() {
+    if (ImGui::CollapsingHeader("Sweep Muscle Plots")) {
+        if (mSweepAngles.empty()) {
+            ImGui::TextDisabled("No sweep data available");
+            ImGui::TextWrapped("Run a joint angle sweep from the control panel to generate plots");
+        } else {
+            // Muscle Selection Sub-header
+            if (ImGui::CollapsingHeader("Muscle Selection", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (mTrackedMuscles.empty()) {
+                    ImGui::TextDisabled("No muscles tracked");
+                } else {
+                    // Filter textbox
+                    ImGui::Text("Filter:");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(200);
+                    ImGui::InputText("##MuscleFilter", mMuscleFilterBuffer, sizeof(mMuscleFilterBuffer));
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear")) {
+                        mMuscleFilterBuffer[0] = '\0';
+                    }
+                    
+                    // Convert filter to lowercase for case-insensitive matching
+                    std::string filter_lower(mMuscleFilterBuffer);
+                    std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+                    
+                    // Build filtered muscle list
+                    std::vector<std::string> filteredMuscles;
+                    for (const auto& muscle_name : mTrackedMuscles) {
+                        // Case-insensitive substring search
+                        std::string muscle_lower = muscle_name;
+                        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
+                        
+                        if (filter_lower.empty() || muscle_lower.find(filter_lower) != std::string::npos) {
+                            filteredMuscles.push_back(muscle_name);
+                        }
+                    }
+                    
+                    // Count visible muscles (from filtered list)
+                    int visibleCount = 0;
+                    for (const auto& muscle_name : filteredMuscles) {
+                        if (mMuscleVisibility[muscle_name]) {
+                            visibleCount++;
+                        }
+                    }
+
+                    // Display visibility count
+                    ImGui::Text("Showing %d of %zu muscles", visibleCount, filteredMuscles.size());
+                    if (!filter_lower.empty()) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(filtered from %zu)", mTrackedMuscles.size());
+                    }
+                    ImGui::SameLine();
+
+                    // Select All / Deselect All buttons (operate on filtered list)
+                    if (ImGui::SmallButton("Select All")) {
+                        for (const auto& muscle_name : filteredMuscles) {
+                            mMuscleVisibility[muscle_name] = true;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Deselect All")) {
+                        for (const auto& muscle_name : filteredMuscles) {
+                            mMuscleVisibility[muscle_name] = false;
+                        }
+                    }
+
+                    ImGui::Separator();
+
+                    // Individual muscle checkboxes (in a scrollable region if many muscles)
+                    if (filteredMuscles.size() > 10) {
+                        // Scrollable region for many muscles
+                        ImGui::BeginChild("MuscleCheckboxes", ImVec2(0, 100), true);
+                    }
+
+                    for (auto& muscle_name : filteredMuscles) {
+                        bool isVisible = mMuscleVisibility[muscle_name];
+                        if (ImGui::Checkbox(muscle_name.c_str(), &isVisible)) {
+                            mMuscleVisibility[muscle_name] = isVisible;
+                        }
+                    }
+
+                    if (filteredMuscles.size() > 10) {
+                        ImGui::EndChild();
+                    }
+                }
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Render the plots with filtered muscles
+            renderMusclePlots();
         }
     }
 }

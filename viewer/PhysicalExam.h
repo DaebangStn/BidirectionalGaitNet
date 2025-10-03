@@ -7,6 +7,7 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <optional>
 #include "dart/dart.hpp"
 #include "dart/gui/Trackball.hpp"
 #include "Character.h"
@@ -77,8 +78,16 @@ public:
     void drawPostureForces();
     void drawGraphPanel();
 
+    // Joint angle sweep
+    void setupSweepMuscles();
+    void runSweep();
+    void collectSweepData(double angle);
+    void renderMusclePlots();
+    void clearSweepData();
+
     // Simulation
     void stepSimulation(int steps);
+    void setPaused(bool paused);  // Callback to control simulation pause state
 
     // Recording
     std::map<std::string, Eigen::VectorXd> recordJointAngles(
@@ -100,6 +109,24 @@ public:
     // UI
     void drawControlPanel();  // Left panel - force controls
     void drawVisualizationPanel();  // Right panel - plots and data
+
+    // Control Panel Sections
+    void drawPosePresetsSection();
+    void drawForceApplicationSection();
+    void drawPrintInfoSection();
+    void drawRecordingSection();
+    void drawRenderOptionsSection();
+    void drawJointControlSection();
+    void drawJointAngleSweepSection();
+
+    // Visualization Panel Sections
+    void drawTrialManagementSection();
+    void drawCurrentStateSection();
+    void drawRecordedDataSection();
+    void drawROMAnalysisSection();
+    void drawCameraStatusSection();
+    void drawSweepMusclePlotsSection();
+
     void drawSimFrame();
     void drawGround();
     void drawSkeleton(const dart::dynamics::SkeletonPtr& skel);
@@ -178,6 +205,26 @@ private:
     CBufferData<double>* mGraphData;
     Eigen::VectorXd mPostureForces;
 
+    // Joint angle sweep system
+    struct JointSweepConfig {
+        int joint_index;           // Which joint to sweep
+        double angle_min;          // Min angle (radians)
+        double angle_max;          // Max angle (radians)
+        int num_steps;             // Number of sweep steps
+    };
+
+    JointSweepConfig mSweepConfig;
+    std::vector<std::string> mTrackedMuscles;  // Muscles crossing swept joint
+    std::vector<double> mSweepAngles;          // X-axis data (joint angles)
+    std::map<std::string, bool> mMuscleVisibility;  // Track which muscles to plot
+    char mMuscleFilterBuffer[256];              // Filter text buffer for muscle search
+    bool mShowSweepLegend;                     // Toggle legend display in sweep plots
+
+    // Sweep state (for non-blocking execution)
+    bool mSweepRunning;                        // Is sweep currently active?
+    int mSweepCurrentStep;                     // Current step in sweep
+    Eigen::VectorXd mSweepOriginalPos;         // Original joint position for restoration
+
     // Examination state
     bool mRunning;
     bool mSimulationPaused;
@@ -198,6 +245,14 @@ private:
     // Pose presets
     int mCurrentPosePreset;  // 0=standing, 1=supine, 2=prone, 3=supine_knee_flexed
     float mPresetKneeAngle;  // For supine with knee flexion
+
+    // Joint angle PI controller
+    bool mEnableInterpolation;  // Enable/disable PI controller mode
+    std::vector<std::optional<double>> mMarkedJointTargets;  // Marked joints with target angles (nullopt = unmarked)
+    std::vector<double> mJointIntegralError;  // Integral error for each joint (PI controller)
+    double mJointKp;  // Proportional gain for joint PI controller
+    double mJointKi;  // Integral gain for joint PI controller
+    double mInterpolationThreshold;  // Threshold to consider target reached (radians)
 
     // Examination table
     dart::dynamics::SkeletonPtr mExamTable;

@@ -75,12 +75,14 @@ public:
 	std::vector<Eigen::Vector3d> mCachedAnchorVelocities;
 	std::vector<Eigen::MatrixXd> mCachedJs;
 
-	// New
-	void change_f(double ratio) { f0 = f0_original * ratio; }
-	void change_l(double ratio) { l_mt0 = l_mt0_original * ratio; }
+	void change_f(double ratio) { f_ratio = ratio; RefreshMuscleParams(); }
+	void change_l(double ratio) { l_ratio = ratio; RefreshMuscleParams(); }
+	void SetTendonOffset(double offset) { l_t0_offset = offset; RefreshMuscleParams(); }
+	void RefreshMuscleParams();
 
-	double ratio_f() { return f0 / f0_original; }
-	double ratio_l() { return l_mt0 / l_mt0_original; }
+	double ratio_f() { return f_ratio; }
+	double ratio_l() { return l_ratio; }
+	double GetTendonOffset() { return l_t0_offset; }
 
 	bool mUseVelocityForce;
 	// Dynamics
@@ -99,7 +101,10 @@ public:
 	double f0;
 
 	double f0_original;
-	double l_mt0_original;
+	double l_mt0_original, l_t0_original;
+
+	// muscle modification variable
+	double l_ratio, f_ratio, l_t0_offset;
 
 	double l_mt0, l_m0, l_t0, length;
 
