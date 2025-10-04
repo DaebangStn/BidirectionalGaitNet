@@ -11,15 +11,12 @@ std::vector<int> sort_indices(const std::vector<double> &val)
 
     return idx;
 }
-Anchor::
-    Anchor(std::vector<BodyNode *> bns, std::vector<Eigen::Vector3d> lps, std::vector<double> ws)
+Anchor::Anchor(std::vector<BodyNode *> bns, std::vector<Eigen::Vector3d> lps, std::vector<double> ws)
     : bodynodes(bns), local_positions(lps), weights(ws), num_related_bodies(bns.size())
 {
 }
 
-Eigen::Vector3d
-Anchor::
-    GetPoint()
+Eigen::Vector3d Anchor::GetPoint()
 {
     Eigen::Vector3d p;
     p.setZero();
@@ -29,10 +26,10 @@ Anchor::
 }
 
 Muscle::Muscle(std::string _name, double _f0, double _lm0, double _lt0, double _pen_angle, 
-    double lmax, double _type1_fraction, bool useVelocityForce)
+    double _type1_fraction, bool useVelocityForce)
     : pen_angle(_pen_angle), selected(false), mUseVelocityForce(useVelocityForce), name(_name), f0_original(_f0), f0(_f0), v_m(0.0), 
-    l_m0(_lm0), l_m(l_mt - l_t0), l_t0(_lt0), l_mt0(0.0), l_mt(1.0), activation(0.0), f_toe(0.33), k_toe(3.0), k_lin(51.878788), 
-    e_toe(0.02), e_t0(0.033), k_pe(5.5), e_mo(0.3), gamma(0.45), l_mt_max(lmax), type1_fraction(_type1_fraction), 
+    l_m0_norm(_lm0), l_m_norm(l_mt_norm - l_t0_norm), l_t0_norm(_lt0), l_mt0(0.0), l_mt_norm(1.0), activation(0.0), f_toe(0.33), k_toe(3.0), k_lin(51.878788), 
+    e_toe(0.02), e_t0(0.033), k_pe(5.5), e_mo(0.3), gamma(0.45), type1_fraction(_type1_fraction), l_ratio(1.0), f_ratio(1.0),
     l_t0_original(_lt0), l_t0_offset(0.0)
 {
 }
@@ -137,11 +134,6 @@ void Muscle::AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::
     mAnchors.push_back(new Anchor(lbs_body_nodes, lbs_local_positions, lbs_weights));
 
     int n = mAnchors.size();
-
-    if (n > 1)
-        l_mt0 += (mAnchors[n - 1]->GetPoint() - mAnchors[n - 2]->GetPoint()).norm();
-    l_mt0_original = l_mt0;
-
     mCachedAnchorPositions.resize(n);
 }
 void Muscle::AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos)
@@ -157,11 +149,6 @@ void Muscle::AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob
     mAnchors.push_back(new Anchor(lbs_body_nodes, lbs_local_positions, lbs_weights));
 
     int n = mAnchors.size();
-    if (n > 1)
-        l_mt0 += (mAnchors[n - 1]->GetPoint() - mAnchors[n - 2]->GetPoint()).norm();
-
-    l_mt0_original = l_mt0;
-
     mCachedAnchorPositions.resize(n);
 }
 void Muscle::SetMuscle()
@@ -170,6 +157,7 @@ void Muscle::SetMuscle()
     l_mt0 = 0;
     for (int i = 1; i < n; i++) l_mt0 += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
     l_mt0_original = l_mt0;
+    l_mt = l_mt0;
 
     Update();
     Eigen::MatrixXd Jt = GetJacobianTranspose();
@@ -187,12 +175,9 @@ void Muscle::SetMuscle()
             num_related_dofs++;
             related_dof_indices.push_back(i);
         }
-        if (JtA[i] > 1E-10)
-            related_vec[i] = 1;
-        else if (JtA[i] < -1E-10)
-            related_vec[i] = -1;
-        else
-            related_vec[i] = 0;
+        if (JtA[i] > 1E-10) related_vec[i] = 1;
+        else if (JtA[i] < -1E-10) related_vec[i] = -1;
+        else related_vec[i] = 0;
     }
     bool isValid = true;
     if (original_related_dof_indices.size() > 0)
@@ -202,8 +187,7 @@ void Muscle::SetMuscle()
             bool isExist = false;
             for (auto idx : original_related_dof_indices)
             {
-                if (related_dof_indices[i] == idx)
-                    isExist = true;
+                if (related_dof_indices[i] == idx) isExist = true;
             }
             if (isExist == false)
             {
@@ -212,9 +196,7 @@ void Muscle::SetMuscle()
             }
         }
     }
-    else
-        for (auto i : related_dof_indices)
-            original_related_dof_indices.push_back(i);
+    else for (auto i : related_dof_indices) original_related_dof_indices.push_back(i);
 
     if (isValid == false)
     {
@@ -225,7 +207,7 @@ void Muscle::SetMuscle()
 
 void Muscle::RefreshMuscleParams()
 {
-    l_t0 = l_t0_original + l_t0_offset;
+    l_t0_norm = l_t0_original + l_t0_offset;
     l_mt0 = (l_mt0_original + l_t0_offset) * l_ratio;
     f0 = f0_original * f_ratio;
 }
@@ -250,20 +232,20 @@ void Muscle::ApplyForceToBody()
         mAnchors[i]->bodynodes[0]->addExtForce(dir, mCachedAnchorPositions[i], false, false);
     }
 }
-double Muscle::
-    GetNormalizedLength()
+
+double Muscle::GetNormalizedLength()
 {
-    return l_m / l_m0;
+    return l_m_norm / l_m0_norm;
 }
 bool Muscle::Update()
 {
     for (int i = 0; i < mAnchors.size(); i++) mCachedAnchorPositions[i] = mAnchors[i]->GetPoint();
-    l_mt = Getl_mt();
-
-    l_m = l_mt - l_t0;
+    l_mt = 0.0;
+    for (int i = 1; i < mAnchors.size(); i++) l_mt += (mCachedAnchorPositions[i] - mCachedAnchorPositions[i - 1]).norm();
+    l_mt_norm = l_mt / l_mt0;
+    l_m_norm = l_mt_norm - l_t0_norm;
     if (mUseVelocityForce) UpdateVelocities();
-
-    return ((l_m / l_m0) < 1.5); // Return whether the joint angle is in ROM
+    return (l_m_norm / l_m0_norm) < 1.5; // Return whether the joint angle is in ROM
 }
 
 // Should be called after Update called
@@ -286,36 +268,19 @@ void Muscle::UpdateVelocities()
         v_m += (1 / l) * (mCachedAnchorPositions[i + 1] - mCachedAnchorPositions[i]).dot((mCachedAnchorVelocities[i + 1] - mCachedAnchorVelocities[i]));
     }
 }
-double
-Muscle::GetForce()
+double Muscle::GetForce()
 {
     return Getf_A() * activation + Getf_p();
 }
-double
-Muscle::
-    Getf_A()
+double Muscle::Getf_A()
 {
-    return f0 * g_al(l_m / l_m0) * (mUseVelocityForce ? g_av(v_m * 0.1 / l_mt0 * l_m0) : 1.0) * cos(pen_angle);
+    return f0 * g_al(l_m_norm / l_m0_norm) * (mUseVelocityForce ? g_av(v_m * 0.1 / l_mt0 * l_m0_norm) : 1.0) * cos(pen_angle);
 }
-double
-Muscle::
-    Getf_p()
+double Muscle::Getf_p()
 {
-    return f0 * g_pl(l_m / l_m0) * cos(pen_angle);
+    return f0 * g_pl(l_m_norm / l_m0_norm) * cos(pen_angle);
 }
-double
-Muscle::
-    Getl_mt()
-{
-    length = 0.0;
-    for (int i = 1; i < mAnchors.size(); i++)
-        length += (mCachedAnchorPositions[i] - mCachedAnchorPositions[i - 1]).norm();
-
-    return length / l_mt0;
-}
-Eigen::VectorXd
-Muscle::
-    GetRelatedJtA()
+Eigen::VectorXd Muscle::GetRelatedJtA()
 {
     Eigen::MatrixXd Jt_reduced = GetReducedJacobianTranspose();
     Eigen::VectorXd A = GetForceJacobianAndPassive().first;
@@ -323,9 +288,47 @@ Muscle::
     return JtA_reduced;
 }
 
-Eigen::MatrixXd
-Muscle::
-    GetReducedJacobianTranspose()
+void Muscle::RelaxPassiveForce()
+{
+    double old_coeff = GetPassiveForceCoeff();
+    SetPassiveForceCoeff(1.0);
+    std::cout << "[Muscle] RelaxPassiveForce: " << name
+              << " | old_coeff=" << old_coeff
+              << " → new_coeff=1.0" << std::endl;
+}
+double Muscle::GetPassiveForceCoeff()
+{
+    return l_m_norm / l_m0_norm;
+}
+void Muscle::SetPassiveForceCoeff(double coeff)
+{
+    double old_l_t0_offset = l_t0_offset;
+    double tendon_length = l_mt_norm - coeff * l_m0_norm;
+    l_t0_offset = tendon_length - l_t0_original;
+
+    // Guard: ensure l_t0 doesn't go below minimum threshold
+    const double MIN_L_T0 = 0.001;
+    double new_l_t0 = l_t0_original + l_t0_offset;
+
+    if (new_l_t0 < MIN_L_T0) {
+        double clamped_offset = MIN_L_T0 - l_t0_original;
+        std::cout << "[Muscle] WARNING: " << name
+                  << " - l_t0 would be " << new_l_t0
+                  << " (below minimum " << MIN_L_T0 << ")"
+                  << " | Clamping l_t0_offset: " << l_t0_offset
+                  << " → " << clamped_offset << std::endl;
+        l_t0_offset = clamped_offset;
+    }
+
+    RefreshMuscleParams();
+
+    std::cout << "[Muscle] SetPassiveForceCoeff: " << name
+              << " | coeff=" << coeff
+              << " | l_t0_offset: " << old_l_t0_offset << " → " << l_t0_offset
+              << " | l_mt=" << l_mt_norm << std::endl;
+}
+
+Eigen::MatrixXd Muscle::GetReducedJacobianTranspose()
 {
     const auto &skel = mAnchors[0]->bodynodes[0]->getSkeleton();
     Eigen::MatrixXd Jt(num_related_dofs, 3 * mAnchors.size());
@@ -349,9 +352,7 @@ Muscle::
     return Jt;
 }
 
-Eigen::VectorXd
-Muscle::
-    GetRelatedJtp()
+Eigen::VectorXd Muscle::GetRelatedJtp()
 {
     Eigen::MatrixXd Jt_reduced = GetReducedJacobianTranspose();
     Eigen::VectorXd P = GetForceJacobianAndPassive().second;
@@ -359,9 +360,7 @@ Muscle::
     return JtP_reduced;
 }
 
-Eigen::MatrixXd
-Muscle::
-    GetJacobianTranspose()
+Eigen::MatrixXd Muscle::GetJacobianTranspose()
 {
     const auto &skel = mAnchors[0]->bodynodes[0]->getSkeleton();
     int dof = skel->getNumDofs();
@@ -375,9 +374,7 @@ Muscle::
     return Jt;
 }
 
-std::pair<Eigen::VectorXd, Eigen::VectorXd>
-Muscle::
-    GetForceJacobianAndPassive()
+std::pair<Eigen::VectorXd, Eigen::VectorXd> Muscle::GetForceJacobianAndPassive()
 {
     double f_a = Getf_A();
     double f_p = Getf_p();
@@ -415,9 +412,7 @@ Muscle::
     return std::make_pair(A, p);
 }
 
-std::vector<dart::dynamics::Joint *>
-Muscle::
-    GetRelatedJoints()
+std::vector<dart::dynamics::Joint *> Muscle::GetRelatedJoints()
 {
     auto skel = mAnchors[0]->bodynodes[0]->getSkeleton();
     std::map<dart::dynamics::Joint *, int> jns;
@@ -436,9 +431,7 @@ Muscle::
             jns_related.push_back(jn.first);
     return jns_related;
 }
-std::vector<dart::dynamics::BodyNode *>
-Muscle::
-    GetRelatedBodyNodes()
+std::vector<dart::dynamics::BodyNode *> Muscle::GetRelatedBodyNodes()
 {
     std::vector<dart::dynamics::BodyNode *> bns_related;
     auto rjs = GetRelatedJoints();
@@ -449,8 +442,7 @@ Muscle::
 
     return bns_related;
 }
-void Muscle::
-    ComputeJacobians()
+void Muscle::ComputeJacobians()
 {
     const auto &skel = mAnchors[0]->bodynodes[0]->getSkeleton();
     int dof = skel->getNumDofs();
@@ -466,9 +458,7 @@ void Muscle::
         }
     }
 }
-Eigen::VectorXd
-Muscle::
-    Getdl_dtheta()
+Eigen::VectorXd Muscle::Getdl_dtheta()
 {
     ComputeJacobians();
     const auto &skel = mAnchors[0]->bodynodes[0]->getSkeleton();
@@ -489,18 +479,14 @@ Muscle::
     return dl_dtheta;
 }
 
-double
-Muscle::
-    g(double _l_m)
+double Muscle::g(double _l_m)
 {
-    double e_t = (l_mt - _l_m - l_t0) / l_t0;
-    _l_m = _l_m / l_m0;
+    double e_t = (l_mt_norm - _l_m - l_t0_norm) / l_t0_norm;
+    _l_m = _l_m / l_m0_norm;
     double f = g_t(e_t) - (g_pl(_l_m) + activation * g_al(_l_m));
     return f;
 }
-double
-Muscle::
-    g_t(double e_t)
+double Muscle::g_t(double e_t)
 {
     double f_t;
     if (e_t <= e_t0)
@@ -510,26 +496,18 @@ Muscle::
 
     return f_t;
 }
-double
-Muscle::
-    g_pl(double _l_m)
+double Muscle::g_pl(double _l_m)
 {
     double f_pl = (exp(k_pe * (_l_m - 1) / e_mo) - 1.0) / (exp(k_pe) - 1.0);
 
-    if (_l_m < 1.0)
-        return 0.0;
-    else
-        return f_pl;
+    if (_l_m < 1.0) return 0.0;
+    else return f_pl;
 }
-double
-Muscle::
-    g_al(double _l_m)
+double Muscle::g_al(double _l_m)
 {
     return exp(-(_l_m - 1.0) * (_l_m - 1.0) / gamma);
 }
-double
-Muscle::
-    g_av(double _v_m)
+double Muscle::g_av(double _v_m)
 {
     double f_av = 0;
 
@@ -543,16 +521,12 @@ Muscle::
     return f_av;
 }
 
-double
-Muscle::
-    GetMass()
+double Muscle::GetMass()
 {
     return 1059.7 * f0 / 250000 * l_mt0;
 }
 
-double
-Muscle::
-    Getdl_velocity()
+double Muscle::Getdl_velocity()
 {
     ComputeJacobians();
     const auto &skel = mAnchors[0]->bodynodes[0]->getSkeleton();
@@ -566,9 +540,7 @@ Muscle::
     return dl_velocity;
 }
 
-std::vector<std::vector<double>>
-Muscle::
-    GetGraphData()
+std::vector<std::vector<double>> Muscle::GetGraphData()
 {
     std::vector<std::vector<double>> result;
     std::vector<double> x;
@@ -603,18 +575,7 @@ Muscle::
     return result;
 }
 
-double
-Muscle::
-    GetRecommendedMinLength()
-{
-    double r_l =
-        1.0 / ((1 / (Getl_mt()) * l_m0 / f0 * ((-e_mo) * log((2000.0 / f0) * (exp(k_pe) - 1) + 1) / k_pe - 1) + l_t0));
-    return r_l;
-}
-
-double
-Muscle::
-    GetBHAR04_EnergyRate() // It assume that activation == excitation (i.e. no delay)
+double Muscle::GetBHAR04_EnergyRate() // It assume that activation == excitation (i.e. no delay)
 {
     double e_dot = 0.0;
     double a_dot = 0.0;
@@ -626,7 +587,7 @@ Muscle::
     double f_a_u = 40 * type1_fraction * sin(M_PI * 0.5 * activation) + 133 * (1 - type1_fraction) * (1 - cos(M_PI * 0.5 * activation));
     double f_m_a = 74 * type1_fraction * sin(M_PI * 0.5 * activation) + 111 * (1 - type1_fraction) * (1 - cos(M_PI * 0.5 * activation));
     double g_l = 0.0;
-    double l_m_ratio = l_m / l_m0;
+    double l_m_ratio = l_m_norm / l_m0_norm;
 
     if (l_m_ratio < 0.5)
         g_l = 0.5;

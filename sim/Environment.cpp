@@ -2,8 +2,7 @@
 #include "UriResolver.h"
 #include "CBufferData.h"
 
-Environment::
-    Environment()
+Environment::Environment()
     : mPhaseUpdateInContolHz(false), mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1), mHeightCalibration(0), mEnforceSymmetry(false), isRender(false), mIsStanceLearning(false), mLimitY(0.6), mLearningStd(false)
 {
     // Initialize URI resolver for path resolution
@@ -54,13 +53,11 @@ Environment::
     mPoseOptimizationMode = 0;
     mHorizon = 300;
 }
-Environment::
-    ~Environment()
+Environment::~Environment()
 {
 }
 
-void Environment::
-    initialize(std::string metadata)
+void Environment::initialize(std::string metadata)
 {
     if (metadata.substr(metadata.length() - 4) == ".xml") // Path 를 입력했을 경우 변환 시켜줌.
     {
@@ -1383,9 +1380,7 @@ bool Environment::isFall()
     return is_fall;
 }
 
-double
-Environment::
-    getMetabolicReward()
+double Environment::getMetabolicReward()
 {
     double r_metabolic = 0.0;
     if (mUseMuscle)
@@ -1427,9 +1422,7 @@ Environment::
     return r_metabolic;
 }
 
-double
-Environment::
-    getLocoPrinReward()
+double Environment::getLocoPrinReward()
 {
     int horizon = mSimulationHz / mControlHz;
     const std::vector<Eigen::Vector3d> &headVels = mCharacters[0]->getHeadVelLogs();
@@ -1446,9 +1439,7 @@ Environment::
     return r_loco;
 }
 
-double
-Environment::
-    getStepReward()
+double Environment::getStepReward()
 {
     Eigen::Vector3d foot_diff = mCurrentFoot - mCurrentTargetFoot;
     foot_diff[0] = 0; // Ignore X axis difference
@@ -1463,8 +1454,7 @@ Environment::
     return r;
 }
 
-Eigen::Vector3d Environment::
-    getAvgVelocity()
+Eigen::Vector3d Environment::getAvgVelocity()
 {
     Eigen::Vector3d avg_vel = Eigen::Vector3d::Zero();
     const std::vector<Eigen::Vector3d> &coms = mCharacters[0]->getCOMLogs();
@@ -1481,9 +1471,7 @@ Eigen::Vector3d Environment::
     return avg_vel;
 }
 
-double
-Environment::
-    getAvgVelReward()
+double Environment::getAvgVelReward()
 {
     Eigen::Vector3d curAvgVel = getAvgVelocity();
     double targetCOMVel = getTargetCOMVelocity();
@@ -1493,9 +1481,7 @@ Environment::
     return vel_reward;
 }
 
-Eigen::VectorXd
-Environment::
-    getJointState(bool isMirror)
+Eigen::VectorXd Environment::getJointState(bool isMirror)
 {
     Eigen::VectorXd joint_state = Eigen::VectorXd::Zero(3 * (mCharacters[0]->getSkeleton()->getNumDofs() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs()));
     Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs());
@@ -1517,8 +1503,7 @@ Environment::
     return joint_state;
 }
 
-void Environment::
-    updateFootStep(bool isInit)
+void Environment::updateFootStep(bool isInit)
 {
 
     double phase = getLocalPhase(true);
@@ -1565,8 +1550,7 @@ void Environment::
     mNextTargetFoot[1] = 0.0;
 }
 
-void Environment::
-    setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
+void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
 {
     int idx = 0;
     // skeleton parameter
@@ -1733,9 +1717,7 @@ Environment::
     return ParamState;
 }
 
-Eigen::VectorXd
-Environment::
-    getParamSample()
+Eigen::VectorXd Environment::getParamSample()
 {
     Eigen::VectorXd sampled_param = mParamMin;
     for (auto p : mParamGroups)
@@ -1875,9 +1857,7 @@ Network Environment::
     return nn;
 }
 
-std::pair<Eigen::VectorXd, Eigen::VectorXd>
-Environment::
-    getSpace(std::string metadata)
+std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getSpace(std::string metadata)
 {
     TiXmlDocument doc;
     Eigen::VectorXd minV = Eigen::VectorXd::Ones(mNumParamState);

@@ -393,5 +393,5 @@ if __name__ == "__main__":
              local_dir="ray_results",
              restore=checkpoint_path,
              progress_reporter=CLIReporter(max_report_frequency=500),
-             checkpoint_freq=1)
+             checkpoint_freq=1000)
     ray.shutdown()

@@ -109,6 +109,7 @@ public:
     // UI
     void drawControlPanel();  // Left panel - force controls
     void drawVisualizationPanel();  // Right panel - plots and data
+    void drawSurgeryPanel();  // Surgery panel - toggleable with G key
 
     // Control Panel Sections
     void drawPosePresetsSection();
@@ -126,6 +127,15 @@ public:
     void drawROMAnalysisSection();
     void drawCameraStatusSection();
     void drawSweepMusclePlotsSection();
+    void drawMuscleInfoSection();
+
+    // Surgery Panel Sections
+    void resetMuscles();
+    void drawDistributePassiveForceSection();
+    void drawRelaxPassiveForceSection();
+    void drawSaveMuscleConfigSection();
+    void exportMuscles(const std::string& path);
+    Eigen::Isometry3d getBodyNodeZeroPoseTransform(dart::dynamics::BodyNode* bn);
 
     void drawSimFrame();
     void drawGround();
@@ -220,6 +230,10 @@ private:
     char mMuscleFilterBuffer[256];              // Filter text buffer for muscle search
     bool mShowSweepLegend;                     // Toggle legend display in sweep plots
 
+    // Muscle Info Panel
+    char mMuscleInfoFilterBuffer[256];          // Filter text for muscle info search
+    std::string mSelectedMuscleInfo;            // Currently selected muscle for info display
+
     // Sweep state (for non-blocking execution)
     bool mSweepRunning;                        // Is sweep currently active?
     int mSweepCurrentStep;                     // Current step in sweep
@@ -268,6 +282,23 @@ private:
     float mJointForceScale;          // Scale factor for joint force arrow visualization
     bool mShowJointForceLabels;      // Toggle for joint passive force text labels
     bool mShowPostureDebug;          // Toggle for posture control debug output
+
+    // Surgery Panel
+    bool mShowSurgeryPanel;          // Toggle for surgery panel visibility
+    char mSaveMuscleFilename[256];   // Buffer for save muscle config filename
+    bool mSavingMuscle;              // Flag to prevent duplicate saves
+
+    // Distribute Passive Force section
+    std::string mDistributeRefMuscle;                // Reference muscle name
+    std::map<std::string, bool> mDistributeSelection; // Selected modifying muscles
+    char mDistributeFilterBuffer[256];               // Filter text for muscle search
+
+    // Relax Passive Force section
+    std::map<std::string, bool> mRelaxSelection;     // Selected muscles to relax
+    char mRelaxFilterBuffer[256];                    // Filter text for muscle search
+
+    // Sweep restore option
+    bool mSweepRestorePosition;                      // Whether to restore position after sweep
 
     // Pose preset methods
     void setPoseStanding();

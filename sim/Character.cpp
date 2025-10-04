@@ -128,8 +128,7 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
     rtgBody->setInertia(inertia);
 }
 
-Character::
-    Character(std::string path, double defaultKp, double defaultKv, double defaultDamping, bool collide_all)
+Character::Character(std::string path, double defaultKp, double defaultKv, double defaultDamping, bool collide_all)
 {
     mActuatorType = tor;
 
@@ -260,9 +259,7 @@ Character::
 // Output : Reflexed Position of the generalized position of character
 // Method : Pair 된 Joint 의 Angle 을 반전 시킴
 
-Eigen::VectorXd
-Character::
-    getMirrorPosition(Eigen::VectorXd pos)
+Eigen::VectorXd Character::getMirrorPosition(Eigen::VectorXd pos)
 {
     for (auto p : mPairs)
     {
@@ -292,17 +289,13 @@ Character::
     return pos;
 }
 
-double
-Character::
-    updateLocalTime(double dtime)
+double Character::updateLocalTime(double dtime)
 {
     mLocalTime += dtime;
     return mLocalTime;
 }
 
-Eigen::VectorXd
-Character::
-    getSPDForces(const Eigen::VectorXd &p_desired, const Eigen::VectorXd &ext, int inference_per_sim)
+Eigen::VectorXd Character::getSPDForces(const Eigen::VectorXd &p_desired, const Eigen::VectorXd &ext, int inference_per_sim)
 {
     Eigen::VectorXd q = mSkeleton->getPositions();
     Eigen::VectorXd dq = mSkeleton->getVelocities();
@@ -435,8 +428,7 @@ Eigen::VectorXd Character::heightCalibration(dart::simulation::WorldPtr _world, 
 }
 
 // Muscle
-void Character::
-    setMuscles(std::string path, bool useVelocityForce, bool meshLbsWeight)
+void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbsWeight)
 {
     TiXmlDocument doc;
     
@@ -462,13 +454,12 @@ void Character::
         double lm = std::stod(unit->Attribute("lm"));
         double lt = std::stod(unit->Attribute("lt"));
         double pa = std::stod(unit->Attribute("pen_angle"));
-        double lmax = std::stod(unit->Attribute("lmax"));
         double type1_fraction = 0.5;
         if (unit->Attribute("type1_fraction") != nullptr)
             type1_fraction = std::stod(unit->Attribute("type1_fraction"));
 
-        Muscle *muscle_elem = new Muscle(name, f0, lm, lt, pa, lmax, type1_fraction, useVelocityForce);
-        Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt, pa, lmax, type1_fraction, useVelocityForce);
+        Muscle *muscle_elem = new Muscle(name, f0, lm, lt, pa, type1_fraction, useVelocityForce);
+        Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt, pa, type1_fraction, useVelocityForce);
 
         bool isValid = true;
         int num_waypoints = 0;
@@ -548,8 +539,7 @@ void Character::
     mActivations = Eigen::VectorXd::Zero(mMuscles.size());
 }
 
-void Character::
-    clearLogs()
+void Character::clearLogs()
 {
     mTorqueLogs.clear();
     mActivationLogs.clear();
@@ -704,8 +694,7 @@ Character::addPositions(Eigen::VectorXd pos1, Eigen::VectorXd pos2, bool include
     return pos1;
 }
 
-void Character::
-    setSkelParam(std::vector<std::pair<std::string, double>> _skel_info, bool doOptimization)
+void Character::setSkelParam(std::vector<std::pair<std::string, double>> _skel_info, bool doOptimization)
 {
 
     // doOptimization = true;
@@ -758,8 +747,7 @@ void Character::
         applySkeletonLength(mSkelInfos, doOptimization);
 }
 
-void Character::
-    applySkeletonLength(const std::vector<BoneInfo> &info, bool doOptimization)
+void Character::applySkeletonLength(const std::vector<BoneInfo> &info, bool doOptimization)
 {
     // const double f0_coeff = 1.5;
     for (auto bone : info)
@@ -911,8 +899,7 @@ void Character::
     mRefSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
 }
 
-void Character::
-    applySkeletonBodyNode(const std::vector<BoneInfo> &info, dart::dynamics::SkeletonPtr skel)
+void Character::applySkeletonBodyNode(const std::vector<BoneInfo> &info, dart::dynamics::SkeletonPtr skel)
 {
     for (auto bone : info)
     {
@@ -978,8 +965,8 @@ Character::calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const std::vect
             shapeTerm += (rep == 0 || rep == numSampling ? 0.5 : 1) * fShape(stdMuscle, rtgMuscle);
 
             // length curve term
-            std::pair<double, double> stdLength = std::make_pair(stdMuscle->length / stdMuscle->l_mt0, phase);
-            std::pair<double, double> rtgLength = std::make_pair(rtgMuscle->length / rtgMuscle->l_mt0, phase);
+            std::pair<double, double> stdLength = std::make_pair(stdMuscle->GetLengthRatio(), phase);
+            std::pair<double, double> rtgLength = std::make_pair(rtgMuscle->GetLengthRatio(), phase);
             stdMin = std::min(stdMin, stdLength);
             stdMax = std::max(stdMax, stdLength);
             rtgMin = std::min(rtgMin, rtgLength);
@@ -1035,9 +1022,7 @@ Character::fShape(Muscle *stdMuscle, Muscle *rtgMuscle)
     return cnt ? ret / cnt : 0;
 }
 
-double
-Character::
-    getSkelParamValue(std::string skel_name)
+double Character::getSkelParamValue(std::string skel_name)
 {
 
     if (skel_name == "global")
@@ -1058,9 +1043,7 @@ Character::
     return -1;
 }
 
-double
-Character::
-    getTorsionValue(std::string skel_name)
+double Character::getTorsionValue(std::string skel_name)
 {
     for (auto s_i : mSkelInfos)
         if (std::get<0>(s_i) == skel_name)

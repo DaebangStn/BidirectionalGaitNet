@@ -30,6 +30,7 @@ cmake-build-*/
 # lsp-server related
 compile_commands.json
 .clangd/
+.cache/
 
 # Ray related
 ray_results/

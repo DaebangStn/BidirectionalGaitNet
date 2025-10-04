@@ -71,10 +71,25 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mJointKp(500.0)               // Proportional gain
     , mJointKi(50.0)                // Integral gain
     , mInterpolationThreshold(0.01)   // 0.01 radians threshold
+    , mShowSurgeryPanel(true)      // Surgery panel hidden by default
+    , mSavingMuscle(false)          // Not currently saving
+    , mSweepRestorePosition(false)   // Restore position after sweep by default
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
     mShowSweepLegend = true;  // Show legend by default
+
+    // Initialize muscle info panel
+    mMuscleInfoFilterBuffer[0] = '\0';  // Initialize muscle info filter buffer
+    mSelectedMuscleInfo = "";  // No muscle selected initially
+
+    // Initialize surgery panel filename buffer with default name
+    std::strncpy(mSaveMuscleFilename, "data/muscle_modified.xml", sizeof(mSaveMuscleFilename));
+    mSaveMuscleFilename[sizeof(mSaveMuscleFilename) - 1] = '\0';
+
+    // Initialize surgery section filter buffers
+    mDistributeFilterBuffer[0] = '\0';
+    mRelaxFilterBuffer[0] = '\0';
 
     // Initialize camera presets from preset definitions below
     initializeCameraPresets();
@@ -793,7 +808,8 @@ void PhysicalExam::render() {
 
     drawControlPanel();  // Left panel
     drawVisualizationPanel();  // Right panel
-
+    
+    if (mShowSurgeryPanel) drawSurgeryPanel();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -827,8 +843,10 @@ void PhysicalExam::mainLoop() {
 
                 mSweepCurrentStep++;
             } else {
-                // Sweep complete - restore original position
-                joint->setPositions(mSweepOriginalPos);
+                // Sweep complete - restore original position if enabled
+                if (mSweepRestorePosition) {
+                    joint->setPositions(mSweepOriginalPos);
+                }
                 mSweepRunning = false;
                 std::cout << "Sweep completed. Collected " << mSweepAngles.size()
                           << " data points" << std::endl;
@@ -836,7 +854,9 @@ void PhysicalExam::mainLoop() {
 
             // Check for user interruption (ESC key)
             if (glfwGetKey(mWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-                joint->setPositions(mSweepOriginalPos);
+                if (mSweepRestorePosition) {
+                    joint->setPositions(mSweepOriginalPos);
+                }
                 mSweepRunning = false;
                 std::cout << "Sweep interrupted by user" << std::endl;
             }
@@ -927,12 +947,510 @@ void PhysicalExam::drawVisualizationPanel() {
     drawROMAnalysisSection();
     drawCameraStatusSection();
     drawSweepMusclePlotsSection();
+    drawMuscleInfoSection();
 
     // Posture control graphs
     drawGraphPanel();
 
     ImGui::End();
 }
+
+// ============================================================================
+// SURGERY PANEL
+// ============================================================================
+void PhysicalExam::drawSurgeryPanel() {
+    // Floating panel in center-top area
+    ImGui::SetNextWindowSize(ImVec2(450, mHeight - 100), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(mWidth - 460, 50), ImGuiCond_FirstUseEver);
+    
+    ImGui::SetNextWindowFocus();
+    ImGui::Begin("Surgery Operations", &mShowSurgeryPanel);
+    
+    // 1. Reset Muscle Button (not a header, just a button)
+    if (ImGui::Button("Reset Muscles")) {
+        resetMuscles();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Reset all muscle properties to their original state");
+    }
+    ImGui::Spacing();
+    
+    // 2. Distribute Passive Force (CollapssingHeader)
+    if (ImGui::CollapsingHeader("Distribute Passive Force", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawDistributePassiveForceSection();
+    }
+    ImGui::Spacing();
+    
+    // 3. Relax Passive Force (CollapsingHeader)
+    if (ImGui::CollapsingHeader("Relax Passive Force", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawRelaxPassiveForceSection();
+    }
+    ImGui::Spacing();
+    
+    // 4. Save Muscle Config (CollapsingHeader)
+    if (ImGui::CollapsingHeader("Save Muscle Config", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawSaveMuscleConfigSection();
+    }
+    
+    ImGui::End();
+}
+
+// ============================================================================
+// SURGERY OPERATIONS
+// ============================================================================
+void PhysicalExam::resetMuscles() {
+    if (!mCharacter) return;
+
+    std::cout << "[Surgery] Resetting all muscles to original state..." << std::endl;
+
+    auto muscles = mCharacter->getMuscles();
+    int resetCount = 0;
+    for (auto muscle : muscles) {
+        muscle->change_f(1.0);
+        muscle->change_l(1.0);
+        muscle->SetTendonOffset(0.0);
+        resetCount++;
+    }
+
+    std::cout << "[Surgery] Muscle reset complete. Reset " << resetCount << " muscles." << std::endl;
+}
+
+void PhysicalExam::drawDistributePassiveForceSection() {
+    ImGui::Indent();
+
+    ImGui::TextWrapped("Select muscles, then choose one as reference to copy its passive force coefficient to others.");
+    ImGui::Spacing();
+
+    if (!mCharacter) {
+        ImGui::TextDisabled("No character loaded");
+        ImGui::Unindent();
+        return;
+    }
+
+    auto muscles = mCharacter->getMuscles();
+    if (muscles.empty()) {
+        ImGui::TextDisabled("No muscles found");
+        ImGui::Unindent();
+        return;
+    }
+
+    // Build muscle name list
+    std::vector<std::string> muscleNames;
+    for (auto m : muscles) {
+        muscleNames.push_back(m->name);
+    }
+
+    // Two-column layout
+    ImGui::Columns(2, "DistributeColumns", true);
+
+    // LEFT PANEL: All Muscles
+    ImGui::Text("All Muscles:");
+    ImGui::Separator();
+
+    // Filter textbox
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##DistributeFilter", mDistributeFilterBuffer, sizeof(mDistributeFilterBuffer));
+    if (ImGui::SmallButton("Clear Filter##Distribute")) {
+        mDistributeFilterBuffer[0] = '\0';
+    }
+
+    // Convert filter to lowercase
+    std::string filter_lower(mDistributeFilterBuffer);
+    std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+
+    // Build filtered muscle list
+    std::vector<std::string> filteredMuscles;
+    for (const auto& muscle_name : muscleNames) {
+        std::string muscle_lower = muscle_name;
+        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
+        if (filter_lower.empty() || muscle_lower.find(filter_lower) != std::string::npos) {
+            filteredMuscles.push_back(muscle_name);
+        }
+    }
+
+    // Select All / Deselect All buttons
+    if (ImGui::SmallButton("All##Distribute")) {
+        for (const auto& muscle_name : filteredMuscles) {
+            mDistributeSelection[muscle_name] = true;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("None##Distribute")) {
+        for (const auto& muscle_name : filteredMuscles) {
+            mDistributeSelection[muscle_name] = false;
+        }
+    }
+
+    // Muscle checkboxes (scrollable)
+    ImGui::BeginChild("DistributeAllMuscles", ImVec2(0, 150), true);
+    for (auto& muscle_name : filteredMuscles) {
+        bool isSelected = mDistributeSelection[muscle_name];
+        if (ImGui::Checkbox(muscle_name.c_str(), &isSelected)) {
+            mDistributeSelection[muscle_name] = isSelected;
+        }
+    }
+    ImGui::EndChild();
+
+    // RIGHT PANEL: Selected Muscles
+    ImGui::NextColumn();
+    ImGui::Text("Selected Muscles:");
+    ImGui::Separator();
+
+    // Build selected muscles list
+    std::vector<std::string> selectedMuscles;
+    for (const auto& muscle_name : muscleNames) {
+        if (mDistributeSelection[muscle_name]) {
+            selectedMuscles.push_back(muscle_name);
+        }
+    }
+
+    ImGui::Text("Count: %zu", selectedMuscles.size());
+
+    // Selected muscles list with radio buttons for reference selection
+    ImGui::BeginChild("DistributeSelectedMuscles", ImVec2(0, 150), true);
+    if (selectedMuscles.empty()) {
+        ImGui::TextDisabled("No muscles selected");
+    } else {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Choose Reference:");
+        ImGui::Separator();
+        for (const auto& muscle_name : selectedMuscles) {
+            bool isRef = (muscle_name == mDistributeRefMuscle);
+            if (ImGui::RadioButton(muscle_name.c_str(), isRef)) {
+                mDistributeRefMuscle = muscle_name;
+            }
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::Columns(1);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Apply button
+    if (ImGui::Button("Apply Distribution", ImVec2(-1, 30))) {
+        if (selectedMuscles.empty()) {
+            std::cout << "[Surgery] Error: No muscles selected!" << std::endl;
+        } else if (mDistributeRefMuscle.empty()) {
+            std::cout << "[Surgery] Error: No reference muscle selected!" << std::endl;
+        } else {
+            // Find reference muscle
+            Muscle* refMuscle = nullptr;
+            for (auto m : muscles) {
+                if (m->name == mDistributeRefMuscle) {
+                    refMuscle = m;
+                    break;
+                }
+            }
+
+            if (refMuscle) {
+                double refCoeff = refMuscle->GetPassiveForceCoeff();
+                int modifiedCount = 0;
+
+                // Apply to all selected muscles
+                for (auto m : muscles) {
+                    if (mDistributeSelection[m->name]) {
+                        m->SetPassiveForceCoeff(refCoeff);
+                        modifiedCount++;
+                    }
+                }
+
+                std::cout << "[Surgery] Distributed passive force coefficient " << refCoeff
+                          << " from '" << mDistributeRefMuscle << "' to "
+                          << modifiedCount << " muscles" << std::endl;
+            }
+        }
+    }
+
+    ImGui::Unindent();
+}
+
+void PhysicalExam::drawRelaxPassiveForceSection() {
+    ImGui::Indent();
+
+    ImGui::TextWrapped("Select muscles to relax (reduce passive forces).");
+    ImGui::Spacing();
+
+    if (!mCharacter) {
+        ImGui::TextDisabled("No character loaded");
+        ImGui::Unindent();
+        return;
+    }
+
+    auto muscles = mCharacter->getMuscles();
+    if (muscles.empty()) {
+        ImGui::TextDisabled("No muscles found");
+        ImGui::Unindent();
+        return;
+    }
+
+    // Build muscle name list
+    std::vector<std::string> muscleNames;
+    for (auto m : muscles) {
+        muscleNames.push_back(m->name);
+    }
+
+    // Two-column layout
+    ImGui::Columns(2, "RelaxColumns", true);
+
+    // LEFT PANEL: All Muscles
+    ImGui::Text("All Muscles:");
+    ImGui::Separator();
+
+    // Filter textbox
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##RelaxFilter", mRelaxFilterBuffer, sizeof(mRelaxFilterBuffer));
+    if (ImGui::SmallButton("Clear Filter##Relax")) {
+        mRelaxFilterBuffer[0] = '\0';
+    }
+
+    // Convert filter to lowercase
+    std::string filter_lower(mRelaxFilterBuffer);
+    std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+
+    // Build filtered muscle list
+    std::vector<std::string> filteredMuscles;
+    for (const auto& muscle_name : muscleNames) {
+        std::string muscle_lower = muscle_name;
+        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
+        if (filter_lower.empty() || muscle_lower.find(filter_lower) != std::string::npos) {
+            filteredMuscles.push_back(muscle_name);
+        }
+    }
+
+    // Select All / Deselect All buttons
+    if (ImGui::SmallButton("All##Relax")) {
+        for (const auto& muscle_name : filteredMuscles) {
+            mRelaxSelection[muscle_name] = true;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("None##Relax")) {
+        for (const auto& muscle_name : filteredMuscles) {
+            mRelaxSelection[muscle_name] = false;
+        }
+    }
+
+    // Muscle checkboxes (scrollable)
+    ImGui::BeginChild("RelaxAllMuscles", ImVec2(0, 150), true);
+    for (auto& muscle_name : filteredMuscles) {
+        bool isSelected = mRelaxSelection[muscle_name];
+        if (ImGui::Checkbox(muscle_name.c_str(), &isSelected)) {
+            mRelaxSelection[muscle_name] = isSelected;
+        }
+    }
+    ImGui::EndChild();
+
+    // RIGHT PANEL: Selected Muscles to Relax
+    ImGui::NextColumn();
+    ImGui::Text("Muscles to Relax:");
+    ImGui::Separator();
+
+    // Build selected muscles list
+    std::vector<std::string> selectedMuscles;
+    for (const auto& muscle_name : muscleNames) {
+        if (mRelaxSelection[muscle_name]) {
+            selectedMuscles.push_back(muscle_name);
+        }
+    }
+
+    ImGui::Text("Count: %zu", selectedMuscles.size());
+
+    // Selected muscles list
+    ImGui::BeginChild("RelaxSelectedMuscles", ImVec2(0, 150), true);
+    if (selectedMuscles.empty()) {
+        ImGui::TextDisabled("No muscles selected");
+    } else {
+        for (const auto& muscle_name : selectedMuscles) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", muscle_name.c_str());
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::Columns(1);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Apply button
+    if (ImGui::Button("Apply Relaxation", ImVec2(-1, 30))) {
+        if (selectedMuscles.empty()) {
+            std::cout << "[Surgery] Error: No muscles selected!" << std::endl;
+        } else {
+            int relaxedCount = 0;
+
+            // Apply relaxation to selected muscles
+            for (auto m : muscles) {
+                if (mRelaxSelection[m->name]) {
+                    m->RelaxPassiveForce();
+                    relaxedCount++;
+                }
+            }
+
+            std::cout << "[Surgery] Applied relaxation to " << relaxedCount << " muscles" << std::endl;
+        }
+    }
+
+    ImGui::Unindent();
+}
+
+void PhysicalExam::drawSaveMuscleConfigSection() {
+    ImGui::Indent();
+    
+    ImGui::TextWrapped("Save current muscle configuration to an XML file.");
+    ImGui::Spacing();
+    
+    // Text input for filename
+    ImGui::Text("Output Filename:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##save_muscle_filename", mSaveMuscleFilename, sizeof(mSaveMuscleFilename));
+    
+    ImGui::Spacing();
+    
+    // Save button (with debounce to prevent duplicate saves on double-click)
+    if (ImGui::Button("Save to File", ImVec2(-1, 30))) {
+        if (!mSavingMuscle) {  // Only process if not already saving
+            mSavingMuscle = true;
+            if (mCharacter) {
+                try {
+                    exportMuscles(mSaveMuscleFilename);
+                } catch (const std::exception& e) {
+                    std::cout << "[Surgery] Error saving muscle configuration: " << e.what() << std::endl;
+                }
+            } else {
+                std::cout << "[Surgery] Error: No character loaded!" << std::endl;
+            }
+            mSavingMuscle = false;
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Save muscle properties to the specified XML file");
+    }
+    
+    ImGui::Unindent();
+}
+
+Eigen::Isometry3d PhysicalExam::getBodyNodeZeroPoseTransform(dart::dynamics::BodyNode* bn) {
+    Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
+
+    // Build chain from body node to root
+    std::vector<dart::dynamics::BodyNode*> chain;
+    dart::dynamics::BodyNode* current = bn;
+    while (current != nullptr) {
+        chain.push_back(current);
+        current = current->getParentBodyNode();
+    }
+
+    // Walk from root down to target body node, accumulating transforms
+    // chain is in reverse order (bn -> ... -> root), so iterate backwards
+    for (int i = chain.size() - 1; i >= 0; --i) {
+        auto body = chain[i];
+        auto joint = body->getParentJoint();
+
+        if (joint == nullptr) continue;  // Skip root joint
+
+        // Get joint's fixed transforms
+        Eigen::Isometry3d parentTransform = joint->getTransformFromParentBodyNode();
+        Eigen::Isometry3d childTransform = joint->getTransformFromChildBodyNode();
+
+        // Get joint transform with zero DOF values (reference pose)
+        Eigen::VectorXd zeroPos = Eigen::VectorXd::Zero(joint->getNumDofs());
+
+        // Save current joint positions
+        Eigen::VectorXd currentPos = joint->getPositions();
+
+        // Temporarily set to zero to get the transform
+        joint->setPositions(zeroPos);
+        Eigen::Isometry3d jointTransform = joint->getRelativeTransform();
+
+        // Restore current positions
+        joint->setPositions(currentPos);
+
+        // Accumulate transform
+        transform = transform * parentTransform * jointTransform * childTransform.inverse();
+    }
+
+    return transform;
+}
+
+void PhysicalExam::exportMuscles(const std::string& path) {
+    if (!mCharacter) {
+        throw std::runtime_error("No character loaded");
+    }
+
+    auto muscles = mCharacter->getMuscles();
+    if (muscles.empty()) {
+        throw std::runtime_error("No muscles found in character");
+    }
+
+    std::ofstream mfs(path);
+    if (!mfs.is_open()) {
+        throw std::runtime_error("Failed to open file: " + path);
+    }
+
+    std::cout << "[Surgery] Saving muscle configuration to: " << path << std::endl;
+
+    // Save current skeleton state
+    auto skel = mCharacter->getSkeleton();
+    Eigen::VectorXd saved_positions = skel->getPositions();
+
+    // Move to zero pose (all joint angles = 0)
+    Eigen::VectorXd zero_positions = Eigen::VectorXd::Zero(skel->getNumDofs());
+    skel->setPositions(zero_positions);
+
+    mfs << "<Muscle>" << std::endl;
+
+    for (auto m : muscles) {
+        std::string name = m->name;
+        double f0 = m->f0;
+        double l_m0 = m->l_m0_norm;
+        double l_t0 = m->l_t0_norm;
+        double pen_angle = m->pen_angle;
+
+        mfs << "    <Unit name=\"" << name
+            << "\" f0=\"" << f0
+            << "\" lm=\"" << l_m0
+            << "\" lt=\"" << l_t0
+            << "\" pen_angle=\"" << pen_angle
+            << "\">" << std::endl;
+
+        for (auto anchor : m->GetAnchors()) {
+            // Use first body node (index 0) for consistency with symmetry checking
+            // The LBS system may have multiple body nodes, but for XML export we use the first
+            auto body_node = anchor->bodynodes[0];
+            std::string body_name = body_node->getName();
+
+            // Get LOCAL position (pose-independent)
+            Eigen::Vector3d local_position = anchor->local_positions[0];
+
+            // Get body node's transform in zero pose (skeleton is now in zero pose)
+            Eigen::Isometry3d zero_pose_transform = body_node->getWorldTransform();
+
+            // Transform to global position in zero pose
+            Eigen::Vector3d glob_position = zero_pose_transform * local_position;
+
+            mfs << "        <Waypoint body=\"" << body_name
+                << "\" p=\"" << glob_position[0] << " "
+                << glob_position[1] << " "
+                << glob_position[2] << " \"/>" << std::endl;
+        }
+
+        mfs << "    </Unit>" << std::endl;
+    }
+
+    mfs << "</Muscle>" << std::endl;
+    mfs.close();
+
+    // Restore original skeleton state
+    skel->setPositions(saved_positions);
+
+    std::cout << "[Surgery] Successfully saved " << muscles.size()
+              << " muscles to " << path << std::endl;
+}
+
 void PhysicalExam::drawSimFrame() {
     glEnable(GL_LIGHTING);
 
@@ -1399,6 +1917,9 @@ void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
     }
     else if (key == GLFW_KEY_0) {
         loadCameraPreset(2);  // Top view
+    }
+    else if (key == GLFW_KEY_G) {
+        mShowSurgeryPanel = !mShowSurgeryPanel;  // Toggle surgery panel
     }
 }
 
@@ -2125,6 +2646,15 @@ void PhysicalExam::setupSweepMuscles() {
     // Store old visibility state to preserve user preferences
     std::map<std::string, bool> oldVisibility = mMuscleVisibility;
 
+    // Check if we have any previously selected muscles (common muscles from previous sweep)
+    bool hasCommonMuscles = false;
+    for (const auto& entry : oldVisibility) {
+        if (entry.second) {  // If any muscle was visible
+            hasCommonMuscles = true;
+            break;
+        }
+    }
+
     mTrackedMuscles.clear();
     if (!mCharacter) return;
 
@@ -2148,11 +2678,13 @@ void PhysicalExam::setupSweepMuscles() {
             mGraphData->register_key(muscleName + "_fp", 500);
             mGraphData->register_key(muscleName + "_lm", 500);
 
-            // Initialize visibility: preserve old state if muscle was tracked before, otherwise default to true
+            // Initialize visibility
             if (oldVisibility.find(muscleName) != oldVisibility.end()) {
+                // Preserve old state for previously tracked muscles
                 mMuscleVisibility[muscleName] = oldVisibility[muscleName];
             } else {
-                mMuscleVisibility[muscleName] = true;  // New muscles visible by default
+                // New muscle: if we have common muscles, default to invisible; otherwise visible
+                mMuscleVisibility[muscleName] = !hasCommonMuscles;
             }
         }
     }
@@ -2212,7 +2744,7 @@ void PhysicalExam::collectSweepData(double angle) {
             != mTrackedMuscles.end()) {
 
             double f_p = muscle->Getf_p();    // Passive force
-            double l_m = muscle->l_m;          // Muscle length
+            double l_m = muscle->l_m_norm;          // Muscle length
 
             mGraphData->push(name + "_fp", f_p);
             mGraphData->push(name + "_lm", l_m);
@@ -2288,7 +2820,7 @@ void PhysicalExam::renderMusclePlots() {
 void PhysicalExam::clearSweepData() {
     mSweepAngles.clear();
     mTrackedMuscles.clear();
-    mMuscleVisibility.clear();
+    // DON'T clear mMuscleVisibility - preserve user selections across sweeps
     if (mGraphData) {
         mGraphData->clear_all();
     }
@@ -2720,6 +3252,8 @@ void PhysicalExam::drawJointAngleSweepSection() {
             if (mSweepConfig.num_steps < 5) mSweepConfig.num_steps = 5;
             if (mSweepConfig.num_steps > 200) mSweepConfig.num_steps = 200;
 
+            // Restore position option
+            ImGui::Checkbox("Restore position after sweep", &mSweepRestorePosition);
             ImGui::Separator();
 
             // Control buttons
@@ -2817,7 +3351,7 @@ void PhysicalExam::drawTrialManagementSection() {
 }
 
 void PhysicalExam::drawCurrentStateSection() {
-    if (ImGui::CollapsingHeader("Current State", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("State", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (mCharacter) {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Character Loaded");
             ImGui::Text("Skeleton DOFs: %zu", mCharacter->getSkeleton()->getNumDofs());
@@ -2981,11 +3515,12 @@ void PhysicalExam::drawCameraStatusSection() {
 }
 
 void PhysicalExam::drawSweepMusclePlotsSection() {
-    if (ImGui::CollapsingHeader("Sweep Muscle Plots")) {
+    if (ImGui::CollapsingHeader("Sweep Muscle Plots", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (mSweepAngles.empty()) {
             ImGui::TextDisabled("No sweep data available");
             ImGui::TextWrapped("Run a joint angle sweep from the control panel to generate plots");
         } else {
+            ImGui::Indent();
             // Muscle Selection Sub-header
             if (ImGui::CollapsingHeader("Muscle Selection", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (mTrackedMuscles.empty()) {
@@ -3026,10 +3561,10 @@ void PhysicalExam::drawSweepMusclePlotsSection() {
                     }
 
                     // Display visibility count
-                    ImGui::Text("Showing %d of %zu muscles", visibleCount, filteredMuscles.size());
+                    ImGui::Text("Show (%d/%zu)", visibleCount, filteredMuscles.size());
                     if (!filter_lower.empty()) {
                         ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(filtered from %zu)", mTrackedMuscles.size());
+                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(total %zu)", mTrackedMuscles.size());
                     }
                     ImGui::SameLine();
 
@@ -3066,7 +3601,7 @@ void PhysicalExam::drawSweepMusclePlotsSection() {
                     }
                 }
             }
-
+            ImGui::Unindent();
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
@@ -3074,5 +3609,137 @@ void PhysicalExam::drawSweepMusclePlotsSection() {
             // Render the plots with filtered muscles
             renderMusclePlots();
         }
+    }
+}
+
+void PhysicalExam::drawMuscleInfoSection() {
+    if (ImGui::CollapsingHeader("Muscle Information", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!mCharacter) {
+            ImGui::TextDisabled("No character loaded");
+            return;
+        }
+
+        auto muscles = mCharacter->getMuscles();
+        if (muscles.empty()) {
+            ImGui::TextDisabled("No muscles available");
+            return;
+        }
+
+        // Build muscle name list
+        std::vector<std::string> muscleNames;
+        for (auto m : muscles) {
+            muscleNames.push_back(m->name);
+        }
+
+        ImGui::Indent();
+
+        // Filter textbox
+        ImGui::Text("Filter:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(200);
+        ImGui::InputText("##MuscleInfoFilter", mMuscleInfoFilterBuffer, sizeof(mMuscleInfoFilterBuffer));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear##InfoFilter")) {
+            mMuscleInfoFilterBuffer[0] = '\0';
+        }
+
+        // Convert filter to lowercase for case-insensitive matching
+        std::string filter_lower(mMuscleInfoFilterBuffer);
+        std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+
+        // Build filtered muscle list
+        std::vector<std::string> filteredMuscles;
+        for (const auto& muscle_name : muscleNames) {
+            std::string muscle_lower = muscle_name;
+            std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
+
+            if (filter_lower.empty() || muscle_lower.find(filter_lower) != std::string::npos) {
+                filteredMuscles.push_back(muscle_name);
+            }
+        }
+
+        ImGui::Text("Muscles: %zu", filteredMuscles.size());
+        if (!filter_lower.empty() && filteredMuscles.size() < muscleNames.size()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(total %zu)", muscleNames.size());
+        }
+
+        ImGui::Separator();
+
+        // Muscle selection (scrollable list)
+        ImGui::Text("Select Muscle:");
+        ImGui::BeginChild("MuscleInfoList", ImVec2(0, 150), true);
+        for (const auto& muscle_name : filteredMuscles) {
+            bool isSelected = (muscle_name == mSelectedMuscleInfo);
+            if (ImGui::Selectable(muscle_name.c_str(), isSelected)) {
+                mSelectedMuscleInfo = muscle_name;
+            }
+        }
+        ImGui::EndChild();
+
+        // Display detailed muscle information
+        if (!mSelectedMuscleInfo.empty()) {
+            // Find the selected muscle
+            Muscle* selectedMuscle = nullptr;
+            for (auto m : muscles) {
+                if (m->name == mSelectedMuscleInfo) {
+                    selectedMuscle = m;
+                    break;
+                }
+            }
+
+            if (selectedMuscle) {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Muscle: %s", mSelectedMuscleInfo.c_str());
+                ImGui::Separator();
+
+                // Basic Parameters
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Basic Parameters:");
+                ImGui::Text("  f0:          %.3f N", selectedMuscle->f0);
+                ImGui::Text("  f0_original: %.3f N", selectedMuscle->f0_original);
+                ImGui::Text("  l_m0:        %.4f m", selectedMuscle->l_m0_norm);
+                ImGui::Text("  l_t0:        %.4f m", selectedMuscle->l_t0_norm);
+                ImGui::Text("  l_t0_orig:   %.4f m", selectedMuscle->l_t0_original);
+                ImGui::Text("  l_mt0:       %.4f m", selectedMuscle->l_mt0);
+                ImGui::Text("  l_mt0_orig:  %.4f m", selectedMuscle->l_mt0_original);
+
+                ImGui::Separator();
+
+                // Current State (cyan color)
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Current State:");
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  l_m:         %.4f m", selectedMuscle->l_m_norm);
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  l_mt:        %.4f", selectedMuscle->l_mt_norm);
+                // ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  v_m:         %.4f m/s", selectedMuscle->v_m);
+                // ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  activation:  %.3f", selectedMuscle->activation);
+
+                ImGui::Separator();
+
+                // Modification Parameters
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Modification Parameters:");
+                ImGui::Text("  l_ratio:     %.3f", selectedMuscle->l_ratio);
+                ImGui::Text("  f_ratio:     %.3f", selectedMuscle->f_ratio);
+                ImGui::Text("  l_t0_offset: %.4f m", selectedMuscle->l_t0_offset);
+
+                ImGui::Separator();
+
+                // Force Outputs (computed)
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Force Outputs:");
+                double normalized_lm = selectedMuscle->l_m_norm / selectedMuscle->l_m0_norm;
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "  g_pl:        %.4f", selectedMuscle->g_pl(normalized_lm));
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "  Getf_p:      %.3f N", selectedMuscle->Getf_p());
+
+                ImGui::Separator();
+
+                // Other Info
+                ImGui::Text("Num Related DOFs: %d", selectedMuscle->num_related_dofs);
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Selected muscle not found!");
+            }
+        } else {
+            ImGui::Separator();
+            ImGui::TextDisabled("Select a muscle to view details");
+        }
+
+        ImGui::Unindent();
     }
 }

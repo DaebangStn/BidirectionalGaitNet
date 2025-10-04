@@ -18,7 +18,7 @@ struct Anchor
 class Muscle
 {
 public:
-	Muscle(std::string _name, double f0, double lm0, double lt0, double pen_angle, double lmax, double type1_fraction, bool useVelocityForce = false);
+	Muscle(std::string _name, double f0, double lm0, double lt0, double pen_angle, double type1_fraction, bool useVelocityForce = false);
 	void AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos, int num_related_bodies, bool meshLbsWeight);
 	void AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos);
 	const std::vector<Anchor *> &GetAnchors() { return mAnchors; }
@@ -31,21 +31,14 @@ public:
 
 	double Getf_A();
 	double Getf_p();
-	double Getl_mt();
 	double GetNormalizedLength();
-	double GetRecommendedMinLength();
 
 	std::vector<std::vector<double>> GetGraphData();
 
 	void SetMuscle();
 	const std::vector<Anchor *> &GetAnchors() const { return mAnchors; }
-	void set_l_mt_max(double l_max) { l_mt_max = l_max; }
 
 	Eigen::MatrixXd GetJacobianTranspose();
-
-	// Deprecated
-	Eigen::MatrixXd GetJacobianTransposeFast();
-
 	Eigen::MatrixXd GetReducedJacobianTranspose();
 
 	std::pair<Eigen::VectorXd, Eigen::VectorXd> GetForceJacobianAndPassive();
@@ -60,7 +53,7 @@ public:
 	void ComputeJacobians();
 	Eigen::VectorXd Getdl_dtheta();
 
-	double GetLengthRatio() { return length / l_mt0; };
+	double GetLengthRatio() { return l_mt / l_mt0; };
 	std::string GetName() { return name; }
 
 public:
@@ -79,6 +72,9 @@ public:
 	void change_l(double ratio) { l_ratio = ratio; RefreshMuscleParams(); }
 	void SetTendonOffset(double offset) { l_t0_offset = offset; RefreshMuscleParams(); }
 	void RefreshMuscleParams();
+	void RelaxPassiveForce();
+	double GetPassiveForceCoeff();
+	void SetPassiveForceCoeff(double coeff);
 
 	double ratio_f() { return f_ratio; }
 	double ratio_l() { return l_ratio; }
@@ -93,20 +89,17 @@ public:
 	double g_al(double _l_m);
 	double g_av(double _l_m);
 
-	double l_mt, l_mt_max;
-	double l_m;
 	double v_m;
 	double activation;
 
-	double f0;
-
-	double f0_original;
+	double f0, f0_original;
 	double l_mt0_original, l_t0_original;
-
+	
 	// muscle modification variable
 	double l_ratio, f_ratio, l_t0_offset;
-
-	double l_mt0, l_m0, l_t0, length;
+	
+	double l_m_norm, l_mt_norm;
+	double l_mt, l_mt0, l_m0_norm, l_t0_norm;
 
 	double f_min;
 	double l_min;
