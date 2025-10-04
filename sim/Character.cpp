@@ -455,8 +455,7 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
         double lt = std::stod(unit->Attribute("lt"));
         double pa = std::stod(unit->Attribute("pen_angle"));
         double type1_fraction = 0.5;
-        if (unit->Attribute("type1_fraction") != nullptr)
-            type1_fraction = std::stod(unit->Attribute("type1_fraction"));
+        if (unit->Attribute("type1_fraction") != nullptr) type1_fraction = std::stod(unit->Attribute("type1_fraction"));
 
         Muscle *muscle_elem = new Muscle(name, f0, lm, lt, pa, type1_fraction, useVelocityForce);
         Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt, pa, type1_fraction, useVelocityForce);
@@ -786,7 +785,7 @@ void Character::applySkeletonLength(const std::vector<BoneInfo> &info, bool doOp
                 }
             }
             mMuscle->SetMuscle();
-            mMuscle->f0_original = mMuscle->f0 = mRefMuscle->f0 * pow(mMuscle->l_mt0 / mRefMuscle->l_mt0, 1.5);
+            mMuscle->f0_base = mMuscle->f0 = mRefMuscle->f0 * pow(mMuscle->lmt_ref / mRefMuscle->lmt_ref, 1.5);
         }
 
         {
@@ -890,7 +889,7 @@ void Character::applySkeletonLength(const std::vector<BoneInfo> &info, bool doOp
         {
             Muscle *mMuscle = mMuscles[i], *mRefMuscle = mRefMuscles[i];
             mMuscle->SetMuscle();
-            mMuscle->f0_original = mMuscle->f0 = mRefMuscle->f0 * pow(mMuscle->l_mt0 / mRefMuscle->l_mt0, 1.5);
+            mMuscle->f0_base = mMuscle->f0 = mRefMuscle->f0 * pow(mMuscle->lmt_ref / mRefMuscle->lmt_ref, 1.5);
         } //*/
     }
 

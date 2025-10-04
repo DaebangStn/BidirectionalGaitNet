@@ -1145,13 +1145,13 @@ void PhysicalExam::drawDistributePassiveForceSection() {
             }
 
             if (refMuscle) {
-                double refCoeff = refMuscle->GetPassiveForceCoeff();
+                double refCoeff = refMuscle->lm_norm;
                 int modifiedCount = 0;
 
                 // Apply to all selected muscles
                 for (auto m : muscles) {
                     if (mDistributeSelection[m->name]) {
-                        m->SetPassiveForceCoeff(refCoeff);
+                        m->SetLmNorm(refCoeff);
                         modifiedCount++;
                     }
                 }
@@ -1406,8 +1406,8 @@ void PhysicalExam::exportMuscles(const std::string& path) {
     for (auto m : muscles) {
         std::string name = m->name;
         double f0 = m->f0;
-        double l_m0 = m->l_m0_norm;
-        double l_t0 = m->l_t0_norm;
+        double l_m0 = m->lm_opt;
+        double l_t0 = m->lt_rel;
         double pen_angle = m->pen_angle;
 
         mfs << "    <Unit name=\"" << name
@@ -2744,7 +2744,7 @@ void PhysicalExam::collectSweepData(double angle) {
             != mTrackedMuscles.end()) {
 
             double f_p = muscle->Getf_p();    // Passive force
-            double l_m = muscle->l_m_norm;          // Muscle length
+            double l_m = muscle->lm_rel;          // Muscle length
 
             mGraphData->push(name + "_fp", f_p);
             mGraphData->push(name + "_lm", l_m);
@@ -3636,7 +3636,7 @@ void PhysicalExam::drawMuscleInfoSection() {
         // Filter textbox
         ImGui::Text("Filter:");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(200);
+        ImGui::SetNextItemWidth(100);
         ImGui::InputText("##MuscleInfoFilter", mMuscleInfoFilterBuffer, sizeof(mMuscleInfoFilterBuffer));
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear##InfoFilter")) {
@@ -3668,7 +3668,7 @@ void PhysicalExam::drawMuscleInfoSection() {
 
         // Muscle selection (scrollable list)
         ImGui::Text("Select Muscle:");
-        ImGui::BeginChild("MuscleInfoList", ImVec2(0, 150), true);
+        ImGui::BeginChild("MuscleInfoList", ImVec2(0, 50), true);
         for (const auto& muscle_name : filteredMuscles) {
             bool isSelected = (muscle_name == mSelectedMuscleInfo);
             if (ImGui::Selectable(muscle_name.c_str(), isSelected)) {
@@ -3695,43 +3695,57 @@ void PhysicalExam::drawMuscleInfoSection() {
 
                 // Basic Parameters
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Basic Parameters:");
-                ImGui::Text("  f0:          %.3f N", selectedMuscle->f0);
-                ImGui::Text("  f0_original: %.3f N", selectedMuscle->f0_original);
-                ImGui::Text("  l_m0:        %.4f m", selectedMuscle->l_m0_norm);
-                ImGui::Text("  l_t0:        %.4f m", selectedMuscle->l_t0_norm);
-                ImGui::Text("  l_t0_orig:   %.4f m", selectedMuscle->l_t0_original);
-                ImGui::Text("  l_mt0:       %.4f m", selectedMuscle->l_mt0);
-                ImGui::Text("  l_mt0_orig:  %.4f m", selectedMuscle->l_mt0_original);
+                ImGui::Columns(4, nullptr, false);
+                ImGui::Text("f0:"); ImGui::NextColumn(); ImGui::Text("%.3f N", selectedMuscle->f0); ImGui::NextColumn();
+                ImGui::Text("f0_base:"); ImGui::NextColumn(); ImGui::Text("%.3f N", selectedMuscle->f0_base); ImGui::NextColumn();
+                ImGui::Text("lm_opt:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lm_opt); ImGui::NextColumn();
+                ImGui::Text("lt_rel:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lt_rel); ImGui::NextColumn();
+                ImGui::Text("lt_rel_base:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lt_rel_base); ImGui::NextColumn();
+                ImGui::Text("lmt_ref:"); ImGui::NextColumn(); ImGui::Text("%.4f m", selectedMuscle->lmt_ref); ImGui::NextColumn();
+                ImGui::Text("lmt_base:"); ImGui::NextColumn(); ImGui::Text("%.4f m", selectedMuscle->lmt_base); ImGui::NextColumn();
+                ImGui::Text("lmt:"); ImGui::NextColumn(); ImGui::Text("%.4f m", selectedMuscle->lmt); ImGui::NextColumn();
+                ImGui::Columns(1);
 
                 ImGui::Separator();
 
                 // Current State (cyan color)
                 ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Current State:");
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  l_m:         %.4f m", selectedMuscle->l_m_norm);
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  l_mt:        %.4f", selectedMuscle->l_mt_norm);
-                // ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  v_m:         %.4f m/s", selectedMuscle->v_m);
-                // ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  activation:  %.3f", selectedMuscle->activation);
+                ImGui::Columns(4, nullptr, false);
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "lm_rel:"); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "%.4f", selectedMuscle->lm_rel); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "lm_norm:"); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "%.4f", selectedMuscle->lm_norm); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "lmt_rel:"); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "%.4f", selectedMuscle->lmt_rel); ImGui::NextColumn();
+                ImGui::Columns(1);
 
                 ImGui::Separator();
 
                 // Modification Parameters
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Modification Parameters:");
-                ImGui::Text("  l_ratio:     %.3f", selectedMuscle->l_ratio);
-                ImGui::Text("  f_ratio:     %.3f", selectedMuscle->f_ratio);
-                ImGui::Text("  l_t0_offset: %.4f m", selectedMuscle->l_t0_offset);
+                ImGui::Columns(4, nullptr, false);
+                ImGui::Text("l_ratio:"); ImGui::NextColumn(); ImGui::Text("%.3f", selectedMuscle->l_ratio); ImGui::NextColumn();
+                ImGui::Text("f_ratio:"); ImGui::NextColumn(); ImGui::Text("%.3f", selectedMuscle->f_ratio); ImGui::NextColumn();
+                ImGui::Text("lt_rel_ofs:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lt_rel_ofs); ImGui::NextColumn();
+                ImGui::Columns(1);
 
                 ImGui::Separator();
 
                 // Force Outputs (computed)
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Force Outputs:");
-                double normalized_lm = selectedMuscle->l_m_norm / selectedMuscle->l_m0_norm;
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "  g_pl:        %.4f", selectedMuscle->g_pl(normalized_lm));
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "  Getf_p:      %.3f N", selectedMuscle->Getf_p());
+                ImGui::Columns(4, nullptr, false);
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "F_psv:"); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%.4f", selectedMuscle->F_psv(selectedMuscle->lm_norm)); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Getf_p:"); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%.3f N", selectedMuscle->Getf_p()); ImGui::NextColumn();
+                ImGui::Columns(1);
 
                 ImGui::Separator();
 
                 // Other Info
-                ImGui::Text("Num Related DOFs: %d", selectedMuscle->num_related_dofs);
+                ImGui::Columns(2, nullptr, false);
+                ImGui::Text("Num Related DOFs:"); ImGui::NextColumn(); ImGui::Text("%d", selectedMuscle->num_related_dofs); ImGui::NextColumn();
+                ImGui::Columns(1);
             } else {
                 ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Selected muscle not found!");
             }

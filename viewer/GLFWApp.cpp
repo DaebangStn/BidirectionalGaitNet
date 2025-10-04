@@ -2457,12 +2457,12 @@ void GLFWApp::drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingTy
             }
             case weakness:
             {
-                color = Eigen::Vector4d(0.1, 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_original), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_original), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_original));
+                color = Eigen::Vector4d(0.1, 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base));
                 break;
             }
             case contracture:
             {
-                color = Eigen::Vector4d(0.05 + 10.0 * (1.0 - muscle->l_mt0 / muscle->l_mt0_original), 0.05, 0.05 + 10.0 * (1.0 - muscle->l_mt0 / muscle->l_mt0_original), 0.05 + 5.0 * (1.0 - muscle->l_mt0 / muscle->l_mt0_original));
+                color = Eigen::Vector4d(0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), 0.05, 0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), 0.05 + 5.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base));
                 break;
             }
             default:

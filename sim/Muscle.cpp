@@ -20,18 +20,19 @@ Eigen::Vector3d Anchor::GetPoint()
 {
     Eigen::Vector3d p;
     p.setZero();
-    for (int i = 0; i < num_related_bodies; i++)
-        p += weights[i] * (bodynodes[i]->getTransform() * local_positions[i]);
+    for (int i = 0; i < num_related_bodies; i++) p += weights[i] * (bodynodes[i]->getTransform() * local_positions[i]);
     return p;
 }
 
 Muscle::Muscle(std::string _name, double _f0, double _lm0, double _lt0, double _pen_angle, 
     double _type1_fraction, bool useVelocityForce)
-    : pen_angle(_pen_angle), selected(false), mUseVelocityForce(useVelocityForce), name(_name), f0_original(_f0), f0(_f0), v_m(0.0), 
-    l_m0_norm(_lm0), l_m_norm(l_mt_norm - l_t0_norm), l_t0_norm(_lt0), l_mt0(0.0), l_mt_norm(1.0), activation(0.0), f_toe(0.33), k_toe(3.0), k_lin(51.878788), 
+    : selected(false), mUseVelocityForce(useVelocityForce), name(_name), 
+    f0_base(_f0), f0(_f0), pen_angle(_pen_angle), lm_opt(_lm0), lt_rel(_lt0), 
+    v_m(0.0), lmt_ref(0.0), lmt_rel(1.0), activation(0.0), f_toe(0.33), k_toe(3.0), k_lin(51.878788), 
     e_toe(0.02), e_t0(0.033), k_pe(5.5), e_mo(0.3), gamma(0.45), type1_fraction(_type1_fraction), l_ratio(1.0), f_ratio(1.0),
-    l_t0_original(_lt0), l_t0_offset(0.0)
+    lt_rel_base(_lt0), lt_rel_ofs(0.0)
 {
+    lm_rel = lmt_rel - lt_rel;
 }
 
 void Muscle::AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos, int num_related_bodies, bool meshLbsWeight)
@@ -154,10 +155,10 @@ void Muscle::AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob
 void Muscle::SetMuscle()
 {
     int n = mAnchors.size();
-    l_mt0 = 0;
-    for (int i = 1; i < n; i++) l_mt0 += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
-    l_mt0_original = l_mt0;
-    l_mt = l_mt0;
+    lmt_ref = 0;
+    for (int i = 1; i < n; i++) lmt_ref += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
+    lmt_base = lmt_ref;
+    lmt = lmt_ref;
 
     Update();
     Eigen::MatrixXd Jt = GetJacobianTranspose();
@@ -207,9 +208,9 @@ void Muscle::SetMuscle()
 
 void Muscle::RefreshMuscleParams()
 {
-    l_t0_norm = l_t0_original + l_t0_offset;
-    l_mt0 = (l_mt0_original + l_t0_offset) * l_ratio;
-    f0 = f0_original * f_ratio;
+    lt_rel = lt_rel_base + lt_rel_ofs;
+    lmt_ref = lmt_base * l_ratio;
+    f0 = f0_base * f_ratio;
 }
 
 void Muscle::ApplyForceToBody()
@@ -233,19 +234,16 @@ void Muscle::ApplyForceToBody()
     }
 }
 
-double Muscle::GetNormalizedLength()
-{
-    return l_m_norm / l_m0_norm;
-}
 bool Muscle::Update()
 {
     for (int i = 0; i < mAnchors.size(); i++) mCachedAnchorPositions[i] = mAnchors[i]->GetPoint();
-    l_mt = 0.0;
-    for (int i = 1; i < mAnchors.size(); i++) l_mt += (mCachedAnchorPositions[i] - mCachedAnchorPositions[i - 1]).norm();
-    l_mt_norm = l_mt / l_mt0;
-    l_m_norm = l_mt_norm - l_t0_norm;
+    lmt = 0.0;
+    for (int i = 1; i < mAnchors.size(); i++) lmt += (mCachedAnchorPositions[i] - mCachedAnchorPositions[i - 1]).norm();
+    lmt_rel = lmt / lmt_ref;
+    lm_rel = lmt_rel - lt_rel;
     if (mUseVelocityForce) UpdateVelocities();
-    return (l_m_norm / l_m0_norm) < 1.5; // Return whether the joint angle is in ROM
+    lm_norm = lm_rel / lm_opt;
+    return lm_norm < 1.5; // Return whether the joint angle is in ROM
 }
 
 // Should be called after Update called
@@ -274,11 +272,11 @@ double Muscle::GetForce()
 }
 double Muscle::Getf_A()
 {
-    return f0 * g_al(l_m_norm / l_m0_norm) * (mUseVelocityForce ? g_av(v_m * 0.1 / l_mt0 * l_m0_norm) : 1.0) * cos(pen_angle);
+    return f0 * F_L(lm_norm) * (mUseVelocityForce ? F_V(v_m * 0.1 / lmt_ref * lm_opt) : 1.0) * cos(pen_angle);
 }
 double Muscle::Getf_p()
 {
-    return f0 * g_pl(l_m_norm / l_m0_norm) * cos(pen_angle);
+    return f0 * F_psv(lm_norm) * cos(pen_angle);
 }
 Eigen::VectorXd Muscle::GetRelatedJtA()
 {
@@ -290,42 +288,39 @@ Eigen::VectorXd Muscle::GetRelatedJtA()
 
 void Muscle::RelaxPassiveForce()
 {
-    double old_coeff = GetPassiveForceCoeff();
-    SetPassiveForceCoeff(1.0);
+    double old_coeff = lm_norm;
+    SetLmNorm(1.0);
     std::cout << "[Muscle] RelaxPassiveForce: " << name
               << " | old_coeff=" << old_coeff
               << " → new_coeff=1.0" << std::endl;
 }
-double Muscle::GetPassiveForceCoeff()
+
+void Muscle::SetLmNorm(double target_lm_norm)
 {
-    return l_m_norm / l_m0_norm;
-}
-void Muscle::SetPassiveForceCoeff(double coeff)
-{
-    double old_l_t0_offset = l_t0_offset;
-    double tendon_length = l_mt_norm - coeff * l_m0_norm;
-    l_t0_offset = tendon_length - l_t0_original;
+    double old_lt_rel_ofs = lt_rel_ofs;
+    double target_lt_rel = lmt_rel - target_lm_norm * lm_opt;
+    lt_rel_ofs = target_lt_rel - lt_rel_base;
 
     // Guard: ensure l_t0 doesn't go below minimum threshold
-    const double MIN_L_T0 = 0.001;
-    double new_l_t0 = l_t0_original + l_t0_offset;
+    const double MIN_LT = 0.001;
+    double new_lt = lt_rel_base + lt_rel_ofs;
 
-    if (new_l_t0 < MIN_L_T0) {
-        double clamped_offset = MIN_L_T0 - l_t0_original;
+    if (new_lt < MIN_LT) {
+        double clamped_offset = MIN_LT - lt_rel_base;
         std::cout << "[Muscle] WARNING: " << name
-                  << " - l_t0 would be " << new_l_t0
-                  << " (below minimum " << MIN_L_T0 << ")"
-                  << " | Clamping l_t0_offset: " << l_t0_offset
+                  << " - l_t0 would be " << new_lt
+                  << " (below minimum " << MIN_LT << ")"
+                  << " | Clamping l_t0_offset: " << lt_rel_ofs
                   << " → " << clamped_offset << std::endl;
-        l_t0_offset = clamped_offset;
+        lt_rel_ofs = clamped_offset;
     }
 
     RefreshMuscleParams();
 
-    std::cout << "[Muscle] SetPassiveForceCoeff: " << name
-              << " | coeff=" << coeff
-              << " | l_t0_offset: " << old_l_t0_offset << " → " << l_t0_offset
-              << " | l_mt=" << l_mt_norm << std::endl;
+    std::cout << "[Muscle] SetLmNorm: " << name
+              << " | target_lm_norm=" << target_lm_norm
+              << " | lt_rel_ofs: " << old_lt_rel_ofs << " → " << lt_rel_ofs
+              << " | lmt_rel=" << lmt_rel << std::endl;
 }
 
 Eigen::MatrixXd Muscle::GetReducedJacobianTranspose()
@@ -468,62 +463,36 @@ Eigen::VectorXd Muscle::Getdl_dtheta()
     {
         Eigen::Vector3d pi = mCachedAnchorPositions[i + 1] - mCachedAnchorPositions[i];
         Eigen::MatrixXd dpi_dtheta = mCachedJs[i + 1] - mCachedJs[i];
-        Eigen::VectorXd dli_d_theta = (dpi_dtheta.transpose() * pi) / (l_mt0 * pi.norm());
+        Eigen::VectorXd dli_d_theta = (dpi_dtheta.transpose() * pi) / (lmt_ref * pi.norm());
         dl_dtheta += dli_d_theta;
     }
 
-    for (int i = 0; i < dl_dtheta.rows(); i++)
-        if (std::abs(dl_dtheta[i]) < 1E-10)
-            dl_dtheta[i] = 0.0;
-
+    for (int i = 0; i < dl_dtheta.rows(); i++) if (std::abs(dl_dtheta[i]) < 1E-10) dl_dtheta[i] = 0.0;
     return dl_dtheta;
 }
 
-double Muscle::g(double _l_m)
-{
-    double e_t = (l_mt_norm - _l_m - l_t0_norm) / l_t0_norm;
-    _l_m = _l_m / l_m0_norm;
-    double f = g_t(e_t) - (g_pl(_l_m) + activation * g_al(_l_m));
-    return f;
-}
-double Muscle::g_t(double e_t)
-{
-    double f_t;
-    if (e_t <= e_t0)
-        f_t = f_toe / (exp(k_toe) - 1) * (exp(k_toe * e_t / e_toe) - 1);
-    else
-        f_t = k_lin * (e_t - e_toe) + f_toe;
-
-    return f_t;
-}
-double Muscle::g_pl(double _l_m)
+double Muscle::F_psv(double _l_m)
 {
     double f_pl = (exp(k_pe * (_l_m - 1) / e_mo) - 1.0) / (exp(k_pe) - 1.0);
-
     if (_l_m < 1.0) return 0.0;
     else return f_pl;
 }
-double Muscle::g_al(double _l_m)
+double Muscle::F_L(double _l_m)
 {
     return exp(-(_l_m - 1.0) * (_l_m - 1.0) / gamma);
 }
-double Muscle::g_av(double _v_m)
+double Muscle::F_V(double _v_m)
 {
     double f_av = 0;
-
-    if (_v_m <= -1)
-        f_av = 0;
-    else if (-1 < _v_m && _v_m <= 0)
-        f_av = (1 + _v_m) / (1 - _v_m / 0.25);
-    else
-        f_av = (1 + _v_m * 1.6 / 0.06) / (1 + _v_m / 0.06);
-
+    if (_v_m <= -1) f_av = 0;
+    else if (-1 < _v_m && _v_m <= 0) f_av = (1 + _v_m) / (1 - _v_m / 0.25);
+    else f_av = (1 + _v_m * 1.6 / 0.06) / (1 + _v_m / 0.06);
     return f_av;
 }
 
 double Muscle::GetMass()
 {
-    return 1059.7 * f0 / 250000 * l_mt0;
+    return 1059.7 * f0 / 250000 * lmt_ref;
 }
 
 double Muscle::Getdl_velocity()
@@ -561,11 +530,11 @@ std::vector<std::vector<double>> Muscle::GetGraphData()
     for (int i = 0; i < 250; i++)
     {
         x.push_back(i * 0.01);
-        a.push_back(f0 * g_al(i * 0.01));
-        a_f.push_back(f0 * g_al(i * 0.01) * activation);
-        p.push_back(f0 * g_pl(i * 0.01));
+        a.push_back(f0 * F_L(i * 0.01));
+        a_f.push_back(f0 * F_L(i * 0.01) * activation);
+        p.push_back(f0 * F_psv(i * 0.01));
     }
-    current.push_back(GetNormalizedLength());
+    current.push_back(lm_norm);
     result.push_back(current);
     result.push_back(x);
     result.push_back(a);
@@ -587,7 +556,7 @@ double Muscle::GetBHAR04_EnergyRate() // It assume that activation == excitation
     double f_a_u = 40 * type1_fraction * sin(M_PI * 0.5 * activation) + 133 * (1 - type1_fraction) * (1 - cos(M_PI * 0.5 * activation));
     double f_m_a = 74 * type1_fraction * sin(M_PI * 0.5 * activation) + 111 * (1 - type1_fraction) * (1 - cos(M_PI * 0.5 * activation));
     double g_l = 0.0;
-    double l_m_ratio = l_m_norm / l_m0_norm;
+    double l_m_ratio = lm_rel / lm_opt;
 
     if (l_m_ratio < 0.5)
         g_l = 0.5;

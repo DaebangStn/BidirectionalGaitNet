@@ -31,7 +31,6 @@ public:
 
 	double Getf_A();
 	double Getf_p();
-	double GetNormalizedLength();
 
 	std::vector<std::vector<double>> GetGraphData();
 
@@ -53,7 +52,7 @@ public:
 	void ComputeJacobians();
 	Eigen::VectorXd Getdl_dtheta();
 
-	double GetLengthRatio() { return l_mt / l_mt0; };
+	double GetLengthRatio() { return lmt / lmt_ref; };
 	std::string GetName() { return name; }
 
 public:
@@ -70,39 +69,32 @@ public:
 
 	void change_f(double ratio) { f_ratio = ratio; RefreshMuscleParams(); }
 	void change_l(double ratio) { l_ratio = ratio; RefreshMuscleParams(); }
-	void SetTendonOffset(double offset) { l_t0_offset = offset; RefreshMuscleParams(); }
+	void SetTendonOffset(double offset) { lt_rel_ofs = offset; RefreshMuscleParams(); }
 	void RefreshMuscleParams();
 	void RelaxPassiveForce();
-	double GetPassiveForceCoeff();
-	void SetPassiveForceCoeff(double coeff);
+	void SetLmNorm(double coeff);
 
 	double ratio_f() { return f_ratio; }
 	double ratio_l() { return l_ratio; }
-	double GetTendonOffset() { return l_t0_offset; }
+	double GetTendonOffset() { return lt_rel_ofs; }
 
 	bool mUseVelocityForce;
-	// Dynamics
-	double g(double _l_m);
-	double g_t(double e_t);
-
-	double g_pl(double _l_m);
-	double g_al(double _l_m);
-	double g_av(double _l_m);
+	double F_L(double _l_m);
+	double F_V(double _l_m);
+	double F_psv(double _l_m);
 
 	double v_m;
 	double activation;
 
-	double f0, f0_original;
-	double l_mt0_original, l_t0_original;
+	double f0, f0_base;
+	double lmt_base, lt_rel_base;
 	
-	// muscle modification variable
-	double l_ratio, f_ratio, l_t0_offset;
+	double l_ratio, f_ratio, lt_rel_ofs; // muscle modification variable
 	
-	double l_m_norm, l_mt_norm;
-	double l_mt, l_mt0, l_m0_norm, l_t0_norm;
-
-	double f_min;
-	double l_min;
+	double lmt, lmt_ref; // actual length of MTU and reference pose MTU length
+	double lmt_rel, lm_rel, lt_rel; // MTU, muscle, tendon length relative to reference MTU length
+	double lm_opt; // normalizer for FLV curve
+	double lm_norm; // input for the FLV curve
 
 	double f_toe, e_toe, k_toe, k_lin, e_t0; // For g_t
 	double k_pe, e_mo;						 // For g_pl

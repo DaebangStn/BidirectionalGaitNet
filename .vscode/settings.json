@@ -42,7 +42,8 @@
       "format": "cpp",
       "typeindex": "cpp",
       "chrono": "cpp",
-      "core": "cpp"
+      "core": "cpp",
+      "system_error": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",
