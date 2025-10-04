@@ -71,7 +71,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mJointKp(500.0)               // Proportional gain
     , mJointKi(50.0)                // Integral gain
     , mInterpolationThreshold(0.01)   // 0.01 radians threshold
-    , mShowSurgeryPanel(true)      // Surgery panel hidden by default
+    , mShowSurgeryPanel(false)      // Surgery panel hidden by default
     , mSavingMuscle(false)          // Not currently saving
     , mSweepRestorePosition(false)   // Restore position after sweep by default
 {
@@ -961,9 +961,7 @@ void PhysicalExam::drawVisualizationPanel() {
 void PhysicalExam::drawSurgeryPanel() {
     // Floating panel in center-top area
     ImGui::SetNextWindowSize(ImVec2(450, mHeight - 100), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 460, 50), ImGuiCond_FirstUseEver);
-    
-    ImGui::SetNextWindowFocus();
+    ImGui::SetNextWindowPos(ImVec2(450, 10), ImGuiCond_FirstUseEver);
     ImGui::Begin("Surgery Operations", &mShowSurgeryPanel);
     
     // 1. Reset Muscle Button (not a header, just a button)
@@ -1068,7 +1066,7 @@ void PhysicalExam::drawDistributePassiveForceSection() {
         }
     }
 
-    // Select All / Deselect All buttons
+    // Select All / Deselect All / Empty Selection buttons
     if (ImGui::SmallButton("All##Distribute")) {
         for (const auto& muscle_name : filteredMuscles) {
             mDistributeSelection[muscle_name] = true;
@@ -1079,6 +1077,11 @@ void PhysicalExam::drawDistributePassiveForceSection() {
         for (const auto& muscle_name : filteredMuscles) {
             mDistributeSelection[muscle_name] = false;
         }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Empty##Distribute")) {
+        mDistributeSelection.clear();
+        mDistributeRefMuscle = "";
     }
 
     // Muscle checkboxes (scrollable)
@@ -1219,7 +1222,7 @@ void PhysicalExam::drawRelaxPassiveForceSection() {
         }
     }
 
-    // Select All / Deselect All buttons
+    // Select All / Deselect All / Empty Selection buttons
     if (ImGui::SmallButton("All##Relax")) {
         for (const auto& muscle_name : filteredMuscles) {
             mRelaxSelection[muscle_name] = true;
@@ -1230,6 +1233,10 @@ void PhysicalExam::drawRelaxPassiveForceSection() {
         for (const auto& muscle_name : filteredMuscles) {
             mRelaxSelection[muscle_name] = false;
         }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Empty##Relax")) {
+        mRelaxSelection.clear();
     }
 
     // Muscle checkboxes (scrollable)
@@ -2677,6 +2684,7 @@ void PhysicalExam::setupSweepMuscles() {
             // Register graph data keys for this muscle
             mGraphData->register_key(muscleName + "_fp", 500);
             mGraphData->register_key(muscleName + "_lm", 500);
+            mGraphData->register_key(muscleName + "_lm_norm", 500);
 
             // Initialize visibility
             if (oldVisibility.find(muscleName) != oldVisibility.end()) {
@@ -2743,11 +2751,13 @@ void PhysicalExam::collectSweepData(double angle) {
         if (std::find(mTrackedMuscles.begin(), mTrackedMuscles.end(), name)
             != mTrackedMuscles.end()) {
 
-            double f_p = muscle->Getf_p();    // Passive force
-            double l_m = muscle->lm_rel;          // Muscle length
+            double f_p = muscle->Getf_p();       // Passive force
+            double l_m = muscle->lm_rel;         // Muscle length
+            double l_m_norm = muscle->lm_norm;   // Normalized muscle length
 
             mGraphData->push(name + "_fp", f_p);
             mGraphData->push(name + "_lm", l_m);
+            mGraphData->push(name + "_lm_norm", l_m_norm);
         }
     }
 }
@@ -2792,13 +2802,13 @@ void PhysicalExam::renderMusclePlots() {
 
     ImGui::Spacing();
 
-    // Plot 2: Muscle Lengths vs Joint Angle
-    if (ImPlot::BeginPlot("Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
+    // Plot 2: lm_norm vs Joint Angle
+    if (ImPlot::BeginPlot("Normalized Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
         ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min,
             mSweepConfig.angle_max, ImGuiCond_Always);
         ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (rad)");
-        ImPlot::SetupAxis(ImAxis_Y1, "Muscle Length (m)");
-        
+        ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
+
         // Only plot visible muscles
         for (const auto& muscle_name : mTrackedMuscles) {
             // Check if muscle should be visible
@@ -2807,10 +2817,10 @@ void PhysicalExam::renderMusclePlots() {
                 continue;  // Skip invisible muscles
             }
 
-            auto lm_data = mGraphData->get(muscle_name + "_lm");
-            if (!lm_data.empty() && lm_data.size() == x_data.size()) {
+            auto lm_norm_data = mGraphData->get(muscle_name + "_lm_norm");
+            if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
                 ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
-                    lm_data.data(), lm_data.size());
+                    lm_norm_data.data(), lm_norm_data.size());
             }
         }
         ImPlot::EndPlot();
@@ -3080,19 +3090,22 @@ void PhysicalExam::drawJointControlSection() {
             // When interpolation is enabled and paused, show marked target angles or current positions
             // This allows user to change targets without them being reset by current positions
             Eigen::VectorXd currentPos = skel->getPositions();
-            Eigen::VectorXf pos(currentPos.size());
+            Eigen::VectorXf pos_rad(currentPos.size());
             if (mEnableInterpolation && mSimulationPaused) {
                 // Show target angle if marked, otherwise current position
-                for (int i = 0; i < pos.size(); ++i) {
-                    pos[i] = mMarkedJointTargets[i].has_value() ?
+                for (int i = 0; i < pos_rad.size(); ++i) {
+                    pos_rad[i] = mMarkedJointTargets[i].has_value() ?
                              mMarkedJointTargets[i].value() : currentPos[i];
                 }
             } else {
-                pos = currentPos.cast<float>();
+                pos_rad = currentPos.cast<float>();
             }
 
+            // Convert to degrees for display
+            Eigen::VectorXf pos_deg = pos_rad * (180.0f / M_PI);
+
             // DOF direction labels
-            const char* dof_labels[] = {"X", "Y", "Z", "tX", "tY", "tZ"};
+            const char* dof_labels[] = {"X", "Y", "Z", "tX", "tY", "tZ"}; // euler xyz and translation xyz
 
             int dof_idx = 0;
             for (size_t j = 0; j < skel->getNumJoints(); j++) {
@@ -3107,10 +3120,34 @@ void PhysicalExam::drawJointControlSection() {
                 ImGui::Indent();
 
                 for (int d = 0; d < num_dofs; d++) {
-                    // Expand limits for root joint (first 6 DOFs)
+                    // Check if this is a translation DOF (root joint DOFs 3-5 are tx, ty, tz)
+                    bool is_translation = (dof_idx >= 3 && dof_idx < 6);
+
+                    // Prepare limits and display value
+                    float lower_limit, upper_limit;
+                    float display_value;
+
                     if (dof_idx < 6) {
+                        // Root joint - expand limits
                         pos_lower_limit[dof_idx] = -2;
                         pos_upper_limit[dof_idx] = 2;
+
+                        if (is_translation) {
+                            // Translation: use raw values (meters)
+                            lower_limit = -2.0f;
+                            upper_limit = 2.0f;
+                            display_value = pos_rad[dof_idx];
+                        } else {
+                            // Rotation: convert to degrees
+                            lower_limit = -2.0f * (180.0f / M_PI);
+                            upper_limit = 2.0f * (180.0f / M_PI);
+                            display_value = pos_deg[dof_idx];
+                        }
+                    } else {
+                        // Non-root joints: always rotation, convert to degrees
+                        lower_limit = pos_lower_limit[dof_idx] * (180.0f / M_PI);
+                        upper_limit = pos_upper_limit[dof_idx] * (180.0f / M_PI);
+                        display_value = pos_deg[dof_idx];
                     }
 
                     // Create label: "JointName Direction" or just "JointName" for single DOF
@@ -3123,24 +3160,51 @@ void PhysicalExam::drawJointControlSection() {
                         label = "";
                     }
 
-                    // Add asterisk and target angle if joint is marked for interpolation
+                    // Add asterisk and target value if joint is marked for interpolation
                     if (mEnableInterpolation && mMarkedJointTargets[dof_idx].has_value()) {
-                        double targetAngle = mMarkedJointTargets[dof_idx].value();
+                        double target_value = mMarkedJointTargets[dof_idx].value();
                         char targetStr[32];
-                        snprintf(targetStr, sizeof(targetStr), " * (→%.3f)", targetAngle);
+                        if (is_translation) {
+                            snprintf(targetStr, sizeof(targetStr), " * (→%.3fm)", target_value);
+                        } else {
+                            snprintf(targetStr, sizeof(targetStr), " * (→%.1f°)", target_value * (180.0 / M_PI));
+                        }
                         label += targetStr;
                     }
-                    label += "##" + joint_name + std::to_string(d);
 
                     // Store previous value to detect changes
-                    float prev_value = pos[dof_idx];
+                    float prev_value = display_value;
 
-                    ImGui::SliderFloat(label.c_str(), &pos[dof_idx],
-                                     pos_lower_limit[dof_idx], pos_upper_limit[dof_idx]);
+                    // DragFloat with limits
+                    std::string drag_label = label + "##drag_" + joint_name + std::to_string(d);
+                    ImGui::SetNextItemWidth(200);
+                    const char* format = is_translation ? "%.3fm" : "%.1f°";
+                    ImGui::SliderFloat(drag_label.c_str(), &display_value, lower_limit, upper_limit, format);
 
-                    // Mark joint with target angle if value changed and interpolation is enabled and paused
-                    if (mEnableInterpolation && mSimulationPaused && prev_value != pos[dof_idx]) {
-                        mMarkedJointTargets[dof_idx] = pos[dof_idx];  // Store target angle
+                    // InputFloat on same line
+                    ImGui::SameLine();
+                    std::string input_label = "##input_" + joint_name + std::to_string(d);
+                    ImGui::SetNextItemWidth(50);
+                    const char* input_format = is_translation ? "%.3f" : "%.1f";
+                    ImGui::InputFloat(input_label.c_str(), &display_value, 0.0f, 0.0f, input_format);
+
+                    // Clamp to limits after input
+                    if (display_value < lower_limit) display_value = lower_limit;
+                    if (display_value > upper_limit) display_value = upper_limit;
+
+                    // Update internal storage
+                    if (is_translation) {
+                        // Translation: store directly in meters
+                        pos_rad[dof_idx] = display_value;
+                    } else {
+                        // Rotation: update degree value and convert to radians
+                        pos_deg[dof_idx] = display_value;
+                        pos_rad[dof_idx] = display_value * (M_PI / 180.0f);
+                    }
+
+                    // Mark joint with target value if changed and interpolation is enabled and paused
+                    if (mEnableInterpolation && mSimulationPaused && prev_value != display_value) {
+                        mMarkedJointTargets[dof_idx] = pos_rad[dof_idx];  // Store in radians/meters
                     }
 
                     dof_idx++;
@@ -3149,9 +3213,9 @@ void PhysicalExam::drawJointControlSection() {
                 ImGui::Unindent();
             }
 
-            // Update positions if interpolation is disabled
+            // Update positions if interpolation is disabled (convert degrees back to radians)
             if (!mEnableInterpolation) {
-                skel->setPositions(pos.cast<double>());
+                skel->setPositions(pos_rad.cast<double>());
             }
             // With interpolation enabled, targets are set when sliders change (marked automatically)
         }
