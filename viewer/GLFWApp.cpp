@@ -16,7 +16,13 @@ const std::vector<std::string> CHANNELS =
         "Yrotation",
         "Zrotation",
 };
- 
+
+const char* CAMERA_PRESET_DEFINITIONS[] = {
+    "PRESET|Frontal view|0,0,3.0|0,1,0|0,0,0|1|1,0,0,0",
+    "PRESET|Sagittal view|0,0,3.0|0,1,0|0,0,0|1|0.707,0.0,0.707,0.0",
+    "PRESET|Foot view|0,0,1.26824|0,1,0|0,900,15|1|0.707,0.0,0.707,0.0",
+};
+
 GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 {
     mGVAELoaded = false;
@@ -30,9 +36,10 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mTranslate = false;
     mZooming = false;
     mTrans = Eigen::Vector3d(0.0, 0.0, 0.0);
+    mRelTrans = Eigen::Vector3d(0.0, 0.0, 0.0);  // Initialize user translation offset
     mEye = Eigen::Vector3d(0.0, 0.0, 1.0);
     mUp = Eigen::Vector3d(0.0, 1.0, 0.0);
-    mDrawOBJ = false;
+    mDrawOBJ = true;
 
     // Screen Record
     mScreenRecord = false;
@@ -50,8 +57,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mMuscleRenderType = activatonLevel;
     mMuscleRenderTypeInt = 2;
     mMuscleResolution = 0.0;
-
-    mC3DCount = 0;
 
     // Initialize Graph Data Buffer
     mGraphData = new CBufferData<double>();
@@ -97,11 +102,15 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     // mCameraSetting
     mCameraMoving = 0;
-    mFocus = 0;
+    mFocus = 1;
     mRenderC3D = false;
 
     mTrackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
     mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
+
+    // Initialize camera presets
+    initializeCameraPresets();
+    loadCameraPreset(0);
 
     mDrawMotion = false;
 
@@ -688,9 +697,6 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
             mJointCalibration.push_back((jn->getTransformFromParentBodyNode() * jn->getParentBodyNode()->getTransform()).linear().transpose());
     }
 
-    // Load C3D
-    mC3DCOM = Eigen::Vector3d::Zero();
-
     // load motion
     for (auto bn : mMotionSkeleton->getBodyNodes())
     {
@@ -751,6 +757,8 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
             mMotions.push_back(motion_elem);
         }
     }
+
+    reset();
 }
 
 void GLFWApp::drawAxis()
@@ -1506,7 +1514,143 @@ void GLFWApp::drawVisualizationPanel()
         }
     }
 
+    // Camera Status
+    drawCameraStatusSection();
+
     ImGui::End();
+}
+
+void GLFWApp::drawCameraStatusSection() {
+    if (ImGui::CollapsingHeader("Camera Status")) {
+        // Current preset description
+        if (mCurrentCameraPreset >= 0 && mCurrentCameraPreset < 3 &&
+            mCameraPresets[mCurrentCameraPreset].isSet) {
+            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Current View:");
+            ImGui::SameLine();
+            ImGui::Text("%s", mCameraPresets[mCurrentCameraPreset].description.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Current View: Custom");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Camera Settings:");
+
+        ImGui::Text("Eye: [%.3f, %.3f, %.3f]", mEye[0], mEye[1], mEye[2]);
+        ImGui::Text("Up:  [%.3f, %.3f, %.3f]", mUp[0], mUp[1], mUp[2]);
+        ImGui::Text("RelTrans: [%.3f, %.3f, %.3f]", mRelTrans[0], mRelTrans[1], mRelTrans[2]);
+        ImGui::Text("Zoom: %.3f", mZoom);
+
+        Eigen::Quaterniond quat = mTrackball.getCurrQuat();
+        ImGui::Text("Quaternion: [%.3f, %.3f, %.3f, %.3f]",
+                    quat.w(), quat.x(), quat.y(), quat.z());
+
+        // Camera presets section
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Camera Presets:");
+        for (int i = 0; i < 3; i++) {
+            if (mCameraPresets[i].isSet) {
+                if (ImGui::Button(("Load " + std::to_string(i + 8)).c_str())) {
+                    loadCameraPreset(i);
+                }
+                ImGui::SameLine();
+                ImGui::Text("%s", mCameraPresets[i].description.c_str());
+            }
+        }
+
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Keyboard Shortcuts:");
+        ImGui::Text("Press C: Print camera info to console");
+        ImGui::Text("Press 0/1/2: Load camera presets");
+    }
+}
+
+void GLFWApp::printCameraInfo() {
+    Eigen::Quaterniond quat = mTrackball.getCurrQuat();
+
+    std::cout << "\n======================================" << std::endl;
+    std::cout << "Copy and paste below to CAMERA_PRESET_DEFINITIONS:" << std::endl;
+    std::cout << "======================================" << std::endl;
+    std::cout << "PRESET|[Add description]|"
+              << mEye[0] << "," << mEye[1] << "," << mEye[2] << "|"
+              << mUp[0] << "," << mUp[1] << "," << mUp[2] << "|"
+              << mRelTrans[0] << "," << mRelTrans[1] << "," << mRelTrans[2] << "|"
+              << mZoom << "|"
+              << quat.w() << "," << quat.x() << "," << quat.y() << "," << quat.z()
+              << std::endl;
+    std::cout << "======================================\n" << std::endl;
+}
+
+void GLFWApp::initializeCameraPresets() {
+    mCurrentCameraPreset = -1;
+
+    for (int i = 0; i < 3; i++) {
+        mCameraPresets[i].isSet = false;
+
+        std::string definition(CAMERA_PRESET_DEFINITIONS[i]);
+        std::stringstream ss(definition);
+        std::string token;
+        std::vector<std::string> tokens;
+
+        while (std::getline(ss, token, '|')) {
+            tokens.push_back(token);
+        }
+
+        if (tokens.size() == 7 && tokens[0] == "PRESET") {
+            mCameraPresets[i].description = tokens[1];
+
+            std::stringstream ss_eye(tokens[2]);
+            std::string val;
+            std::getline(ss_eye, val, ','); mCameraPresets[i].eye[0] = std::stod(val);
+            std::getline(ss_eye, val, ','); mCameraPresets[i].eye[1] = std::stod(val);
+            std::getline(ss_eye, val, ','); mCameraPresets[i].eye[2] = std::stod(val);
+
+            std::stringstream ss_up(tokens[3]);
+            std::getline(ss_up, val, ','); mCameraPresets[i].up[0] = std::stod(val);
+            std::getline(ss_up, val, ','); mCameraPresets[i].up[1] = std::stod(val);
+            std::getline(ss_up, val, ','); mCameraPresets[i].up[2] = std::stod(val);
+
+            // Note: 'trans' in preset definitions represents mRelTrans (user manual offset)
+            std::stringstream ss_trans(tokens[4]);
+            std::getline(ss_trans, val, ','); mCameraPresets[i].trans[0] = std::stod(val);
+            std::getline(ss_trans, val, ','); mCameraPresets[i].trans[1] = std::stod(val);
+            std::getline(ss_trans, val, ','); mCameraPresets[i].trans[2] = std::stod(val);
+
+            mCameraPresets[i].zoom = std::stod(tokens[5]);
+
+            if (tokens.size() > 6) {
+                std::stringstream ss_quat(tokens[6]);
+                std::getline(ss_quat, val, ','); double w = std::stod(val);
+                std::getline(ss_quat, val, ','); double x = std::stod(val);
+                std::getline(ss_quat, val, ','); double y = std::stod(val);
+                std::getline(ss_quat, val, ','); double z = std::stod(val);
+                mCameraPresets[i].quat = Eigen::Quaterniond(w, x, y, z);
+            }
+
+            mCameraPresets[i].isSet = true;
+        } else {
+            if (tokens.size() != 7) {
+                std::cout << "Camera preset " << i << " is not valid. Because it have " << tokens.size() << " tokens. It should have 7 tokens" << std::endl;
+            } else {
+                std::cout << "Camera preset " << i << " is not valid. Because the first token is not PRESET. Got " << tokens[0] << std::endl;
+            }
+        }
+    }
+}
+
+void GLFWApp::loadCameraPreset(int index) {
+    if (index < 0 || index >= 3 || !mCameraPresets[index].isSet)
+    {
+        std::cout << "Camera preset " << index << " is not valid" << std::endl;
+        return;
+    }
+    std::cout << "Loading camera preset " << index << ": " << mCameraPresets[index].description << std::endl;
+
+    mEye = mCameraPresets[index].eye;
+    mUp = mCameraPresets[index].up;
+    mRelTrans = mCameraPresets[index].trans;  // Restore user manual translation offset
+    mZoom = mCameraPresets[index].zoom;
+    mTrackball.setQuaternion(mCameraPresets[index].quat);
+    mCurrentCameraPreset = index;
 }
 
 void GLFWApp::drawControlPanel()
@@ -1817,7 +1961,9 @@ void GLFWApp::drawSimFrame()
     mTrackball.applyGLRotation();
 
     glScalef(mZoom, mZoom, mZoom);
-    glTranslatef(mTrans[0] * 0.001, mTrans[1] * 0.001, mTrans[2] * 0.001);
+    // Apply combined translation: automatic focus tracking + user manual offset
+    Eigen::Vector3d totalTrans = mTrans + mRelTrans;
+    glTranslatef(totalTrans[0] * 0.001, totalTrans[1] * 0.001, totalTrans[2] * 0.001);
     glEnable(GL_DEPTH_TEST);
 
     // Simulated Character
@@ -2064,7 +2210,7 @@ void GLFWApp::mouseMove(double xpos, double ypos)
     {
         Eigen::Matrix3d rot;
         rot = mTrackball.getRotationMatrix();
-        mTrans += (1 / mZoom) * rot.transpose() * Eigen::Vector3d(deltaX, -deltaY, 0.0);
+        mRelTrans += (1 / mZoom) * rot.transpose() * Eigen::Vector3d(deltaX, -deltaY, 0.0);
     }
     if (mZooming)
         mZoom = std::max(0.01, mZoom + deltaY * 0.01);
@@ -2114,129 +2260,134 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
     {
         switch (key)
         {
-        case GLFW_KEY_U:
-            mEnv->updateParamState();
-            mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-            reset();
-            break;
-        case GLFW_KEY_COMMA:
-            mEnv->setParamState(mEnv->getParamDefault(), false, true);
-            mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-            reset();
-            break;
-        case GLFW_KEY_N:
-            mEnv->setParamState(mEnv->getParamMin(), false, true);
-            mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-            reset();
-            break;
-        case GLFW_KEY_M:
-            mEnv->setParamState(mEnv->getParamMax(), false, true);
-            mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-            reset();
-            break;
+        // case GLFW_KEY_U:
+        //     mEnv->updateParamState();
+        //     mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        //     reset();
+        //     break;
+        // case GLFW_KEY_COMMA:
+        //     mEnv->setParamState(mEnv->getParamDefault(), false, true);
+        //     mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        //     reset();
+        //     break;
+        // case GLFW_KEY_N:
+        //     mEnv->setParamState(mEnv->getParamMin(), false, true);
+        //     mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        //     reset();
+        //     break;
+        // case GLFW_KEY_M:
+        //     mEnv->setParamState(mEnv->getParamMax(), false, true);
+        //     mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        //     reset();
+        //     break;
 
-        case GLFW_KEY_Z:
-        {
-            Eigen::VectorXd pos = mEnv->getCharacter(0)->getSkeleton()->getPositions().setZero();
-            Eigen::VectorXd vel = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setZero();
-            pos[41] = 1.5;
-            pos[51] = -1.5;
-            mEnv->getCharacter(0)->getSkeleton()->setPositions(pos);
-            mEnv->getCharacter(0)->getSkeleton()->setVelocities(vel);
-        }
-        break;
-        // Rendering Key
-        case GLFW_KEY_T:
-            mDrawReferenceSkeleton = !mDrawReferenceSkeleton;
-            break;
-        case GLFW_KEY_P:
-            mDrawCharacter = !mDrawCharacter;
-            break;
+        // case GLFW_KEY_Z:
+        // {
+        //     Eigen::VectorXd pos = mEnv->getCharacter(0)->getSkeleton()->getPositions().setZero();
+        //     Eigen::VectorXd vel = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setZero();
+        //     pos[41] = 1.5;
+        //     pos[51] = -1.5;
+        //     mEnv->getCharacter(0)->getSkeleton()->setPositions(pos);
+        //     mEnv->getCharacter(0)->getSkeleton()->setVelocities(vel);
+        // }
+        // break;
+        // // Rendering Key
+        // case GLFW_KEY_T:
+        //     mDrawReferenceSkeleton = !mDrawReferenceSkeleton;
+        //     break;
+        // case GLFW_KEY_P:
+        //     mDrawCharacter = !mDrawCharacter;
+        //     break;
         case GLFW_KEY_S:
             update();
             break;
         case GLFW_KEY_R:
             reset();
             break;
-        case GLFW_KEY_O:
-            mDrawOBJ = !mDrawOBJ;
-            break;
+        // case GLFW_KEY_O:
+            // mDrawOBJ = !mDrawOBJ;
+            // break;
         case GLFW_KEY_SPACE:
             mRolloutStatus.pause = !mRolloutStatus.pause;
             mRolloutStatus.cycle = -1;
             break;
         // Camera Setting
-        case GLFW_KEY_F:
-            mFocus += 1;
-            mFocus %= 5;
+        case GLFW_KEY_C:
+            printCameraInfo();
             break;
-        case GLFW_KEY_5:
-        case GLFW_KEY_KP_5:
-            mCameraMoving = 0;
-            mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
-            break;
-
-        case GLFW_KEY_7:
-        case GLFW_KEY_KP_7:
-            mCameraMoving -= 100;
-            break;
-        case GLFW_KEY_9:
-        case GLFW_KEY_KP_9:
-            mCameraMoving += 100;
-            break;
-
-        case GLFW_KEY_8:
-        case GLFW_KEY_KP_8:
-            mTrackball.setQuaternion(Eigen::Quaterniond(Eigen::AngleAxisd(0.01 * M_PI, Eigen::Vector3d::UnitX())) * mTrackball.getCurrQuat());
-            break;
-        case GLFW_KEY_2:
-        case GLFW_KEY_KP_2:
-            mTrackball.setQuaternion(Eigen::Quaterniond(Eigen::AngleAxisd(-0.01 * M_PI, Eigen::Vector3d::UnitX())) * mTrackball.getCurrQuat());
-            break;
-        case GLFW_KEY_1:
-        case GLFW_KEY_KP_1:
-            mEye = Eigen::Vector3d(0, 0, 2.92526);
-            break;
-
-        case GLFW_KEY_3:
-        case GLFW_KEY_KP_3: // Muscle Information Rendering
-            mFocus = 1;
-            mCameraMoving = -400;
-            mEye = Eigen::Vector3d(0, 0, 2.92526);
-            mRenderConditions = !mRenderConditions;
-            if (mRenderConditions)
-                glfwSetWindowSize(mWindow, mWidth / 3.0, mHeight);
-            else
-            {
-                glfwSetWindowSize(mWindow, 1920, mHeight);
-                mCameraMoving = 0;
-            }
-            {
-                Eigen::VectorXd pos = mEnv->getCharacter(0)->getSkeleton()->getPositions().setZero();
-                Eigen::VectorXd vel = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setZero();
-                pos[41] = 1.5;
-                pos[51] = -1.5;
-                mEnv->getCharacter(0)->getSkeleton()->setPositions(pos);
-                mEnv->getCharacter(0)->getSkeleton()->setVelocities(vel);
-            }
-            break;
+        // case GLFW_KEY_F:
+            // mFocus += 1;
+            // mFocus %= 5;
+            // break;
 
         case GLFW_KEY_0:
         case GLFW_KEY_KP_0:
-            mScreenIdx = 0;
-            mScreenRecord = !mScreenRecord;
+            loadCameraPreset(0);
+            // mScreenIdx = 0;
+            // mScreenRecord = !mScreenRecord;
             break;
-
-        case GLFW_KEY_B:
-            reset();
-
-            {
-                mMotionBuffer.clear();
-                while (mEnv->isEOE() == 0)
-                    update(true);
-            }
-            exportBVH(mMotionBuffer, mEnv->getCharacter(0)->getSkeleton());
+        case GLFW_KEY_1:
+        case GLFW_KEY_KP_1:
+            loadCameraPreset(1);
             break;
+        case GLFW_KEY_2:
+        case GLFW_KEY_KP_2:
+            loadCameraPreset(2);
+            break;
+        // case GLFW_KEY_5:
+        // case GLFW_KEY_KP_5:
+        //     mCameraMoving = 0;
+        //     mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
+        //     break;
+
+        // case GLFW_KEY_7:
+        // case GLFW_KEY_KP_7:
+        //     mCameraMoving -= 100;
+        //     break;
+        // case GLFW_KEY_9:
+        // case GLFW_KEY_KP_9:
+        //     mCameraMoving += 100;
+        //     break;
+
+        // case GLFW_KEY_8:
+        // case GLFW_KEY_KP_8:
+        //     mTrackball.setQuaternion(Eigen::Quaterniond(Eigen::AngleAxisd(0.01 * M_PI, Eigen::Vector3d::UnitX())) * mTrackball.getCurrQuat());
+        //     break;
+
+        // case GLFW_KEY_3:
+        // case GLFW_KEY_KP_3: // Muscle Information Rendering
+        //     mFocus = 1;
+        //     mCameraMoving = -400;
+        //     mEye = Eigen::Vector3d(0, 0, 2.92526);
+        //     mRenderConditions = !mRenderConditions;
+        //     if (mRenderConditions)
+        //         glfwSetWindowSize(mWindow, mWidth / 3.0, mHeight);
+        //     else
+        //     {
+        //         glfwSetWindowSize(mWindow, 1920, mHeight);
+        //         mCameraMoving = 0;
+        //     }
+        //     {
+        //         Eigen::VectorXd pos = mEnv->getCharacter(0)->getSkeleton()->getPositions().setZero();
+        //         Eigen::VectorXd vel = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setZero();
+        //         pos[41] = 1.5;
+        //         pos[51] = -1.5;
+        //         mEnv->getCharacter(0)->getSkeleton()->setPositions(pos);
+        //         mEnv->getCharacter(0)->getSkeleton()->setVelocities(vel);
+        //     }
+        //     break;
+
+        // case GLFW_KEY_B:
+            // reset();
+// 
+            // {
+                // mMotionBuffer.clear();
+                // while (mEnv->isEOE() == 0)
+                    // update(true);
+            // }
+            // exportBVH(mMotionBuffer, mEnv->getCharacter(0)->getSkeleton());
+            // break;
+
         default:
             break;
         }
@@ -2299,21 +2450,15 @@ void GLFWApp::drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr)
 void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color, bool isLineSkeleton)
 {
     mMotionSkeleton->setPositions(pos);
-
     if (!isLineSkeleton)
     {
-        for (const auto bn : mMotionSkeleton->getBodyNodes())
-            drawSingleBodyNode(bn, color);
-    }
-    else
-    {
+        for (const auto bn : mMotionSkeleton->getBodyNodes()) drawSingleBodyNode(bn, color);
     }
 }
 
 void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
 {
-    if (!shape)
-        return;
+    if (!shape) return;
 
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_COLOR_MATERIAL);
@@ -2354,8 +2499,7 @@ void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
     }
 }
 
-void GLFWApp::
-    setCamera()
+void GLFWApp::setCamera()
 {
     if (mFocus == 1)
     {

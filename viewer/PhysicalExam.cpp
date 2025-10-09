@@ -2773,14 +2773,19 @@ void PhysicalExam::renderMusclePlots() {
         ImGui::SetTooltip("Toggle legend display in muscle plots");
     }
 
-    std::vector<double> x_data = mSweepAngles;
+    // Convert radian angles to degrees for x_data
+    std::vector<double> x_data;
+    x_data.reserve(mSweepAngles.size());
+    for (double angle_rad : mSweepAngles) {
+        x_data.push_back(angle_rad * 180.0 / M_PI);
+    }
 
     // Plot 1: Passive Forces vs Joint Angle
     ImPlotFlags plot_flags = mShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
     if (ImPlot::BeginPlot("Passive Forces vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min,
-            mSweepConfig.angle_max, ImGuiCond_Always);
-        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (rad)");
+        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+            mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
         ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
         
         // Only plot visible muscles
@@ -2804,9 +2809,9 @@ void PhysicalExam::renderMusclePlots() {
 
     // Plot 2: lm_norm vs Joint Angle
     if (ImPlot::BeginPlot("Normalized Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min,
-            mSweepConfig.angle_max, ImGuiCond_Always);
-        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (rad)");
+        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+            mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
         ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
 
         // Only plot visible muscles

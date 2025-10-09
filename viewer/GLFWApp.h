@@ -93,6 +93,11 @@ private:
     void drawControlPanel();
     void drawGaitNetDisplay();
     void drawVisualizationPanel();
+    void drawCameraStatusSection();
+
+    void printCameraInfo();
+    void initializeCameraPresets();
+    void loadCameraPreset(int index);
     void drawGround(double height);
     void drawCollision();
 
@@ -119,6 +124,19 @@ private:
     // Keyboard Function
     void keyboardPress(int key, int scancode, int action, int mods);
 
+    // Camera presets
+    struct CameraPreset {
+        std::string description;
+        Eigen::Vector3d eye;
+        Eigen::Vector3d up;
+        Eigen::Vector3d trans;
+        double zoom;
+        Eigen::Quaterniond quat;
+        bool isSet;
+    };
+    CameraPreset mCameraPresets[3];
+    int mCurrentCameraPreset;
+
     // Variable
     bool mRenderMode;
     double mWidth, mHeight;
@@ -134,6 +152,7 @@ private:
     dart::gui::Trackball mTrackball;
     double mZoom, mPersp, mMouseX, mMouseY;
     Eigen::Vector3d mTrans, mEye, mUp;
+    Eigen::Vector3d mRelTrans;  // User's manual translation offset (preserved across focus modes)
     int mCameraMoving, mFocus;
 
     // Skeleton for kinematic drawing
