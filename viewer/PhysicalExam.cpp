@@ -2,6 +2,7 @@
 #include "PhysicalExam.h"
 #include "UriResolver.h"
 #include "GLfunctions.h"
+#include "SurgeryScript.h"
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <iostream>
@@ -35,7 +36,6 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mWindowYPos(0)
     , mControlPanelWidth(250)
     , mPlotPanelWidth(350)
-    , mCharacter(nullptr)
     , mMouseDown(false)
     , mRotate(false)
     , mTranslate(false)
@@ -80,10 +80,20 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mShowSurgeryPanel(false)      // Surgery panel hidden by default
     , mSavingMuscle(false)          // Not currently saving
     , mSweepRestorePosition(false)   // Restore position after sweep by default
+    , mRecordingSurgery(false)       // Not recording by default
+    , mRecordingScriptPath("data/recorded_surgery.yaml")  // Default recording path
+    , mLoadScriptPath("data/recorded_surgery.yaml")  // Default load path
+    , mShowScriptPreview(false)     // Script preview hidden by default
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
     mShowSweepLegend = true;  // Show legend by default
+    
+    // Initialize path buffers
+    strncpy(mRecordingPathBuffer, mRecordingScriptPath.c_str(), sizeof(mRecordingPathBuffer) - 1);
+    mRecordingPathBuffer[sizeof(mRecordingPathBuffer) - 1] = '\0';
+    strncpy(mLoadPathBuffer, mLoadScriptPath.c_str(), sizeof(mLoadPathBuffer) - 1);
+    mLoadPathBuffer[sizeof(mLoadPathBuffer) - 1] = '\0';
 
     // Muscle Selection UI
     std::memset(mMuscleFilterText, 0, sizeof(mMuscleFilterText));
@@ -887,6 +897,7 @@ void PhysicalExam::render() {
     drawVisualizationPanel();  // Right panel
     
     if (mShowSurgeryPanel) drawSurgeryPanel();
+    showScriptPreview();  // Show script preview popup if active
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -1069,9 +1080,72 @@ void PhysicalExam::drawSurgeryPanel() {
     ImGui::SetNextWindowPos(ImVec2(450, 10), ImGuiCond_FirstUseEver);
     ImGui::Begin("Surgery Operations", &mShowSurgeryPanel);
     
+    // ========================================================================
+    // SURGERY SCRIPT CONTROLS
+    // ========================================================================
+    
+    // Recording Section
+    if (ImGui::CollapsingHeader("Load & Record Surgery Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Indent();
+        
+        if (!mRecordingSurgery) {
+            if (ImGui::Button("Start Recording", ImVec2(150, 30))) {
+                startRecording();
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+            if (ImGui::Button("Stop Recording", ImVec2(150, 30))) {
+                stopRecording();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "● RECORDING");
+        }
+        
+        if (!mRecordedOperations.empty()) {
+            ImGui::Text("Recorded operations: %zu", mRecordedOperations.size());
+            
+            ImGui::Text("Export to:");
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputText("##RecordingPath", mRecordingPathBuffer, sizeof(mRecordingPathBuffer))) {
+                mRecordingScriptPath = mRecordingPathBuffer;
+            }
+            
+            if (ImGui::Button("Export Recording", ImVec2(-1, 30))) {
+                exportRecording(mRecordingScriptPath);
+            }
+        }
+                
+        ImGui::Text("Script path:");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##LoadPath", mLoadPathBuffer, sizeof(mLoadPathBuffer))) {
+            mLoadScriptPath = mLoadPathBuffer;
+        }
+        
+        if (ImGui::Button("Load and Preview", ImVec2(-1, 30))) {
+            loadSurgeryScript();
+        }
+        
+        ImGui::Unindent();
+    }
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // ========================================================================
+    // SURGERY OPERATIONS
+    // ========================================================================
+    
     // 1. Reset Muscle Button (not a header, just a button)
     if (ImGui::Button("Reset Muscles")) {
         resetMuscles();
+        
+        // Record operation if recording
+        if (mRecordingSurgery) {
+            auto op = std::make_unique<ResetMusclesOp>();
+            recordOperation(std::move(op));
+        }
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Reset all muscle properties to their original state");
@@ -1105,23 +1179,83 @@ void PhysicalExam::drawSurgeryPanel() {
 }
 
 // ============================================================================
-// SURGERY OPERATIONS
+// SURGERY OPERATIONS (GUI-specific overrides)
 // ============================================================================
-void PhysicalExam::resetMuscles() {
-    if (!mCharacter) return;
 
-    std::cout << "[Surgery] Resetting all muscles to original state..." << std::endl;
-
-    auto muscles = mCharacter->getMuscles();
-    int resetCount = 0;
-    for (auto muscle : muscles) {
-        muscle->change_f(1.0);
-        muscle->change_l(1.0);
-        muscle->SetTendonOffset(0.0);
-        resetCount++;
+bool PhysicalExam::editAnchorPosition(const std::string& muscle, int anchor_index, 
+                                      const Eigen::Vector3d& position) {
+    // Call base class implementation
+    bool success = SurgeryExecutor::editAnchorPosition(muscle, anchor_index, position);
+    
+    // Add GUI-specific logic if successful
+    if (success && mCharacter) {
+        auto muscles = mCharacter->getMuscles();
+        for (auto m : muscles) {
+            if (m->name == muscle) {
+                mShapeRenderer.invalidateMuscleCache(m);
+                break;
+            }
+        }
     }
+    
+    return success;
+}
 
-    std::cout << "[Surgery] Muscle reset complete. Reset " << resetCount << " muscles." << std::endl;
+bool PhysicalExam::editAnchorWeights(const std::string& muscle, int anchor_index,
+                                     const std::vector<double>& weights) {
+    // Call base class implementation
+    bool success = SurgeryExecutor::editAnchorWeights(muscle, anchor_index, weights);
+    
+    // Add GUI-specific logic if successful
+    if (success && mCharacter) {
+        auto muscles = mCharacter->getMuscles();
+        for (auto m : muscles) {
+            if (m->name == muscle) {
+                mShapeRenderer.invalidateMuscleCache(m);
+                break;
+            }
+        }
+    }
+    
+    return success;
+}
+
+bool PhysicalExam::addBodyNodeToAnchor(const std::string& muscle, int anchor_index,
+                                       const std::string& bodynode_name, double weight) {
+    // Call base class implementation
+    bool success = SurgeryExecutor::addBodyNodeToAnchor(muscle, anchor_index, bodynode_name, weight);
+    
+    // Add GUI-specific logic if successful
+    if (success && mCharacter) {
+        auto muscles = mCharacter->getMuscles();
+        for (auto m : muscles) {
+            if (m->name == muscle) {
+                mShapeRenderer.invalidateMuscleCache(m);
+                break;
+            }
+        }
+    }
+    
+    return success;
+}
+
+bool PhysicalExam::removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index,
+                                            int bodynode_index) {
+    // Call base class implementation
+    bool success = SurgeryExecutor::removeBodyNodeFromAnchor(muscle, anchor_index, bodynode_index);
+    
+    // Add GUI-specific logic if successful
+    if (success && mCharacter) {
+        auto muscles = mCharacter->getMuscles();
+        for (auto m : muscles) {
+            if (m->name == muscle) {
+                mShapeRenderer.invalidateMuscleCache(m);
+                break;
+            }
+        }
+    }
+    
+    return success;
 }
 
 void PhysicalExam::drawDistributePassiveForceSection() {
@@ -1249,30 +1383,26 @@ void PhysicalExam::drawDistributePassiveForceSection() {
         } else if (mDistributeRefMuscle.empty()) {
             std::cout << "[Surgery] Error: No reference muscle selected!" << std::endl;
         } else {
-            // Find reference muscle
-            Muscle* refMuscle = nullptr;
-            for (auto m : muscles) {
-                if (m->name == mDistributeRefMuscle) {
-                    refMuscle = m;
-                    break;
-                }
-            }
-
-            if (refMuscle) {
-                double refCoeff = refMuscle->lm_norm;
-                int modifiedCount = 0;
-
-                // Apply to all selected muscles
-                for (auto m : muscles) {
-                    if (mDistributeSelection[m->name]) {
-                        m->SetLmNorm(refCoeff);
-                        modifiedCount++;
+            // Capture current joint angles for recording
+            std::map<std::string, Eigen::VectorXd> currentJointAngles;
+            if (mRecordingSurgery && mCharacter) {
+                auto skel = mCharacter->getSkeleton();
+                for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root joint
+                    auto joint = skel->getJoint(i);
+                    if (joint->getNumDofs() > 0) {
+                        currentJointAngles[joint->getName()] = joint->getPositions();
                     }
                 }
-
-                std::cout << "[Surgery] Distributed passive force coefficient " << refCoeff
-                          << " from '" << mDistributeRefMuscle << "' to "
-                          << modifiedCount << " muscles" << std::endl;
+            }
+            
+            // Execute operation using refactored method
+            if (distributePassiveForce(selectedMuscles, mDistributeRefMuscle)) {
+                // Record operation if recording
+                if (mRecordingSurgery) {
+                    auto op = std::make_unique<DistributePassiveForceOp>(
+                        selectedMuscles, mDistributeRefMuscle, currentJointAngles);
+                    recordOperation(std::move(op));
+                }
             }
         }
     }
@@ -1397,17 +1527,27 @@ void PhysicalExam::drawRelaxPassiveForceSection() {
         if (selectedMuscles.empty()) {
             std::cout << "[Surgery] Error: No muscles selected!" << std::endl;
         } else {
-            int relaxedCount = 0;
-
-            // Apply relaxation to selected muscles
-            for (auto m : muscles) {
-                if (mRelaxSelection[m->name]) {
-                    m->RelaxPassiveForce();
-                    relaxedCount++;
+            // Capture current joint angles for recording
+            std::map<std::string, Eigen::VectorXd> currentJointAngles;
+            if (mRecordingSurgery && mCharacter) {
+                auto skel = mCharacter->getSkeleton();
+                for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root joint
+                    auto joint = skel->getJoint(i);
+                    if (joint->getNumDofs() > 0) {
+                        currentJointAngles[joint->getName()] = joint->getPositions();
+                    }
                 }
             }
-
-            std::cout << "[Surgery] Applied relaxation to " << relaxedCount << " muscles" << std::endl;
+            
+            // Execute operation using refactored method
+            if (relaxPassiveForce(selectedMuscles)) {
+                // Record operation if recording
+                if (mRecordingSurgery) {
+                    auto op = std::make_unique<RelaxPassiveForceOp>(
+                        selectedMuscles, currentJointAngles);
+                    recordOperation(std::move(op));
+                }
+            }
         }
     }
 
@@ -1435,6 +1575,13 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
             if (mCharacter) {
                 try {
                     exportMuscles(mSaveMuscleFilename);
+                    
+                    // Record operation if recording
+                    if (mRecordingSurgery) {
+                        auto op = std::make_unique<ExportMusclesOp>(
+                            std::string(mSaveMuscleFilename));
+                        recordOperation(std::move(op));
+                    }
                 } catch (const std::exception& e) {
                     std::cout << "[Surgery] Error saving muscle configuration: " << e.what() << std::endl;
                 }
@@ -1791,19 +1938,19 @@ void PhysicalExam::drawAnchorManipulationSection() {
                     if (anchor->bodynodes.size() > 1) {
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Remove##BodyNode")) {
-                            // Remove this bodynode from anchor
-                            anchor->bodynodes.erase(anchor->bodynodes.begin() + i);
-                            anchor->weights.erase(anchor->weights.begin() + i);
-                            anchor->local_positions.erase(anchor->local_positions.begin() + i);
-                            editWeights.erase(editWeights.begin() + i);
+                            std::string bodyNodeName = anchor->bodynodes[i]->getName();
                             
-                            // Recalculate muscle
-                            candidateMuscle->SetMuscle();
-                            mShapeRenderer.invalidateMuscleCache(candidateMuscle);
-                            
-                            std::cout << "[Surgery] Removed bodynode from anchor #" 
-                                      << mSelectedCandidateAnchorIndex << std::endl;
-                            editValuesLoaded = false;
+                            if (removeBodyNodeFromAnchor(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, static_cast<int>(i))) {
+                                editWeights.erase(editWeights.begin() + i);
+                                editValuesLoaded = false;
+                                
+                                // Record operation if recording
+                                if (mRecordingSurgery) {
+                                    auto op = std::make_unique<RemoveBodyNodeFromAnchorOp>(
+                                        mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, static_cast<int>(i));
+                                    recordOperation(std::move(op));
+                                }
+                            }
                         }
                     }
                     
@@ -1813,16 +1960,17 @@ void PhysicalExam::drawAnchorManipulationSection() {
                 
                 // Apply Weights button
                 if (ImGui::Button("Apply Weights", ImVec2(150, 25))) {
-                    // Update weights in anchor
-                    for (size_t i = 0; i < editWeights.size() && i < anchor->weights.size(); ++i) {
-                        anchor->weights[i] = editWeights[i];
+                    // Convert float weights to double
+                    std::vector<double> weights_double(editWeights.begin(), editWeights.end());
+                    
+                    if (editAnchorWeights(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, weights_double)) {
+                        // Record operation if recording
+                        if (mRecordingSurgery) {
+                            auto op = std::make_unique<EditAnchorWeightsOp>(
+                                mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, weights_double);
+                            recordOperation(std::move(op));
+                        }
                     }
-                    
-                    candidateMuscle->SetMuscle();
-                    mShapeRenderer.invalidateMuscleCache(candidateMuscle);
-                    
-                    std::cout << "[Surgery] Updated weights for anchor #" 
-                              << mSelectedCandidateAnchorIndex << std::endl;
                 }
                 
                 ImGui::Spacing();
@@ -1863,37 +2011,20 @@ void PhysicalExam::drawAnchorManipulationSection() {
                 if (ImGui::Button("Add Body Node to Anchor", ImVec2(-1, 25))) {
                     if (newBodyNodeIndex < allBodyNodeNames.size()) {
                         auto newBodyNode = skel->getBodyNode(newBodyNodeIndex);
+                        std::string bodyNodeName = newBodyNode->getName();
                         
-                        // Check if bodynode already exists in anchor
-                        bool alreadyExists = false;
-                        for (auto bn : anchor->bodynodes) {
-                            if (bn == newBodyNode) {
-                                alreadyExists = true;
-                                break;
-                            }
-                        }
-                        
-                        if (!alreadyExists) {
-                            // Add new bodynode with same local position as first one
-                            anchor->bodynodes.push_back(newBodyNode);
-                            anchor->weights.push_back(newBodyNodeWeight);
-                            
-                            if (!anchor->local_positions.empty()) {
-                                anchor->local_positions.push_back(anchor->local_positions[0]);
-                            } else {
-                                anchor->local_positions.push_back(Eigen::Vector3d::Zero());
-                            }
-                            
+                        if (addBodyNodeToAnchor(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, 
+                                                bodyNodeName, newBodyNodeWeight)) {
                             editWeights.push_back(newBodyNodeWeight);
-                            
-                            candidateMuscle->SetMuscle();
-                            mShapeRenderer.invalidateMuscleCache(candidateMuscle);
-                            
-                            std::cout << "[Surgery] Added bodynode '" << newBodyNode->getName() 
-                                      << "' to anchor #" << mSelectedCandidateAnchorIndex 
-                                      << " with weight " << newBodyNodeWeight << std::endl;
-                            
                             editValuesLoaded = false;
+                            
+                            // Record operation if recording
+                            if (mRecordingSurgery) {
+                                auto op = std::make_unique<AddBodyNodeToAnchorOp>(
+                                    mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, 
+                                    bodyNodeName, newBodyNodeWeight);
+                                recordOperation(std::move(op));
+                            }
                         } else {
                             std::cout << "[Surgery] Body node already exists in this anchor!" << std::endl;
                         }
@@ -1930,18 +2061,15 @@ void PhysicalExam::drawAnchorManipulationSection() {
                 
                 // Apply button
                 if (ImGui::Button("Apply Position", ImVec2(-1, 25))) {
-                    // Update anchor position for ALL bodynodes in this anchor
                     Eigen::Vector3d newPos(editAnchorPosX, editAnchorPosY, editAnchorPosZ);
-                    for (size_t i = 0; i < anchor->local_positions.size(); ++i) {
-                        anchor->local_positions[i] = newPos;
+                    if (editAnchorPosition(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, newPos)) {
+                        // Record operation if recording
+                        if (mRecordingSurgery) {
+                            auto op = std::make_unique<EditAnchorPositionOp>(
+                                mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex, newPos);
+                            recordOperation(std::move(op));
+                        }
                     }
-                    
-                    candidateMuscle->SetMuscle();
-                    mShapeRenderer.invalidateMuscleCache(candidateMuscle);
-                    
-                    std::cout << "[Surgery] Updated position for anchor #" << mSelectedCandidateAnchorIndex 
-                              << " to [" << editAnchorPosX << ", " 
-                              << editAnchorPosY << ", " << editAnchorPosZ << "]" << std::endl;
                 }
                 
             } else {
@@ -1984,8 +2112,15 @@ void PhysicalExam::drawAnchorManipulationSection() {
                 if (totalAnchors <= 2) {
                     std::cout << "[Surgery] Error: Cannot remove anchor - muscle must have at least 2 anchors!" << std::endl;
                 } else {
-                    removeAnchorFromMuscle(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex);
-                    mSelectedCandidateAnchorIndex = -1;
+                    if (removeAnchorFromMuscle(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex)) {
+                        // Record operation if recording
+                        if (mRecordingSurgery) {
+                            auto op = std::make_unique<RemoveAnchorOp>(
+                                mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex);
+                            recordOperation(std::move(op));
+                        }
+                        mSelectedCandidateAnchorIndex = -1;
+                    }
                 }
             }
         }
@@ -2003,7 +2138,14 @@ void PhysicalExam::drawAnchorManipulationSection() {
         } else if (mSelectedReferenceAnchorIndex < 0) {
             std::cout << "[Surgery] Error: No reference anchor selected!" << std::endl;
         } else {
-            copyAnchorToMuscle(mAnchorReferenceMuscle, mSelectedReferenceAnchorIndex, mAnchorCandidateMuscle);
+            if (copyAnchorToMuscle(mAnchorReferenceMuscle, mSelectedReferenceAnchorIndex, mAnchorCandidateMuscle)) {
+                // Record operation if recording
+                if (mRecordingSurgery) {
+                    auto op = std::make_unique<CopyAnchorOp>(
+                        mAnchorReferenceMuscle, mSelectedReferenceAnchorIndex, mAnchorCandidateMuscle);
+                    recordOperation(std::move(op));
+                }
+            }
         }
     }
     if (ImGui::IsItemHovered()) {
@@ -2013,227 +2155,40 @@ void PhysicalExam::drawAnchorManipulationSection() {
     ImGui::Unindent();
 }
 
-void PhysicalExam::removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex) {
-    if (!mCharacter) return;
+bool PhysicalExam::removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex) {
+    // Call base class implementation
+    bool success = SurgeryExecutor::removeAnchorFromMuscle(muscleName, anchorIndex);
     
-    auto muscles = mCharacter->getMuscles();
-    Muscle* targetMuscle = nullptr;
-    for (auto m : muscles) {
-        if (m->name == muscleName) {
-            targetMuscle = m;
-            break;
+    // Add GUI-specific logic if successful
+    if (success && mCharacter) {
+        auto muscles = mCharacter->getMuscles();
+        for (auto m : muscles) {
+            if (m->name == muscleName) {
+                mShapeRenderer.invalidateMuscleCache(m);
+                break;
+            }
         }
     }
     
-    if (!targetMuscle) {
-        std::cout << "[Surgery] Error: Muscle '" << muscleName << "' not found!" << std::endl;
-        return;
-    }
-    
-    if (anchorIndex < 0 || anchorIndex >= targetMuscle->mAnchors.size()) {
-        std::cout << "[Surgery] Error: Invalid anchor index " << anchorIndex << std::endl;
-        return;
-    }
-    
-    std::cout << "[Surgery] Removing anchor #" << anchorIndex 
-              << " from muscle '" << muscleName << "'..." << std::endl;
-    
-    // Remove the anchor
-    delete targetMuscle->mAnchors[anchorIndex];  // Free memory
-    targetMuscle->mAnchors.erase(targetMuscle->mAnchors.begin() + anchorIndex);
-    
-    // Recalculate muscle parameters
-    targetMuscle->SetMuscle();
-
-    // Invalidate cached rendering buffers
-    mShapeRenderer.invalidateMuscleCache(targetMuscle);
-
-    std::cout << "[Surgery] Anchor removal complete. Muscle now has "
-              << targetMuscle->mAnchors.size() << " anchors." << std::endl;
+    return success;
 }
 
-void PhysicalExam::copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle) {
-    if (!mCharacter) return;
+bool PhysicalExam::copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle) {
+    // Call base class implementation
+    bool success = SurgeryExecutor::copyAnchorToMuscle(fromMuscle, fromIndex, toMuscle);
     
-    auto muscles = mCharacter->getMuscles();
-    Muscle* sourceMuscle = nullptr;
-    Muscle* targetMuscle = nullptr;
-    
-    for (auto m : muscles) {
-        if (m->name == fromMuscle) {
-            sourceMuscle = m;
-        }
-        if (m->name == toMuscle) {
-            targetMuscle = m;
-        }
-    }
-    
-    if (!sourceMuscle) {
-        std::cout << "[Surgery] Error: Source muscle '" << fromMuscle << "' not found!" << std::endl;
-        return;
-    }
-    
-    if (!targetMuscle) {
-        std::cout << "[Surgery] Error: Target muscle '" << toMuscle << "' not found!" << std::endl;
-        return;
-    }
-    
-    auto sourceAnchors = sourceMuscle->GetAnchors();
-    if (fromIndex < 0 || fromIndex >= sourceAnchors.size()) {
-        std::cout << "[Surgery] Error: Invalid anchor index " << fromIndex << std::endl;
-        return;
-    }
-    
-    auto sourceAnchor = sourceAnchors[fromIndex];
-    
-    std::cout << "[Surgery] Copying anchor #" << fromIndex 
-              << " from '" << fromMuscle << "' to '" << toMuscle << "'..." << std::endl;
-    
-    // Create a deep copy of the anchor
-    std::vector<dart::dynamics::BodyNode*> newBodyNodes = sourceAnchor->bodynodes;
-    std::vector<Eigen::Vector3d> newLocalPositions = sourceAnchor->local_positions;
-    std::vector<double> newWeights = sourceAnchor->weights;
-    
-    Anchor* newAnchor = new Anchor(newBodyNodes, newLocalPositions, newWeights);
-    
-    // Add the new anchor to the target muscle
-    targetMuscle->mAnchors.push_back(newAnchor);
-    
-    // Recalculate muscle parameters
-    targetMuscle->SetMuscle();
-
-    // Invalidate cached rendering buffers
-    mShapeRenderer.invalidateMuscleCache(targetMuscle);
-
-    std::cout << "[Surgery] Anchor copied successfully. Target muscle now has "
-              << targetMuscle->mAnchors.size() << " anchors." << std::endl;
-    
-    // Display info about the copied anchor
-    if (!newBodyNodes.empty()) {
-        std::cout << "[Surgery]   Copied anchor attached to: " 
-                  << newBodyNodes[0]->getName() << std::endl;
-        if (newBodyNodes.size() > 1) {
-            std::cout << "[Surgery]   (LBS with " << newBodyNodes.size() << " body nodes)" << std::endl;
+    // Add GUI-specific logic if successful
+    if (success && mCharacter) {
+        auto muscles = mCharacter->getMuscles();
+        for (auto m : muscles) {
+            if (m->name == toMuscle) {
+                mShapeRenderer.invalidateMuscleCache(m);
+                break;
+            }
         }
     }
-}
-
-Eigen::Isometry3d PhysicalExam::getBodyNodeZeroPoseTransform(dart::dynamics::BodyNode* bn) {
-    Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
-
-    // Build chain from body node to root
-    std::vector<dart::dynamics::BodyNode*> chain;
-    dart::dynamics::BodyNode* current = bn;
-    while (current != nullptr) {
-        chain.push_back(current);
-        current = current->getParentBodyNode();
-    }
-
-    // Walk from root down to target body node, accumulating transforms
-    // chain is in reverse order (bn -> ... -> root), so iterate backwards
-    for (int i = chain.size() - 1; i >= 0; --i) {
-        auto body = chain[i];
-        auto joint = body->getParentJoint();
-
-        if (joint == nullptr) continue;  // Skip root joint
-
-        // Get joint's fixed transforms
-        Eigen::Isometry3d parentTransform = joint->getTransformFromParentBodyNode();
-        Eigen::Isometry3d childTransform = joint->getTransformFromChildBodyNode();
-
-        // Get joint transform with zero DOF values (reference pose)
-        Eigen::VectorXd zeroPos = Eigen::VectorXd::Zero(joint->getNumDofs());
-
-        // Save current joint positions
-        Eigen::VectorXd currentPos = joint->getPositions();
-
-        // Temporarily set to zero to get the transform
-        joint->setPositions(zeroPos);
-        Eigen::Isometry3d jointTransform = joint->getRelativeTransform();
-
-        // Restore current positions
-        joint->setPositions(currentPos);
-
-        // Accumulate transform
-        transform = transform * parentTransform * jointTransform * childTransform.inverse();
-    }
-
-    return transform;
-}
-
-void PhysicalExam::exportMuscles(const std::string& path) {
-    if (!mCharacter) {
-        throw std::runtime_error("No character loaded");
-    }
-
-    auto muscles = mCharacter->getMuscles();
-    if (muscles.empty()) {
-        throw std::runtime_error("No muscles found in character");
-    }
-
-    std::ofstream mfs(path);
-    if (!mfs.is_open()) {
-        throw std::runtime_error("Failed to open file: " + path);
-    }
-
-    std::cout << "[Surgery] Saving muscle configuration to: " << path << std::endl;
-
-    // Save current skeleton state
-    auto skel = mCharacter->getSkeleton();
-    Eigen::VectorXd saved_positions = skel->getPositions();
-
-    // Move to zero pose (all joint angles = 0)
-    Eigen::VectorXd zero_positions = Eigen::VectorXd::Zero(skel->getNumDofs());
-    skel->setPositions(zero_positions);
-
-    mfs << "<Muscle>" << std::endl;
-
-    for (auto m : muscles) {
-        std::string name = m->name;
-        double f0 = m->f0;
-        double l_m0 = m->lm_opt;
-        double l_t0 = m->lt_rel;
-        double pen_angle = m->pen_angle;
-
-        mfs << "    <Unit name=\"" << name
-            << "\" f0=\"" << f0
-            << "\" lm=\"" << l_m0
-            << "\" lt=\"" << l_t0
-            << "\" pen_angle=\"" << pen_angle
-            << "\">" << std::endl;
-
-        for (auto anchor : m->GetAnchors()) {
-            // Use first body node (index 0) for consistency with symmetry checking
-            // The LBS system may have multiple body nodes, but for XML export we use the first
-            auto body_node = anchor->bodynodes[0];
-            std::string body_name = body_node->getName();
-
-            // Get LOCAL position (pose-independent)
-            Eigen::Vector3d local_position = anchor->local_positions[0];
-
-            // Get body node's transform in zero pose (skeleton is now in zero pose)
-            Eigen::Isometry3d zero_pose_transform = body_node->getWorldTransform();
-
-            // Transform to global position in zero pose
-            Eigen::Vector3d glob_position = zero_pose_transform * local_position;
-
-            mfs << "        <Waypoint body=\"" << body_name
-                << "\" p=\"" << glob_position[0] << " "
-                << glob_position[1] << " "
-                << glob_position[2] << " \"/>" << std::endl;
-        }
-
-        mfs << "    </Unit>" << std::endl;
-    }
-
-    mfs << "</Muscle>" << std::endl;
-    mfs.close();
-
-    // Restore original skeleton state
-    skel->setPositions(saved_positions);
-
-    std::cout << "[Surgery] Successfully saved " << muscles.size()
-              << " muscles to " << path << std::endl;
+    
+    return success;
 }
 
 void PhysicalExam::drawSimFrame() {
@@ -4742,4 +4697,131 @@ void PhysicalExam::drawMuscleInfoSection() {
 
         ImGui::Unindent();
     }
+}
+
+// ============================================================================
+// SURGERY SCRIPT RECORDING AND EXECUTION
+// ============================================================================
+
+void PhysicalExam::startRecording() {
+    mRecordedOperations.clear();
+    mRecordingSurgery = true;
+    std::cout << "[Surgery Recording] Started recording surgery operations" << std::endl;
+}
+
+void PhysicalExam::stopRecording() {
+    mRecordingSurgery = false;
+    std::cout << "[Surgery Recording] Stopped recording. Captured " 
+              << mRecordedOperations.size() << " operation(s)" << std::endl;
+}
+
+void PhysicalExam::exportRecording(const std::string& filepath) {
+    if (mRecordedOperations.empty()) {
+        std::cerr << "[Surgery Recording] No operations to export!" << std::endl;
+        return;
+    }
+    
+    try {
+        SurgeryScript::saveToFile(mRecordedOperations, filepath, "Recorded surgery operations");
+        std::cout << "[Surgery Recording] Exported " << mRecordedOperations.size() 
+                  << " operation(s) to " << filepath << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[Surgery Recording] Export failed: " << e.what() << std::endl;
+    }
+}
+
+void PhysicalExam::recordOperation(std::unique_ptr<SurgeryOperation> op) {
+    if (!mRecordingSurgery) return;
+    
+    std::cout << "[Surgery Recording] Recorded: " << op->getDescription() << std::endl;
+    mRecordedOperations.push_back(std::move(op));
+}
+
+void PhysicalExam::loadSurgeryScript() {
+    try {
+        mLoadedScript = SurgeryScript::loadFromFile(mLoadScriptPath);
+        
+        if (mLoadedScript.empty()) {
+            std::cerr << "[Surgery Script] No operations loaded from " << mLoadScriptPath << std::endl;
+            return;
+        }
+        
+        std::cout << "[Surgery Script] Loaded " << mLoadedScript.size() 
+                  << " operation(s) from " << mLoadScriptPath << std::endl;
+        
+        // Show preview
+        mShowScriptPreview = true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "[Surgery Script] Failed to load: " << e.what() << std::endl;
+    }
+}
+
+void PhysicalExam::executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops) {
+    if (!mCharacter) {
+        std::cerr << "[Surgery Script] Error: No character loaded!" << std::endl;
+        return;
+    }
+    
+    std::cout << "[Surgery Script] Executing " << ops.size() << " operation(s)..." << std::endl;
+    
+    int successCount = 0;
+    int failCount = 0;
+    
+    for (size_t i = 0; i < ops.size(); ++i) {
+        std::cout << "[Surgery Script] Operation " << (i + 1) << "/" << ops.size() 
+                  << ": " << ops[i]->getDescription() << std::endl;
+        
+        bool success = ops[i]->execute(this);
+        if (success) {
+            successCount++;
+        } else {
+            failCount++;
+            std::cerr << "[Surgery Script] Operation " << (i + 1) << " FAILED" << std::endl;
+        }
+    }
+    
+    std::cout << "[Surgery Script] Execution complete. Success: " << successCount 
+              << ", Failed: " << failCount << std::endl;
+}
+
+void PhysicalExam::showScriptPreview() {
+    if (!mShowScriptPreview || mLoadedScript.empty()) return;
+    
+    ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(mWidth / 2 - 300, mHeight / 2 - 200), ImGuiCond_FirstUseEver);
+    
+    if (ImGui::Begin("Surgery Script Preview", &mShowScriptPreview)) {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 1.0f, 1.0f), "Script Preview");
+        ImGui::Separator();
+        
+        ImGui::Text("Total operations: %zu", mLoadedScript.size());
+        ImGui::Spacing();
+        
+        // Display operations in scrollable region
+        ImGui::BeginChild("ScriptOperations", ImVec2(0, 250), true);
+        for (size_t i = 0; i < mLoadedScript.size(); ++i) {
+            ImGui::Text("%zu. %s", i + 1, mLoadedScript[i]->getDescription().c_str());
+        }
+        ImGui::EndChild();
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Action buttons
+        if (ImGui::Button("Execute Script", ImVec2(150, 40))) {
+            executeSurgeryScript(mLoadedScript);
+            mShowScriptPreview = false;
+            mLoadedScript.clear();
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Cancel", ImVec2(150, 40))) {
+            mShowScriptPreview = false;
+            mLoadedScript.clear();
+        }
+    }
+    ImGui::End();
 }

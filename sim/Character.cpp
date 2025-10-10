@@ -156,7 +156,7 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     mActivations = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
     TiXmlDocument doc;
-    doc.LoadFile(path.c_str());
+    doc.LoadFile(resolvedPath.c_str());
     TiXmlElement *skel_elem = doc.FirstChildElement("Skeleton");
 
     for (TiXmlElement *node = skel_elem->FirstChildElement("Node"); node != nullptr; node = node->NextSiblingElement("Node"))

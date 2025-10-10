@@ -13,6 +13,9 @@
 #include "Character.h"
 #include "ShapeRenderer.h"
 #include "CBufferData.h"
+#include "SurgeryOperation.h"
+#include "../sim/SurgeryExecutor.h"
+#include <memory>
 
 namespace PMuscle {
 
@@ -52,7 +55,7 @@ struct TrialConfig {
     std::string output_file;
 };
 
-class PhysicalExam {
+class PhysicalExam : public SurgeryExecutor {
 public:
     PhysicalExam(int width = 1920, int height = 1080);
     ~PhysicalExam();
@@ -131,15 +134,27 @@ public:
     void drawMuscleInfoSection();
 
     // Surgery Panel Sections
-    void resetMuscles();
     void drawDistributePassiveForceSection();
     void drawRelaxPassiveForceSection();
     void drawSaveMuscleConfigSection();
     void drawAnchorManipulationSection();
-    void removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex);
-    void copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle);
-    void exportMuscles(const std::string& path);
-    Eigen::Isometry3d getBodyNodeZeroPoseTransform(dart::dynamics::BodyNode* bn);
+    
+    // Surgery operations with GUI-specific logic (override base class)
+    bool removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex) override;
+    bool copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle) override;
+    bool editAnchorPosition(const std::string& muscle, int anchor_index, const Eigen::Vector3d& position) override;
+    bool editAnchorWeights(const std::string& muscle, int anchor_index, const std::vector<double>& weights) override;
+    bool addBodyNodeToAnchor(const std::string& muscle, int anchor_index, const std::string& bodynode_name, double weight) override;
+    bool removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index, int bodynode_index) override;
+    
+    // Surgery script recording and execution
+    void startRecording();
+    void stopRecording();
+    void exportRecording(const std::string& filepath);
+    void recordOperation(std::unique_ptr<SurgeryOperation> op);
+    void loadSurgeryScript();
+    void executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops);
+    void showScriptPreview();
 
     void drawSimFrame();
     void drawGround();
@@ -169,7 +184,6 @@ public:
 private:
     // DART simulation
     dart::simulation::WorldPtr mWorld;
-    Character* mCharacter;
     dart::dynamics::SkeletonPtr mGround;
 
     // Loaded file paths
@@ -326,6 +340,16 @@ private:
 
     // Sweep restore option
     bool mSweepRestorePosition;                      // Whether to restore position after sweep
+
+    // Surgery script recording and execution
+    bool mRecordingSurgery;                          // Is recording active?
+    std::vector<std::unique_ptr<SurgeryOperation>> mRecordedOperations;  // Recorded operations
+    std::string mRecordingScriptPath;                // Default path for saving recording
+    std::string mLoadScriptPath;                     // Path for loading script
+    char mRecordingPathBuffer[256];                  // Buffer for recording path input
+    char mLoadPathBuffer[256];                       // Buffer for load path input
+    std::vector<std::unique_ptr<SurgeryOperation>> mLoadedScript;  // Loaded script for preview
+    bool mShowScriptPreview;                         // Show script preview popup
 
     // Pose preset methods
     void setPoseStanding();

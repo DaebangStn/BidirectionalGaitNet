@@ -1,0 +1,30 @@
+version: "1.0"
+description: "Example surgery script demonstrating various operations"
+operations:
+  # Example 1: Reset all muscles to original state
+  - type: reset_muscles
+  
+  # Example 2: Distribute passive force with specific joint angles
+  - type: distribute_passive_force
+    muscles: ["GAS_R", "SOL_R", "TA_R"]
+    reference_muscle: "GAS_R"
+    joint_angles:
+      TibiaR: 0.5236  # 30 degrees in radians
+      FemurR: -0.1745  # -10 degrees in radians
+  
+  # Example 3: Relax passive force for selected muscles
+  - type: relax_passive_force
+    muscles: ["PSOAS_R", "ILIACUS_R"]
+    joint_angles:
+      FemurR: 1.5708  # 90 degrees in radians
+  
+  # Example 4: Edit anchor position
+  - type: edit_anchor_position
+    muscle: "GAS_R"
+    anchor_index: 1
+    position: [0.05, 0.0, 0.02]
+  
+  # Example 5: Export modified muscles
+  - type: export_muscles
+    filepath: "data/muscle_example_modified.xml"
+

@@ -25,6 +25,7 @@ train-pipeline = "python.scripts:train_pipeline"
 # C++ binary wrappers
 viewer = "python.scripts:viewer"
 physical_exam = "python.scripts:physical_exam"
+surgery = "python.scripts:surgery_tool"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

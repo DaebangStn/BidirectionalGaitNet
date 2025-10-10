@@ -101,3 +101,48 @@ def train_pipeline():
     sys.argv = ["train.py", "--config", "data/config/pipeline.yaml"]  
     from python.train import main
     main()
+
+
+def surgery_tool():
+    """
+    Run the surgery_tool binary to execute surgery scripts
+    Usage: uv run surgery-tool [options]
+    
+    Options:
+      --skeleton PATH    Path to skeleton XML file
+      --muscle PATH      Path to muscle XML file  
+      --script PATH      Path to surgery script YAML file
+      --help, -h         Show help message
+      
+    Examples:
+      # Use all defaults
+      uv run surgery-tool
+      
+      # Use custom script
+      uv run surgery-tool --script data/my_surgery.yaml
+      
+      # Specify all parameters
+      uv run surgery-tool --skeleton data/skeleton_gaitnet_narrow_model.xml \\
+                          --muscle data/muscle_gaitnet.xml \\
+                          --script data/example_surgery.yaml
+    """
+    project_root = get_project_root()
+    binary_path = project_root / "build/release/viewer/surgery_tool"
+
+    if not binary_path.exists():
+        print(f"Error: Binary not found at {binary_path}", file=sys.stderr)
+        print("Please build the project first with: ninja -C build/release", file=sys.stderr)
+        sys.exit(1)
+
+    # Pass all arguments to the binary (skip the script name)
+    args = sys.argv[1:]
+
+    # Run the binary with micromamba environment
+    cmd = ["micromamba", "run", "-n", "bidir", str(binary_path)] + args
+    try:
+        subprocess.run(cmd, cwd=project_root, check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+        sys.exit(0)

@@ -35,6 +35,10 @@ add_executable(physical_exam
     "ShapeRenderer.cpp"
     "GLfunctions.h"
     "GLfunctions.cpp"
+    "SurgeryOperation.h"
+    "SurgeryOperation.cpp"
+    "SurgeryScript.h"
+    "SurgeryScript.cpp"
 )
 
 target_link_libraries(physical_exam
@@ -43,5 +47,21 @@ target_link_libraries(physical_exam
     GL GLU glut glad pybind11::embed glfw imgui
     sim
     dart-gui
+    yaml-cpp
+)
+
+# Surgery Tool executable (CLI-only, no GUI dependencies)
+add_executable(surgery_tool
+    "surgery_main.cpp"
+    "SurgeryOperation.h"
+    "SurgeryOperation.cpp"
+    "SurgeryScript.h"
+    "SurgeryScript.cpp"
+)
+
+target_link_libraries(surgery_tool
+    tinyxml2::tinyxml2
+    sim
+    dart
     yaml-cpp
 )
