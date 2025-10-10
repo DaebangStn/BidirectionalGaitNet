@@ -17,6 +17,7 @@ struct ShapeRenderer {
     std::unordered_map<const Muscle*, std::pair<uint32_t, uint32_t>> muscleVboIbo;
 
     void renderMuscle(const Muscle* muscle, double thickness = -1.0);
+    void invalidateMuscleCache(const Muscle* muscle);
 
     void renderMesh(const MeshShape* meshShape, bool drawShadows = false, float shadowY = 0.0f,
                     const Eigen::Vector4d& color = Eigen::Vector4d(0.8, 0.8, 0.8, 1.0));

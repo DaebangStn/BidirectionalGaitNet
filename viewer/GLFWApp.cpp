@@ -9,6 +9,7 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 #include <filesystem>
+#include <algorithm>
 const std::vector<std::string> CHANNELS =
     {
         "Xposition",
@@ -73,6 +74,10 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mMuscleRenderTypeInt = 2;
     mMuscleResolution = 0.0;
 
+    // Muscle Selection UI
+    std::memset(mMuscleFilterText, 0, sizeof(mMuscleFilterText));
+    // Note: mMuscleSelectionStates will be initialized in setEnv when muscles are available
+
     // Initialize Graph Data Buffer
     mGraphData = new CBufferData<double>();
 
@@ -129,6 +134,12 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     mDrawMotion = false;
 
+    if (argc > 1)
+    {
+        std::string path = std::string(argv[1]);
+        mNetworkPaths.push_back(path);
+    }
+
     // GLFW Initialization
     glfwInit();
     glfwWindowHint(GLFW_SAMPLES, 4);
@@ -136,7 +147,9 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
 
-    mWindow = glfwCreateWindow(mWidth, mHeight, "render", nullptr, nullptr);
+    glfwWindowHintString(GLFW_X11_CLASS_NAME, "MuscleSim");
+    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+    mWindow = glfwCreateWindow(mWidth, mHeight, "MuscleSim", nullptr, nullptr);
     if (mWindow == NULL)
     {
         std::cerr << "Failed to initialize GLFW" << std::endl;
@@ -146,7 +159,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     // Set window position from config
     glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-
     glfwMakeContextCurrent(mWindow);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
@@ -156,7 +168,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     }
     glViewport(0, 0, mWidth, mHeight);
     glfwSetWindowUserPointer(mWindow, this); // 창 사이즈 변경
-    setWindowIcon("figure/icon.png");
 
     auto framebufferSizeCallback = [](GLFWwindow *window, int width, int height)
     {
@@ -219,13 +230,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     mns = py::module::import("__main__").attr("__dict__");
     py::module::import("sys").attr("path").attr("insert")(1, "python");
-
-    if (argc > 1) // Network 가 주어졌을 때
-    {
-        std::string path = std::string(argv[1]);
-
-        mNetworkPaths.push_back(path);
-    }
 
     mSelectedMuscles.clear();
     mRelatedDofs.clear();
@@ -411,10 +415,6 @@ void GLFWApp::exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::
 
 void GLFWApp::update(bool _isSave)
 {
-    // Rollout control: check if rollout is complete or paused
-    if (mRolloutStatus.cycle == 0 || mRolloutStatus.pause)
-        return;
-
     if (mEnv->isActionTime())
     {
         // Reward Update
@@ -623,8 +623,7 @@ void GLFWApp::startLoop()
         }
 
         // Simulation Step
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-            update();
+        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0) update();
 
         // Rendering
         drawSimFrame();
@@ -747,6 +746,16 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
     mEnv->initialize(metadata);
     mEnv->setIsRender(true);
 
+    // Get checkpoint name for plot titles
+    if (!mRolloutStatus.name.empty()) {
+        mCheckpointName = mRolloutStatus.name;
+    } else if (!mNetworkPaths.empty()) {
+        mCheckpointName = std::filesystem::path(mNetworkPaths.back()).stem().string();
+    } else {
+        mCheckpointName = std::filesystem::path(mEnv->getMetadata()).parent_path().filename().string();
+    }
+    glfwSetWindowTitle(mWindow, mCheckpointName.c_str());
+
     mMotionSkeleton = mEnv->getCharacter(0)->getSkeleton()->cloneSkeleton();
     auto character = mEnv->getCharacter(0);
     mNetworks.clear();
@@ -769,6 +778,14 @@ void GLFWApp::setEnv(Environment *env, std::string metadata)
     {
         mRelatedDofs.push_back(false);
         mRelatedDofs.push_back(false);
+    }
+
+    // Initialize muscle selection states - select all muscles by default
+    if (mEnv->getUseMuscle())
+    {
+        auto muscles = mEnv->getCharacter(0)->getMuscles();
+        mMuscleSelectionStates.clear();
+        mMuscleSelectionStates.resize(muscles.size(), true);  // All muscles selected by default
     }
 
     // Forward GaitNet
@@ -1248,26 +1265,18 @@ void GLFWApp::drawVisualizationPanel()
     ImGui::InputDouble("X-axis Min", &mXmin);
     ImGui::SameLine();
     if (ImGui::Button("HS")) _setXminToHeelStrike();
+    ImGui::SameLine();
+    if (ImGui::Button("1.1")) mXmin = -1.1;
 
     // Plot title control
     ImGui::Checkbox("Title##PlotTitleCheckbox", &mPlotTitle);
     ImGui::SameLine();
     ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
-    // Get checkpoint name for plot titles
-    std::string checkpoint_name;
-    if (!mRolloutStatus.name.empty()) {
-        checkpoint_name = mRolloutStatus.name;
-    } else if (!mNetworkPaths.empty()) {
-        checkpoint_name = std::filesystem::path(mNetworkPaths.back()).stem().string();
-    } else {
-        checkpoint_name = std::filesystem::path(mEnv->getMetadata()).parent_path().filename().string();
-    }
-
     // Rewards
     if (ImGui::CollapsingHeader("Rewards"))
     {
-        std::string title_str = mPlotTitle ? checkpoint_name : "Reward";
+        std::string title_str = mPlotTitle ? mCheckpointName : "Reward";
         if (ImPlot::BeginPlot((title_str + "##Reward").c_str()))
         {
             ImPlot::SetupAxes("Time (s)", "Reward");
@@ -1283,9 +1292,10 @@ void GLFWApp::drawVisualizationPanel()
     if (ImGui::CollapsingHeader("Kinematics", ImGuiTreeNodeFlags_DefaultOpen))
     {
         if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-        else ImPlot::SetNextAxisLimits(0, -3, 0);
+        else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+        ImPlot::SetNextAxisLimits(3, -45, 60);
 
-        std::string title_major_joints = mPlotTitle ? checkpoint_name : "Major Joint Angles (deg)";
+        std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
         if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str()))
         {
             ImPlot::SetupAxes("Time (s)", "Angle (deg)");
@@ -1303,9 +1313,10 @@ void GLFWApp::drawVisualizationPanel()
         ImGui::Separator();
 
         if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-        else ImPlot::SetNextAxisLimits(0, -3, 0);
+        else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+        ImPlot::SetNextAxisLimits(3, -10, 15);
 
-        std::string title_minor_joints = mPlotTitle ? checkpoint_name : "Minor Joint Angles (deg)";
+        std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
         if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str()))
         {
 
@@ -1691,7 +1702,7 @@ void GLFWApp::drawCameraStatusSection() {
 }
 
 void GLFWApp::drawJointControlSection() {
-    if (ImGui::CollapsingHeader("Joint Control")) {
+    if (ImGui::CollapsingHeader("Joint")) {
         if (!mEnv || !mEnv->getCharacter(0)) {
             ImGui::TextDisabled("Load character first");
         } else {
@@ -1897,15 +1908,15 @@ void GLFWApp::drawControlPanel()
     ImGui::Begin("Controls");
 
     // Rollout Control
-    if (ImGui::CollapsingHeader("Rollout Control", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Rollout", ImGuiTreeNodeFlags_DefaultOpen))
     {
         static int rolloutInput = -1; // Will be initialized from config
         if (rolloutInput == -1) {
             rolloutInput = mDefaultRolloutCount; // Initialize from config on first use
         }
 
-        ImGui::SetNextItemWidth(90);
-        ImGui::InputInt("Rollout Cycles", &rolloutInput);
+        ImGui::SetNextItemWidth(70);
+        ImGui::InputInt("Cycles", &rolloutInput);
         if (rolloutInput < 1) rolloutInput = 1;
 
         ImGui::SameLine();
@@ -1919,7 +1930,7 @@ void GLFWApp::drawControlPanel()
     }
 
     // Muscle Control
-    if (ImGui::CollapsingHeader("Muscle Control"))
+    if (ImGui::CollapsingHeader("Muscle"))
     {
         Eigen::VectorXf activation = mEnv->getCharacter(0)->getActivations().cast<float>(); // * mEnv->getActionScale();
         int idx = 0;
@@ -1971,9 +1982,8 @@ void GLFWApp::drawControlPanel()
     }
 
     // Rendering
-    if (ImGui::CollapsingHeader("Rendering"))
+    if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::SliderFloat("Muscle Resolution", &mMuscleResolution, 0.0, 1000.0);
         ImGui::Checkbox("Draw Reference Motion", &mDrawReferenceSkeleton);
         ImGui::Checkbox("Draw PD Target Motion", &mDrawPDTarget);
         ImGui::Checkbox("Draw Joint Sphere", &mDrawJointSphere);
@@ -1983,22 +1993,112 @@ void GLFWApp::drawControlPanel()
         ImGui::Checkbox("Draw C3D", &mRenderC3D);
 
         ImGui::Separator();
+        // Muscle Filtering and Selection
+        if (ImGui::CollapsingHeader("Muscle##Rendering"))
+        {
+            ImGui::Indent();
+            ImGui::SetNextItemWidth(125);
+            ImGui::SliderFloat("Resolution", &mMuscleResolution, 0.0, 1000.0);
+            ImGui::SetNextItemWidth(125);
+            ImGui::SliderFloat("Transparency", &mMuscleTransparency, 0.1, 1.0);
 
+            ImGui::Separator();
+
+            // Get all muscles
+            auto allMuscles = mEnv->getCharacter(0)->getMuscles();
+
+            // Initialize selection states if needed
+            if (mMuscleSelectionStates.size() != allMuscles.size())
+            {
+                mMuscleSelectionStates.resize(allMuscles.size(), true);
+            }
+
+            // Count selected muscles
+            int selectedCount = 0;
+            for (bool selected : mMuscleSelectionStates)
+            {
+                if (selected) selectedCount++;
+            }
+
+            ImGui::Text("Selected: %d / %zu", selectedCount, allMuscles.size());
+
+            // Text filter
+            ImGui::InputText("Filter", mMuscleFilterText, IM_ARRAYSIZE(mMuscleFilterText));
+
+            // Filter muscles by name
+            std::vector<int> filteredIndices;
+            std::string filterStr(mMuscleFilterText);
+            std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
+
+            for (int i = 0; i < allMuscles.size(); i++)
+            {
+                std::string muscleName = allMuscles[i]->name;
+                std::transform(muscleName.begin(), muscleName.end(), muscleName.begin(), ::tolower);
+
+                if (filterStr.empty() || muscleName.find(filterStr) != std::string::npos)
+                {
+                    filteredIndices.push_back(i);
+                }
+            }
+
+            // Select All / Deselect All buttons for filtered muscles
+            if (ImGui::Button("Select"))
+            {
+                for (int idx : filteredIndices)
+                {
+                    mMuscleSelectionStates[idx] = true;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Deselect"))
+            {
+                for (int idx : filteredIndices)
+                {
+                    mMuscleSelectionStates[idx] = false;
+                }
+            }
+
+            ImGui::Text("Filtered Muscles: %zu", filteredIndices.size());
+
+            // Display filtered muscles with checkboxes
+            ImGui::BeginChild("MuscleList", ImVec2(0, 300), true);
+            for (int idx : filteredIndices)
+            {
+                bool selected = mMuscleSelectionStates[idx];
+                if (ImGui::Checkbox(allMuscles[idx]->name.c_str(), &selected))
+                {
+                    mMuscleSelectionStates[idx] = selected;
+                }
+            }
+            ImGui::EndChild();
+        }
+
+        if (mEnv->getUseMuscle()) mEnv->getCharacter(0)->getMuscleTuple(false);
+
+        
+        // If no muscles are manually selected, show none (empty list)
+        // The rendering code will use mSelectedMuscles if it has content
+        
         ImGui::RadioButton("PassiveForce", &mMuscleRenderTypeInt, 0);
         ImGui::RadioButton("ContractileForce", &mMuscleRenderTypeInt, 1);
         ImGui::RadioButton("ActivatonLevel", &mMuscleRenderTypeInt, 2);
         ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
         ImGui::RadioButton("Weakness", &mMuscleRenderTypeInt, 4);
-
         mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
+        ImGui::Unindent();
     }
-
-    if (mEnv->getUseMuscle())
-        mEnv->getCharacter(0)->getMuscleTuple(false);
-
+    
+    // // Build selected muscles list based on selection states
+    // auto allMuscles = mEnv->getCharacter(0)->getMuscles();
+    // for (int i = 0; i < mMuscleSelectionStates.size() && i < allMuscles.size(); i++)
+    // {
+    //     if (mMuscleSelectionStates[i])
+    //     {
+    //         mSelectedMuscles.push_back(allMuscles[i]);
+    //     }
+    // }
     // Related Dof Muscle Rendering
-    mSelectedMuscles.clear();
-
+    // mSelectedMuscles.clear();
     // Muscle Selection
     if (ImGui::CollapsingHeader("Muscle Selection"))
     {
@@ -2756,7 +2856,7 @@ void GLFWApp::drawCollision()
     }
 }
 
-void GLFWApp::drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingType renderingType, bool isTransparency)
+void GLFWApp::drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingType renderingType)
 {
     int count = 0;
     glEnable(GL_LIGHTING);
@@ -2764,51 +2864,48 @@ void GLFWApp::drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingTy
     glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_DEPTH_TEST);
 
-    for (auto muscle : muscles)
+    for (int i = 0; i < muscles.size(); i++)
     {
-        // if(muscle->selected || isAll)
-        {
-            muscle->Update();
-            double a = muscle->activation;
-            Eigen::Vector4d color;
-            switch (renderingType)
-            {
-            case activatonLevel:
-                color = Eigen::Vector4d(0.2 + 1.6 * a, 0.2, 0.2, 0.1 + 0.9 * a);
-                break;
-            case passiveForce:
-            {
-                double f_p = muscle->Getf_p() / mMuscleResolution;
-                color = Eigen::Vector4d(0.1, 0.1, 0.1 + 0.9 * f_p, f_p);
-                break;
-            }
-            case contractileForce:
-            {
-                double f_c = muscle->Getf_A() * a / mMuscleResolution;
-                color = Eigen::Vector4d(0.1, 0.1 + 0.9 * f_c, 0.1, f_c);
-                break;
-            }
-            case weakness:
-            {
-                color = Eigen::Vector4d(0.1, 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base));
-                break;
-            }
-            case contracture:
-            {
-                color = Eigen::Vector4d(0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), 0.05, 0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), 0.05 + 5.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base));
-                break;
-            }
-            default:
-                color.setOnes();
-                break;
-            }
-            if (!isTransparency)
-                color[3] = 0.8;
+        // Skip if muscle is not selected (using same order as environment)
+        if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
-            glColor4dv(color.data());
-            if (color[3] > 0.001)
-                mShapeRenderer.renderMuscle(muscle, -1.0);
+        auto muscle = muscles[i];
+        muscle->Update();
+        double a = muscle->activation;
+        Eigen::Vector4d color;
+        switch (renderingType)
+        {
+        case activatonLevel:
+            color = Eigen::Vector4d(0.2 + 1.6 * a, 0.2, 0.2, mMuscleTransparency + 0.9 * a);
+            break;
+        case passiveForce:
+        {
+            double f_p = muscle->Getf_p() / mMuscleResolution;
+            color = Eigen::Vector4d(0.1, 0.1, 0.1 + 0.9 * f_p, mMuscleTransparency + f_p);
+            break;
         }
+        case contractileForce:
+        {
+            double f_c = muscle->Getf_A() * a / mMuscleResolution;
+            color = Eigen::Vector4d(0.1, 0.1 + 0.9 * f_c, 0.1, mMuscleTransparency + f_c);
+            break;
+        }
+        case weakness:
+        {
+            color = Eigen::Vector4d(0.1, 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), mMuscleTransparency + 2.0 * (1.0 - muscle->f0 / muscle->f0_base));
+            break;
+        }
+        case contracture:
+        {
+            color = Eigen::Vector4d(0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), 0.05, 0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), mMuscleTransparency + 5.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base));
+            break;
+        }
+        default:
+            color.setOnes();
+            break;
+        }
+        glColor4dv(color.data());
+        mShapeRenderer.renderMuscle(muscle, -1.0);
     }
     glEnable(GL_LIGHTING);
 }

@@ -1,7 +1,7 @@
 geometry:
   window:
-    width: 1280
-    # width: 2560
+    # width: 1280
+    width: 2560
     height: 1440
     xpos: 0
     ypos: 0
@@ -10,7 +10,7 @@ geometry:
 
 glfwapp:
   rollout:
-    count: 5
+    count: 8
   plot:
     title: true
     x_min: -3.3

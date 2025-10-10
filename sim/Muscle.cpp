@@ -133,9 +133,6 @@ void Muscle::AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::
     for (int i = 0; i < lbs_body_nodes.size(); i++)
         lbs_weights[i] /= total_weight;
     mAnchors.push_back(new Anchor(lbs_body_nodes, lbs_local_positions, lbs_weights));
-
-    int n = mAnchors.size();
-    mCachedAnchorPositions.resize(n);
 }
 void Muscle::AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos)
 {
@@ -148,13 +145,12 @@ void Muscle::AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob
     lbs_weights.push_back(1.0);
 
     mAnchors.push_back(new Anchor(lbs_body_nodes, lbs_local_positions, lbs_weights));
-
-    int n = mAnchors.size();
-    mCachedAnchorPositions.resize(n);
 }
 void Muscle::SetMuscle()
 {
     int n = mAnchors.size();
+    mCachedAnchorPositions.resize(n);
+
     lmt_ref = 0;
     for (int i = 1; i < n; i++) lmt_ref += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
     lmt_base = lmt_ref;

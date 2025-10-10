@@ -32,7 +32,8 @@ def viewer():
         print(f"No checkpoint path provided, using default: {ckpt_path}")
 
     # Run the binary with micromamba environment (required for pybind11 dependencies)
-    cmd = ["/opt/miniconda3/bin/micromamba", "run", "-n", "bidir", str(binary_path), ckpt_path]
+    # cmd = ["/opt/miniconda3/bin/micromamba", "run", "-n", "bidir", str(binary_path), ckpt_path]
+    cmd = ["micromamba", "run", "-n", "bidir", str(binary_path), ckpt_path]
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:
@@ -66,7 +67,8 @@ def physical_exam():
     config_path = sys.argv[1]
 
     # Run the binary with micromamba environment (required for pybind11 dependencies)
-    cmd = ["/opt/miniconda3/bin/micromamba", "run", "-n", "bidir", str(binary_path), config_path]
+    # cmd = ["/opt/miniconda3/bin/micromamba", "run", "-n", "bidir", str(binary_path), config_path]
+    cmd = ["micromamba", "run", "-n", "bidir", str(binary_path), config_path]
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:

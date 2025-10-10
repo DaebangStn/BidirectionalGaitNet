@@ -59,6 +59,7 @@ public:
 
     // Initialization
     void initialize();
+    void loadRenderConfig();
     void loadCharacter(const std::string& skel_path, const std::string& muscle_path, ActuatorType _actType);
     void createGround();
 
@@ -134,6 +135,9 @@ public:
     void drawDistributePassiveForceSection();
     void drawRelaxPassiveForceSection();
     void drawSaveMuscleConfigSection();
+    void drawAnchorManipulationSection();
+    void removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex);
+    void copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle);
     void exportMuscles(const std::string& path);
     Eigen::Isometry3d getBodyNodeZeroPoseTransform(dart::dynamics::BodyNode* bn);
 
@@ -146,6 +150,7 @@ public:
     void drawForceArrow();
     void drawJointPassiveForces();
     void drawConfinementForces();
+    void drawSelectedAnchors();
 
     // Camera control
     void setCamera();
@@ -153,6 +158,7 @@ public:
     void mousePress(int button, int action, int mods);
     void mouseScroll(double xoffset, double yoffset);
     void keyboardPress(int key, int scancode, int action, int mods);
+    void windowResize(int width, int height);
     
     // Camera presets
     void printCameraInfo();
@@ -166,9 +172,16 @@ private:
     Character* mCharacter;
     dart::dynamics::SkeletonPtr mGround;
 
+    // Loaded file paths
+    std::string mSkeletonPath;
+    std::string mMusclePath;
+
     // GLFW/ImGui
     GLFWwindow* mWindow;
     int mWidth, mHeight;
+    int mWindowXPos, mWindowYPos;
+    int mControlPanelWidth;
+    int mPlotPanelWidth;
 
     // Camera
     Eigen::Vector3d mEye;
@@ -278,24 +291,38 @@ private:
     // Rendering
     ShapeRenderer mShapeRenderer;
     float mPassiveForceNormalizer;  // Normalization factor for passive force visualization
+    float mMuscleTransparency;       // Transparency for muscle rendering
     bool mShowJointPassiveForces;   // Toggle for joint passive force arrows
     float mJointForceScale;          // Scale factor for joint force arrow visualization
     bool mShowJointForceLabels;      // Toggle for joint passive force text labels
     bool mShowPostureDebug;          // Toggle for posture control debug output
+    bool mShowExamTable;             // Toggle for examination table visibility
+
+    // Muscle Selection UI
+    char mMuscleFilterText[32];
+    std::vector<bool> mMuscleSelectionStates;
 
     // Surgery Panel
     bool mShowSurgeryPanel;          // Toggle for surgery panel visibility
-    char mSaveMuscleFilename[256];   // Buffer for save muscle config filename
+    char mSaveMuscleFilename[64];   // Buffer for save muscle config filename
     bool mSavingMuscle;              // Flag to prevent duplicate saves
 
     // Distribute Passive Force section
     std::string mDistributeRefMuscle;                // Reference muscle name
     std::map<std::string, bool> mDistributeSelection; // Selected modifying muscles
-    char mDistributeFilterBuffer[256];               // Filter text for muscle search
+    char mDistributeFilterBuffer[32];               // Filter text for muscle search
 
     // Relax Passive Force section
     std::map<std::string, bool> mRelaxSelection;     // Selected muscles to relax
-    char mRelaxFilterBuffer[256];                    // Filter text for muscle search
+    char mRelaxFilterBuffer[32];                    // Filter text for muscle search
+
+    // Anchor Manipulation section
+    char mAnchorCandidateFilterBuffer[32];          // Filter text for candidate muscle search
+    char mAnchorReferenceFilterBuffer[32];          // Filter text for reference muscle search
+    std::string mAnchorCandidateMuscle;              // Selected candidate muscle name
+    std::string mAnchorReferenceMuscle;              // Selected reference muscle name
+    int mSelectedCandidateAnchorIndex;               // Selected candidate anchor index for operations
+    int mSelectedReferenceAnchorIndex;               // Selected reference anchor index for copying
 
     // Sweep restore option
     bool mSweepRestorePosition;                      // Whether to restore position after sweep

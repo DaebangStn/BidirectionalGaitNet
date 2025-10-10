@@ -153,6 +153,16 @@ void ShapeRenderer::renderMuscle(const Muscle *muscle, double thickness)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
+void ShapeRenderer::invalidateMuscleCache(const Muscle* muscle) {
+    auto it = muscleVboIbo.find(muscle);
+    if (it != muscleVboIbo.end()) {
+        auto [vbo, ibo] = it->second;
+        glDeleteBuffers(1, &vbo);
+        glDeleteBuffers(1, &ibo);
+        muscleVboIbo.erase(it);
+    }
+}
+
 void ShapeRenderer::renderMesh(const MeshShape *meshShape, bool drawShadows, float shadowY,
                                const Eigen::Vector4d &color)
 {

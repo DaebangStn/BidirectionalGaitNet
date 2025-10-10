@@ -113,7 +113,7 @@ private:
     void drawShape(const dart::dynamics::Shape *shape, const Eigen::Vector4d &color);
 
     void drawAxis();
-    void drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingType renderingType = activatonLevel, bool isTransparency = true);
+    void drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingType renderingType = activatonLevel);
 
     void drawShadow();
 
@@ -182,8 +182,11 @@ private:
 
     MuscleRenderingType mMuscleRenderType;
     int mMuscleRenderTypeInt;
+    float mMuscleResolution, mMuscleTransparency;
 
-    float mMuscleResolution;
+    // Muscle Selection UI
+    char mMuscleFilterText[32];
+    std::vector<bool> mMuscleSelectionStates;
 
     // Muscle Rendering Option
     std::vector<Muscle *> mSelectedMuscles;
@@ -300,6 +303,7 @@ private:
 
     // Plot title control
     bool mPlotTitle;
+    std::string mCheckpointName;
 
     // Configuration loading
     void loadRenderConfig();

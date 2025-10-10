@@ -6,7 +6,8 @@ description: "Example exam showing inline and referenced trial definitions"
 
 character:
   skeleton: "@data/skeleton_gaitnet_narrow_model.xml"
-  muscle: "@data/muscle_gaitnet_lower_only.xml"
+  # muscle: "@data/muscle_distribute_lower_only.xml"
+  muscle: "@data/muscle_anchor_semiten.xml"
   actuator: "mass_lower"
 
 trials:
