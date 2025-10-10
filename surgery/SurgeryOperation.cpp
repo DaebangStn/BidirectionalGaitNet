@@ -1,5 +1,5 @@
 #include "SurgeryOperation.h"
-#include "../sim/SurgeryExecutor.h"
+#include "SurgeryExecutor.h"
 #include <sstream>
 
 namespace PMuscle {

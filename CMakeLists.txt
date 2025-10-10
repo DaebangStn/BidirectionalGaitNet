@@ -58,6 +58,7 @@ find_package(pybind11 REQUIRED)
 link_libraries(stdc++fs)
 
 add_subdirectory( sim )
+add_subdirectory( surgery )
 add_subdirectory( python )
 if(NOT SERVER_BUILD)
   add_subdirectory( libs )

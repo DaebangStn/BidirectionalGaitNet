@@ -1,7 +1,7 @@
 #include <iostream>
 #include <string>
 #include <cstring>
-#include "../sim/SurgeryExecutor.h"
+#include "SurgeryExecutor.h"
 #include "SurgeryScript.h"
 #include "SurgeryOperation.h"
 

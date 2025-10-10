@@ -14,7 +14,8 @@
 #include "ShapeRenderer.h"
 #include "CBufferData.h"
 #include "SurgeryOperation.h"
-#include "../sim/SurgeryExecutor.h"
+#include "SurgeryExecutor.h"
+#include "SurgeryPanel.h"
 #include <memory>
 
 namespace PMuscle {

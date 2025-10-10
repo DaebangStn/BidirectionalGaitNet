@@ -50,7 +50,7 @@ def physical_exam():
     Example: uv run physical_exam data/config/physical_exam_example2.yaml
     """
     project_root = get_project_root()
-    binary_path = project_root / "build/release/viewer/physical_exam"
+    binary_path = project_root / "build/release/surgery/physical_exam"
 
     if not binary_path.exists():
         print(f"Error: Binary not found at {binary_path}", file=sys.stderr)
@@ -127,7 +127,7 @@ def surgery_tool():
                           --script data/example_surgery.yaml
     """
     project_root = get_project_root()
-    binary_path = project_root / "build/release/viewer/surgery_tool"
+    binary_path = project_root / "build/release/surgery/surgery_tool"
 
     if not binary_path.exists():
         print(f"Error: Binary not found at {binary_path}", file=sys.stderr)
