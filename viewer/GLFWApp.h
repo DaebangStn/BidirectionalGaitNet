@@ -12,6 +12,7 @@
 #include <examples/imgui_impl_opengl3.h>
 #include <imgui_internal.h>
 #include "C3D_Reader.h"
+#include <yaml-cpp/yaml.h>
 
 enum MuscleRenderingType
 {
@@ -115,6 +116,9 @@ private:
     void drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingType renderingType = activatonLevel, bool isTransparency = true);
 
     void drawShadow();
+
+    // Plot control
+    void _setXminToHeelStrike();
 
     // Mousing Function
     void mouseMove(double xpos, double ypos);
@@ -287,6 +291,28 @@ private:
     Eigen::Vector3d mC3DCOM;
     bool mRenderConditions;
     bool mRenderC3D;
-    
+
+    // Plot X-axis range
+    double mXmin;
+
+    // Joint Control
+    void drawJointControlSection();
+
+    // Plot title control
+    bool mPlotTitle;
+
+    // Configuration loading
+    void loadRenderConfig();
+
+    // Panel widths from config
+    int mControlPanelWidth;
+    int mPlotPanelWidth;
+
+    // Window position from config
+    int mWindowXPos;
+    int mWindowYPos;
+
+    // Rollout configuration
+    int mDefaultRolloutCount;
 
 };

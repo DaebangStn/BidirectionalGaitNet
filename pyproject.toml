@@ -6,7 +6,6 @@ authors = [
     {name = "Geon", email = "geon@example.com"}
 ]
 dependencies = [
-    "torch>=1.9.0",
     "numpy>=1.20.0", 
     "pyyaml>=6.0",
     "tensorboard>=2.0.0",
@@ -20,8 +19,12 @@ train = "python.train:main"
 
 # Quick training commands
 train-fgn = "python.scripts:train_fgn"
-train-bgn = "python.scripts:train_bgn" 
+train-bgn = "python.scripts:train_bgn"
 train-pipeline = "python.scripts:train_pipeline"
+
+# C++ binary wrappers
+viewer = "python.scripts:viewer"
+physical_exam = "python.scripts:physical_exam"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

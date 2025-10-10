@@ -18,9 +18,6 @@ if not torch.cuda.is_available():
         kwargs.pop('map_location', None)
         return original_torch_load(*args, **kwargs, map_location='cpu')
     torch.load = safe_cpu_load
-    print("Ray worker: No GPU detected - using CPU tensor loading")
-else:
-    print("Ray worker: GPU detected - using GPU tensor loading")
 
 MultiVariateNormal = torch.distributions.Normal
 temp = MultiVariateNormal.log_prob
@@ -430,7 +427,7 @@ def loading_network(path, num_states=0, num_actions=0,
     from uri_resolver import resolve_path
     resolved_path = resolve_path(path)
 
-    print("Loading network from {}".format(resolved_path))
+    print("[Python] Loading network from {}".format(resolved_path))
     # Load with global CPU mapping for Ray workers without GPU
     state = dill.load(open(resolved_path, "rb"))
     worker_state = SelectiveUnpickler(BytesIO(state['worker'])).load()

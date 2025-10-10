@@ -23,7 +23,7 @@ void URIResolver::initialize() {
     registerScheme("data", dataRoot);
     
     mInitialized = true;
-    std::printf("URIResolver initialized with data root: %s\n", dataRoot.c_str());
+    std::printf("[URIResolver] Initialized with data root: %s\n", dataRoot.c_str());
 }
 
 std::string URIResolver::resolve(const std::string& uri) const {

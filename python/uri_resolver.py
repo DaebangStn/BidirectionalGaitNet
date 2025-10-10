@@ -44,7 +44,7 @@ class URIResolver:
         
         self.register_scheme("data", data_root)
         self._initialized = True
-        print(f"Python URIResolver initialized with data root: {data_root}")
+        print(f"[Python] URIResolver initialized with data root: {data_root}")
     
     def resolve(self, uri):
         """

@@ -5,8 +5,10 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
 #include "GLFWApp.h"
+#include "UriResolver.h"
 #include "stb_image.h"
 #include "stb_image_write.h"
+#include <filesystem>
 const std::vector<std::string> CHANNELS =
     {
         "Xposition",
@@ -27,8 +29,21 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 {
     mGVAELoaded = false;
     mRenderConditions = false;
-    mWidth = 1920;
-    mHeight = 1080;
+
+    // Set default values before loading config
+    mWidth = 2560;
+    mHeight = 1440;
+    mWindowXPos = 0;
+    mWindowYPos = 0;
+    mControlPanelWidth = 450;
+    mPlotPanelWidth = 450;
+    mDefaultRolloutCount = 10;
+    mXmin = 0.0;
+    mPlotTitle = false;
+
+    // Load configuration from render.yaml (will override defaults if file exists)
+    loadRenderConfig();
+
     mZoom = 1.0;
     mPersp = 45.0;
     mMouseDown = false;
@@ -75,20 +90,20 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     // Register contact keys
     mGraphData->register_key("contact_left", 500);
     mGraphData->register_key("contact_right", 500);
-    mGraphData->register_key("contact_phaseR", 500);
+    mGraphData->register_key("contact_phaseR", 1000);
     mGraphData->register_key("grf_left", 500);
     mGraphData->register_key("grf_right", 500);
 
     // Register kinematic keys
-    mGraphData->register_key("sway_Torso_X", 500);
-    mGraphData->register_key("angle_HipR", 500);
-    mGraphData->register_key("angle_HipIRR", 500);
-    mGraphData->register_key("angle_HipAbR", 500);
-    mGraphData->register_key("angle_KneeR", 500);
-    mGraphData->register_key("angle_AnkleR", 500);
-    mGraphData->register_key("angle_Rotation", 500);
-    mGraphData->register_key("angle_Obliquity", 500);
-    mGraphData->register_key("angle_Tilt", 500);
+    // mGraphData->register_key("sway_Torso_X", 500);
+    mGraphData->register_key("angle_HipR", 1000);
+    mGraphData->register_key("angle_HipIRR", 1000);
+    mGraphData->register_key("angle_HipAbR", 1000);
+    mGraphData->register_key("angle_KneeR", 1000);
+    mGraphData->register_key("angle_AnkleR", 1000);
+    mGraphData->register_key("angle_Rotation", 1000);
+    mGraphData->register_key("angle_Obliquity", 1000);
+    mGraphData->register_key("angle_Tilt", 1000);
 
     // Forward GaitNEt
     selected_fgn = 0;
@@ -128,6 +143,10 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
         glfwTerminate();
         exit(EXIT_FAILURE);
     }
+
+    // Set window position from config
+    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
+
     glfwMakeContextCurrent(mWindow);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
@@ -213,6 +232,63 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     mMotionFrameIdx = 0;
     mMotionRootOffset = Eigen::Vector3d::Zero();
+}
+
+void GLFWApp::loadRenderConfig()
+{
+    try {
+        // Use URIResolver to resolve the config path
+        PMuscle::URIResolver& resolver = PMuscle::URIResolver::getInstance();
+        resolver.initialize();
+        std::string resolved_path = resolver.resolve("render.yaml");
+
+        std::cout << "[Config] Loading render config from: " << resolved_path << std::endl;
+
+        YAML::Node config = YAML::LoadFile(resolved_path);
+
+        // Load geometry settings
+        if (config["geometry"]) {
+            if (config["geometry"]["window"]) {
+                if (config["geometry"]["window"]["width"])
+                    mWidth = config["geometry"]["window"]["width"].as<int>();
+                if (config["geometry"]["window"]["height"])
+                    mHeight = config["geometry"]["window"]["height"].as<int>();
+                if (config["geometry"]["window"]["xpos"])
+                    mWindowXPos = config["geometry"]["window"]["xpos"].as<int>();
+                if (config["geometry"]["window"]["ypos"])
+                    mWindowYPos = config["geometry"]["window"]["ypos"].as<int>();
+            }
+
+            if (config["geometry"]["control"])
+                mControlPanelWidth = config["geometry"]["control"].as<int>();
+
+            if (config["geometry"]["plot"])
+                mPlotPanelWidth = config["geometry"]["plot"].as<int>();
+        }
+
+        // Load glfwapp settings
+        if (config["glfwapp"]) {
+            if (config["glfwapp"]["rollout"] && config["glfwapp"]["rollout"]["count"])
+                mDefaultRolloutCount = config["glfwapp"]["rollout"]["count"].as<int>();
+
+            if (config["glfwapp"]["plot"]) {
+                if (config["glfwapp"]["plot"]["title"])
+                    mPlotTitle = config["glfwapp"]["plot"]["title"].as<bool>();
+
+                if (config["glfwapp"]["plot"]["x_min"])
+                    mXmin = config["glfwapp"]["plot"]["x_min"].as<double>();
+            }
+        }
+
+        std::cout << "[Config] Loaded - Window: " << mWidth << "x" << mHeight
+                  << ", Control: " << mControlPanelWidth
+                  << ", Plot: " << mPlotPanelWidth
+                  << ", Rollout: " << mDefaultRolloutCount << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
+        std::cerr << "[Config] Using default values." << std::endl;
+    }
 }
 
 GLFWApp::~GLFWApp()
@@ -484,6 +560,57 @@ void GLFWApp::plotPhaseBar(double x_min, double x_max, double y_min, double y_ma
     }
 
     ImPlot::PopStyleVar();
+}
+
+void GLFWApp::_setXminToHeelStrike()
+{
+    if (!mGraphData->key_exists("contact_phaseR"))
+    {
+        std::cout << "[HeelStrike] contact_phaseR key not found in graph data" << std::endl;
+        return;
+    }
+
+    std::vector<double> contact_phase_buffer = mGraphData->get("contact_phaseR");
+
+    // Ensure there are at least two points to compare for transitions
+    if (contact_phase_buffer.size() < 2)
+    {
+        std::cout << "[HeelStrike] Not enough data points for heel strike detection" << std::endl;
+        return;
+    }
+
+    bool prev_phase = static_cast<bool>(contact_phase_buffer[0]);
+    double heel_strike_time = 0.0;
+    bool found_heel_strike = false;
+
+    // Search for the most recent heel strike (swing to stance transition)
+    for (size_t i = 1; i < contact_phase_buffer.size(); ++i)
+    {
+        bool current_phase = static_cast<bool>(contact_phase_buffer[i]);
+
+        // Check for heel strike: transition from swing (false) to stance (true)
+        if (!prev_phase && current_phase)
+        {
+            // Calculate time based on buffer index and time step
+            double heel_strike_time_candidate = (-(static_cast<int>(contact_phase_buffer.size())) + static_cast<int>(i)) * mEnv->getWorld()->getTimeStep();
+            if (heel_strike_time_candidate < -0.3)
+            {
+                heel_strike_time = heel_strike_time_candidate;
+                found_heel_strike = true;
+            } // Don't break - we want the most recent (last) heel strike
+        }
+        prev_phase = current_phase;
+    }
+
+    if (found_heel_strike)
+    {
+        mXmin = heel_strike_time;
+        std::cout << "[HeelStrike] Found heel strike at time: " << heel_strike_time << std::endl;
+    }
+    else
+    {
+        std::cout << "[HeelStrike] No heel strike found in current data" << std::endl;
+    }
 }
 
 void GLFWApp::startLoop()
@@ -801,8 +928,8 @@ void GLFWApp::
 
 void GLFWApp::drawGaitNetDisplay()
 {
-    ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 410, 10), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(400, mHeight - 80), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(mWidth - 810, 10), ImGuiCond_Once);
     ImGui::Begin("GaitNet");
     // mFGNList
     ImGui::Checkbox("Draw FGN Result\t", &mDrawFGNSkeleton);
@@ -1092,8 +1219,8 @@ void GLFWApp::drawGaitNetDisplay()
 
 void GLFWApp::drawVisualizationPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(400, 800), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 410, 10), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight - 80), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(mWidth - mPlotPanelWidth - 10, 10), ImGuiCond_Once);
     ImGui::Begin("Plots");
     
     // Status & Metadata
@@ -1116,39 +1243,54 @@ void GLFWApp::drawVisualizationPanel()
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Rollout: %d cycles remaining", mRolloutStatus.cycle);
     }
 
+    // Plot X-axis range control
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputDouble("X-axis Min", &mXmin);
+    ImGui::SameLine();
+    if (ImGui::Button("HS")) _setXminToHeelStrike();
+
+    // Plot title control
+    ImGui::Checkbox("Title##PlotTitleCheckbox", &mPlotTitle);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Show checkpoint name as plot titles)");
+
+    // Get checkpoint name for plot titles
+    std::string checkpoint_name;
+    if (!mRolloutStatus.name.empty()) {
+        checkpoint_name = mRolloutStatus.name;
+    } else if (!mNetworkPaths.empty()) {
+        checkpoint_name = std::filesystem::path(mNetworkPaths.back()).stem().string();
+    } else {
+        checkpoint_name = std::filesystem::path(mEnv->getMetadata()).parent_path().filename().string();
+    }
+
     // Rewards
     if (ImGui::CollapsingHeader("Rewards"))
     {
-        ImPlot::SetNextAxisLimits(0, -3, 0);
-        ImPlot::SetNextAxisLimits(3, 0, 4);
-        if (ImPlot::BeginPlot("Reward"))
+        std::string title_str = mPlotTitle ? checkpoint_name : "Reward";
+        if (ImPlot::BeginPlot((title_str + "##Reward").c_str()))
         {
             ImPlot::SetupAxes("Time (s)", "Reward");
 
             // Plot reward data using common plotting function
             std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_metabolic", "r_loco", "r_avg", "r_step"};
             plotGraphData(rewardKeys, ImAxis_Y1, true, false, "");
-
-            // Overlay phase bars
-            ImPlotRect limits = ImPlot::GetPlotLimits();
-            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
             ImPlot::EndPlot();
         }
     }
 
     // Kinematics
-    if (ImGui::CollapsingHeader("Kinematics"))
+    if (ImGui::CollapsingHeader("Kinematics", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        // Joint Angles Plot
-        ImPlot::SetNextAxisLimits(0, -3, 0);
-        ImPlot::SetNextAxisLimits(3, -60, 60);
-        if (ImPlot::BeginPlot("Joint Angles (deg)"))
+        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+        else ImPlot::SetNextAxisLimits(0, -3, 0);
+
+        std::string title_major_joints = mPlotTitle ? checkpoint_name : "Major Joint Angles (deg)";
+        if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str()))
         {
             ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
-            std::vector<std::string> jointKeys = {"angle_HipR", "angle_HipIRR", "angle_HipAbR",
-                                                    "angle_KneeR", "angle_AnkleR"};
+            std::vector<std::string> jointKeys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
             plotGraphData(jointKeys, ImAxis_Y1, true, false, "");
 
             // Overlay phase bars
@@ -1160,15 +1302,17 @@ void GLFWApp::drawVisualizationPanel()
 
         ImGui::Separator();
 
-        // Pelvis Angles Plot
-        ImPlot::SetNextAxisLimits(0, -3, 0);
-        ImPlot::SetNextAxisLimits(3, -20, 20);
-        if (ImPlot::BeginPlot("Pelvis Angles (deg)"))
+        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+        else ImPlot::SetNextAxisLimits(0, -3, 0);
+
+        std::string title_minor_joints = mPlotTitle ? checkpoint_name : "Minor Joint Angles (deg)";
+        if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str()))
         {
+
             ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
-            std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
-            plotGraphData(pelvisKeys, ImAxis_Y1, true, false, "");
+            std::vector<std::string> jointKeys = {"angle_HipIRR", "angle_HipAbR"};
+            plotGraphData(jointKeys, ImAxis_Y1, true, false, "");
 
             // Overlay phase bars
             ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -1177,24 +1321,41 @@ void GLFWApp::drawVisualizationPanel()
             ImPlot::EndPlot();
         }
 
-        ImGui::Separator();
+        // // Pelvis Angles Plot
+        // ImPlot::SetNextAxisLimits(0, -3, 0);
+        // ImPlot::SetNextAxisLimits(3, -20, 20);
+        // if (ImPlot::BeginPlot("Pelvis Angles (deg)"))
+        // {
+        //     ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
-        // Torso Sway Plot
-        ImPlot::SetNextAxisLimits(0, -3, 0);
-        ImPlot::SetNextAxisLimits(3, -0.2, 0.2);
-        if (ImPlot::BeginPlot("Torso Sway (m)"))
-        {
-            ImPlot::SetupAxes("Time (s)", "Sway (m)");
+        //     std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
+        //     plotGraphData(pelvisKeys, ImAxis_Y1, true, false, "");
 
-            std::vector<std::string> swayKeys = {"sway_Torso_X"};
-            plotGraphData(swayKeys, ImAxis_Y1, true, false, "");
+        //     // Overlay phase bars
+        //     ImPlotRect limits = ImPlot::GetPlotLimits();
+        //     plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
 
-            // Overlay phase bars
-            ImPlotRect limits = ImPlot::GetPlotLimits();
-            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+        //     ImPlot::EndPlot();
+        // }
 
-            ImPlot::EndPlot();
-        }
+        // ImGui::Separator();
+
+        // // Torso Sway Plot
+        // ImPlot::SetNextAxisLimits(0, -3, 0);
+        // ImPlot::SetNextAxisLimits(3, -0.2, 0.2);
+        // if (ImPlot::BeginPlot("Torso Sway (m)"))
+        // {
+        //     ImPlot::SetupAxes("Time (s)", "Sway (m)");
+
+        //     std::vector<std::string> swayKeys = {"sway_Torso_X"};
+        //     plotGraphData(swayKeys, ImAxis_Y1, true, false, "");
+
+        //     // Overlay phase bars
+        //     ImPlotRect limits = ImPlot::GetPlotLimits();
+        //     plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+        //     ImPlot::EndPlot();
+        // }
     }
 
     // State
@@ -1431,41 +1592,6 @@ void GLFWApp::drawVisualizationPanel()
         }
     }
 
-    // Gait
-    if (ImGui::CollapsingHeader("Gait"))
-    {
-        int horizon = (mEnv->getBVH(0)->getMaxTime() / (mEnv->getCadence() / sqrt(mEnv->getCharacter(0)->getGlobalRatio()))) * mEnv->getSimulationHz();
-
-        ImPlot::SetNextAxisLimits(0, 0, horizon * 0.01, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, 0, 1.5);
-
-        if (ImPlot::BeginPlot("Contact Graph"))
-        {
-            std::vector<double> px_l;
-            std::vector<double> px_r;
-            std::vector<double> py_l;
-            std::vector<double> py_r;
-
-            px_l.clear();
-            px_r.clear();
-            py_l.clear();
-            py_r.clear();
-
-            std::vector<Eigen::Vector2i> c_logs = mEnv->getContactLogs();
-            for (int i = 0; i < c_logs.size(); i++)
-            {
-                px_l.push_back(0.01 * i - c_logs.size() * 0.01 + horizon * 0.01);
-                px_r.push_back(0.01 * i - (c_logs.size() + horizon * 0.5) * 0.01 + horizon * 0.01);
-
-                py_l.push_back(c_logs[i][0]);
-                py_r.push_back(c_logs[i][1]);
-            }
-            ImPlot::PlotLine("Left_Contact", px_l.data(), py_l.data(), px_l.size());
-            ImPlot::PlotLine("Right_Contact", px_r.data(), py_r.data(), px_r.size());
-            ImPlot::EndPlot();
-        }
-    }
-
     // Network Weights
     if (ImGui::CollapsingHeader("Network Weights"))
     {
@@ -1549,7 +1675,7 @@ void GLFWApp::drawCameraStatusSection() {
         ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Camera Presets:");
         for (int i = 0; i < 3; i++) {
             if (mCameraPresets[i].isSet) {
-                if (ImGui::Button(("Load " + std::to_string(i + 8)).c_str())) {
+                if (ImGui::Button(("Load " + std::to_string(i)).c_str())) {
                     loadCameraPreset(i);
                 }
                 ImGui::SameLine();
@@ -1561,6 +1687,117 @@ void GLFWApp::drawCameraStatusSection() {
         ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Keyboard Shortcuts:");
         ImGui::Text("Press C: Print camera info to console");
         ImGui::Text("Press 0/1/2: Load camera presets");
+    }
+}
+
+void GLFWApp::drawJointControlSection() {
+    if (ImGui::CollapsingHeader("Joint Control")) {
+        if (!mEnv || !mEnv->getCharacter(0)) {
+            ImGui::TextDisabled("Load character first");
+        } else {
+            auto skel = mEnv->getCharacter(0)->getSkeleton();
+            
+            // Joint Position Control
+            Eigen::VectorXd pos_lower_limit = skel->getPositionLowerLimits();
+            Eigen::VectorXd pos_upper_limit = skel->getPositionUpperLimits();
+            Eigen::VectorXd currentPos = skel->getPositions();
+            Eigen::VectorXf pos_rad = currentPos.cast<float>();
+            
+            // Convert to degrees for display
+            Eigen::VectorXf pos_deg = pos_rad * (180.0f / M_PI);
+            
+            // DOF direction labels
+            const char* dof_labels[] = {"X", "Y", "Z", "tX", "tY", "tZ"}; // euler xyz and translation xyz
+            
+            int dof_idx = 0;
+            for (size_t j = 0; j < skel->getNumJoints(); j++) {
+                auto joint = skel->getJoint(j);
+                std::string joint_name = joint->getName();
+                int num_dofs = joint->getNumDofs();
+                
+                if (num_dofs == 0) continue;
+                
+                // Display joint name as a header
+                ImGui::Text("%s:", joint_name.c_str());
+                ImGui::Indent();
+                
+                for (int d = 0; d < num_dofs; d++) {
+                    // Check if this is a translation DOF (root joint DOFs 3-5 are tx, ty, tz)
+                    bool is_translation = (dof_idx >= 3 && dof_idx < 6);
+                    
+                    // Prepare limits and display value
+                    float lower_limit, upper_limit;
+                    float display_value;
+                    
+                    if (dof_idx < 6) {
+                        // Root joint - expand limits
+                        if (is_translation) {
+                            // Translation: use raw values (meters)
+                            lower_limit = -2.0f;
+                            upper_limit = 2.0f;
+                            display_value = pos_rad[dof_idx];
+                        } else {
+                            // Rotation: convert to degrees
+                            lower_limit = -360.0f;
+                            upper_limit = 360.0f;
+                            display_value = pos_deg[dof_idx];
+                        }
+                    } else {
+                        // Non-root joints: always rotation, convert to degrees
+                        lower_limit = pos_lower_limit[dof_idx] * (180.0f / M_PI);
+                        upper_limit = pos_upper_limit[dof_idx] * (180.0f / M_PI);
+                        display_value = pos_deg[dof_idx];
+                    }
+                    
+                    // Create label: "JointName Direction" or just "JointName" for single DOF
+                    std::string label;
+                    if (num_dofs > 1 && d < 6) {
+                        label = std::string(dof_labels[d]);
+                    } else if (num_dofs > 1) {
+                        label = "DOF " + std::to_string(d);
+                    } else {
+                        label = "";
+                    }
+                    
+                    // Store previous value to detect changes
+                    float prev_value = display_value;
+                    
+                    // DragFloat with limits
+                    std::string drag_label = label + "##drag_" + joint_name + std::to_string(d);
+                    ImGui::SetNextItemWidth(200);
+                    const char* format = is_translation ? "%.3fm" : "%.1f°";
+                    ImGui::SliderFloat(drag_label.c_str(), &display_value, lower_limit, upper_limit, format);
+                    
+                    // InputFloat on same line
+                    ImGui::SameLine();
+                    std::string input_label = "##input_" + joint_name + std::to_string(d);
+                    ImGui::SetNextItemWidth(50);
+                    const char* input_format = is_translation ? "%.3f" : "%.1f";
+                    ImGui::InputFloat(input_label.c_str(), &display_value, 0.0f, 0.0f, input_format);
+                    
+                    // Clamp to limits after input
+                    if (display_value < lower_limit) display_value = lower_limit;
+                    if (display_value > upper_limit) display_value = upper_limit;
+                    
+                    // Update internal storage
+                    if (is_translation) {
+                        // Translation: store directly in meters
+                        pos_rad[dof_idx] = display_value;
+                    } else {
+                        // Rotation: update degree value and convert to radians
+                        pos_deg[dof_idx] = display_value;
+                        pos_rad[dof_idx] = display_value * (M_PI / 180.0f);
+                    }
+                    
+                    dof_idx++;
+                }
+                
+                ImGui::Unindent();
+            }
+            
+            // Update positions
+            skel->setPositions(pos_rad.cast<double>());
+        }
     }
 }
 
@@ -1640,10 +1877,10 @@ void GLFWApp::initializeCameraPresets() {
 void GLFWApp::loadCameraPreset(int index) {
     if (index < 0 || index >= 3 || !mCameraPresets[index].isSet)
     {
-        std::cout << "Camera preset " << index << " is not valid" << std::endl;
+        std::cout << "[Camera] Preset " << index << " is not valid" << std::endl;
         return;
     }
-    std::cout << "Loading camera preset " << index << ": " << mCameraPresets[index].description << std::endl;
+    std::cout << "[Camera] Loading camera preset " << index << ": " << mCameraPresets[index].description << std::endl;
 
     mEye = mCameraPresets[index].eye;
     mUp = mCameraPresets[index].up;
@@ -1655,26 +1892,22 @@ void GLFWApp::loadCameraPreset(int index) {
 
 void GLFWApp::drawControlPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(400, 800), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight - 80), ImGuiCond_Once);
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
     ImGui::Begin("Controls");
 
     // Rollout Control
     if (ImGui::CollapsingHeader("Rollout Control", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        static int rolloutInput = 10; // Static variable to store user input
+        static int rolloutInput = -1; // Will be initialized from config
+        if (rolloutInput == -1) {
+            rolloutInput = mDefaultRolloutCount; // Initialize from config on first use
+        }
 
-        ImGui::Text("Remaining Cycles: %d", mRolloutStatus.cycle);
-
-        ImGui::Separator();
-
-        // Cycle input
         ImGui::SetNextItemWidth(90);
         ImGui::InputInt("Rollout Cycles", &rolloutInput);
         if (rolloutInput < 1) rolloutInput = 1;
 
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Infinite")) rolloutInput = -1;
         ImGui::SameLine();
 
         // Run button
@@ -1682,21 +1915,6 @@ void GLFWApp::drawControlPanel()
         {
             mRolloutStatus.cycle = rolloutInput;
             mRolloutStatus.pause = false;
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Stop"))
-        {
-            mRolloutStatus.pause = true;
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Reset"))
-        {
-            mRolloutStatus.reset();
-            mEnv->reset();
-            mGraphData->clear_all();
-            rolloutInput = 10;
         }
     }
 
@@ -1713,37 +1931,8 @@ void GLFWApp::drawControlPanel()
         mEnv->getCharacter(0)->setActivations((activation.cast<double>()));
     }
 
-    // Joint Control
-    if (ImGui::CollapsingHeader("Joint Control")) 
-    {
-        // Joint Position
-        Eigen::VectorXd pos_lower_limit = mEnv->getCharacter(0)->getSkeleton()->getPositionLowerLimits();
-        Eigen::VectorXd pos_upper_limit = mEnv->getCharacter(0)->getSkeleton()->getPositionUpperLimits();
-        Eigen::VectorXf pos = mEnv->getCharacter(0)->getSkeleton()->getPositions().cast<float>();
-
-        for (int i = 0; i < pos.rows(); i++)
-        {
-            if (i < 6)
-            {
-                pos_lower_limit[i] = -10;
-                pos_upper_limit[i] = 10;
-            }
-            ImGui::SliderFloat((std::to_string(i) + " Pos").c_str(), &pos[i], pos_lower_limit[i], pos_upper_limit[i]);
-        }
-        mEnv->getCharacter(0)->getSkeleton()->setPositions(pos.cast<double>());
-
-        ImGui::Separator();
-
-        // Joint Velocity
-        Eigen::VectorXd vel_lower_limit = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setOnes() * -5;
-        Eigen::VectorXd vel_upper_limit = mEnv->getCharacter(0)->getSkeleton()->getVelocities().setOnes() * 5;
-        Eigen::VectorXf vel = mEnv->getCharacter(0)->getSkeleton()->getVelocities().cast<float>();
-
-        for (int i = 0; i < vel.rows(); i++)
-            ImGui::SliderFloat((std::to_string(i) + " Vel").c_str(), &vel[i], vel_lower_limit[i], vel_upper_limit[i]);
-
-        mEnv->getCharacter(0)->getSkeleton()->setVelocities(vel.cast<double>());
-    }
+    // Joint Control - use new detailed control method
+    drawJointControlSection();
 
     // Gait Parameters
     if (ImGui::CollapsingHeader("Gait Parameters"))
