@@ -76,7 +76,7 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     // Muscle Selection UI
     std::memset(mMuscleFilterText, 0, sizeof(mMuscleFilterText));
-    // Note: mMuscleSelectionStates will be initialized in setEnv when muscles are available
+    // Note: mMuscleSelectionStates will be initialized in initEnv when muscles are available
 
     // Initialize Graph Data Buffer
     mGraphData = new CBufferData<double>();
@@ -236,6 +236,36 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     mMotionFrameIdx = 0;
     mMotionRootOffset = Eigen::Vector3d::Zero();
+
+
+    py::gil_scoped_acquire gil;
+    
+    // Import Python modules
+    try {
+        loading_network = py::module::import("python.ray_model").attr("loading_network");
+    } catch (const py::error_already_set& e) {
+        std::cerr << "Warning: Failed to import python.ray_model: " << e.what() << std::endl;
+        loading_network = py::none();
+    }
+
+    // Determine metadata path
+    if (!mNetworkPaths.empty()) {
+        std::string path = mNetworkPaths.back();
+        if (path.substr(path.length() - 4) == ".xml") {
+            mCachedMetadata = path;
+            mNetworkPaths.pop_back();
+        } else {
+            try {
+                py::object py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(path);
+                if (!py_metadata.is_none()) {
+                    mCachedMetadata = py_metadata.cast<std::string>();
+                }
+            } catch (const py::error_already_set& e) {
+                std::cerr << "Warning: Failed to load metadata from network path: " << e.what() << std::endl;
+            }
+        }
+    }
+    initEnv(mCachedMetadata);
 }
 
 void GLFWApp::loadRenderConfig()
@@ -297,6 +327,7 @@ void GLFWApp::loadRenderConfig()
 
 GLFWApp::~GLFWApp()
 {
+    delete mRenderEnv;
     ImPlot::DestroyContext();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -415,30 +446,16 @@ void GLFWApp::exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::
 
 void GLFWApp::update(bool _isSave)
 {
-    if (mEnv->isActionTime())
-    {
-        // Reward Update
-        mEnv->getReward();
+    Eigen::VectorXf action = (mNetworks.size() > 0 ? mNetworks[0].joint.attr("get_action")(mEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>() : mEnv->getAction().cast<float>());
 
-        // Log reward map to graph data
-        std::map<std::string, double> rewardMap = mEnv->getRewardMap();
-        for (const auto& pair : rewardMap)
-        {
-            if (mGraphData->key_exists(pair.first))
-                mGraphData->push(pair.first, pair.second);
-        }
+    mEnv->setAction(action.cast<double>());
 
-        Eigen::VectorXf action = (mNetworks.size() > 0 ? mNetworks[0].joint.attr("get_action")(mEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>() : mEnv->getAction().cast<float>());
-
-        mEnv->setAction(action.cast<double>());
-    }
     if (_isSave)
     {
-        mEnv->step(mEnv->getSimulationHz() / 120, mGraphData);
+        mRenderEnv->step();
         mMotionBuffer.push_back(mEnv->getCharacter(0)->getSkeleton()->getPositions());
     }
-    else
-        mEnv->step(mEnv->getSimulationHz() / mEnv->getControlHz() / 2, mGraphData);
+    else mRenderEnv->step();
 
     // Check for gait cycle completion AFTER step (when phase counters are updated)
     if (mEnv->isGaitCycleComplete())
@@ -450,24 +467,22 @@ void GLFWApp::update(bool _isSave)
             return;
         }
     }
-    // mEnv->step(1);
 
-    if (mC3Dmotion.size() > 0)
+    if (mC3dMotion.size() > 0)
     {
-        if (mC3DCount + (mC3DReader->getFrameRate() / 60) >= mC3Dmotion.size())
+        if (mC3DCount + (mC3DReader->getFrameRate() / 60) >= mC3dMotion.size())
         {
-            mC3DCOM += mC3Dmotion.back().segment(3, 3); // mC3DReader->getBVHSkeleton()->getPositions().segment(3,3);
+            mC3DCOM += mC3dMotion.back().segment(3, 3); // mC3DReader->getBVHSkeleton()->getPositions().segment(3,3);
         }
         mC3DCount += (mC3DReader->getFrameRate() / 60);
-        mC3DCount %= mC3Dmotion.size();
+        mC3DCount %= mC3dMotion.size();
     }
 }
 
 void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
                             bool show_phase, bool plot_avg_copy, std::string postfix)
 {
-    if (keys.empty() || !mGraphData)
-        return;
+    if (keys.empty() || !mGraphData) return;
 
     ImPlot::SetAxis(y_axis);
 
@@ -628,8 +643,7 @@ void GLFWApp::startLoop()
         // Rendering
         drawSimFrame();
 
-        if (!mScreenRecord)
-            drawUIFrame();
+        if (!mScreenRecord) drawUIFrame();
         else
         {
             int width, height;
@@ -668,10 +682,8 @@ void GLFWApp::initGL()
     GLfloat position1[] = {-1.0, 0.0, 0.0, 0.0};
     GLfloat position2[] = {0.0, 3.0, 0.0, 0.0};
 
-    if (mRenderConditions)
-        glClearColor(0.0, 0.0, 0.0, 1.0);
-    else
-        glClearColor(1.0, 1.0, 1.0, 1.0);
+    if (mRenderConditions) glClearColor(0.0, 0.0, 0.0, 1.0);
+    else glClearColor(1.0, 1.0, 1.0, 1.0);
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_BLEND);
@@ -708,199 +720,77 @@ void GLFWApp::initGL()
     glEnable(GL_MULTISAMPLE);
 }
 
-void GLFWApp::setEnv(Environment *env, std::string metadata)
+void GLFWApp::initEnv(std::string metadata)
 {
-    py::gil_scoped_acquire gil;
-    try {
-        loading_network = py::module::import("python.ray_model").attr("loading_network");
-    } catch (const py::error_already_set& e) {
-        std::cerr << "Warning: Failed to import python.ray_model in debug build: " << e.what() << std::endl;
-        std::cerr << "This is a known issue in debug builds. Continuing without ray model support." << std::endl;
-        // Set a dummy function or handle gracefully
-        loading_network = py::none();
-    }
-
-    if (mNetworkPaths.size() > 0)
-    {
-        std::string path = mNetworkPaths.back();
-        if (path.substr(path.length() - 4) == ".xml")
-        {
-            metadata = path;
-            mNetworkPaths.pop_back();
-        }
-        else
-        {
-            try {
-                py::object py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(mNetworkPaths.back());
-                if (!py_metadata.is_none())
-                    metadata = py_metadata.cast<std::string>();
-            } catch (const py::error_already_set& e) {
-                std::cerr << "Warning: Failed to load metadata using ray_model: " << e.what() << std::endl;
-                // Use a default or fallback metadata
-                metadata = "";
-            }
-        }
-    }
-
-    mEnv = env;
-    mEnv->initialize(metadata);
-    mEnv->setIsRender(true);
-
-    // Get checkpoint name for plot titles
+    // Create RenderEnvironment wrapper
+    mRenderEnv = new RenderEnvironment(metadata, mGraphData);
+    mEnv = mRenderEnv->GetEnvironment();
+    
+    // Set window title
     if (!mRolloutStatus.name.empty()) {
         mCheckpointName = mRolloutStatus.name;
     } else if (!mNetworkPaths.empty()) {
         mCheckpointName = std::filesystem::path(mNetworkPaths.back()).stem().string();
     } else {
-        mCheckpointName = std::filesystem::path(mEnv->getMetadata()).parent_path().filename().string();
+        mCheckpointName = std::filesystem::path(mCachedMetadata).parent_path().filename().string();
     }
     glfwSetWindowTitle(mWindow, mCheckpointName.c_str());
 
-    mMotionSkeleton = mEnv->getCharacter(0)->getSkeleton()->cloneSkeleton();
+    // Initialize motion skeleton
+    initializeMotionSkeleton();
+    
+    // Load networks
     auto character = mEnv->getCharacter(0);
     mNetworks.clear();
-
-    for (auto p : mNetworkPaths)
-    {
-        Network new_elem;
-        new_elem.name = p;
-        py::tuple res = loading_network(p.c_str(), mEnv->getState().rows(), mEnv->getAction().rows(), (character->getActuatorType() == mass || character->getActuatorType() == mass_lower), mEnv->getNumActuatorAction(), character->getNumMuscles(), character->getNumMuscleRelatedDof());
-        new_elem.joint = res[0];
-        new_elem.muscle = res[1];
-        mNetworks.push_back(new_elem);
+    for (const auto& path : mNetworkPaths) {
+        loadNetworkFromPath(path);
+    }
+    
+    if (!mNetworks.empty()) {
+        mEnv->setMuscleNetwork(mNetworks.back().muscle);
     }
 
-    if (mNetworks.size() > 0)
-        mEnv->setMuscleNetwork(mNetworks.back().muscle); // Set Main Muscle Network
-
+    // Initialize DOF tracking
     mRelatedDofs.clear();
-    for (int i = 0; i < mEnv->getCharacter(0)->getSkeleton()->getNumDofs(); i++)
-    {
-        mRelatedDofs.push_back(false);
-        mRelatedDofs.push_back(false);
-    }
+    mRelatedDofs.resize(mEnv->getCharacter(0)->getSkeleton()->getNumDofs() * 2, false);
 
-    // Initialize muscle selection states - select all muscles by default
-    if (mEnv->getUseMuscle())
-    {
-        auto muscles = mEnv->getCharacter(0)->getMuscles();
+    // Initialize muscle selection states
+    if (mEnv->getUseMuscle()) {
+        auto muscles = character->getMuscles();
         mMuscleSelectionStates.clear();
-        mMuscleSelectionStates.resize(muscles.size(), true);  // All muscles selected by default
+        mMuscleSelectionStates.resize(muscles.size(), true);
     }
 
-    // Forward GaitNet
+    // Load GaitNet lists (FGN, BGN, C3D)
     std::string path = "distillation";
     mFGNList.clear();
-    if (fs::exists(path) && fs::is_directory(path)) {
-        for (const auto &entry : fs::recursive_directory_iterator(path)) {
-            if (fs::is_regular_file(entry)) {
-                std::string file_path = entry.path().string();
-                std::string filename = entry.path().filename().string();
-                
-                // Filter for *.fgn.pt files
-                if (filename.size() > 7 && filename.substr(filename.size() - 7) == ".fgn.pt") {
-                    mFGNList.push_back(file_path);
-                }
-            }
-        }
-    }
-
-    // Backward GaitNet
     mBGNList.clear();
     if (fs::exists(path) && fs::is_directory(path)) {
         for (const auto &entry : fs::recursive_directory_iterator(path)) {
             if (fs::is_regular_file(entry)) {
-                std::string file_path = entry.path().string();
                 std::string filename = entry.path().filename().string();
-                
-                // Filter for *.bgn.pt files
-                if (filename.size() > 7 && filename.substr(filename.size() - 7) == ".bgn.pt") {
-                    mBGNList.push_back(file_path);
+                if (filename.size() > 7) {
+                    if (filename.substr(filename.size() - 7) == ".fgn.pt") {
+                        mFGNList.push_back(entry.path().string());
+                    } else if (filename.substr(filename.size() - 7) == ".bgn.pt") {
+                        mBGNList.push_back(entry.path().string());
+                    }
                 }
             }
         }
     }
 
-    // C3D List
+    // C3D files
     path = "c3d";
     mC3DList.clear();
     if (fs::exists(path) && fs::is_directory(path)) {
-        for (const auto &entry : fs::directory_iterator(path))
-        {
-            std::string c3d_path = entry.path().string();
-            mC3DList.push_back(c3d_path);
+        for (const auto &entry : fs::directory_iterator(path)) {
+            mC3DList.push_back(entry.path().string());
         }
     }
 
-    // Set For BVH
-    for (auto jn : mEnv->getCharacter(0)->getSkeleton()->getJoints())
-    {
-        if (jn == mEnv->getCharacter(0)->getSkeleton()->getRootJoint())
-            mJointCalibration.push_back(Eigen::Matrix3d::Identity());
-        else
-            mJointCalibration.push_back((jn->getTransformFromParentBodyNode() * jn->getParentBodyNode()->getTransform()).linear().transpose());
-    }
-
-    // load motion
-    for (auto bn : mMotionSkeleton->getBodyNodes())
-    {
-        ModifyInfo SkelInfo;
-        mSkelInfosForMotions.push_back(std::make_pair(bn->getName(), SkelInfo));
-    }
-
-    // get list of files in the specific directory path
-    mMotions.clear();
-    std::string motion_path = "motions";
-    py::object load_motions_from_file = py::module::import("forward_gaitnet").attr("load_motions_from_file");
-    mMotionIdx = 0;
-    for (const auto &entry : fs::directory_iterator(motion_path))
-    {
-        std::string file_name = entry.path().string();
-        if (file_name.find(".npz") == std::string::npos)
-            continue;
-
-        py::tuple results = load_motions_from_file(file_name, mEnv->getNumKnownParam());
-        
-        // Handle potential type conversion issues between debug/release builds
-        py::object params_obj = results[0];
-        py::object motions_obj = results[1];
-        
-        // Check if we need to unwrap nested tuples (debug build issue)
-        if (py::isinstance<py::tuple>(params_obj)) {
-            py::tuple params_tuple = params_obj.cast<py::tuple>();
-            if (params_tuple.size() > 0) {
-                params_obj = params_tuple[0];
-            }
-        }
-        if (py::isinstance<py::tuple>(motions_obj)) {
-            py::tuple motions_tuple = motions_obj.cast<py::tuple>();
-            if (motions_tuple.size() > 0) {
-                motions_obj = motions_tuple[0];
-            }
-        }
-        
-        Eigen::MatrixXd params, motions;
-        try {
-            params = params_obj.cast<Eigen::MatrixXd>();
-            motions = motions_obj.cast<Eigen::MatrixXd>();
-        } catch (const std::system_error& e) {
-            std::cerr << "System error during numpy array casting in debug build: " << e.what() << std::endl;
-            std::cerr << "This appears to be a pybind11/numpy API initialization issue in debug mode." << std::endl;
-            continue; // Skip this motion file and continue with others
-        } catch (const std::exception& e) {
-            std::cerr << "Error casting Python objects to Eigen matrices: " << e.what() << std::endl;
-            continue; // Skip this motion file and continue with others
-        }
-
-        for (int i = 0; i < params.rows(); i++)
-        {
-            Motion motion_elem;
-            motion_elem.name = file_name + "_" + std::to_string(i);
-            motion_elem.param = params.row(i);
-            motion_elem.motion = motions.row(i);
-            mMotions.push_back(motion_elem);
-        }
-    }
+    // Load motion files
+    loadMotionFiles();
 
     reset();
 }
@@ -976,7 +866,7 @@ void GLFWApp::drawGaitNetDisplay()
         mNetworks.clear();
         std::cout << "METADATA " << std::endl
                   << mFGNmetadata << std::endl;
-        setEnv(new Environment(), mFGNmetadata);
+        initEnv(mFGNmetadata);
     }
     if (ImGui::CollapsingHeader("BGN"))
     {
@@ -1037,7 +927,7 @@ void GLFWApp::drawGaitNetDisplay()
                 mRenderC3D = true;
                 mC3DReader = new C3D_Reader("data/skeleton_gaitnet_narrow_model.xml", "data/marker_set.xml", mEnv);
                 std::cout << "Loading C3D: " << mC3DList[selected_c3d] << std::endl;
-                mC3Dmotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset); // /* ,torsionL, torsionR*/);
+                mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset); // /* ,torsionL, torsionR*/);
                 mC3DCOM = Eigen::Vector3d::Zero();
             }
             else
@@ -2287,10 +2177,10 @@ void GLFWApp::drawSimFrame()
     }
 
     // Draw Marker Network
-    if (mC3Dmotion.size() > 0 && !mRenderConditions && mRenderC3D)
+    if (mC3dMotion.size() > 0 && !mRenderConditions && mRenderC3D)
     {
         auto skel = mC3DReader->getBVHSkeleton();
-        Eigen::VectorXd pos = mC3Dmotion[mC3DCount];
+        Eigen::VectorXd pos = mC3dMotion[mC3DCount];
 
         pos[3] += mC3DCOM[0];
         pos[5] += mC3DCOM[2];
@@ -2804,7 +2694,7 @@ void GLFWApp::setCamera()
     }
     else if (mFocus == 3)
     {
-        if (mC3Dmotion.size() == 0)
+        if (mC3dMotion.size() == 0)
             mFocus++;
         else
         {
@@ -2948,4 +2838,120 @@ void GLFWApp::drawShadow()
     drawSkeleton(pos, Eigen::Vector4d(0.1, 0.1, 0.1, 1.0));
     glPopMatrix();
     glEnable(GL_LIGHTING);
+}
+
+void GLFWApp::loadNetworkFromPath(const std::string& path)
+{
+    if (loading_network.is_none()) {
+        std::cerr << "Warning: loading_network not available, skipping: " << path << std::endl;
+        return;
+    }
+
+    try {
+        auto character = mEnv->getCharacter(0);
+        Network new_elem;
+        new_elem.name = path;
+        
+        py::tuple res = loading_network(
+            path.c_str(),
+            mEnv->getState().rows(),
+            mEnv->getAction().rows(),
+            (character->getActuatorType() == mass || character->getActuatorType() == mass_lower),
+            mEnv->getNumActuatorAction(),
+            character->getNumMuscles(),
+            character->getNumMuscleRelatedDof()
+        );
+        
+        new_elem.joint = res[0];
+        new_elem.muscle = res[1];
+        mNetworks.push_back(new_elem);
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading network from " << path << ": " << e.what() << std::endl;
+    }
+}
+
+void GLFWApp::initializeMotionSkeleton()
+{
+    mMotionSkeleton = mEnv->getCharacter(0)->getSkeleton()->cloneSkeleton();
+    
+    // Setup BVH joint calibration
+    mJointCalibration.clear();
+    for (auto jn : mEnv->getCharacter(0)->getSkeleton()->getJoints()) {
+        if (jn == mEnv->getCharacter(0)->getSkeleton()->getRootJoint()) {
+            mJointCalibration.push_back(Eigen::Matrix3d::Identity());
+        } else {
+            mJointCalibration.push_back(
+                (jn->getTransformFromParentBodyNode() * jn->getParentBodyNode()->getTransform()).linear().transpose()
+            );
+        }
+    }
+
+    // Setup skeleton info for motions
+    mSkelInfosForMotions.clear();
+    for (auto bn : mMotionSkeleton->getBodyNodes()) {
+        ModifyInfo skelInfo;
+        mSkelInfosForMotions.push_back(std::make_pair(bn->getName(), skelInfo));
+    }
+}
+
+void GLFWApp::loadMotionFiles()
+{
+    py::gil_scoped_acquire gil;
+    
+    mMotions.clear();
+    mMotionIdx = 0;
+    
+    std::string motion_path = "motions";
+    if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
+        std::cerr << "Motion directory not found: " << motion_path << std::endl;
+        return;
+    }
+
+    try {
+        py::object load_motions_from_file = py::module::import("forward_gaitnet").attr("load_motions_from_file");
+        
+        for (const auto &entry : fs::directory_iterator(motion_path)) {
+            std::string file_name = entry.path().string();
+            if (file_name.find(".npz") == std::string::npos)
+                continue;
+
+            try {
+                py::tuple results = load_motions_from_file(file_name, mEnv->getNumKnownParam());
+                
+                // Handle potential type conversion issues
+                py::object params_obj = results[0];
+                py::object motions_obj = results[1];
+                
+                // Unwrap nested tuples if needed (debug build issue)
+                if (py::isinstance<py::tuple>(params_obj)) {
+                    py::tuple params_tuple = params_obj.cast<py::tuple>();
+                    if (params_tuple.size() > 0) {
+                        params_obj = params_tuple[0];
+                    }
+                }
+                if (py::isinstance<py::tuple>(motions_obj)) {
+                    py::tuple motions_tuple = motions_obj.cast<py::tuple>();
+                    if (motions_tuple.size() > 0) {
+                        motions_obj = motions_tuple[0];
+                    }
+                }
+                
+                Eigen::MatrixXd params = params_obj.cast<Eigen::MatrixXd>();
+                Eigen::MatrixXd motions = motions_obj.cast<Eigen::MatrixXd>();
+
+                for (int i = 0; i < params.rows(); i++) {
+                    Motion motion_elem;
+                    motion_elem.name = file_name + "_" + std::to_string(i);
+                    motion_elem.param = params.row(i);
+                    motion_elem.motion = motions.row(i);
+                    mMotions.push_back(motion_elem);
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Error loading motion file " << file_name << ": " << e.what() << std::endl;
+                continue;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error importing forward_gaitnet module: " << e.what() << std::endl;
+    }
 }

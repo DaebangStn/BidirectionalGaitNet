@@ -2,12 +2,22 @@
 
 import sys
 import subprocess
+import socket
 from pathlib import Path
 
 
 def get_project_root():
     """Get the project root directory"""
     return Path(__file__).parent.parent
+
+
+def get_micromamba_path():
+    """Get the appropriate micromamba path based on the system hostname"""
+    hostname = socket.gethostname()
+    if hostname == "IMO-geon":
+        return "/opt/miniconda3/bin/micromamba"
+    else:
+        return "micromamba"
 
 
 def viewer():
@@ -32,8 +42,8 @@ def viewer():
         print(f"No checkpoint path provided, using default: {ckpt_path}")
 
     # Run the binary with micromamba environment (required for pybind11 dependencies)
-    # cmd = ["/opt/miniconda3/bin/micromamba", "run", "-n", "bidir", str(binary_path), ckpt_path]
-    cmd = ["micromamba", "run", "-n", "bidir", str(binary_path), ckpt_path]
+    micromamba = get_micromamba_path()
+    cmd = [micromamba, "run", "-n", "bidir", str(binary_path), ckpt_path]
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:
@@ -67,8 +77,8 @@ def physical_exam():
     config_path = sys.argv[1]
 
     # Run the binary with micromamba environment (required for pybind11 dependencies)
-    # cmd = ["/opt/miniconda3/bin/micromamba", "run", "-n", "bidir", str(binary_path), config_path]
-    cmd = ["micromamba", "run", "-n", "bidir", str(binary_path), config_path]
+    micromamba = get_micromamba_path()
+    cmd = [micromamba, "run", "-n", "bidir", str(binary_path), config_path]
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:
@@ -138,7 +148,8 @@ def surgery_tool():
     args = sys.argv[1:]
 
     # Run the binary with micromamba environment
-    cmd = ["micromamba", "run", "-n", "bidir", str(binary_path)] + args
+    micromamba = get_micromamba_path()
+    cmd = [micromamba, "run", "-n", "bidir", str(binary_path)] + args
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:

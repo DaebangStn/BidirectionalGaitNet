@@ -43,7 +43,10 @@
       "typeindex": "cpp",
       "chrono": "cpp",
       "core": "cpp",
-      "system_error": "cpp"
+      "system_error": "cpp",
+      "bitset": "cpp",
+      "regex": "cpp",
+      "valarray": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",

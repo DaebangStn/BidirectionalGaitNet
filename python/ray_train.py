@@ -21,6 +21,26 @@ from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 from ray_config import CONFIG
 
 
+def mean_dict_list(dict_list):
+    """Average values across list of dictionaries"""
+    if not dict_list:
+        return {}
+
+    # Collect all keys
+    all_keys = set()
+    for d in dict_list:
+        all_keys.update(d.keys())
+
+    # Average each key
+    result = {}
+    for key in all_keys:
+        values = [d[key] for d in dict_list if key in d]
+        if values:
+            result[key] = np.mean(values)
+
+    return result
+
+
 class MuscleLearner:
     def __init__(self, device, num_actuator_action, num_muscles, num_muscle_dofs,
                  learning_rate=1e-4, num_epochs=3, batch_size=128, model=None, is_cascaded=False):
@@ -236,6 +256,26 @@ class MyTrainer(PPO):
         result["num_tuples"] = {}
         result["loss"] = {}
 
+        # Collect reward component averages with optimized IPC
+        if not self.rollout:
+            # Each environment returns its own average (not list of maps)
+            buffer = [worker.foreach_env.remote(
+                lambda env: env.get_reward_map_average())
+                for worker in self.remote_workers]
+
+            # Collect all worker averages
+            worker_rewards = []
+            for worker_maps in ray.get(buffer):
+                # Each env already returned averaged dict
+                for avg_map in worker_maps:
+                    if avg_map:  # Skip empty dicts
+                        worker_rewards.append(avg_map)
+
+            # Average across all workers/envs and add to metrics
+            if worker_rewards:
+                avg_reward_components = mean_dict_list(worker_rewards)
+                result['sampler_results']['custom_metrics']['reward'] = avg_reward_components
+
         # For Two Level Controller
         if self.isTwoLevelActuactor and not self.rollout:
             start = time.perf_counter()
@@ -260,19 +300,15 @@ class MyTrainer(PPO):
             stats = self.muscle_learner.learn(muscle_transitions)
 
             distribute_time = time.perf_counter()
-            model_weights = ray.put(
-                self.muscle_learner.get_model_weights(device=torch.device("cpu")))
+            model_weights = ray.put(self.muscle_learner.get_model_weights(device=torch.device("cpu")))
             for worker in self.remote_workers:
-                worker.foreach_env.remote(
-                    lambda env: env.load_muscle_model_weights(model_weights))
+                worker.foreach_env.remote(lambda env: env.load_muscle_model_weights(model_weights))
 
-            distribute_time = (time.perf_counter() -
-                               distribute_time) * 1000
+            distribute_time = (time.perf_counter() - distribute_time) * 1000
             total_time = (time.perf_counter() - start) * 1000
 
             result['timers']['muscle_learning'] = stats.pop('time')
-            result['num_tuples']['muscle_learning'] = stats.pop(
-                'num_tuples')
+            result['num_tuples']['muscle_learning'] = stats.pop('num_tuples')
             result['timers']['muscle_learning']['distribute_time_ms'] = distribute_time
             result['timers']['muscle_learning']['loading_time_ms'] = loading_time
             result['timers']['muscle_learning']['total_ms'] = total_time

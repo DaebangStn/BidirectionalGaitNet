@@ -43,6 +43,9 @@ class MyEnv(gym.Env):
         self.idx = 0
         self.save_iter = 0
 
+        # For reward map logging
+        self.reward_map_buffer = []
+
     def reset(self):
         if self.param_count > 300 or self.is_rollout:
             self.env.updateParamState()
@@ -86,6 +89,8 @@ class MyEnv(gym.Env):
         if not self.is_rollout:
             self.obs = self.env.getState()
             reward = self.env.getReward()
+            # Accumulate reward map for logging
+            self.reward_map_buffer.append(dict(self.env.getRewardMap()))
         else:
             reward = 0.0
 
@@ -126,6 +131,27 @@ class MyEnv(gym.Env):
 
     def set_idx(self, idx):
         self.idx = idx
+
+    def get_reward_map_average(self):
+        """Return average of accumulated reward maps and clear buffer"""
+        if not self.reward_map_buffer:
+            return {}
+
+        # Collect all keys
+        all_keys = set()
+        for reward_map in self.reward_map_buffer:
+            all_keys.update(reward_map.keys())
+
+        # Average each key across all accumulated maps
+        result = {}
+        for key in all_keys:
+            values = [rm[key] for rm in self.reward_map_buffer if key in rm]
+            if values:
+                result[key] = np.mean(values)
+
+        # Clear buffer after averaging
+        self.reward_map_buffer = []
+        return result
 
 
 def createEnv():

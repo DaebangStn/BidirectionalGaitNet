@@ -11,9 +11,7 @@ int main(int argc, char **argv)
     pybind11::print("[Python] sys.path:", sys.attr("path"));
     pybind11::print("[Python] interpreter path:", sys.attr("executable"));
 
-    Environment *env = new Environment();
     GLFWApp app(argc, argv);
-    app.setEnv(env);
     app.startLoop();
 
     return -1;
