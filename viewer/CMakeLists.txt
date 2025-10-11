@@ -11,6 +11,8 @@ add_executable(viewer
     "main.cpp"
     "GLFWApp.h"
     "GLFWApp.cpp"
+    "RenderEnvironment.h"
+    "RenderEnvironment.cpp"
     "ShapeRenderer.h"
     "ShapeRenderer.cpp"
     "GLfunctions.h"

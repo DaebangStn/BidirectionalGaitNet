@@ -5,6 +5,8 @@
 #include "Character.h"
 #include "dart/collision/bullet/bullet.hpp"
 #include "export.h"
+#include <map>
+#include <string>
 
 // Forward declaration
 template <typename T> class CBufferData;
@@ -69,11 +71,13 @@ public:
 
     void setAction(Eigen::VectorXd _action);
 
-    void step(int _step = 0, CBufferData<double>* pGraphData = nullptr);
+    void step();
     void reset();
+    double getReward() { return mReward; }
+    const std::map<std::string, double>& getRewardMap() const { return mRewardMap; }
 
     int isEOE();
-    void setRefMotion(BVH *_bvh, Character *_character);
+    // void setRefMotion(BVH *_bvh, Character *_character);
 
     void updateTargetPosAndVel(bool isInit = false);
 
@@ -87,13 +91,12 @@ public:
 
     Eigen::VectorXd getJointState(bool isMirror);
 
-    double getReward();
-    bool isActionTime() { return mSimulationConut % (mSimulationHz / mControlHz) == 0; }
-
+    double calcReward();
     Eigen::VectorXd getAction() { return mAction; }
 
     int getSimulationHz() { return mSimulationHz; }
     int getControlHz() { return mControlHz; }
+    int getSimulationStep() const { return mSimulationStep; }
     std::string getMetadata() { return mMetadata; }
 
     bool isMirror(int character_idx = 0) { return mEnforceSymmetry && ((mHardPhaseClipping) ? (getNormalizedPhase() > 0.5) : (getLocalPhase(true) > 0.5)); }
@@ -101,10 +104,6 @@ public:
     bool isFall();
     dart::simulation::WorldPtr getWorld() { return mWorld; }
 
-    void setIsRender(bool _b) { isRender = _b; }
-    bool getIsRender() { return isRender; }
-
-    std::map<std::string, double> getRewardMap() { return mRewardMap; }
     double getActionScale() { return mActionScale; }
 
     // Metabolic Reward
@@ -173,11 +172,16 @@ public:
     double getMetabolicReward();
     double getStepReward();
     double getAvgVelReward();
-    double getLocoPrinReward();
+    double getLocoReward();
     Eigen::Vector3d getAvgVelocity();
     double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacters[0]->getGlobalRatio()) / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))); }
     double getNormalizedPhase() { return mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))) - (int)(mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))); }
     double getWorldPhase() { return mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))) - (int)(mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))); }
+    
+    // Time and cycle getters for rollout
+    double getWorldTime() const { return mWorldTime; }
+    int getWorldPhaseCount() const { return mWorldPhaseCount; }
+    int getSimulationConut() const { return mSimulationCount; }
 
     // For Parameterization
 
@@ -228,7 +232,6 @@ public:
 
     Eigen::Vector2i getIsContact();
     Eigen::Vector2d getFootGRF(); // Get normalized GRF for left and right foot
-    const std::vector<Eigen::Vector2i> &getContactLogs() { return mContactLogs; }
 
     // For Cascading
     Network loadPrevNetworks(std::string path, bool isFirst); // Neot
@@ -269,15 +272,20 @@ public:
     bool isGaitCycleComplete();
     int getGaitCycleCount() const { return mWorldPhaseCount; }
 
-private : 
-     bool mPhaseUpdateInContolHz;
+    void muscleStep();
+    int getNumSubSteps() { return mNumSubSteps; }
+    void postStep();
+private:
+    // Step method components
+    void calcActivation();
+    void postMuscleStep();
 
     Eigen::VectorXd mTargetPositions;
     Eigen::VectorXd mTargetVelocities;
     double mActionScale;
 
     // Parameter (General)
-    int mSimulationHz, mControlHz;
+    int mSimulationHz, mControlHz, mNumSubSteps;
 
     // Parameter (Muscle)
     bool mUseMuscle;
@@ -304,16 +312,12 @@ private :
     // Cyclic or Not
     bool mCyclic;
 
-    int mSimulationConut;
+    int mSimulationCount, mSimulationStep;
     int mHeightCalibration; // 0 : No, 1 : Only avoid collision, 2: Strict
-    bool mEnforceSymmetry;
-
-    // Reward Map
-    bool isRender;
-    std::map<std::string, double> mRewardMap;
-    bool mIsStanceLearning;
+    bool mEnforceSymmetry, mIsStanceLearning;
 
     // Muscle Learning Tuple
+    bool mTupleFilled;
     Eigen::VectorXd mRandomDesiredTorque;
     MuscleTuple mRandomMuscleTuple;
     Eigen::VectorXd mRandomPrevOut;
@@ -324,18 +328,15 @@ private :
 
     // Reward Type (Deep Mimic or GaitNet)
     RewardType mRewardType;
+    double mReward;
+    std::map<std::string, double> mRewardMap;
 
     // GaitNet
     double mRefStride;
-    double mStride;  // Ratio of Foot stride [default = 1]
-    double mCadence; // Ratio of time displacement [default == 1]
+    double mStride, mCadence;  // Ratio of Foot stride & time displacement [default = 1]
     bool mIsLeftLegStance;
-    Eigen::Vector3d mNextTargetFoot;
-    Eigen::Vector3d mCurrentTargetFoot;
-    Eigen::Vector3d mCurrentFoot;
-
-    double mPhaseDisplacement;
-    double mPhaseDisplacementScale;
+    Eigen::Vector3d mNextTargetFoot, mCurrentTargetFoot, mCurrentFoot;
+    double mPhaseDisplacement, mPhaseDisplacementScale;
     int mNumActuatorAction;
 
     double mLimitY; // For EOE
@@ -343,45 +344,29 @@ private :
     // Offset for Stance phase at current bvh;
     double mStanceOffset;
 
-    bool mLoadedMuscleNN;
-    bool mUseJointState;
-
-    bool mLearningStd;
+    bool mLoadedMuscleNN, mUseJointState, mLearningStd;
 
     // Parameter
     std::vector<param_group> mParamGroups;
-    Eigen::VectorXd mParamMin;
-    Eigen::VectorXd mParamMax;
-    Eigen::VectorXd mParamDefault;
+    Eigen::VectorXd mParamMin, mParamMax, mParamDefault;
     std::vector<std::string> mParamName;
     std::vector<bool> mSamplingStrategy;
     int mNumParamState;
 
     // Reward Weight
-    double mHeadLinearAccWeight;
-    double mHeadRotWeight;
-    double mStepWeight;
-    double mMetabolicWeight;
-    double mAvgVelWeight;
+    double mHeadLinearAccWeight, mHeadRotWeight, mStepWeight, mMetabolicWeight, mAvgVelWeight;
 
     // Simulation Setting
-    bool mSoftPhaseClipping;
-    bool mHardPhaseClipping;
-    int mPhaseCount;
-    int mWorldPhaseCount;
-    int mPrevWorldPhaseCount;
-
-    int mSimulationStep;
+    bool mSoftPhaseClipping, mHardPhaseClipping;
+    int mPhaseCount, mWorldPhaseCount, mPrevWorldPhaseCount;
     EOEType mEOEType;
-    double mGlobalTime;
-    double mWorldTime;
+    double mGlobalTime, mWorldTime;
 
     // Pose Optimization
     bool mMusclePoseOptimization;
     int mPoseOptimizationMode;
 
-    // Gait Analysis (only work for render mode)
-    std::vector<Eigen::Vector2i> mContactLogs;
+    // Gait Analysis
     Eigen::Vector2i mPrevContact; // Previous contact state for heel strike detection
 
     // nFor Cascading
@@ -391,15 +376,11 @@ private :
     std::vector<Eigen::Vector2i> mEdges;
     std::vector<std::vector<int>> mChildNetworks;
 
-    std::vector<Eigen::VectorXd> mProjStates;
-    std::vector<Eigen::VectorXd> mProjJointStates;
+    std::vector<Eigen::VectorXd> mProjStates, mProjJointStates;
 
-    std::vector<double> mDmins;
-    std::vector<double> mWeights;
-    std::vector<double> mBetas;
+    std::vector<double> mDmins, mWeights, mBetas;
 
-    Eigen::VectorXd mState;
-    Eigen::VectorXd mJointState;
+    Eigen::VectorXd mState, mJointState;
 
     py::object loading_network;
 

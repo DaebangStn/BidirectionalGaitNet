@@ -93,8 +93,18 @@ public:
         }
         return py_mt;
     }
+
+    py::dict getRewardMap()
+    {
+        const auto& rewardMap = Environment::getRewardMap();
+        py::dict py_map;
+        for (const auto& pair : rewardMap)
+        {
+            py_map[py::cast(pair.first)] = pair.second;
+        }
+        return py_map;
+    }
     void setAction(py::array_t<float> action) { Environment::setAction(toEigenVector(action)); }
-    void step() { Environment::step(Environment::getSimulationHz() / Environment::getControlHz()); }
     int getNumMuscles() { return Environment::getCharacter(0)->getMuscles().size(); }
 
     int getNumMuscleDof() { return Environment::getCharacter(0)->getNumMuscleRelatedDof(); }
@@ -144,6 +154,7 @@ PYBIND11_MODULE(pysim, m)
         .def("reset", &RayEnvManager::reset)
         .def("isEOE", &RayEnvManager::isEOE)
         .def("getReward", &RayEnvManager::getReward)
+        .def("getRewardMap", &RayEnvManager::getRewardMap)
         .def("getState", &RayEnvManager::getState)
         .def("getAction", &RayEnvManager::getAction)
 

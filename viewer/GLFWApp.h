@@ -3,6 +3,7 @@
 #include "GLfunctions.h"
 #include "ShapeRenderer.h"
 #include "CBufferData.h"
+#include "RenderEnvironment.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -63,24 +64,22 @@ class GLFWApp
 public:
     GLFWApp(int argc, char **argv, bool rendermode = true);
     ~GLFWApp();
-
-    void setEnv(Environment *env, std::string metadata = "../data/env.xml");
-
     void startLoop();
-    void initGL();
-
-    void writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const bool isPos = false); // Pose Or Hierarchy
-    void exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::dynamics::SkeletonPtr &skel);
-
-    void plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis = ImAxis_Y1,
-                       bool show_phase = true, bool plot_avg_copy = false, std::string postfix = "");
-
-    void plotPhaseBar(double x_min, double x_max, double y_min, double y_max);
-
+    
 private:
     py::object mns;
     py::object loading_network;
 
+    void writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const bool isPos = false); // Pose Or Hierarchy
+    void exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::dynamics::SkeletonPtr &skel);
+    
+    void plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis = ImAxis_Y1,
+        bool show_phase = true, bool plot_avg_copy = false, std::string postfix = "");
+        
+    void plotPhaseBar(double x_min, double x_max, double y_min, double y_max);
+    
+    void initEnv(std::string metadata);
+    void initGL();
     void update(bool isSave = false);
     void reset();
 
@@ -147,7 +146,7 @@ private:
     bool mRotate, mTranslate, mZooming, mMouseDown;
 
     GLFWwindow *mWindow;
-    Environment *mEnv;
+    RenderEnvironment *mRenderEnv;
 
     ShapeRenderer mShapeRenderer;
     bool mDrawOBJ;
@@ -217,7 +216,7 @@ private:
 
     // BVH Buffer
 
-    std::vector<Eigen::VectorXd> mC3Dmotion;
+    std::vector<Eigen::VectorXd> mC3dMotion;
     int mC3DCount;
 
     C3D_Reader* mC3DReader;
@@ -263,9 +262,9 @@ private:
         std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("FemurR")->getIndexInSkeleton()]).value[4] = skel_param[12];
 
 
-        mEnv->getCharacter(0)->applySkeletonBodyNode(mSkelInfosForMotions, mMotionSkeleton);
+        mRenderEnv->getCharacter(0)->applySkeletonBodyNode(mSkelInfosForMotions, mMotionSkeleton);
 
-        int pos_dof = mEnv->getCharacter(0)->posToSixDof(mEnv->getCharacter(0)->getSkeleton()->getPositions()).rows();
+        int pos_dof = mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()).rows();
         if (motion.rows() != pos_dof * 60) {
             std::cout << "Motion Dimension is not matched" << motion.rows()  << std::endl;
             return;
@@ -277,7 +276,7 @@ private:
         
         for(int i = 0; i < 60; i++)
         {
-            Eigen::VectorXd skel_pos = mEnv->getCharacter(0)->sixDofToPos(motion.segment(i*pos_dof, pos_dof));
+            Eigen::VectorXd skel_pos = mRenderEnv->getCharacter(0)->sixDofToPos(motion.segment(i*pos_dof, pos_dof));
             pos[0] += motion.segment(i * pos_dof, pos_dof)[6];
             pos[1] = motion.segment(i * pos_dof, pos_dof)[7];
             pos[2] += motion.segment(i * pos_dof, pos_dof)[8];
@@ -287,7 +286,7 @@ private:
                 drawSkeleton(skel_pos, color);
         }
 
-        mEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
     }
 
     std::vector<Eigen::VectorXd> mTestMotion;
@@ -319,4 +318,11 @@ private:
     // Rollout configuration
     int mDefaultRolloutCount;
 
+    // Cached metadata path
+    std::string mCachedMetadata;
+
+    // Helper methods for initEnv
+    void loadNetworkFromPath(const std::string& path);
+    void initializeMotionSkeleton();
+    void loadMotionFiles();
 };

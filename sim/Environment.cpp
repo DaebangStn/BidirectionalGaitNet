@@ -2,8 +2,10 @@
 #include "UriResolver.h"
 #include "CBufferData.h"
 
+
 Environment::Environment()
-    : mPhaseUpdateInContolHz(false), mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1), mHeightCalibration(0), mEnforceSymmetry(false), isRender(false), mIsStanceLearning(false), mLimitY(0.6), mLearningStd(false)
+    : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1), 
+    mHeightCalibration(0), mEnforceSymmetry(false), mIsStanceLearning(false), mLimitY(0.6), mLearningStd(false)
 {
     // Initialize URI resolver for path resolution
     PMuscle::URIResolver::getInstance().initialize();
@@ -11,8 +13,7 @@ Environment::Environment()
     mWorld = std::make_shared<dart::simulation::World>();
     mCyclic = true;
     mIsResidual = true;
-    mSimulationConut = 0;
-    mRewardMap.clear();
+    mSimulationCount = 0;
     mActionScale = 0.04;
     mIncludeMetabolicReward = false;
     mRewardType = deepmimic;
@@ -53,6 +54,7 @@ Environment::Environment()
     mPoseOptimizationMode = 0;
     mHorizon = 300;
 }
+
 Environment::~Environment()
 {
 }
@@ -164,6 +166,12 @@ void Environment::initialize(std::string metadata)
     if (doc.FirstChildElement("controlHz") != NULL)
         mControlHz = doc.FirstChildElement("controlHz")->IntText();
 
+    if (mSimulationHz % mControlHz != 0) {
+        std::cout << "[ERROR] Simulation Hz must be divisible by control Hz. Got " << mSimulationHz << " / " << mControlHz << " != 0" << std::endl;
+        exit(-1);
+    }
+    mNumSubSteps = mSimulationHz / mControlHz;
+
     // Action Scale
     if (doc.FirstChildElement("actionScale") != NULL)
         mActionScale = doc.FirstChildElement("actionScale")->DoubleText();
@@ -183,10 +191,6 @@ void Environment::initialize(std::string metadata)
     // hard Phase Clipping
     if (doc.FirstChildElement("hardPhaseClipping") != NULL)
         mHardPhaseClipping = doc.FirstChildElement("hardPhaseClipping")->BoolText();
-
-    // Phase Update In Control Hz 
-    if (doc.FirstChildElement("phaseUpdateInControlHz") != NULL)
-        mPhaseUpdateInContolHz = doc.FirstChildElement("phaseUpdateInControlHz")->BoolText();
 
     if (doc.FirstChildElement("musclePoseOptimization") != NULL)
     {
@@ -439,21 +443,18 @@ void Environment::initialize(std::string metadata)
     // std::cout << "Num Known Param : " << mNumKnownParam << std::endl;
 }
 
-void Environment::
-    addCharacter(std::string path, double kp, double kv, double damping)
+void Environment::addCharacter(std::string path, double kp, double kv, double damping)
 {
     mCharacters.push_back(new Character(path, kp, kv, damping));
     // std::cout << "Skeleton Added " << mCharacters.back()->getSkeleton()->getName() << " Degree Of Freedom : " << mCharacters.back()->getSkeleton()->getNumDofs() << std::endl;
 }
 
-void Environment::
-    addObject(std::string path)
+void Environment::addObject(std::string path)
 {
     mObjects.push_back(BuildFromFile(path));
 }
 
-void Environment::
-    setAction(Eigen::VectorXd _action)
+void Environment::setAction(Eigen::VectorXd _action)
 {
     mPhaseDisplacement = 0.0;
     mAction.setZero();
@@ -545,50 +546,38 @@ void Environment::
     if (mPhaseDisplacement < (-1.0 / mControlHz))
         mPhaseDisplacement = -1.0 / mControlHz;
 
-    Eigen::VectorXd actuactorAction = mAction.head(mNumActuatorAction);
-    // actuactorAction *= mActionScale;
+    Eigen::VectorXd actuatorAction = mAction.head(mNumActuatorAction);
 
     updateTargetPosAndVel();
 
-    if (mCharacters[0]->getActuatorType() == pd || mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower)
+    if (mCharacters[0]->getActuatorType() == pd || 
+        mCharacters[0]->getActuatorType() == mass || 
+        mCharacters[0]->getActuatorType() == mass_lower)
     {
         Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
-        action.tail(actuactorAction.rows()) = actuactorAction;
-        if (isMirror())
-            action = mCharacters[0]->getMirrorPosition(action);
-
-        if (mIsResidual)
-            action = mCharacters[0]->addPositions(mTargetPositions, action);
-
+        action.tail(actuatorAction.rows()) = actuatorAction;
+        if (isMirror()) action = mCharacters[0]->getMirrorPosition(action);
+        if (mIsResidual) action = mCharacters[0]->addPositions(mTargetPositions, action);
         mCharacters[0]->setPDTarget(action);
     }
     else if (mCharacters[0]->getActuatorType() == tor)
     {
         Eigen::VectorXd torque = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
-        torque.tail(actuactorAction.rows()) = actuactorAction;
-        if (isMirror())
-            torque = mCharacters[0]->getMirrorPosition(torque);
+        torque.tail(actuatorAction.rows()) = actuatorAction;
+        if (isMirror()) torque = mCharacters[0]->getMirrorPosition(torque);
         mCharacters[0]->setTorque(torque);
     }
     else if (mCharacters[0]->getActuatorType() == mus)
     {
-        Eigen::VectorXd activation = (!isMirror() ? actuactorAction : mCharacters[0]->getMirrorActivation(actuactorAction));
+        Eigen::VectorXd activation = (!isMirror() ? actuatorAction : mCharacters[0]->getMirrorActivation(actuatorAction));
         // Clipping Function
         mCharacters[0]->setActivations(activation);
-    }
-
-    if (mPhaseUpdateInContolHz)
-    {
-        mGlobalTime += 1.0 / mControlHz;
-        mWorldTime += 1.0 / mControlHz;
-        mCharacters[0]->updateLocalTime(1.0 / mControlHz + mPhaseDisplacement);
     }
 
     mSimulationStep++;
 }
 
-void Environment::
-    updateTargetPosAndVel(bool isInit)
+void Environment::updateTargetPosAndVel(bool isInit)
 {
     double dTime = 1.0 / mControlHz;
     double dPhase = dTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
@@ -605,8 +594,7 @@ void Environment::
     }
 }
 
-int Environment::
-    isEOE()
+int Environment::isEOE()
 {
     int isEOE = 0;
     double root_y = mCharacters[0]->getSkeleton()->getCOM()[1];
@@ -618,10 +606,11 @@ int Environment::
     return isEOE;
 }
 
-double Environment::
-    getReward()
+double Environment::calcReward()
 {
     double r = 0.0;
+    mRewardMap.clear();
+
     if (mRewardType == deepmimic || mRewardType == scadiver)
     {
         // Deep Mimic Reward Setting
@@ -677,51 +666,37 @@ double Environment::
             else if (mRewardType == scadiver)
                 r *= (0.1 + 0.9 * r_metabolic);
         }
-
-        if (isRender)
-        {
-            mRewardMap.clear();
-            mRewardMap.insert(std::make_pair("r", r));
-            mRewardMap.insert(std::make_pair("r_p", r_p));
-            mRewardMap.insert(std::make_pair("r_v", r_v));
-            mRewardMap.insert(std::make_pair("r_com", r_com));
-            mRewardMap.insert(std::make_pair("r_ee", r_ee));
-            if (mIncludeMetabolicReward)
-                mRewardMap.insert(std::make_pair("r_metabolic", r_metabolic));
-        }
     }
     else if (mRewardType == gaitnet)
     {
         double w_gait = 2.0;
-        double r_loco = getLocoPrinReward();
+        double r_loco = getLocoReward();
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
         double r_metabolic = getMetabolicReward();
 
         r = w_gait * r_loco * r_avg * r_step + (mIncludeMetabolicReward ? r_metabolic : 0.0);
 
-        if (isRender)
-        {
-            mRewardMap.clear();
-            mRewardMap.insert(std::make_pair("r", r));
-            mRewardMap.insert(std::make_pair("r_loco", r_loco));
-            mRewardMap.insert(std::make_pair("r_avg", r_avg));
-            mRewardMap.insert(std::make_pair("r_step", r_step));
-            mRewardMap.insert(std::make_pair("r_metabolic", r_metabolic));
-        }
+        // Populate reward map for gaitnet
+        mRewardMap.insert(std::make_pair("r_loco", r_loco));
+        mRewardMap.insert(std::make_pair("r_avg", r_avg));
+        mRewardMap.insert(std::make_pair("r_step", r_step));
+        mRewardMap.insert(std::make_pair("r_metabolic", r_metabolic));
     }
 
     if (mCharacters[0]->getActuatorType() == mus)
     {
-       // Design the reward function for musculo-skeletal system
+       // Design the reward function for musculoskeletal system
         r = 1.0;
     }
+
+    // Always store total reward
+    mRewardMap.insert(std::make_pair("r", r));
 
     return r;
 }
 
-std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::
-    getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV)
+std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV)
 {
     if (minV.rows() != maxV.rows())
         exit(-1);
@@ -821,7 +796,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::
         v.segment<3>(num_body_nodes * 3)[0] *= -1;
     }
 
-    // Motion informcation (phase)
+    // Motion information (phase)
 
     Eigen::VectorXd phase = Eigen::VectorXd::Zero(1 + (mPhaseDisplacementScale > 0.0 ? 1 : 0));
     phase[0] = getNormalizedPhase();
@@ -859,7 +834,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::
 
     setParamState(curParamState, true);
 
-    // Ingration of all states
+    // Integration of all states
 
     Eigen::VectorXd state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows() + step_state.rows() + joint_state.rows() + proj_param_state.rows());
     state << com, p, v, phase, step_state, 0.008 * joint_state, proj_param_state;
@@ -882,8 +857,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::
     return std::make_pair(state, joint_state);
 }
 
-Eigen::VectorXd Environment::
-    getState()
+Eigen::VectorXd Environment::getState()
 {
     std::pair<Eigen::VectorXd, Eigen::VectorXd> res = getProjState(mParamMin, mParamMax);
     mState = res.first;
@@ -891,239 +865,138 @@ Eigen::VectorXd Environment::
     return mState;
 }
 
-void Environment::
-    step(int _step, CBufferData<double>* pGraphData)
+void Environment::calcActivation()
 {
-    if (_step == 0)
-        _step = mSimulationHz / mControlHz;
-    else if ((mSimulationHz / mControlHz) % _step != 0)
-        exit(-1);
+    MuscleTuple mt = mCharacters[0]->getMuscleTuple(isMirror());
 
-    int rand_idx = dart::math::Random::uniform(0.0, _step - 1E-3);
+    Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
+    if (mCharacters[0]->getIncludeJtPinSPD()) fullJtp.tail(fullJtp.rows() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs()) = mt.JtP;
+    if (isMirror()) fullJtp = mCharacters[0]->getMirrorPosition(fullJtp);
 
-    for (int i = 0; i < _step; i++)
+    Eigen::VectorXd fulldt = mCharacters[0]->getSPDForces(mCharacters[0]->getPDTarget(), fullJtp);
+    mDesiredTorqueLogs.push_back(fulldt);
+
+    if (isMirror()) fulldt = mCharacters[0]->getMirrorPosition(fulldt);
+    Eigen::VectorXd dt = fulldt.tail(mt.JtP.rows());
+    if (!mCharacters[0]->getIncludeJtPinSPD()) dt -= mt.JtP;
+
+    std::vector<Eigen::VectorXf> prev_activations;
+
+    for (int j = 0; j < mPrevNetworks.size() + 1; j++) // Include Current Network
+        prev_activations.push_back(Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size()));
+
+    // For base network
+    if (mPrevNetworks.size() > 0)
+        prev_activations[0] = mPrevNetworks[0].muscle.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, py::cast<py::none>(Py_None), true, py::cast<py::none>(Py_None)).cast<Eigen::VectorXf>();
+
+    for (int j = 1; j < mPrevNetworks.size(); j++)
     {
-        if (mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower)
-        {
-            MuscleTuple mt = mCharacters[0]->getMuscleTuple(isMirror());
+        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+        for (int k : mChildNetworks[j]) prev_activation += prev_activations[k];
+        prev_activations[j] = (mUseWeights[j * 2 + 1] ? 1 : 0) * mWeights[j] * mPrevNetworks[j].muscle.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights[j]).cast<Eigen::VectorXf>();
+    }
+    // Current Network
+    if (mLoadedMuscleNN)
+    {
+        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+        for (int k : mChildNetworks.back()) prev_activation += prev_activations[k];
 
-            Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
-            if (mCharacters[0]->getIncludeJtPinSPD())
-                fullJtp.tail(fullJtp.rows() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs()) = mt.JtP;
-
-            if (isMirror())
-                fullJtp = mCharacters[0]->getMirrorPosition(fullJtp);
-
-            Eigen::VectorXd fulldt = mCharacters[0]->getSPDForces(mCharacters[0]->getPDTarget(), fullJtp);
-
-            mDesiredTorqueLogs.push_back(fulldt);
-
-            if (isMirror())
-                fulldt = mCharacters[0]->getMirrorPosition(fulldt);
-
-            Eigen::VectorXd dt = fulldt.tail(mt.JtP.rows());
-
-            if (!mCharacters[0]->getIncludeJtPinSPD())
-                dt -= mt.JtP;
-
-            std::vector<Eigen::VectorXf> prev_activations;
-
-            for (int j = 0; j < mPrevNetworks.size() + 1; j++) // Include Current Network
-                prev_activations.push_back(Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size()));
-
-            // For base network
-            if (mPrevNetworks.size() > 0)
-                prev_activations[0] = mPrevNetworks[0].muscle.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, py::cast<py::none>(Py_None), true, py::cast<py::none>(Py_None)).cast<Eigen::VectorXf>();
-
-            for (int j = 1; j < mPrevNetworks.size(); j++)
-            {
-
-                Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
-                for (int k : mChildNetworks[j])
-                    prev_activation += prev_activations[k];
-                prev_activations[j] = (mUseWeights[j * 2 + 1] ? 1 : 0) * mWeights[j] * mPrevNetworks[j].muscle.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights[j]).cast<Eigen::VectorXf>();
-            }
-            // Current Network
-            if (mLoadedMuscleNN)
-            {
-                Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
-                for (int k : mChildNetworks.back())
-                    prev_activation += prev_activations[k];
-
-                if (mPrevNetworks.size() > 0)
-                    prev_activations[prev_activations.size() - 1] = (mUseWeights.back() ? 1 : 0) * mWeights.back() * mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights.back()).cast<Eigen::VectorXf>();
-                else
-                    prev_activations[prev_activations.size() - 1] = mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, py::cast<py::none>(Py_None), true, py::cast<py::none>(Py_None)).cast<Eigen::VectorXf>();
-            }
-
-            Eigen::VectorXf activations = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
-            for (Eigen::VectorXf a : prev_activations)
-                activations += a;
-
-            activations = mMuscleNN.attr("forward_filter")(activations).cast<Eigen::VectorXf>();
-
-            if (isMirror())
-                activations = mCharacters[0]->getMirrorActivation(activations.cast<double>()).cast<float>();
-
-            mCharacters[0]->setActivations(activations.cast<double>());
-
-            if (i == rand_idx)
-            {
-                mRandomMuscleTuple = mt;
-                mRandomDesiredTorque = dt;
-                if (mUseCascading)
-                {
-                    Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
-                    for (int k : mChildNetworks.back())
-                        prev_activation += prev_activations[k];
-                    mRandomPrevOut = prev_activation.cast<double>();
-                    mRandomWeight = mWeights.back();
-                }
-            }
-        }
-        mCharacters[0]->step();
-        mWorld->step();
-
-        if (isRender)
-        {
-            Eigen::Vector2i contact = getIsContact();
-            Eigen::Vector2d grf = getFootGRF();
-            mContactLogs.push_back(contact);
-
-            // Contact-based gait cycle detection: detect right foot heel strike (swing→stance transition)
-            // This replaces time-based mWorldPhaseCount update for more accurate cycle tracking
-            // GRF threshold (0.2 * body weight) ensures the foot is actually bearing weight
-            const double grf_threshold = 0.2;  // 20% of body weight
-            if (mPrevContact[1] == 0 && contact[1] == 1 && grf[1] > grf_threshold)  // Right foot: swing→stance with weight
-            {
-                mWorldPhaseCount++;
-                mWorldTime = mCharacters[0]->getLocalTime();
-            }
-            mPrevContact = contact;
-
-            // Log to graph data if available
-            if (pGraphData)
-            {
-                if (pGraphData->key_exists("contact_left"))
-                    pGraphData->push("contact_left", static_cast<double>(contact[0]));
-                if (pGraphData->key_exists("contact_right"))
-                    pGraphData->push("contact_right", static_cast<double>(contact[1]));
-
-                // Log contact phase for right foot
-                if (pGraphData->key_exists("contact_phaseR"))
-                    pGraphData->push("contact_phaseR", static_cast<double>(contact[1]));
-
-                // Log GRF data
-                if (pGraphData->key_exists("grf_left"))
-                    pGraphData->push("grf_left", grf[0]);
-                if (pGraphData->key_exists("grf_right"))
-                    pGraphData->push("grf_right", grf[1]);
-
-                // Log kinematic data
-                auto skel = mCharacters[0]->getSkeleton();
-
-                if (pGraphData->key_exists("sway_Torso_X"))
-                {
-                    const double rootx = skel->getRootBodyNode()->getCOM()[0];
-                    const double torsoX = skel->getBodyNode("Torso")->getCOM()[0] - rootx;
-                    pGraphData->push("sway_Torso_X", torsoX);
-                }
-
-                if (pGraphData->key_exists("angle_HipR"))
-                {
-                    const double angleHipR = skel->getJoint("FemurR")->getPosition(0) * 180.0 / M_PI;
-                    pGraphData->push("angle_HipR", -angleHipR);
-                }
-
-                if (pGraphData->key_exists("angle_HipIRR"))
-                {
-                    const double angleHipIRR = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
-                    pGraphData->push("angle_HipIRR", -angleHipIRR);
-                }
-
-                if (pGraphData->key_exists("angle_HipAbR"))
-                {
-                    const double angleHipAbR = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
-                    pGraphData->push("angle_HipAbR", -angleHipAbR);
-                }
-
-                if (pGraphData->key_exists("angle_KneeR"))
-                {
-                    const double angleKneeR = skel->getJoint("TibiaR")->getPosition(0) * 180.0 / M_PI;
-                    pGraphData->push("angle_KneeR", angleKneeR);
-                }
-
-                if (pGraphData->key_exists("angle_AnkleR"))
-                {
-                    const double angleAnkleR = skel->getJoint("TalusR")->getPosition(0) * 180.0 / M_PI;
-                    pGraphData->push("angle_AnkleR", -angleAnkleR);
-                }
-
-                if (pGraphData->key_exists("angle_Rotation"))
-                {
-                    const double angleRotation = skel->getJoint("Pelvis")->getPosition(1) * 180.0 / M_PI;
-                    pGraphData->push("angle_Rotation", angleRotation);
-                }
-
-                if (pGraphData->key_exists("angle_Obliquity"))
-                {
-                    const double angleObliquity = skel->getJoint("Pelvis")->getPosition(2) * 180.0 / M_PI;
-                    pGraphData->push("angle_Obliquity", angleObliquity);
-                }
-
-                if (pGraphData->key_exists("angle_Tilt"))
-                {
-                    const double angleTilt = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
-                    pGraphData->push("angle_Tilt", angleTilt);
-                }
-            }
-        }
-
-        if(!mPhaseUpdateInContolHz)
-        {
-            mGlobalTime += 1.0 / mSimulationHz;
-            mWorldTime += 1.0 / mSimulationHz;
-            mCharacters[0]->updateLocalTime((1.0 + mPhaseDisplacement * mControlHz) / mSimulationHz);
-        }
-
-        if (mHardPhaseClipping)
-        {
-            int currentGlobalCount = mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
-            int currentLocalCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
-
-            if (currentGlobalCount > currentLocalCount)
-                mCharacters[0]->setLocalTime(mGlobalTime);
-            else if (currentGlobalCount < currentLocalCount)
-                mCharacters[0]->setLocalTime(currentLocalCount * ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))));
-        }
-        else if (mSoftPhaseClipping)
-        {
-            // FIXED LOCAL PHASE TIME
-            int currentCount = mCharacters[0]->getLocalTime() / (0.5 * (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
-            // int currentCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
-            if (mPhaseCount != currentCount)
-            {
-                mGlobalTime = mCharacters[0]->getLocalTime();
-                mPhaseCount = currentCount;
-            }
-        }
-
-        // World Time Clipping (disabled - now using contact-based cycle detection above)
-        // Contact-based detection at heel strike is more accurate than time-based estimation
-
-        mSimulationConut++; // Should be called with mWorld Step
+        if (mPrevNetworks.size() > 0) prev_activations[prev_activations.size() - 1] = (mUseWeights.back() ? 1 : 0) * mWeights.back() * mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights.back()).cast<Eigen::VectorXf>();
+        else prev_activations[prev_activations.size() - 1] = mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, py::cast<py::none>(Py_None), true, py::cast<py::none>(Py_None)).cast<Eigen::VectorXf>();
     }
 
-    if (mRewardType == gaitnet)
-        updateFootStep();
+    Eigen::VectorXf activations = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+    for (Eigen::VectorXf a : prev_activations) activations += a;
+
+    activations = mMuscleNN.attr("forward_filter")(activations).cast<Eigen::VectorXf>();
+
+    if (isMirror()) activations = mCharacters[0]->getMirrorActivation(activations.cast<double>()).cast<float>();
+
+    mCharacters[0]->setActivations(activations.cast<double>());
+
+    if (dart::math::Random::uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mTupleFilled)
+    {
+        mRandomMuscleTuple = mt;
+        mRandomDesiredTorque = dt;
+        if (mUseCascading)
+        {
+            Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+            for (int k : mChildNetworks.back())
+                prev_activation += prev_activations[k];
+            mRandomPrevOut = prev_activation.cast<double>();
+            mRandomWeight = mWeights.back();
+        }
+        mTupleFilled = true;
+    }
 }
 
-void Environment::
-    poseOptimiziation(int iter)
+void Environment::postMuscleStep()
 {
+    mSimulationCount++;
+    mGlobalTime += 1.0 / mSimulationHz;
+    mWorldTime += 1.0 / mSimulationHz;
+    mCharacters[0]->updateLocalTime((1.0 + mPhaseDisplacement * mControlHz) / mSimulationHz);
 
-    if (!mUseMuscle)
-        return;
+    // Contact-based gait cycle detection: detect right foot heel strike (swing→stance transition)
+    // This replaces time-based mWorldPhaseCount update for more accurate cycle tracking
+    // GRF threshold (0.2 * body weight) ensures the foot is actually bearing weight
+    Eigen::Vector2i contact = getIsContact();
+    Eigen::Vector2d grf = getFootGRF();
+
+    const double grf_threshold = 0.2;  // 20% of body weight
+    if (mPrevContact[1] == 0 && contact[1] == 1 && grf[1] > grf_threshold)  // Right foot: swing→stance with weight
+    {
+        mWorldPhaseCount++;
+        mWorldTime = mCharacters[0]->getLocalTime();
+    }
+    mPrevContact = contact;
+
+    if (mHardPhaseClipping)
+    {
+        int currentGlobalCount = mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
+        int currentLocalCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
+
+        if (currentGlobalCount > currentLocalCount) mCharacters[0]->setLocalTime(mGlobalTime);
+        else if (currentGlobalCount < currentLocalCount) mCharacters[0]->setLocalTime(currentLocalCount * ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))));
+    }
+    else if (mSoftPhaseClipping)
+    {
+        // FIXED LOCAL PHASE TIME
+        int currentCount = mCharacters[0]->getLocalTime() / (0.5 * (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
+        // int currentCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
+        if (mPhaseCount != currentCount)
+        {
+            mGlobalTime = mCharacters[0]->getLocalTime();
+            mPhaseCount = currentCount;
+        }
+    }
+}
+
+void Environment::muscleStep()
+{
+    if (mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower) 
+        calcActivation();
+
+    mCharacters[0]->step();
+    mWorld->step();
+    postMuscleStep();
+}
+
+void Environment::step()
+{
+    for (int i = 0; i < mNumSubSteps; i++) muscleStep();
+    postStep();
+}
+
+void Environment::postStep()
+{
+    if (mRewardType == gaitnet) updateFootStep();
+    mReward = calcReward();
+}
+
+void Environment::poseOptimiziation(int iter)
+{
+    if (!mUseMuscle) return;
     auto skel = mCharacters[0]->getSkeleton();
 
     double step_size = 1E-4;
@@ -1239,13 +1112,13 @@ void Environment::
     skel->getRootJoint()->setPositions(FreeJoint::convertToPositions(rootTransform));
 }
 
-void Environment::
-    reset()
+void Environment::reset()
 {
+    mTupleFilled = false;
     mPhaseCount = 0;
     mWorldPhaseCount = 0;
     mPrevWorldPhaseCount = 0;
-    mSimulationConut = 0;
+    mSimulationCount = 0;
     mPrevContact = Eigen::Vector2i(0, 0); // Initialize contact state
 
     // Reset Initial Time
@@ -1342,7 +1215,6 @@ void Environment::
         updateFootStep(true);
 
     mSimulationStep = 0;
-    mContactLogs.clear();
 
     for (auto c : mCharacters)
     {
@@ -1394,12 +1266,12 @@ double Environment::getMetabolicReward()
         else
         {
             
-            for (int i = 0; i < mSimulationHz / mControlHz; i++)
+            for (int i = 0; i < mNumSubSteps; i++)
             {
                 for (int j = 0; j < activation_sum.rows(); j++)
                     activation_sum[j] += abs(muscleLogs[log_size - 1 - i][j]);
             }
-            activation_sum /= (mSimulationHz / mControlHz);
+            activation_sum /= mNumSubSteps;
             r_metabolic = exp(-mMetabolicWeight * activation_sum.squaredNorm() / activation_sum.rows());
         }
     }
@@ -1413,23 +1285,22 @@ double Environment::getMetabolicReward()
         else
         {
 
-            for (int i = 0; i < mSimulationHz / mControlHz; i++)
+            for (int i = 0; i < mNumSubSteps; i++)
                 torque_sum += torqueLogs[log_size - 1 - i].cwiseAbs();
-            torque_sum /= (mSimulationHz / mControlHz);
+            torque_sum /= mNumSubSteps;
             r_metabolic = exp(-1E-4 * mMetabolicWeight * torque_sum.squaredNorm() / torque_sum.rows());
         }
     }
     return r_metabolic;
 }
 
-double Environment::getLocoPrinReward()
+double Environment::getLocoReward()
 {
-    int horizon = mSimulationHz / mControlHz;
     const std::vector<Eigen::Vector3d> &headVels = mCharacters[0]->getHeadVelLogs();
     if (headVels.size() == 0)
         return 1.0;
 
-    Eigen::Vector3d headLinearAcc = headVels.back() - headVels[headVels.size() - horizon];
+    Eigen::Vector3d headLinearAcc = headVels.back() - headVels[headVels.size() - mNumSubSteps];
 
     double headRotDiff = Eigen::AngleAxisd(mCharacters[0]->getSkeleton()->getBodyNode("Head")->getTransform().linear()).angle();
     double r_head_linear_acc = exp(-mHeadLinearAccWeight * headLinearAcc.squaredNorm() / headLinearAcc.rows());
@@ -1599,8 +1470,7 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
     }
 }
 
-void Environment::
-    setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
+void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
 {
     int idx = 0;
     // skeleton parameter
@@ -1650,9 +1520,7 @@ void Environment::
     }
 }
 
-Eigen::VectorXd
-Environment::
-    getParamState(bool isMirror)
+Eigen::VectorXd Environment::getParamState(bool isMirror)
 {
     Eigen::VectorXd ParamState = Eigen::VectorXd::Zero(mNumParamState);
     int idx = 0;
@@ -1822,8 +1690,7 @@ bool Environment::isGaitCycleComplete()
     return false;
 }
 
-Network Environment::
-    loadPrevNetworks(std::string path, bool isFirst)
+Network Environment::loadPrevNetworks(std::string path, bool isFirst)
 {
     Network nn;
     

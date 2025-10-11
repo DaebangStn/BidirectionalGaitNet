@@ -21,6 +21,26 @@ from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 from ray_config import CONFIG
 
 
+def mean_dict_list(dict_list):
+    """Average values across list of dictionaries"""
+    if not dict_list:
+        return {}
+
+    # Collect all keys
+    all_keys = set()
+    for d in dict_list:
+        all_keys.update(d.keys())
+
+    # Average each key
+    result = {}
+    for key in all_keys:
+        values = [d[key] for d in dict_list if key in d]
+        if values:
+            result[key] = np.mean(values)
+
+    return result
+
+
 class MuscleLearner:
     def __init__(self, device, num_actuator_action, num_muscles, num_muscle_dofs,
                  learning_rate=1e-4, num_epochs=3, batch_size=128, model=None, is_cascaded=False):
@@ -110,16 +130,16 @@ class MuscleLearner:
         converting_time = (time.perf_counter() - start_time) * 1000
         start_time = time.perf_counter()
         loss_avg = 0.
-        loss_regul_avg = 0.
+        loss_reg_avg = 0.
         loss_target_avg = 0.
-        loss_act_regul = 0.
+        loss_act_reg = 0.
         print(self.num_epochs_muscle)
         for _ in range(self.num_epochs_muscle):
             np.random.shuffle(idx_all)
             loss_avg = 0.
-            loss_regul_avg = 0.
+            loss_reg_avg = 0.
             loss_target_avg = 0.
-            loss_act_regul = 0.
+            loss_act_reg = 0.
             for i in range(l // self.muscle_batch_size):
                 mini_batch_idx = torch.from_numpy(
                     idx_all[i*self.muscle_batch_size: (i+1)*self.muscle_batch_size]).cuda()
@@ -158,17 +178,17 @@ class MuscleLearner:
 
                         param.grad.data.clamp_(-0.5, 0.5)
                 self.optimizer.step()
-                loss_act_regul += activation.pow(
+                loss_act_reg += activation.pow(
                     2).mean().cpu().detach().numpy().tolist()
                 loss_avg += loss.cpu().detach().numpy().tolist()
-                loss_regul_avg += loss_reg_wo_relu.cpu().detach().numpy().tolist()
+                loss_reg_avg += loss_reg_wo_relu.cpu().detach().numpy().tolist()
                 loss_target_avg += loss_target.cpu().detach().numpy().tolist()
 
         loss_muscle = loss_avg / (l // self.muscle_batch_size)
 
-        loss_muscle_regul = loss_regul_avg / (l // self.muscle_batch_size)
+        loss_muscle_reg = loss_reg_avg / (l // self.muscle_batch_size)
         loss_muscle_target = loss_target_avg / (l // self.muscle_batch_size)
-        loss_act_regul = loss_act_regul / (l // self.muscle_batch_size)
+        loss_act_reg = loss_act_reg / (l // self.muscle_batch_size)
 
         learning_time = (time.perf_counter() - start_time) * 1000
         time_stat = {'converting_time_ms': converting_time,
@@ -177,9 +197,9 @@ class MuscleLearner:
         return {
             'num_tuples': l,
             'loss_muscle': loss_muscle,
-            'loss_regul': loss_muscle_regul,
+            'loss_reg': loss_muscle_reg,
             'loss_target': loss_muscle_target,
-            'loss_act': loss_act_regul,
+            'loss_act': loss_act_reg,
             'time': time_stat
         }
 
@@ -195,7 +215,7 @@ class MyTrainer(PPO):
 
         self.rollout = config.pop("rollout")
         self.metadata = config.pop("metadata")
-        self.isTwoLevelActuactor = config.pop("isTwoLevelActuactor")
+        self.isTwoLevelActuator = config.pop("isTwoLevelActuator")
 
         self.trainer_config = config.pop("trainer_config")
         PPO.setup(self, config=config)
@@ -204,8 +224,8 @@ class MyTrainer(PPO):
 
         self.env_config = config.pop("env_config")
 
-        if self.isTwoLevelActuactor and not self.rollout:
-            self.muscle_learner = MuscleLearner(self.device, self.env_config['num_actuactor_action'], self.env_config['num_muscles'], self.env_config["num_muscle_dofs"], learning_rate=self.trainer_config[
+        if self.isTwoLevelActuator and not self.rollout:
+            self.muscle_learner = MuscleLearner(self.device, self.env_config['num_actuator_action'], self.env_config['num_muscles'], self.env_config["num_muscle_dofs"], learning_rate=self.trainer_config[
                                                 "muscle_lr"], num_epochs=self.trainer_config["muscle_num_epochs"], batch_size=self.trainer_config["muscle_sgd_minibatch_size"], is_cascaded=self.env_config["cascading"])
 
             model_weights = ray.put(
@@ -236,8 +256,28 @@ class MyTrainer(PPO):
         result["num_tuples"] = {}
         result["loss"] = {}
 
+        # Collect reward component averages with optimized IPC
+        if not self.rollout:
+            # Each environment returns its own average (not list of maps)
+            buffer = [worker.foreach_env.remote(
+                lambda env: env.get_reward_map_average())
+                for worker in self.remote_workers]
+
+            # Collect all worker averages
+            worker_rewards = []
+            for worker_maps in ray.get(buffer):
+                # Each env already returned averaged dict
+                for avg_map in worker_maps:
+                    if avg_map:  # Skip empty dicts
+                        worker_rewards.append(avg_map)
+
+            # Average across all workers/envs and add to metrics
+            if worker_rewards:
+                avg_reward_components = mean_dict_list(worker_rewards)
+                result['sampler_results']['custom_metrics']['reward'] = avg_reward_components
+
         # For Two Level Controller
-        if self.isTwoLevelActuactor and not self.rollout:
+        if self.isTwoLevelActuator and not self.rollout:
             start = time.perf_counter()
             mts = []
             muscle_transitions = []
@@ -260,19 +300,15 @@ class MyTrainer(PPO):
             stats = self.muscle_learner.learn(muscle_transitions)
 
             distribute_time = time.perf_counter()
-            model_weights = ray.put(
-                self.muscle_learner.get_model_weights(device=torch.device("cpu")))
+            model_weights = ray.put(self.muscle_learner.get_model_weights(device=torch.device("cpu")))
             for worker in self.remote_workers:
-                worker.foreach_env.remote(
-                    lambda env: env.load_muscle_model_weights(model_weights))
+                worker.foreach_env.remote(lambda env: env.load_muscle_model_weights(model_weights))
 
-            distribute_time = (time.perf_counter() -
-                               distribute_time) * 1000
+            distribute_time = (time.perf_counter() - distribute_time) * 1000
             total_time = (time.perf_counter() - start) * 1000
 
             result['timers']['muscle_learning'] = stats.pop('time')
-            result['num_tuples']['muscle_learning'] = stats.pop(
-                'num_tuples')
+            result['num_tuples']['muscle_learning'] = stats.pop('num_tuples')
             result['timers']['muscle_learning']['distribute_time_ms'] = distribute_time
             result['timers']['muscle_learning']['loading_time_ms'] = loading_time
             result['timers']['muscle_learning']['total_ms'] = total_time
@@ -289,7 +325,7 @@ class MyTrainer(PPO):
     def __getstate__(self):
         state = PPO.__getstate__(self)
         state["metadata"] = self.metadata
-        if self.isTwoLevelActuactor and not self.rollout:
+        if self.isTwoLevelActuator and not self.rollout:
             state["muscle"] = self.muscle_learner.get_weights()
             state["muscle_optimizer"] = self.muscle_learner.get_optimizer_weights()
         if self.env_config["cascading"]:
@@ -298,7 +334,7 @@ class MyTrainer(PPO):
 
     def __setstate__(self, state):
         PPO.__setstate__(self, state)
-        if self.isTwoLevelActuactor and not self.rollout:
+        if self.isTwoLevelActuator and not self.rollout:
             self.muscle_learner.set_weights(state["muscle"])
             self.muscle_learner.set_optimizer_weights(
                 state["muscle_optimizer"])
@@ -377,11 +413,11 @@ if __name__ == "__main__":
 
     with MyEnv(env_xml) as env:
         config["metadata"] = env.metadata
-        config["isTwoLevelActuactor"] = env.isTwoLevelActuactor
+        config["isTwoLevelActuator"] = env.isTwoLevelActuator
         config["model"]["custom_model_config"]["learningStd"] = env.env.getLearningStd()
         config["env_config"]["cascading"] = env.env.getUseCascading()
         config["env_config"]["num_action"] = env.env.getNumAction()
-        config["env_config"]["num_actuactor_action"] = env.env.getNumActuatorAction()
+        config["env_config"]["num_actuator_action"] = env.env.getNumActuatorAction()
 
         config["env_config"]["num_muscles"] = env.env.getNumMuscles()
         config["env_config"]["num_muscle_dofs"] = env.env.getNumMuscleDof()

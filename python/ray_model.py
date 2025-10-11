@@ -71,6 +71,9 @@ class MuscleNN(nn.Module):
             self.std_tau = self.std_tau.cuda()
             self.std_muscle_tau = self.std_muscle_tau.cuda()
             self.cuda()
+            self.device = torch.device('cuda')
+        else:
+            self.device = torch.device('cpu')
 
         self.fc.apply(weights_init)
 
@@ -160,9 +163,22 @@ class MuscleNN(nn.Module):
         torch.save(self.state_dict(), path)
 
     def get_activation(self, muscle_tau, tau):
-        act = self.forward(torch.FloatTensor(muscle_tau.reshape(1, -1)),
-                           torch.FloatTensor(tau.reshape(1, -1)))
+        act = self.forward(torch.FloatTensor(muscle_tau.reshape(1, -1)).to(self.device),
+                           torch.FloatTensor(tau.reshape(1, -1)).to(self.device))
         return act.cpu().detach().numpy()[0]
+
+    def to(self, *args, **kwargs):
+        """Override to() to update self.device"""
+        self = super().to(*args, **kwargs)
+        # Extract device from args or kwargs
+        if args and isinstance(args[0], (torch.device, str)):
+            self.device = torch.device(args[0])
+        elif 'device' in kwargs:
+            self.device = torch.device(kwargs['device'])
+        else:
+            # Infer device from parameters
+            self.device = next(self.parameters()).device
+        return self
 
 
 class SimulationNN(nn.Module):
@@ -213,6 +229,9 @@ class SimulationNN(nn.Module):
             if not learningStd:
                 self.log_std = self.log_std.cuda()
             self.cuda()
+            self.device = torch.device('cuda')
+        else:
+            self.device = torch.device('cpu')
 
     def reset(self):
         self.p_fc.apply(weights_init)
@@ -236,23 +255,36 @@ class SimulationNN(nn.Module):
         torch.save(self.state_dict(), path)
 
     def get_action(self, s):
-        ts = torch.tensor(s)
+        ts = torch.tensor(s, device=self.device)
         p, _ = self.forward(ts)
         return p.loc.cpu().detach().numpy()
 
     def get_value(self, s):
-        ts = torch.tensor(s)
+        ts = torch.tensor(s, device=self.device)
         _, v = self.forward(ts)
         return v.cpu().detach().numpy()
 
     def get_random_action(self, s):
         # print(self.log_std)
-        ts = torch.tensor(s)
+        ts = torch.tensor(s, device=self.device)
         p, _ = self.forward(ts)
         return p.sample().cpu().detach().numpy()
 
     def get_noise(self):
         return self.log_std.exp().mean().item()
+
+    def to(self, *args, **kwargs):
+        """Override to() to update self.device"""
+        self = super().to(*args, **kwargs)
+        # Extract device from args or kwargs
+        if args and isinstance(args[0], (torch.device, str)):
+            self.device = torch.device(args[0])
+        elif 'device' in kwargs:
+            self.device = torch.device(kwargs['device'])
+        else:
+            # Infer device from parameters
+            self.device = next(self.parameters()).device
+        return self
 
 
 class RolloutNNRay(TorchModelV2, nn.Module):
@@ -419,9 +451,7 @@ class SelectiveUnpickler(Unpickler):
             return Dummy
 
 
-def loading_network(path, num_states=0, num_actions=0,
-                    use_musclenet=False, num_actuator_action=0, num_muscles=0, num_total_muscle_related_dofs=0,
-                    device="cpu"):
+def loading_network(path, num_states=0, num_actions=0, use_musclenet=False, device="cpu"):
 
     # Resolve URI before loading
     from uri_resolver import resolve_path
@@ -436,11 +466,15 @@ def loading_network(path, num_states=0, num_actions=0,
 
     device = torch.device(device)
     learningStd = ('log_std' in policy_state.keys())
-    policy = PolicyNN(num_states, num_actions, policy_state,
-                      filter_state, device, learningStd)
+    policy = PolicyNN(num_states, num_actions, policy_state, filter_state, device, learningStd)
 
     muscle = None
     if use_musclenet:
+        env_config = worker_state['policy_config']['env_config']
+        num_actuator_action = env_config['num_actuactor_action']
+        num_muscles = env_config['num_muscles']
+        num_total_muscle_related_dofs = env_config['num_muscle_dofs']
+
         muscle = MuscleNN(num_total_muscle_related_dofs, num_actuator_action, num_muscles, is_cpu=True, is_cascaded=(
             state["cascading"] if "cascading" in state.keys() else False))
         muscle.load_state_dict(convert_to_torch_tensor(state['muscle']))

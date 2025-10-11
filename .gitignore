@@ -94,5 +94,5 @@ augment_test/
 
 secret.yaml
 results/
-
+sampled/
 uv.lock
