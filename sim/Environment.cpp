@@ -1713,7 +1713,7 @@ Network Environment::loadPrevNetworks(std::string path, bool isFirst)
 
     Eigen::VectorXd projState = getProjState(space.first, space.second).first;
 
-    py::tuple res = loading_network(path, projState.rows(), mAction.rows() - (isFirst ? 1 : 0), true, mNumActuatorAction, mCharacters[0]->getNumMuscles(), mCharacters[0]->getNumMuscleRelatedDof());
+    py::tuple res = loading_network(path, projState.rows(), mAction.rows() - (isFirst ? 1 : 0), true);
 
     nn.joint = res[0];
     nn.muscle = res[1];

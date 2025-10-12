@@ -93,6 +93,7 @@ private:
     void drawSimControlPanel();
     void drawKinematicsControlPanel();
     void drawSimVisualizationPanel();
+    void drawTimingPane();
     void drawCameraStatusSection();
 
     void printCameraInfo();
@@ -294,10 +295,14 @@ private:
     double mViewerTime;              // Viewer's master time counter
     double mViewerPhase;             // Phase value [0, 1) for cyclic motion
     double mViewerPlaybackSpeed;     // Playback speed multiplier (1.0 = normal speed)
+    double mLastPlaybackSpeed;       // Previous playback speed for change detection
     double mViewerCycleDuration;     // Duration of one motion cycle (default 2.0/1.1)
     double mLastRealTime;            // Last real time from glfwGetTime()
     double mSimulationStepDuration;  // Measured simulation step duration
+    double mSimStepDurationAvg;      // Moving average of simulation step duration
+    double mRealDeltaTimeAvg;        // Moving average of real frame delta time
     bool mIsPlaybackTooFast;         // Warning: playback faster than simulation can handle
+    bool mShowTimingPane;            // Toggle for timing information pane
 
     // Plot X-axis range
     double mXmin;

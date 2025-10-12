@@ -236,10 +236,14 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mViewerTime = 0.0;
     mViewerPhase = 0.0;
     mViewerPlaybackSpeed = 1.0;
+    mLastPlaybackSpeed = 1.0;
     mViewerCycleDuration = 2.0 / 1.1;  // Default cycle duration (~1.818s)
     mLastRealTime = 0.0;
     mSimulationStepDuration = 0.0;
+    mSimStepDurationAvg = -1.0;
+    mRealDeltaTimeAvg = 0.0;
     mIsPlaybackTooFast = false;
+    mShowTimingPane = false;
 
     py::gil_scoped_acquire gil;
     
@@ -647,6 +651,21 @@ void GLFWApp::startLoop()
         double realDeltaTime = currentRealTime - mLastRealTime;
         mLastRealTime = currentRealTime;
 
+        // Update moving average of frame delta time (alpha = 0.005)
+        const double alpha = 0.005;
+        if (mRealDeltaTimeAvg == 0.0) {
+            mRealDeltaTimeAvg = realDeltaTime;
+        } else {
+            mRealDeltaTimeAvg = alpha * realDeltaTime + (1.0 - alpha) * mRealDeltaTimeAvg;
+        }
+
+        // Detect playback speed change and resync viewer time to simulation time
+        if (mRenderEnv && mViewerPlaybackSpeed != mLastPlaybackSpeed)
+        {
+            mViewerTime = mRenderEnv->getWorld()->getTime();
+            mLastPlaybackSpeed = mViewerPlaybackSpeed;
+        }
+
         // Update viewer time (master clock for playback)
         if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
         {
@@ -654,19 +673,38 @@ void GLFWApp::startLoop()
             mViewerPhase = fmod(mViewerTime / mViewerCycleDuration, 1.0);
         }
 
-        // Simulation Step with performance monitoring
+        // Simulation Step with performance monitoring and sync control
         if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
         {
             double simStartTime = glfwGetTime();
             double simStartWorldTime = mRenderEnv ? mRenderEnv->getWorld()->getTime() : 0.0;
 
-            update();
+            // Sync control: only step simulation if viewer time has caught up with sim time
+            // This prevents viewer time from running ahead of simulation time
+            bool shouldStepSimulation = (mViewerTime >= simStartWorldTime);
+
+            if (shouldStepSimulation)
+            {
+                update();
+            }
+            // else: idle rendering - render current state without stepping simulation
 
             double simEndTime = glfwGetTime();
             double simEndWorldTime = mRenderEnv ? mRenderEnv->getWorld()->getTime() : 0.0;
 
             // Measure actual simulation step duration
             mSimulationStepDuration = simEndTime - simStartTime;
+
+            // Update moving average with exponential smoothing (alpha = 0.005)
+            const double alpha = 0.05;
+            if (mSimStepDurationAvg < 0.0) {
+                // Initialize on first measurement
+                mSimStepDurationAvg = mSimulationStepDuration;
+            } else {
+                // Exponential moving average: new_avg = alpha * new_value + (1 - alpha) * old_avg
+                mSimStepDurationAvg = alpha * mSimulationStepDuration + (1.0 - alpha) * mSimStepDurationAvg;
+            }
+
             double simTimeAdvanced = simEndWorldTime - simStartWorldTime;
 
             // Check if playback is too fast for simulation to keep up
@@ -1215,7 +1253,7 @@ void GLFWApp::drawSimVisualizationPanel()
 
         // Playback performance monitoring
         ImGui::Text("Playback Speed  : %.2fx", mViewerPlaybackSpeed);
-        ImGui::Text("Sim Step Time   : %.1f ms", mSimulationStepDuration * 1000.0);
+        ImGui::Text("Sim Step Time   : %.1f ms", mSimStepDurationAvg * 1000.0);
         if (mIsPlaybackTooFast)
         {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "WARNING: Playback too fast!");
@@ -2166,8 +2204,57 @@ void GLFWApp::drawUIFrame()
     drawSimControlPanel();
     drawSimVisualizationPanel();
     drawKinematicsControlPanel();
+    drawTimingPane();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void GLFWApp::drawTimingPane()
+{
+    if (!mShowTimingPane || !mRenderEnv)
+        return;
+
+    // Create a compact floating window
+    ImGui::SetNextWindowSize(ImVec2(280, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
+    if (!ImGui::Begin("Timing Info (T to toggle)", &mShowTimingPane, window_flags))
+    {
+        ImGui::End();
+        return;
+    }
+
+    // Use fixed-width font for better alignment
+    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+
+    // Display timing metrics in a compact table format
+    ImGui::Text("Phase          : %.3f", mViewerPhase);
+    ImGui::Text("Viewer Time    : %.3f s", mViewerTime);
+    ImGui::Text("Simulation Time: %.3f s", mRenderEnv->getWorld()->getTime());
+    ImGui::Text("Cycle Duration : %.3f s", mViewerCycleDuration);
+
+    // Draggable playback speed control
+    ImGui::Text("Playback Speed:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120);
+    double speed_min = 0.1, speed_max = 5.0;
+    ImGui::SliderScalar("##playback", ImGuiDataType_Double, &mViewerPlaybackSpeed, &speed_min, &speed_max, "%.2fx");
+
+    ImGui::Separator();
+
+    ImGui::Text("Frame Delta    : %.1f ms", mRealDeltaTimeAvg * 1000.0);
+    ImGui::Text("Sim Step Time  : %.1f ms", mSimulationStepDuration * 1000.0);
+    ImGui::Text("Sim Step Avg   : %.1f ms", mSimStepDurationAvg * 1000.0);
+
+    if (mIsPlaybackTooFast)
+    {
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "! Playback too fast");
+    }
+
+    ImGui::PopFont();
+    ImGui::End();
 }
 
 void GLFWApp::drawPhase(double phase, double normalized_phase)
@@ -2544,6 +2631,7 @@ void GLFWApp::mousePress(int button, int action, int mods)
 
 void GLFWApp::reset()
 {
+    mSimStepDurationAvg = -1.0;
     mC3DCount = 0;
     mGraphData->clear_all();
     mMotionRootOffset = Eigen::Vector3d::Zero();
@@ -2613,6 +2701,9 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         case GLFW_KEY_SPACE:
             mRolloutStatus.pause = !mRolloutStatus.pause;
             mRolloutStatus.cycle = -1;
+            break;
+        case GLFW_KEY_T:
+            mShowTimingPane = !mShowTimingPane;
             break;
         // Camera Setting
         case GLFW_KEY_C:
