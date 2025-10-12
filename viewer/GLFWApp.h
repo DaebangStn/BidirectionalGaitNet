@@ -290,6 +290,15 @@ private:
     bool mRenderConditions;
     bool mRenderC3D;
 
+    // Viewer independent time management
+    double mViewerTime;              // Viewer's master time counter
+    double mViewerPhase;             // Phase value [0, 1) for cyclic motion
+    double mViewerPlaybackSpeed;     // Playback speed multiplier (1.0 = normal speed)
+    double mViewerCycleDuration;     // Duration of one motion cycle (default 2.0/1.1)
+    double mLastRealTime;            // Last real time from glfwGetTime()
+    double mSimulationStepDuration;  // Measured simulation step duration
+    bool mIsPlaybackTooFast;         // Warning: playback faster than simulation can handle
+
     // Plot X-axis range
     double mXmin;
 

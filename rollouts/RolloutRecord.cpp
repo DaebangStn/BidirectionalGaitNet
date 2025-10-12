@@ -75,10 +75,10 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
 
     // Contact/GRF fields
     if (config.foot.enabled) {
-        if (config.foot.contact_left) fields.push_back("contact_left");
-        if (config.foot.contact_right) fields.push_back("contact_right");
-        if (config.foot.grf_left) fields.push_back("grf_left");
-        if (config.foot.grf_right) fields.push_back("grf_right");
+        if (config.foot.contact_left) fields.push_back("contact/left");
+        if (config.foot.contact_right) fields.push_back("contact/right");
+        if (config.foot.grf_left) fields.push_back("grf/left");
+        if (config.foot.grf_right) fields.push_back("grf/right");
     }
 
     // Kinematics fields
@@ -89,28 +89,28 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
 
         // Root position
         if (config.kinematics.root) {
-            fields.push_back("root_x");
-            fields.push_back("root_y");
-            fields.push_back("root_z");
+            fields.push_back("root/x");
+            fields.push_back("root/y");
+            fields.push_back("root/z");
         }
 
         // Angle fields
         if (config.kinematics.angle.enabled) {
-            if (config.kinematics.angle.hip) fields.push_back("angle_HipR");
-            if (config.kinematics.angle.hip_ir) fields.push_back("angle_HipIRR");
-            if (config.kinematics.angle.hip_ab) fields.push_back("angle_HipAbR");
-            if (config.kinematics.angle.knee) fields.push_back("angle_KneeR");
-            if (config.kinematics.angle.ankle) fields.push_back("angle_AnkleR");
-            if (config.kinematics.angle.pelvic_tilt) fields.push_back("angle_Tilt");
-            if (config.kinematics.angle.pelvic_rotation) fields.push_back("angle_Rotation");
-            if (config.kinematics.angle.pelvic_obliquity) fields.push_back("angle_Obliquity");
+            if (config.kinematics.angle.hip) fields.push_back("angle/HipR");
+            if (config.kinematics.angle.hip_ir) fields.push_back("angle/HipIRR");
+            if (config.kinematics.angle.hip_ab) fields.push_back("angle/HipAbR");
+            if (config.kinematics.angle.knee) fields.push_back("angle/KneeR");
+            if (config.kinematics.angle.ankle) fields.push_back("angle/AnkleR");
+            if (config.kinematics.angle.pelvic_tilt) fields.push_back("angle/Tilt");
+            if (config.kinematics.angle.pelvic_rotation) fields.push_back("angle/Rotation");
+            if (config.kinematics.angle.pelvic_obliquity) fields.push_back("angle/Obliquity");
         }
 
         // Angular velocity fields
         if (config.kinematics.anvel.enabled) {
-            if (config.kinematics.anvel.hip) fields.push_back("anvel_HipR");
-            if (config.kinematics.anvel.knee) fields.push_back("anvel_KneeR");
-            if (config.kinematics.anvel.ankle) fields.push_back("anvel_AnkleR");
+            if (config.kinematics.anvel.hip) fields.push_back("anvel/HipR");
+            if (config.kinematics.anvel.knee) fields.push_back("anvel/KneeR");
+            if (config.kinematics.anvel.ankle) fields.push_back("anvel/AnkleR");
         }
     }
 

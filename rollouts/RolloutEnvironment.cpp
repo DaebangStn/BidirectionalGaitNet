@@ -53,7 +53,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     std::unordered_map<std::string, double> data;
 
     // Basic fields (always recorded)
-    data["step"] = mEnv.getSimulationStep();
+    data["step"] = mEnv.getSimulationConut();
     data["time"] = mEnv.getWorldTime();
     data["phase"] = mEnv.getNormalizedPhase();
     data["cycle"] = mEnv.getWorldPhaseCount();
@@ -66,16 +66,16 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
         Eigen::Vector2d grf = mEnv.getFootGRF();
 
         if (mRecordConfig.foot.contact_left) {
-            data["contact_left"] = static_cast<double>(contact[0]);
+            data["contact/left"] = static_cast<double>(contact[0]);
         }
         if (mRecordConfig.foot.contact_right) {
-            data["contact_right"] = static_cast<double>(contact[1]);
+            data["contact/right"] = static_cast<double>(contact[1]);
         }
         if (mRecordConfig.foot.grf_left) {
-            data["grf_left"] = grf[0];
+            data["grf/left"] = grf[0];
         }
         if (mRecordConfig.foot.grf_right) {
-            data["grf_right"] = grf[1];
+            data["grf/right"] = grf[1];
         }
     }
 
@@ -83,69 +83,69 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     if (mRecordConfig.kinematics.enabled) {
         // All joint positions as a single vector
         if (mRecordConfig.kinematics.all) {
-            record->addVector("motions", mEnv.getSimulationStep() - 1, skel->getPositions());
+            record->addVector("motions", mEnv.getSimulationConut() - 1, skel->getPositions());
         }
 
         // Root position
         if (mRecordConfig.kinematics.root) {
             auto root_body = skel->getRootBodyNode();
             Eigen::Vector3d root_pos = root_body->getCOM();
-            data["root_x"] = root_pos[0];
-            data["root_y"] = root_pos[1];
-            data["root_z"] = root_pos[2];
+            data["root/x"] = root_pos[0];
+            data["root/y"] = root_pos[1];
+            data["root/z"] = root_pos[2];
         }
 
         // Angle fields
         if (mRecordConfig.kinematics.angle.enabled) {
             if (mRecordConfig.kinematics.angle.hip) {
                 double angle = skel->getJoint("FemurR")->getPosition(0) * 180.0 / M_PI;
-                data["angle_HipR"] = -angle;  // Negate as per Environment.cpp:1035
+                data["angle/HipR"] = -angle;  // Negate as per Environment.cpp:1035
             }
             if (mRecordConfig.kinematics.angle.hip_ir) {
                 double angle = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
-                data["angle_HipIRR"] = -angle;
+                data["angle/HipIRR"] = -angle;
             }
             if (mRecordConfig.kinematics.angle.hip_ab) {
                 double angle = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
-                data["angle_HipAbR"] = -angle;
+                data["angle/HipAbR"] = -angle;
             }
             if (mRecordConfig.kinematics.angle.knee) {
                 double angle = skel->getJoint("TibiaR")->getPosition(0) * 180.0 / M_PI;
-                data["angle_KneeR"] = angle;  // No negation
+                data["angle/KneeR"] = angle;  // No negation
             }
             if (mRecordConfig.kinematics.angle.ankle) {
                 double angle = skel->getJoint("TalusR")->getPosition(0) * 180.0 / M_PI;
-                data["angle_AnkleR"] = -angle;
+                data["angle/AnkleR"] = -angle;
             }
             if (mRecordConfig.kinematics.angle.pelvic_tilt) {
                 double angle = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
-                data["angle_Tilt"] = angle;
+                data["angle/Tilt"] = angle;
             }
             if (mRecordConfig.kinematics.angle.pelvic_rotation) {
                 double angle = skel->getJoint("Pelvis")->getPosition(1) * 180.0 / M_PI;
-                data["angle_Rotation"] = angle;
+                data["angle/Rotation"] = angle;
             }
             if (mRecordConfig.kinematics.angle.pelvic_obliquity) {
                 double angle = skel->getJoint("Pelvis")->getPosition(2) * 180.0 / M_PI;
-                data["angle_Obliquity"] = angle;
+                data["angle/Obliquity"] = angle;
             }
         }
 
         // Angular velocity fields
         if (mRecordConfig.kinematics.anvel.enabled) {
             if (mRecordConfig.kinematics.anvel.hip) {
-                data["anvel_HipR"] = skel->getJoint("FemurR")->getVelocity(0);
+                data["anvel/HipR"] = skel->getJoint("FemurR")->getVelocity(0);
             }
             if (mRecordConfig.kinematics.anvel.knee) {
-                data["anvel_KneeR"] = skel->getJoint("TibiaR")->getVelocity(0);
+                data["anvel/KneeR"] = skel->getJoint("TibiaR")->getVelocity(0);
             }
             if (mRecordConfig.kinematics.anvel.ankle) {
-                data["anvel_AnkleR"] = skel->getJoint("TalusR")->getVelocity(0);
+                data["anvel/AnkleR"] = skel->getJoint("TalusR")->getVelocity(0);
             }
         }
     }
 
-    record->add(mEnv.getSimulationStep() - 1, data);
+    record->add(mEnv.getSimulationConut() - 1, data);
 }
 
 int RolloutEnvironment::GetCycleCount() {

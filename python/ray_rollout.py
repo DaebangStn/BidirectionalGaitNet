@@ -203,25 +203,24 @@ class EnvWorker:
             param_idx: Parameter index for this rollout
             success: Whether rollout completed successfully (reached target cycles)
         """
-        self.all_rollout_data.append((param_idx, self.record.data.copy(), self.fields, success))
+        self.all_rollout_data.append((param_idx, self.record.data.copy(), self.record.matrix_data, self.fields, success))
 
-    def get_all_data(self) -> List[Tuple[int, np.ndarray, List[str]]]:
+    def get_all_data(self) -> List[Tuple[int, np.ndarray, Dict[str, np.ndarray], List[str], bool]]:
         """Get all recorded rollout data"""
         return self.all_rollout_data
     
     def set_mcn_weights(self, weights):
         self.rollout_env.set_mcn_weights(weights)
 
-def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, List[str], bool]],
+def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, Dict[str, np.ndarray], List[str], bool]],
                  output_path: str,
                  sample_dir: Path):
     """Save collected rollout data to HDF5 with hierarchical structure
 
-    Structure: /param_{idx}/field_name datasets
-    Each parameter index gets its own group containing all field datasets
+    Structure: /param_{idx}/cycle_{idx}/field_name datasets
 
     Args:
-        rollout_data: List of (param_idx, data, fields, success) tuples
+        rollout_data: List of (param_idx, data, matrix_data, fields, success) tuples
         output_path: Output HDF5 file path
         sample_dir: Sample directory for error log
     """
@@ -229,30 +228,75 @@ def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, List[str], bool]],
     failed_params = []
 
     with h5py.File(output_path, 'w') as f:
-        for param_idx, data, fields, success in rollout_data:
+        for param_idx, data, matrix_data, fields, success in rollout_data:
             if data.shape[0] == 0:
                 continue  # Skip empty rollouts
 
             # Create group for this parameter index
-            group_name = f"param_{param_idx}"
-            grp = f.create_group(group_name)
-
-            # Store each field as a separate dataset
-            for field_idx, field_name in enumerate(fields):
-                field_data = data[:, field_idx]
-
-                # Use appropriate dtype
-                if field_name in ['step', 'cycle', 'contact_left', 'contact_right']:
-                    grp.create_dataset(field_name, data=field_data.astype(np.int32),
-                                      compression='gzip', compression_opts=4)
-                else:
-                    grp.create_dataset(field_name, data=field_data.astype(np.float32),
-                                      compression='gzip', compression_opts=4)
+            param_group_name = f"param_{param_idx}"
+            param_grp = f.create_group(param_group_name)
 
             # Store metadata as attributes
-            grp.attrs['param_idx'] = param_idx
-            grp.attrs['num_steps'] = data.shape[0]
-            grp.attrs['success'] = success
+            param_grp.attrs['param_idx'] = param_idx
+            param_grp.attrs['num_steps'] = data.shape[0]
+            param_grp.attrs['success'] = success
+
+            # Group by cycle
+            if 'cycle' in fields:
+                cycle_col_idx = fields.index('cycle')
+                cycles = data[:, cycle_col_idx].astype(np.int32)
+                unique_cycles = np.unique(cycles)
+
+                for cycle_idx in unique_cycles:
+                    cycle_mask = (cycles == cycle_idx)
+                    cycle_data = data[cycle_mask]
+
+                    if cycle_data.shape[0] == 0:
+                        continue
+
+                    cycle_group_name = f"cycle_{cycle_idx}"
+                    cycle_grp = param_grp.create_group(cycle_group_name)
+                    cycle_grp.attrs['cycle_idx'] = cycle_idx
+                    cycle_grp.attrs['num_steps'] = cycle_data.shape[0]
+
+                    # Store each scalar field as a separate dataset
+                    for field_idx, field_name in enumerate(fields):
+                        if field_name in matrix_data or field_name == 'cycle':
+                            continue
+
+                        field_data = cycle_data[:, field_idx]
+
+                        # Use appropriate dtype
+                        if field_name in ['step', 'contact_left', 'contact_right']:
+                            cycle_grp.create_dataset(field_name, data=field_data.astype(np.int32),
+                                                     compression='gzip', compression_opts=4)
+                        else:
+                            cycle_grp.create_dataset(field_name, data=field_data.astype(np.float32),
+                                                     compression='gzip', compression_opts=4)
+
+                    # Store each matrix field as a separate dataset
+                    for field_name, matrix in matrix_data.items():
+                        cycle_matrix_data = matrix[cycle_mask]
+                        cycle_grp.create_dataset(field_name, data=cycle_matrix_data.astype(np.float32),
+                                                   compression='gzip', compression_opts=4)
+            else:
+                # Fallback for rollouts without cycle data
+                print(f"Warning: 'cycle' field not found for param_idx={param_idx}. Saving data without cycle grouping.")
+                # Store each scalar field as a separate dataset
+                for field_idx, field_name in enumerate(fields):
+                    if field_name in matrix_data:
+                        continue
+                    field_data = data[:, field_idx]
+                    if field_name in ['step', 'cycle', 'contact_left', 'contact_right']:
+                        param_grp.create_dataset(field_name, data=field_data.astype(np.int32),
+                                             compression='gzip', compression_opts=4)
+                    else:
+                        param_grp.create_dataset(field_name, data=field_data.astype(np.float32),
+                                             compression='gzip', compression_opts=4)
+                # Store each matrix field
+                for field_name, matrix in matrix_data.items():
+                    param_grp.create_dataset(field_name, data=matrix.astype(np.float32),
+                                         compression='gzip', compression_opts=4)
 
             total_rows += data.shape[0]
 
