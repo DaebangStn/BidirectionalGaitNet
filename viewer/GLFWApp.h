@@ -19,7 +19,7 @@ enum MuscleRenderingType
 {
     passiveForce = 0,
     contractileForce,
-    activatonLevel,
+    activationLevel,
     contracture,
     weakness
 };
@@ -90,9 +90,9 @@ private:
 
     void drawSimFrame();
     void drawUIFrame();
-    void drawControlPanel();
-    void drawGaitNetDisplay();
-    void drawVisualizationPanel();
+    void drawSimControlPanel();
+    void drawKinematicsControlPanel();
+    void drawSimVisualizationPanel();
     void drawCameraStatusSection();
 
     void printCameraInfo();
@@ -112,7 +112,7 @@ private:
     void drawShape(const dart::dynamics::Shape *shape, const Eigen::Vector4d &color);
 
     void drawAxis();
-    void drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingType renderingType = activatonLevel);
+    void drawMuscles(MuscleRenderingType renderingType = activationLevel);
 
     void drawShadow();
 
@@ -156,7 +156,7 @@ private:
     double mZoom, mPersp, mMouseX, mMouseY;
     Eigen::Vector3d mTrans, mEye, mUp;
     Eigen::Vector3d mRelTrans;  // User's manual translation offset (preserved across focus modes)
-    int mCameraMoving, mFocus;
+    int mFocus;
 
     // Skeleton for kinematic drawing
     dart::dynamics::SkeletonPtr mMotionSkeleton;
@@ -193,10 +193,6 @@ private:
 
     // Using Weights
     std::vector<bool> mUseWeights;
-
-    // Screen Record
-    bool mScreenRecord;
-    int mScreenIdx;
 
     std::vector<std::string> mFGNList;
     std::vector<std::string> mBGNList;

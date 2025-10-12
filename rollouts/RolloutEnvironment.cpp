@@ -81,12 +81,9 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
 
     // Kinematics fields
     if (mRecordConfig.kinematics.enabled) {
-        // All joint positions
+        // All joint positions as a single vector
         if (mRecordConfig.kinematics.all) {
-            Eigen::VectorXd positions = skel->getPositions();
-            for (int i = 0; i < positions.size(); ++i) {
-                data["pos_" + std::to_string(i)] = positions[i];
-            }
+            record->addVector("motions", mEnv.getSimulationStep() - 1, skel->getPositions());
         }
 
         // Root position
@@ -217,4 +214,3 @@ std::vector<std::string> RolloutEnvironment::GetParameterNames() {
     const std::vector<std::string>& param_names = mEnv.getParamName();
     return std::vector<std::string>(param_names.begin(), param_names.end());
 }
-

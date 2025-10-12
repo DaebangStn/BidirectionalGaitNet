@@ -73,7 +73,7 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
     fields.push_back("phase");
     fields.push_back("cycle");
 
-    // Foot contact/GRF fields
+    // Contact/GRF fields
     if (config.foot.enabled) {
         if (config.foot.contact_left) fields.push_back("contact_left");
         if (config.foot.contact_right) fields.push_back("contact_right");
@@ -83,11 +83,8 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
 
     // Kinematics fields
     if (config.kinematics.enabled) {
-        // All joint positions (requires skeleton_dof parameter)
-        if (config.kinematics.all && skeleton_dof > 0) {
-            for (int i = 0; i < skeleton_dof; ++i) {
-                fields.push_back("pos_" + std::to_string(i));
-            }
+        if (config.kinematics.all) {
+            fields.push_back("motions");
         }
 
         // Root position
@@ -122,43 +119,48 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
 
 RolloutRecord::RolloutRecord(const std::vector<std::string>& field_names)
     : mFieldNames(field_names), mNcol(field_names.size()), mNrow(0) {
-    
-    // Build field to index map
     for (size_t i = 0; i < field_names.size(); ++i) {
         mFieldToIdx[field_names[i]] = i;
     }
-    
-    // Initialize with initial chunk
-    mData = Eigen::MatrixXd::Zero(DATA_CHUNK_SIZE, mNcol);
+    resize_if_needed(0);
 }
 
 RolloutRecord::RolloutRecord(const RecordConfig& config)
     : RolloutRecord(FieldsFromConfig(config)) {}
 
 void RolloutRecord::resize_if_needed(unsigned int requested_size) {
-    if (requested_size > static_cast<unsigned int>(mData.rows())) {
-        unsigned int old_rows = mData.rows();
-        unsigned int new_rows = ((requested_size / DATA_CHUNK_SIZE) + 1) * DATA_CHUNK_SIZE;
-        
-        mData.conservativeResize(new_rows, Eigen::NoChange);
-        mData.block(old_rows, 0, new_rows - old_rows, mNcol).setZero();
+    if (requested_size >= mData.rows()) {
+        Eigen::MatrixXd new_data(mData.rows() + DATA_CHUNK_SIZE, mNcol);
+        if (mNrow > 0) {
+            new_data.topRows(mNrow) = mData.topRows(mNrow);
+        }
+        mData = std::move(new_data);
     }
 }
 
 void RolloutRecord::add(unsigned int sim_step, const std::unordered_map<std::string, double>& data) {
-    resize_if_needed(sim_step + 1);
-    mNrow = std::max(mNrow, sim_step + 1);
-    
-    for (const auto& [field, value] : data) {
-        auto it = mFieldToIdx.find(field);
+    resize_if_needed(mNrow + 1);
+
+    for (const auto& [key, value] : data) {
+        auto it = mFieldToIdx.find(key);
         if (it != mFieldToIdx.end()) {
-            mData(sim_step, it->second) = value;
+            mData(mNrow, it->second) = value;
         }
+    }
+    mNrow++;
+}
+
+void RolloutRecord::addVector(const std::string& key, int step, const Eigen::VectorXd& data) {
+    resize_if_needed(step + 1);
+    auto it = mFieldToIdx.find(key);
+    if (it != mFieldToIdx.end()) {
+        mData(step, it->second) = data(0);
+    }
+    if (step >= mNrow) {
+        mNrow = step + 1;
     }
 }
 
 void RolloutRecord::reset() {
     mNrow = 0;
-    mData.setZero();
 }
-

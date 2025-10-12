@@ -1,15 +1,11 @@
-#ifndef STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#endif
-#ifndef STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#endif
 #include "GLFWApp.h"
 #include "UriResolver.h"
 #include "stb_image.h"
 #include "stb_image_write.h"
 #include <filesystem>
 #include <algorithm>
+
+
 const std::vector<std::string> CHANNELS =
     {
         "Xposition",
@@ -28,6 +24,7 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
 
 GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 {
+    mRenderEnv = nullptr;
     mGVAELoaded = false;
     mRenderConditions = false;
 
@@ -57,10 +54,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mUp = Eigen::Vector3d(0.0, 1.0, 0.0);
     mDrawOBJ = true;
 
-    // Screen Record
-    mScreenRecord = false;
-    mScreenIdx = 0;
-
     // Rendering Option
     mDrawReferenceSkeleton = false;
     mDrawCharacter = true;
@@ -70,7 +63,7 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mDrawFootStep = false;
     mDrawEOE = false;
 
-    mMuscleRenderType = activatonLevel;
+    mMuscleRenderType = activationLevel;
     mMuscleRenderTypeInt = 2;
     mMuscleResolution = 0.0;
 
@@ -120,8 +113,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     // C3D
     selected_c3d = 0;
 
-    // mCameraSetting
-    mCameraMoving = 0;
     mFocus = 1;
     mRenderC3D = false;
 
@@ -180,6 +171,10 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 
     auto keyCallback = [](GLFWwindow *window, int key, int scancode, int action, int mods)
     {
+        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+        {
+            glfwSetWindowShouldClose(window, true);
+        }
         auto &io = ImGui::GetIO();
         if (!io.WantCaptureKeyboard)
         {
@@ -399,6 +394,8 @@ void GLFWApp::writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const
 
 void GLFWApp::exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::dynamics::SkeletonPtr &skel)
 {
+    if (!mRenderEnv)
+        return;
 
     std::ofstream bvh;
     bvh.open("motion1.bvh");
@@ -446,6 +443,7 @@ void GLFWApp::exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::
 
 void GLFWApp::update(bool _isSave)
 {
+    if (!mRenderEnv) return;
     Eigen::VectorXf action = (mNetworks.size() > 0 ? mNetworks[0].joint.attr("get_action")(mRenderEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>() : mRenderEnv->getAction().cast<float>());
 
     mRenderEnv->setAction(action.cast<double>());
@@ -585,6 +583,8 @@ void GLFWApp::_setXminToHeelStrike()
         return;
     }
 
+    if (!mRenderEnv) return;
+
     std::vector<double> contact_phase_buffer = mGraphData->get("contact_phaseR");
 
     // Ensure there are at least two points to compare for transitions
@@ -632,38 +632,12 @@ void GLFWApp::startLoop()
 {
     while (!glfwWindowShouldClose(mWindow))
     {
-        if (glfwGetKey(mWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        {
-            glfwSetWindowShouldClose(mWindow, true);
-        }
-
         // Simulation Step
         if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0) update();
 
         // Rendering
         drawSimFrame();
-
-        if (!mScreenRecord) drawUIFrame();
-        else
-        {
-            int width, height;
-            glfwGetFramebufferSize(mWindow, &width, &height);
-            unsigned char *pixels = new unsigned char[width * height * 4];
-            glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-            int stride = 4 * width;
-            std::vector<unsigned char> flipped_pixels(stride * height);
-            for (int y = 0; y < height; ++y)
-                memcpy(&flipped_pixels[y * stride], &pixels[(height - y - 1) * stride], stride);
-            std::string filename = "../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png";
-            const int channels = 4;
-            const int stride_in_bytes = width * channels;
-            stbi_write_png(filename.c_str(), width, height, channels, flipped_pixels.data(), stride_in_bytes);
-            // lodepng::encode(("../screenshots/screenshot" + std::to_string(mScreenIdx) + ".png").c_str(), flipped_pixels.data(), width, height);
-            std::cout << "Saving screenshot" << mScreenIdx << ".png ...... " << std::endl;
-            delete[] pixels;
-            mScreenIdx++;
-        }
-
+        drawUIFrame();
         glfwPollEvents();
         glfwSwapBuffers(mWindow);
     }
@@ -722,6 +696,11 @@ void GLFWApp::initGL()
 
 void GLFWApp::initEnv(std::string metadata)
 {
+    if (mRenderEnv)
+    {
+        delete mRenderEnv;
+        mRenderEnv = nullptr;
+    }
     // Create RenderEnvironment wrapper
     mRenderEnv = new RenderEnvironment(metadata, mGraphData);
     
@@ -801,23 +780,19 @@ void GLFWApp::drawAxis()
     GUI::DrawLine(Eigen::Vector3d(0, 2E-3, 0), Eigen::Vector3d(0.0, 0.0, 0.5), Eigen::Vector3d(0.0, 0.0, 1.0));
 }
 
-void GLFWApp::
-    drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &color)
+void GLFWApp::drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &color)
 {
-    if (!bn)
-        return;
+    if (!bn) return;
 
     glPushMatrix();
     glMultMatrixd(bn->getTransform().data());
 
     bn->eachShapeNodeWith<VisualAspect>([this, &color](const dart::dynamics::ShapeNode* sn) {
-        if (!sn)
-            return true;
+        if (!sn) return true;
 
         const auto &va = sn->getVisualAspect();
 
-        if (!va || va->isHidden())
-            return true;
+        if (!va || va->isHidden()) return true;
 
         glPushMatrix();
         Eigen::Affine3d tmp = sn->getRelativeTransform();
@@ -832,11 +807,21 @@ void GLFWApp::
     glPopMatrix();
 }
 
-void GLFWApp::drawGaitNetDisplay()
+void GLFWApp::drawKinematicsControlPanel()
 {
     ImGui::SetNextWindowSize(ImVec2(400, mHeight - 80), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 810, 10), ImGuiCond_Once);
-    ImGui::Begin("GaitNet");
+    ImGui::SetNextWindowPos(ImVec2(mControlPanelWidth + 10, 10), ImGuiCond_Once);
+    ImGui::Begin("Kinematics Control");
+
+    // Todo: motion control panel here
+
+    if (!mRenderEnv)
+    {
+        ImGui::Separator();
+        ImGui::Text("Environment not loaded.");
+        ImGui::End();
+        return;
+    }
     // mFGNList
     ImGui::Checkbox("Draw FGN Result\t", &mDrawFGNSkeleton);
     if (ImGui::CollapsingHeader("FGN"))
@@ -1106,7 +1091,6 @@ void GLFWApp::drawGaitNetDisplay()
         save_motions(motions, params);
     }
 
-    ImGui::End();
     if (mGVAELoaded)
         if (ImGui::CollapsingHeader("Predicted Parameters"))
         {
@@ -1120,17 +1104,27 @@ void GLFWApp::drawGaitNetDisplay()
                 idx++;
             }
         }
+    ImGui::End();
     mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
 }
 
-void GLFWApp::drawVisualizationPanel()
+void GLFWApp::drawSimVisualizationPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight - 80), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(mWidth - mPlotPanelWidth - 10, 10), ImGuiCond_Once);
-    ImGui::Begin("Plots");
     
-    // Status & Metadata
-    if (ImGui::CollapsingHeader("Status & Metadata", ImGuiTreeNodeFlags_DefaultOpen))
+    ImGui::SetNextWindowPos(ImVec2(mWidth - mPlotPanelWidth - 10, 10), ImGuiCond_Once);
+    if (!mRenderEnv)
+    {
+        ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, 60), ImGuiCond_Always);
+        ImGui::Begin("Sim visualization##1", nullptr, ImGuiWindowFlags_NoCollapse);
+        ImGui::Text("Environment not loaded.");
+        ImGui::End();
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight - 80), ImGuiCond_Appearing);
+    ImGui::Begin("Sim visualization##2");
+
+    // Status
+    if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::Text("Elapsed Time    : %.3f s", mRenderEnv->getWorld()->getTime());
         ImGui::Text("Phase           : %.3f", std::fmod(mRenderEnv->getCharacter(0)->getLocalTime(), (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence())) / (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence()));
@@ -1139,6 +1133,15 @@ void GLFWApp::drawVisualizationPanel()
         ImGui::Text("Current Vel     : %.3f m/s", mRenderEnv->getCharacter(0)->getSkeleton()->getCOMLinearVelocity()[2]);
 
         ImGui::Separator();
+        
+        ImGui::Indent();
+        if (ImGui::CollapsingHeader("Metadata"))
+        {
+            if (ImGui::Button("Print"))
+                std::cout << mRenderEnv->getMetadata() << std::endl;
+            ImGui::TextUnformatted(mRenderEnv->getMetadata().c_str());
+        }
+        ImGui::Unindent();
 
         // Rollout status display
         if (mRolloutStatus.cycle == -1)
@@ -1592,8 +1595,8 @@ void GLFWApp::drawCameraStatusSection() {
 
 void GLFWApp::drawJointControlSection() {
     if (ImGui::CollapsingHeader("Joint")) {
-        if (!mRenderEnv->getCharacter(0)) {
-            ImGui::TextDisabled("Load character first");
+        if (!mRenderEnv || !mRenderEnv->getCharacter(0)) {
+            ImGui::TextDisabled("Load environment first");
         } else {
             auto skel = mRenderEnv->getCharacter(0)->getSkeleton();
             
@@ -1790,11 +1793,29 @@ void GLFWApp::loadCameraPreset(int index) {
     mCurrentCameraPreset = index;
 }
 
-void GLFWApp::drawControlPanel()
+void GLFWApp::drawSimControlPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight - 80), ImGuiCond_Once);
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
-    ImGui::Begin("Controls");
+    if (!mRenderEnv) {
+        ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, 60), ImGuiCond_Always);
+        ImGui::Begin("Sim Control##1", nullptr, ImGuiWindowFlags_NoCollapse);
+        if (ImGui::Button("Load Environment")) initEnv(mCachedMetadata);
+        ImGui::End();
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight - 80), ImGuiCond_Appearing);
+    ImGui::Begin("Sim Control##2");
+    
+    if (ImGui::Button("Unload Environment"))
+    {
+        delete mRenderEnv;
+        mRenderEnv = nullptr;
+    }
+
+    if (!mRenderEnv) {
+        ImGui::End();
+        return;
+    }
 
     // Rollout Control
     if (ImGui::CollapsingHeader("Rollout", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1989,39 +2010,39 @@ void GLFWApp::drawControlPanel()
     // Related Dof Muscle Rendering
     // mSelectedMuscles.clear();
     // Muscle Selection
-    if (ImGui::CollapsingHeader("Muscle Selection"))
-    {
-        for (int i = 0; i < mRelatedDofs.size(); i += 2)
-        {
-            bool dof_plus, dof_minus;
-            dof_plus = mRelatedDofs[i];
-            dof_minus = mRelatedDofs[i + 1];
-            ImGui::Checkbox((std::to_string(i / 2) + " +").c_str(), &dof_plus);
-            ImGui::SameLine();
-            ImGui::Checkbox((std::to_string(i / 2) + " -").c_str(), &dof_minus);
-            mRelatedDofs[i] = dof_plus;
-            mRelatedDofs[i + 1] = dof_minus;
-        }
+    // if (ImGui::CollapsingHeader("Muscle Selection"))
+    // {
+    //     for (int i = 0; i < mRelatedDofs.size(); i += 2)
+    //     {
+    //         bool dof_plus, dof_minus;
+    //         dof_plus = mRelatedDofs[i];
+    //         dof_minus = mRelatedDofs[i + 1];
+    //         ImGui::Checkbox((std::to_string(i / 2) + " +").c_str(), &dof_plus);
+    //         ImGui::SameLine();
+    //         ImGui::Checkbox((std::to_string(i / 2) + " -").c_str(), &dof_minus);
+    //         mRelatedDofs[i] = dof_plus;
+    //         mRelatedDofs[i + 1] = dof_minus;
+    //     }
 
-        // Check related dof
-        for (auto m : mRenderEnv->getCharacter(0)->getMuscles())
-        {
-            Eigen::VectorXd related_vec = m->GetRelatedVec();
-            for (int i = 0; i < related_vec.rows(); i++)
-            {
-                if (related_vec[i] > 0 && mRelatedDofs[i * 2])
-                {
-                    mSelectedMuscles.push_back(m);
-                    break;
-                }
-                else if (related_vec[i] < 0 && mRelatedDofs[i * 2 + 1])
-                {
-                    mSelectedMuscles.push_back(m);
-                    break;
-                }
-            }
-        }
-    }
+    //     // Check related dof
+    //     for (auto m : mRenderEnv->getCharacter(0)->getMuscles())
+    //     {
+    //         Eigen::VectorXd related_vec = m->GetRelatedVec();
+    //         for (int i = 0; i < related_vec.rows(); i++)
+    //         {
+    //             if (related_vec[i] > 0 && mRelatedDofs[i * 2])
+    //             {
+    //                 mSelectedMuscles.push_back(m);
+    //                 break;
+    //             }
+    //             else if (related_vec[i] < 0 && mRelatedDofs[i * 2 + 1])
+    //             {
+    //                 mSelectedMuscles.push_back(m);
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // }
 
     // Network
     if (ImGui::CollapsingHeader("Network"))
@@ -2045,14 +2066,6 @@ void GLFWApp::drawControlPanel()
         }
     }
 
-    // Metadata
-    if (ImGui::CollapsingHeader("Metadata"))
-    {
-        if (ImGui::Button("Print"))
-            std::cout << mRenderEnv->getMetadata() << std::endl;
-        ImGui::TextUnformatted(mRenderEnv->getMetadata().c_str());
-    }
-
     ImGui::End();
 }
 
@@ -2061,31 +2074,33 @@ void GLFWApp::drawUIFrame()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    drawControlPanel();
-    drawVisualizationPanel();
-    drawGaitNetDisplay();
+    drawSimControlPanel();
+    drawSimVisualizationPanel();
+    drawKinematicsControlPanel();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 void GLFWApp::drawPhase(double phase, double normalized_phase)
 {
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
 
-    glPushMatrix();
-
     glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
     glLoadIdentity();
     glViewport(0, 0, mWidth, mHeight);
     gluOrtho2D(0.0, (GLdouble)mWidth, 0.0, (GLdouble)mHeight);
 
     glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
     glLoadIdentity();
 
     glLineWidth(1.0);
     glColor3f(0.0f, 0.0f, 0.0f);
-    glTranslatef(mHeight * 0.05, mHeight * 0.05, 0.0f);
+    glTranslatef(mWidth * 0.5, mHeight * 0.05, 0.0f);
     glBegin(GL_LINE_LOOP);
     for (int i = 0; i < 360; i++)
     {
@@ -2099,7 +2114,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
     glColor3f(1, 0, 0);
     glBegin(GL_LINES);
     glVertex2d(0, 0);
-    glVertex2d(mHeight * 0.04 * sin(normalized_phase * 2 * M_PI), mHeight * 0.04 * cos(normalized_phase * M_PI * 2));
+    glVertex2d(mHeight * 0.04 * sin(normalized_phase * 2 * M_PI), mHeight * 0.04 * cos(normalized_phase * 2 * M_PI));
     glEnd();
 
     glColor3f(0, 0, 0);
@@ -2107,30 +2122,33 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 
     glBegin(GL_LINES);
     glVertex2d(0, 0);
-    glVertex2d(mHeight * 0.04 * sin(phase * 2 * M_PI), mHeight * 0.04 * cos(phase * M_PI * 2));
+    glVertex2d(mHeight * 0.04 * sin(phase * 2 * M_PI), mHeight * 0.04 * cos(phase * 2 * M_PI));
     glEnd();
 
-    glPushMatrix();
     glPointSize(2.0);
     glBegin(GL_POINTS);
-    glVertex2d(mHeight * 0.04 * sin(phase * 2 * M_PI), mHeight * 0.04 * cos(phase * M_PI * 2));
+    glVertex2d(mHeight * 0.04 * sin(phase * 2 * M_PI), mHeight * 0.04 * cos(phase * 2 * M_PI));
     glEnd();
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
 
-    glPopMatrix();
+    glPopAttrib();
 }
 
 void GLFWApp::drawSimFrame()
 {
     initGL();
-    setCamera();
+    if (mRenderEnv) setCamera();
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
 
     glViewport(0, 0, mWidth, mHeight);
     gluPerspective(mPersp, mWidth / mHeight, 0.1, 100.0);
-    gluLookAt(mEye[0], mEye[1], mEye[2], 0.0, 0.0, -1.0, mUp[0], mUp[1], mUp[2]);
+    gluLookAt(mEye[0], mEye[1], mEye[2], 0.0, 0.0, 0.0, mUp[0], mUp[1], mUp[2]);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
@@ -2144,35 +2162,108 @@ void GLFWApp::drawSimFrame()
     glTranslatef(totalTrans[0] * 0.001, totalTrans[1] * 0.001, totalTrans[2] * 0.001);
     glEnable(GL_DEPTH_TEST);
 
+    if (!mRenderConditions) drawGround(1E-3);
+
     // Simulated Character
-    if (mDrawCharacter)
-    {
-        drawSkeleton(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 1.0));
-
-        // drawSkeleton(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 1.0), true);
-
-        if (!mRenderConditions)
-            drawShadow();
-        if (mSelectedMuscles.size() > 0)
-            drawMuscles(mSelectedMuscles, mMuscleRenderType);
-        else
+    if (mRenderEnv){
+        drawPhase(mRenderEnv->getLocalPhase(true), mRenderEnv->getNormalizedPhase());    
+        if (mDrawCharacter)
         {
-            if (mRenderConditions)
-            {
-                if (mCameraMoving < -200)
-                    mMuscleRenderType = contracture;
-                else
-                    mMuscleRenderType = weakness;
-            }
-            drawMuscles(mRenderEnv->getCharacter(0)->getMuscles(), mMuscleRenderType);
+            drawSkeleton(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 1.0));
+            if (!mRenderConditions) drawShadow();
+            if (mMuscleSelectionStates.size() > 0) drawMuscles(mMuscleRenderType);
         }
-    }
-
-    //  BVH
-    if (mDrawReferenceSkeleton && !mRenderConditions)
-    {
-        Eigen::VectorXd pos = (mDrawPDTarget ? mRenderEnv->getCharacter(0)->getPDTarget() : mRenderEnv->getTargetPositions());
-        drawSkeleton(pos, Eigen::Vector4d(1.0, 0.35, 0.35, 1.0));
+        if ((mRenderEnv->getRewardType() == gaitnet) && mDrawFootStep) drawFootStep();
+        if (mDrawJointSphere)
+        {
+            for (auto jn : mRenderEnv->getCharacter(0)->getSkeleton()->getJoints())
+            {
+                Eigen::Vector3d jn_pos = jn->getChildBodyNode()->getTransform() * jn->getTransformFromChildBodyNode() * Eigen::Vector3d::Zero();
+                glColor4f(0.0, 0.0, 0.0, 1.0);
+                GUI::DrawSphere(jn_pos, 0.01);
+                glColor4f(0.5, 0.5, 0.5, 0.2);
+                GUI::DrawSphere(jn_pos, 0.1);
+            }
+        }
+        if (mDrawReferenceSkeleton && !mRenderConditions)
+        {
+            Eigen::VectorXd pos = (mDrawPDTarget ? mRenderEnv->getCharacter(0)->getPDTarget() : mRenderEnv->getTargetPositions());
+            drawSkeleton(pos, Eigen::Vector4d(1.0, 0.35, 0.35, 1.0));
+        }
+        if (mDrawEOE)
+        {
+            glColor4f(1.0, 0.0, 0.0, 1.0);
+            GUI::DrawSphere(mRenderEnv->getCharacter(0)->getSkeleton()->getCOM(), 0.01);
+            glColor4f(0.5, 0.5, 0.8, 0.2);
+            glBegin(GL_QUADS);
+            glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), -10);
+            glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), -10);
+            glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), 10);
+            glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), 10);
+            glEnd();
+        }
+        if (mMotions.size() > 0)
+        {
+            // GVAE
+            // For Debugging
+            if (mDrawMotion)
+            {
+                Eigen::VectorXd motion_pos; // Eigen::VectorXd::Zero(101);
+                // mMotionFrsameIdx %= 60;
+    
+                double phase = mRenderEnv->getGlobalTime() / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
+                phase = fmod(phase, 2.0);
+    
+                int idx_0 = (int)(phase * 30);
+                int idx_1 = (idx_0 + 1);
+    
+                // Interpolation between idx_0 and idx_1
+                motion_pos = mRenderEnv->getCharacter(0)->sixDofToPos(mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60))) + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60)));
+    
+                // Root Offset
+                if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+                {
+                    mMotionRootOffset[0] += motion_pos[3] * 0.5;
+                    mMotionRootOffset[1] = motion_pos[4];
+                    mMotionRootOffset[2] += motion_pos[5] * 0.5;
+                }
+                motion_pos.segment(3, 3) = mMotionRootOffset;
+    
+                drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
+            }
+    
+            // Draw Output Motion
+            // Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
+            // input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
+            // Eigen::VectorXd output = mGVAE.attr("render_forward")(input.cast<float>()).cast<Eigen::VectorXd>();
+            // std::cout << "[DEBUG] Out put " << output.rows() << std::endl;
+            // drawMotions(output, mMotions[mMotionIdx].param, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
+            // drawMotions(mPredictedMotion.motion, mPredictedMotion.param, Eigen::Vector3d(1.0, 0.0, 0.0), Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
+        }
+        // FGN
+        if (mDrawFGNSkeleton)
+        {
+            Eigen::VectorXd FGN_in = Eigen::VectorXd::Zero(mRenderEnv->getNumParamState() + 2);
+            Eigen::VectorXd phase = Eigen::VectorXd::Zero(2);
+    
+            phase[0] = sin(2 * M_PI * mRenderEnv->getNormalizedPhase());
+            phase[1] = cos(2 * M_PI * mRenderEnv->getNormalizedPhase());
+    
+            FGN_in << mRenderEnv->getNormalizedParamStateFromParam(mRenderEnv->getParamState()), phase;
+    
+            Eigen::VectorXd res = mFGN.attr("get_action")(FGN_in).cast<Eigen::VectorXd>();
+            if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+            {
+                // Because of display Hz
+                mFGNRootOffset[0] += res[6] * 0.5;
+                mFGNRootOffset[2] += res[8] * 0.5;
+            }
+            res[6] = mFGNRootOffset[0];
+            res[8] = mFGNRootOffset[2];
+    
+            Eigen::VectorXd pos = mRenderEnv->getCharacter(0)->sixDofToPos(res);
+            drawSkeleton(pos, Eigen::Vector4d(0.35, 0.35, 1.0, 1.0));
+        }    
     }
 
     // Draw Marker Network
@@ -2222,121 +2313,8 @@ void GLFWApp::drawSimFrame()
         // drawSkeleton(mRenderEnv->getCharacter(0)->sixDofToPos(mC3DReader->mConvertedPos[mC3DCount % mC3DReader->mConvertedPos.size()]), Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
     }
 
-    // drawCollision();
+    if (mMouseDown) drawAxis();
 
-    if (mMouseDown)
-        drawAxis();
-
-    if ((mRenderEnv->getRewardType() == gaitnet) && mDrawFootStep)
-        drawFootStep();
-
-    if (mDrawJointSphere)
-    {
-        for (auto jn : mRenderEnv->getCharacter(0)->getSkeleton()->getJoints())
-        {
-            Eigen::Vector3d jn_pos = jn->getChildBodyNode()->getTransform() * jn->getTransformFromChildBodyNode() * Eigen::Vector3d::Zero();
-            glColor4f(0.0, 0.0, 0.0, 1.0);
-            GUI::DrawSphere(jn_pos, 0.01);
-            glColor4f(0.5, 0.5, 0.5, 0.2);
-            GUI::DrawSphere(jn_pos, 0.1);
-        }
-    }
-
-    if (mDrawEOE)
-    {
-        glColor4f(1.0, 0.0, 0.0, 1.0);
-        GUI::DrawSphere(mRenderEnv->getCharacter(0)->getSkeleton()->getCOM(), 0.01);
-        glColor4f(0.5, 0.5, 0.8, 0.2);
-        glBegin(GL_QUADS);
-        glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), -10);
-        glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), -10);
-        glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), 10);
-        glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), 10);
-        glEnd();
-    }
-
-    // Draw marker
-    // {
-    //     glColor4f(0.0, 1.0, 0.0, 1.0);
-    //     for(auto m : mMarkerSet)
-    //     {
-    //         Eigen::Vector3d p = m.getGlobalPos();
-    //         GUI::DrawSphere(p, 0.01);
-    //     }
-    // }
-
-    // Draw Motion
-    if (mMotions.size() > 0)
-    {
-
-        // GVAE
-
-        // For Debugging
-        if (mDrawMotion)
-        {
-
-            Eigen::VectorXd motion_pos; // Eigen::VectorXd::Zero(101);
-            // mMotionFrsameIdx %= 60;
-
-            double phase = mRenderEnv->getGlobalTime() / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
-            phase = fmod(phase, 2.0);
-
-            int idx_0 = (int)(phase * 30);
-            int idx_1 = (idx_0 + 1);
-
-            // Interpolation between idx_0 and idx_1
-            motion_pos = mRenderEnv->getCharacter(0)->sixDofToPos(mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60))) + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60)));
-
-            // Root Offset
-            if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-            {
-                mMotionRootOffset[0] += motion_pos[3] * 0.5;
-                mMotionRootOffset[1] = motion_pos[4];
-                mMotionRootOffset[2] += motion_pos[5] * 0.5;
-            }
-            motion_pos.segment(3, 3) = mMotionRootOffset;
-
-            drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-        }
-
-        // Draw Output Motion
-        // Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
-        // input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
-        // Eigen::VectorXd output = mGVAE.attr("render_forward")(input.cast<float>()).cast<Eigen::VectorXd>();
-        // std::cout << "[DEBUG] Out put " << output.rows() << std::endl;
-        // drawMotions(output, mMotions[mMotionIdx].param, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-        // drawMotions(mPredictedMotion.motion, mPredictedMotion.param, Eigen::Vector3d(1.0, 0.0, 0.0), Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-    }
-    // FGN
-    if (mDrawFGNSkeleton)
-    {
-        Eigen::VectorXd FGN_in = Eigen::VectorXd::Zero(mRenderEnv->getNumParamState() + 2);
-        Eigen::VectorXd phase = Eigen::VectorXd::Zero(2);
-
-        phase[0] = sin(2 * M_PI * mRenderEnv->getNormalizedPhase());
-        phase[1] = cos(2 * M_PI * mRenderEnv->getNormalizedPhase());
-
-        FGN_in << mRenderEnv->getNormalizedParamStateFromParam(mRenderEnv->getParamState()), phase;
-
-        Eigen::VectorXd res = mFGN.attr("get_action")(FGN_in).cast<Eigen::VectorXd>();
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-        {
-            // Because of display Hz
-            mFGNRootOffset[0] += res[6] * 0.5;
-            mFGNRootOffset[2] += res[8] * 0.5;
-        }
-        res[6] = mFGNRootOffset[0];
-        res[8] = mFGNRootOffset[2];
-
-        Eigen::VectorXd pos = mRenderEnv->getCharacter(0)->sixDofToPos(res);
-        drawSkeleton(pos, Eigen::Vector4d(0.35, 0.35, 1.0, 1.0));
-    }
-
-    if (!mRenderConditions)
-        drawGround(1E-3);
-
-    if (!mScreenRecord)
-        drawPhase(mRenderEnv->getLocalPhase(true), mRenderEnv->getNormalizedPhase());
 }
 
 void GLFWApp::drawGround(double height)
@@ -2422,14 +2400,16 @@ void GLFWApp::mousePress(int button, int action, int mods)
 void GLFWApp::reset()
 {
     mC3DCount = 0;
-    mRenderEnv->reset();
-    mFGNRootOffset = mRenderEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getPositions().tail(3);
     mGraphData->clear_all();
-    mUseWeights = mRenderEnv->getUseWeights();
-
     mMotionRootOffset = Eigen::Vector3d::Zero();
     mMotionRootOffset[0] = 1.0;
     mC3DCOM = Eigen::Vector3d::Zero();
+
+    if (mRenderEnv) {
+        mRenderEnv->reset();
+        mFGNRootOffset = mRenderEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getPositions().tail(3);
+        mUseWeights = mRenderEnv->getUseWeights();
+    }
 }
 
 void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
@@ -2501,8 +2481,6 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         case GLFW_KEY_0:
         case GLFW_KEY_KP_0:
             loadCameraPreset(0);
-            // mScreenIdx = 0;
-            // mScreenRecord = !mScreenRecord;
             break;
         case GLFW_KEY_1:
         case GLFW_KEY_KP_1:
@@ -2512,49 +2490,6 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         case GLFW_KEY_KP_2:
             loadCameraPreset(2);
             break;
-        // case GLFW_KEY_5:
-        // case GLFW_KEY_KP_5:
-        //     mCameraMoving = 0;
-        //     mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
-        //     break;
-
-        // case GLFW_KEY_7:
-        // case GLFW_KEY_KP_7:
-        //     mCameraMoving -= 100;
-        //     break;
-        // case GLFW_KEY_9:
-        // case GLFW_KEY_KP_9:
-        //     mCameraMoving += 100;
-        //     break;
-
-        // case GLFW_KEY_8:
-        // case GLFW_KEY_KP_8:
-        //     mTrackball.setQuaternion(Eigen::Quaterniond(Eigen::AngleAxisd(0.01 * M_PI, Eigen::Vector3d::UnitX())) * mTrackball.getCurrQuat());
-        //     break;
-
-        // case GLFW_KEY_3:
-        // case GLFW_KEY_KP_3: // Muscle Information Rendering
-        //     mFocus = 1;
-        //     mCameraMoving = -400;
-        //     mEye = Eigen::Vector3d(0, 0, 2.92526);
-        //     mRenderConditions = !mRenderConditions;
-        //     if (mRenderConditions)
-        //         glfwSetWindowSize(mWindow, mWidth / 3.0, mHeight);
-        //     else
-        //     {
-        //         glfwSetWindowSize(mWindow, 1920, mHeight);
-        //         mCameraMoving = 0;
-        //     }
-        //     {
-        //         Eigen::VectorXd pos = mRenderEnv->getCharacter(0)->getSkeleton()->getPositions().setZero();
-        //         Eigen::VectorXd vel = mRenderEnv->getCharacter(0)->getSkeleton()->getVelocities().setZero();
-        //         pos[41] = 1.5;
-        //         pos[51] = -1.5;
-        //         mRenderEnv->getCharacter(0)->getSkeleton()->setPositions(pos);
-        //         mRenderEnv->getCharacter(0)->getSkeleton()->setVelocities(vel);
-        //     }
-        //     break;
-
         // case GLFW_KEY_B:
             // reset();
 // 
@@ -2709,19 +2644,6 @@ void GLFWApp::setCamera()
         mTrans[2] = -mFGNRootOffset[2];
         mTrans *= 1000;
     }
-
-    if (mCameraMoving < 0) // Negative
-    {
-        mCameraMoving++;
-        Eigen::Quaterniond r = Eigen::Quaterniond(Eigen::AngleAxisd(0.005 * M_PI, Eigen::Vector3d::UnitY())) * mTrackball.getCurrQuat();
-        mTrackball.setQuaternion(r);
-    }
-    if (mCameraMoving > 0) // Positive
-    {
-        mCameraMoving--;
-        Eigen::Quaterniond r = Eigen::Quaterniond(Eigen::AngleAxisd(-0.005 * M_PI, Eigen::Vector3d::UnitY())) * mTrackball.getCurrQuat();
-        mTrackball.setQuaternion(r);
-    }
 }
 
 void GLFWApp::drawCollision()
@@ -2745,7 +2667,7 @@ void GLFWApp::drawCollision()
     }
 }
 
-void GLFWApp::drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingType renderingType)
+void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
 {
     int count = 0;
     glEnable(GL_LIGHTING);
@@ -2753,6 +2675,7 @@ void GLFWApp::drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingTy
     glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_DEPTH_TEST);
 
+    auto muscles = mRenderEnv->getCharacter(0)->getMuscles();
     for (int i = 0; i < muscles.size(); i++)
     {
         // Skip if muscle is not selected (using same order as environment)
@@ -2764,7 +2687,7 @@ void GLFWApp::drawMuscles(const std::vector<Muscle *> muscles, MuscleRenderingTy
         Eigen::Vector4d color;
         switch (renderingType)
         {
-        case activatonLevel:
+        case activationLevel:
             color = Eigen::Vector4d(0.2 + 1.6 * a, 0.2, 0.2, mMuscleTransparency + 0.9 * a);
             break;
         case passiveForce:

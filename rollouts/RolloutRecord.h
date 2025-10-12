@@ -62,10 +62,14 @@ class RolloutRecord {
 public:
     explicit RolloutRecord(const std::vector<std::string>& field_names);
     explicit RolloutRecord(const RecordConfig& config);
-    
+    virtual ~RolloutRecord() = default;
+
     // Add data for a simulation step
-    void add(unsigned int sim_step, const std::unordered_map<std::string, double>& data);
-    
+    virtual void add(unsigned int sim_step, const std::unordered_map<std::string, double>& data) = 0;
+
+    // Add vector data for a specific step (for matrix datasets)
+    virtual void addVector(const std::string& key, int step, const Eigen::VectorXd& data) = 0;
+
     // Getters
     unsigned int get_nrow() const { return mNrow; }
     unsigned int get_ncol() const { return mNcol; }
@@ -78,7 +82,8 @@ public:
     
     // Build field list from config
     static std::vector<std::string> FieldsFromConfig(const RecordConfig& config, int skeleton_dof = 0);
-    
+    static std::vector<std::string> VectorFieldsFromConfig(const RecordConfig& config);
+
 private:
     void resize_if_needed(unsigned int requested_size);
     
