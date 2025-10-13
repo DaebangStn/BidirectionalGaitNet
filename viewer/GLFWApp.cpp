@@ -696,7 +696,7 @@ void GLFWApp::startLoop()
             mSimulationStepDuration = simEndTime - simStartTime;
 
             // Update moving average with exponential smoothing (alpha = 0.005)
-            const double alpha = 0.05;
+            const double alpha = 0.01;
             if (mSimStepDurationAvg < 0.0) {
                 // Initialize on first measurement
                 mSimStepDurationAvg = mSimulationStepDuration;
@@ -1203,35 +1203,7 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::Begin("Sim visualization##1", nullptr, ImGuiWindowFlags_NoCollapse);
         ImGui::Text("Environment not loaded.");
 
-        // Viewer Time Management (independent of mRenderEnv)
-        ImGui::Separator();
-        if (ImGui::CollapsingHeader("Motion Playback", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Text("Viewer Time: %.3f s", mViewerTime);
-            ImGui::Text("Phase: %.3f", mViewerPhase);
 
-            ImGui::Separator();
-            ImGui::SetNextItemWidth(100);
-            ImGui::InputDouble("Cycle Duration", &mViewerCycleDuration, 0.1, 0.5, "%.3f");
-            if (mViewerCycleDuration < 0.1) mViewerCycleDuration = 0.1;
-
-            ImGui::SetNextItemWidth(100);
-            ImGui::InputDouble("Playback Speed", &mViewerPlaybackSpeed, 0.1, 0.5, "%.2f");
-            if (mViewerPlaybackSpeed < 0.0) mViewerPlaybackSpeed = 0.0;
-
-            // Warning for playback too fast
-            if (mIsPlaybackTooFast)
-            {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "WARNING: Playback too fast!");
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Simulation cannot keep up");
-            }
-
-            if (ImGui::Button("Reset Time"))
-            {
-                mViewerTime = 0.0;
-                mViewerPhase = 0.0;
-            }
-        }
 
         ImGui::End();
         return;
@@ -2211,7 +2183,7 @@ void GLFWApp::drawUIFrame()
 
 void GLFWApp::drawTimingPane()
 {
-    if (!mShowTimingPane || !mRenderEnv)
+    if (!mShowTimingPane)
         return;
 
     // Create a compact floating window
@@ -2229,28 +2201,38 @@ void GLFWApp::drawTimingPane()
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
 
     // Display timing metrics in a compact table format
-    ImGui::Text("Phase          : %.3f", mViewerPhase);
     ImGui::Text("Viewer Time    : %.3f s", mViewerTime);
-    ImGui::Text("Simulation Time: %.3f s", mRenderEnv->getWorld()->getTime());
-    ImGui::Text("Cycle Duration : %.3f s", mViewerCycleDuration);
-
-    // Draggable playback speed control
-    ImGui::Text("Playback Speed:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(120);
-    double speed_min = 0.1, speed_max = 5.0;
-    ImGui::SliderScalar("##playback", ImGuiDataType_Double, &mViewerPlaybackSpeed, &speed_min, &speed_max, "%.2fx");
-
+    ImGui::Text("Phase          : %.3f", mViewerPhase);
+    if (mRenderEnv) {
+        ImGui::Text("Simulation Time: %.3f s", mRenderEnv->getWorld()->getTime());
+    }
+    
     ImGui::Separator();
 
-    ImGui::Text("Frame Delta    : %.1f ms", mRealDeltaTimeAvg * 1000.0);
-    ImGui::Text("Sim Step Time  : %.1f ms", mSimulationStepDuration * 1000.0);
-    ImGui::Text("Sim Step Avg   : %.1f ms", mSimStepDurationAvg * 1000.0);
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputDouble("Cycle Duration", &mViewerCycleDuration, 0.1, 0.5, "%.3f");
+    if (mViewerCycleDuration < 0.1) mViewerCycleDuration = 0.1;
+
+    if(ImGui::Button("1x")) mViewerPlaybackSpeed = 1.0;
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::SliderFloat("Playback Speed", &mViewerPlaybackSpeed, 0.1, 2.5, "%.2f");
+
+    if (mRenderEnv)
+    {
+        ImGui::Separator();
+        ImGui::Text("Frame Delta    : %.1f ms", mRealDeltaTimeAvg * 1000.0);
+        ImGui::Text("Sim Step Time  : %.1f ms", mSimulationStepDuration * 1000.0);
+        ImGui::Text("Sim Step Avg   : %.1f ms", mSimStepDurationAvg * 1000.0);
+    }
 
     if (mIsPlaybackTooFast)
     {
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "! Playback too fast");
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "WARNING: Playback too fast!");
+        if (!mRenderEnv) {
+             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Simulation cannot keep up");
+        }
     }
 
     ImGui::PopFont();
@@ -2313,6 +2295,68 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 
     glPopAttrib();
 }
+
+void GLFWApp::drawPlayableMotion()
+{
+    if (mMotions.empty() || !mDrawMotion)
+        return;
+
+    double phase;
+    if (mRenderEnv)
+    {
+        // Use viewer time for smooth playback independent of simulation speed
+        phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
+        phase = fmod(phase, 2.0);
+    }
+    else
+    {
+        if (!mMotionSkeleton) return;
+        // drawPhase(mViewerPhase, mViewerPhase);
+        // Use viewer phase for motion playback
+        phase = mViewerPhase * 2.0;  // Convert [0,1) to [0,2) range
+    }
+
+    int idx_0 = (int)(phase * 30);
+    int idx_1 = (idx_0 + 1);
+
+    // Interpolation between idx_0 and idx_1
+    Eigen::VectorXd motion_6dof = mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60)))
+                                + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60));
+
+    if (mRenderEnv)
+    {
+        Eigen::VectorXd motion_pos = mRenderEnv->getCharacter(0)->sixDofToPos(motion_6dof);
+
+        // Root Offset
+        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+        {
+            mMotionRootOffset[0] += motion_pos[3] * 0.5;
+            mMotionRootOffset[1] = motion_pos[4];
+            mMotionRootOffset[2] += motion_pos[5] * 0.5;
+        }
+        motion_pos.segment(3, 3) = mMotionRootOffset;
+
+        drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
+    }
+    else
+    {
+        // Root Offset update
+        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+        {
+            mMotionRootOffset[0] += motion_6dof[3] * 0.5;
+            mMotionRootOffset[1] = motion_6dof[4];
+            mMotionRootOffset[2] += motion_6dof[5] * 0.5;
+        }
+
+        // Apply root offset to motion data
+        Eigen::VectorXd motion_with_offset = motion_6dof;
+        motion_with_offset.segment(3, 3) = mMotionRootOffset;
+
+        // Note: Full implementation requires Character::sixDofToPos which needs mRenderEnv
+        // drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
+    }
+}
+
 
 void GLFWApp::drawSimFrame()
 {
@@ -2379,45 +2423,7 @@ void GLFWApp::drawSimFrame()
             glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), 10);
             glEnd();
         }
-        if (mMotions.size() > 0)
-        {
-            // GVAE
-            // For Debugging
-            if (mDrawMotion)
-            {
-                Eigen::VectorXd motion_pos; // Eigen::VectorXd::Zero(101);
-                // mMotionFrsameIdx %= 60;
 
-                // Use viewer time instead of simulation time for motion playback
-                double phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
-                phase = fmod(phase, 2.0);
-
-                int idx_0 = (int)(phase * 30);
-                int idx_1 = (idx_0 + 1);
-
-                // Interpolation between idx_0 and idx_1
-                motion_pos = mRenderEnv->getCharacter(0)->sixDofToPos(mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60))) + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60)));
-
-                // Root Offset
-                if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-                {
-                    mMotionRootOffset[0] += motion_pos[3] * 0.5;
-                    mMotionRootOffset[1] = motion_pos[4];
-                    mMotionRootOffset[2] += motion_pos[5] * 0.5;
-                }
-                motion_pos.segment(3, 3) = mMotionRootOffset;
-
-                drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-            }
-
-            // Draw Output Motion
-            // Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
-            // input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
-            // Eigen::VectorXd output = mGVAE.attr("render_forward")(input.cast<float>()).cast<Eigen::VectorXd>();
-            // std::cout << "[DEBUG] Out put " << output.rows() << std::endl;
-            // drawMotions(output, mMotions[mMotionIdx].param, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-            // drawMotions(mPredictedMotion.motion, mPredictedMotion.param, Eigen::Vector3d(1.0, 0.0, 0.0), Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-        }
         // FGN - use viewer phase for playback
         if (mDrawFGNSkeleton)
         {
@@ -2445,42 +2451,7 @@ void GLFWApp::drawSimFrame()
         }
     }
 
-    // Motion playback using viewer time (independent of mRenderEnv)
-    if (!mRenderEnv && mMotions.size() > 0 && mDrawMotion && mMotionSkeleton)
-    {
-        drawPhase(mViewerPhase, mViewerPhase);  // Draw phase bar using viewer phase
-
-        // Use viewer phase for motion playback
-        double phase = mViewerPhase * 2.0;  // Convert [0,1) to [0,2) range
-
-        int idx_0 = (int)(phase * 30);
-        int idx_1 = (idx_0 + 1);
-
-        // Interpolation between idx_0 and idx_1
-        Eigen::VectorXd motion_6dof = mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60)))
-                                    + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60));
-
-        // Convert 6DoF representation to full position using motion skeleton
-        // Note: We need Character's sixDofToPos method, which requires RenderEnvironment
-        // For now, we'll use the motion data directly if it's already in position format
-        // Or skip drawing if conversion is needed
-
-        // Root Offset update
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-        {
-            mMotionRootOffset[0] += motion_6dof[3] * 0.5;
-            mMotionRootOffset[1] = motion_6dof[4];
-            mMotionRootOffset[2] += motion_6dof[5] * 0.5;
-        }
-
-        // Apply root offset to motion data
-        Eigen::VectorXd motion_with_offset = motion_6dof;
-        motion_with_offset.segment(3, 3) = mMotionRootOffset;
-
-        // Draw skeleton using motion data
-        // Note: Full implementation requires Character::sixDofToPos which needs mRenderEnv
-        // drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-    }
+    drawPlayableMotion();
 
     // FGN playback using viewer time (independent of mRenderEnv)
     if (!mRenderEnv && mDrawFGNSkeleton && !mFGN.is_none())
@@ -2632,6 +2603,8 @@ void GLFWApp::mousePress(int button, int action, int mods)
 void GLFWApp::reset()
 {
     mSimStepDurationAvg = -1.0;
+    mViewerTime = 0.0;
+    mViewerPhase = 0.0;
     mC3DCount = 0;
     mGraphData->clear_all();
     mMotionRootOffset = Eigen::Vector3d::Zero();

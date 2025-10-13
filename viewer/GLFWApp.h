@@ -95,6 +95,13 @@ private:
     void drawSimVisualizationPanel();
     void drawTimingPane();
     void drawCameraStatusSection();
+    void drawPlayableMotion();
+
+    void drawFGNControl();
+    void drawBGNControl();
+    void drawC3DControl();
+    void drawMotionControl();
+    void drawGVAEControl();
 
     void printCameraInfo();
     void initializeCameraPresets();
@@ -294,7 +301,7 @@ private:
     // Viewer independent time management
     double mViewerTime;              // Viewer's master time counter
     double mViewerPhase;             // Phase value [0, 1) for cyclic motion
-    double mViewerPlaybackSpeed;     // Playback speed multiplier (1.0 = normal speed)
+    float mViewerPlaybackSpeed;     // Playback speed multiplier (1.0 = normal speed)
     double mLastPlaybackSpeed;       // Previous playback speed for change detection
     double mViewerCycleDuration;     // Duration of one motion cycle (default 2.0/1.1)
     double mLastRealTime;            // Last real time from glfwGetTime()
