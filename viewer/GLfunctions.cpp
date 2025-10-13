@@ -4,6 +4,10 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 #include "GL/glut.h"
+#include "dart/dynamics/Skeleton.hpp"
+#include "dart/dynamics/Joint.hpp"
+#include "dart/dynamics/BallJoint.hpp"
+#include "dart/dynamics/FreeJoint.hpp"
 
 #define USE_VNORMAL 0
 #define RESOLUTION 16

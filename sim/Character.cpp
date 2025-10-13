@@ -139,7 +139,6 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
 
     // Always resolve paths through UriResolver for backwards compatibility
     std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
-    std::cout << "[Character] Using Path: " << resolvedPath << std::endl;
 
     mSkeleton = BuildFromFile(resolvedPath, defaultDamping, Eigen::Vector4d(1,1,1,1), true, collide_all);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
@@ -252,6 +251,16 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
         modifyLog[bodynode] = ModifyInfo();
 
     mIncludeJtPinSPD = false;
+}
+
+Character::~Character()
+{
+    for(auto m : mMuscles)
+        delete m;
+    mMuscles.clear();
+    for(auto m : mRefMuscles)
+        delete m;
+    mRefMuscles.clear();
 }
 
 // Explanatation

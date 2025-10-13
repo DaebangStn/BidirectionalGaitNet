@@ -27,6 +27,7 @@ public:
 	void ApplyForceToBody();
 
 	double GetForce();
+	double GetActivation() { return activation; };
 	double GetActiveForce() { return Getf_A() * activation; };
 
 	double Getf_A();

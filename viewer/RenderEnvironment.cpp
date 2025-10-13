@@ -103,5 +103,17 @@ void RenderEnvironment::RecordGraphData() {
         const double angleTilt = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
         mGraphData->push("angle_Tilt", angleTilt);
     }
+
+    // Log muscle activations for the right side
+    auto character = mEnv->getCharacter(0);
+    for (const auto& muscle : character->getMuscles()) {
+        const auto& muscle_name = muscle->GetName();
+        if(muscle_name.find("R_") != std::string::npos) {
+            std::string key = "act_" + muscle_name;
+            if (mGraphData->key_exists(key)) {
+                mGraphData->push(key, muscle->GetActivation());
+            }
+        }
+    }
 }
 

@@ -253,16 +253,16 @@ Trim(std::string str)
 	return str;
 }
 
-dart::dynamics::SkeletonPtr
-BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d color_filter, bool isContact, bool collide_all, bool isBVH)
+dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d color_filter, bool isContact, bool collide_all, bool isBVH)
 {
-	// Initialize UriResolver for mesh path resolution
-	PMuscle::URIResolver::getInstance().initialize();
-	
 	TiXmlDocument doc;
-	if (doc.LoadFile(path.c_str()))
+	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+	std::cout << "[DARTHelper] Building skeleton from file : " << resolvedPath << std::endl;
+	if (doc.LoadFile(resolvedPath.c_str()))
 	{
-		std::cout << "Can't open file : " << path << std::endl;
+		std::cout << "[DARTHelper] Failed to load file" << std::endl;
+		std::cout << "[DARTHelper] Error : " << doc.ErrorName() << std::endl;
+		std::cout << "[DARTHelper] Error Str : " << doc.ErrorStr() << std::endl;
 		return nullptr;
 	}
 

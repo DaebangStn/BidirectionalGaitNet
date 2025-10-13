@@ -4,6 +4,7 @@
 #include "ShapeRenderer.h"
 #include "CBufferData.h"
 #include "RenderEnvironment.h"
+#include "Character.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -14,6 +15,12 @@
 #include <imgui_internal.h>
 #include "C3D_Reader.h"
 #include <yaml-cpp/yaml.h>
+
+struct ResizablePlot {
+    std::vector<std::string> keys;
+    char newKeyInput[256] = {0};
+    int selectedKey = -1;
+};
 
 enum MuscleRenderingType
 {
@@ -94,6 +101,7 @@ private:
     void drawKinematicsControlPanel();
     void drawSimVisualizationPanel();
     void drawTimingPane();
+    void drawResizablePlotPane();
     void drawCameraStatusSection();
     void drawPlayableMotion();
 
@@ -102,6 +110,7 @@ private:
     void drawC3DControl();
     void drawMotionControl();
     void drawGVAEControl();
+    void addSimulationMotion();
 
     void printCameraInfo();
     void initializeCameraPresets();
@@ -125,7 +134,7 @@ private:
     void drawShadow();
 
     // Plot control
-    void _setXminToHeelStrike();
+    float getHeelStrikeTime();
 
     // Mousing Function
     void mouseMove(double xpos, double ypos);
@@ -155,6 +164,8 @@ private:
 
     GLFWwindow *mWindow;
     RenderEnvironment *mRenderEnv;
+    Character *mMotionCharacter;
+
 
     ShapeRenderer mShapeRenderer;
     bool mDrawOBJ;
@@ -310,15 +321,21 @@ private:
     double mRealDeltaTimeAvg;        // Moving average of real frame delta time
     bool mIsPlaybackTooFast;         // Warning: playback faster than simulation can handle
     bool mShowTimingPane;            // Toggle for timing information pane
+    bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
+
+    // For Resizable Plot Pane
+    std::vector<ResizablePlot> mResizablePlots;
+    char mResizePlotKeys[1024];
+    bool mResizePlotPane, mSetResizablePlotPane;
 
     // Plot X-axis range
-    double mXmin;
+    double mXmin, mXminResizablePlotPane, mYminResizablePlotPane, mYmaxResizablePlotPane;
 
     // Joint Control
     void drawJointControlSection();
 
     // Plot title control
-    bool mPlotTitle;
+    bool mPlotTitle, mPlotTitleResizablePlotPane;
     std::string mCheckpointName;
 
     // Configuration loading
@@ -342,4 +359,6 @@ private:
     void loadNetworkFromPath(const std::string& path);
     void initializeMotionSkeleton();
     void loadMotionFiles();
+    void updateUnifiedKeys();
+    void updateResizablePlotsFromKeys();
 };

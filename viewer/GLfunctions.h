@@ -42,6 +42,8 @@ namespace GUI
 	void DrawCircularArrow3D(const Eigen::Isometry3d &trans, double deg, double R, double r1, double r2, double h);
 
 	void Draw2DCircle(const Eigen::Vector3d &origin, const Eigen::Vector3d &normal, const Eigen::Vector3d &up, double R, int segment = 30);
+
+
 };
 
 #endif

@@ -4,6 +4,9 @@
 #include "stb_image_write.h"
 #include <filesystem>
 #include <algorithm>
+#include "DARTHelper.h"
+#include <tinyxml2.h>
+#include <sstream>
 
 
 const std::vector<std::string> CHANNELS =
@@ -25,6 +28,7 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
 GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
 {
     mRenderEnv = nullptr;
+    mMotionCharacter = nullptr;
     mGVAELoaded = false;
     mRenderConditions = false;
 
@@ -37,10 +41,33 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mPlotPanelWidth = 450;
     mDefaultRolloutCount = 10;
     mXmin = 0.0;
+    mXminResizablePlotPane = 0.0;
+    mYminResizablePlotPane = 0.0;
+    mYmaxResizablePlotPane = 1.0;
     mPlotTitle = false;
+
+    // Initialize viewer time management with default cycle duration
+    mViewerTime = 0.0;
+    mViewerPhase = 0.0;
+    mViewerPlaybackSpeed = 1.5;
+    mLastPlaybackSpeed = 1.5;
+    mViewerCycleDuration = 2.0 / 1.1;  // Default cycle duration (~1.818s)
+    mLastRealTime = 0.0;
+    mSimulationStepDuration = 0.0;
+    mSimStepDurationAvg = -1.0;
+    mRealDeltaTimeAvg = 0.0;
+    mIsPlaybackTooFast = false;
+    mShowTimingPane = false;
+    mShowResizablePlotPane = false;
+    mResizablePlots.resize(1);
+    strcpy(mResizePlotKeys, "");
+    mResizePlotPane = true;
+    mSetResizablePlotPane = false;
+    mPlotTitleResizablePlotPane = false;
 
     // Load configuration from render.yaml (will override defaults if file exists)
     loadRenderConfig();
+    updateResizablePlotsFromKeys();
 
     mZoom = 1.0;
     mPersp = 45.0;
@@ -232,19 +259,6 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mMotionFrameIdx = 0;
     mMotionRootOffset = Eigen::Vector3d::Zero();
 
-    // Initialize viewer time management with default cycle duration
-    mViewerTime = 0.0;
-    mViewerPhase = 0.0;
-    mViewerPlaybackSpeed = 1.0;
-    mLastPlaybackSpeed = 1.0;
-    mViewerCycleDuration = 2.0 / 1.1;  // Default cycle duration (~1.818s)
-    mLastRealTime = 0.0;
-    mSimulationStepDuration = 0.0;
-    mSimStepDurationAvg = -1.0;
-    mRealDeltaTimeAvg = 0.0;
-    mIsPlaybackTooFast = false;
-    mShowTimingPane = false;
-
     py::gil_scoped_acquire gil;
     
     // Import Python modules
@@ -319,12 +333,34 @@ void GLFWApp::loadRenderConfig()
                 if (config["glfwapp"]["plot"]["x_min"])
                     mXmin = config["glfwapp"]["plot"]["x_min"].as<double>();
             }
+
+            if (config["glfwapp"]["playback_speed"]) {
+                mViewerPlaybackSpeed = config["glfwapp"]["playback_speed"].as<float>();
+                mLastPlaybackSpeed = mViewerPlaybackSpeed;
+            }
+
+            if (config["glfwapp"]["resizable_plot"]) {
+                if (config["glfwapp"]["resizable_plot"]["x_min"])
+                    mXminResizablePlotPane = config["glfwapp"]["resizable_plot"]["x_min"].as<double>();
+                if (config["glfwapp"]["resizable_plot"]["y_min"])
+                    mYminResizablePlotPane = config["glfwapp"]["resizable_plot"]["y_min"].as<double>();
+                if (config["glfwapp"]["resizable_plot"]["y_max"])
+                    mYmaxResizablePlotPane = config["glfwapp"]["resizable_plot"]["y_max"].as<double>();
+                if (config["glfwapp"]["resizable_plot"]["keys"]) {
+                    std::string keys = config["glfwapp"]["resizable_plot"]["keys"].as<std::string>();
+                    strncpy(mResizePlotKeys, keys.c_str(), sizeof(mResizePlotKeys) - 1);
+                    mResizePlotKeys[sizeof(mResizePlotKeys) - 1] = '\0';
+                }
+                if (config["glfwapp"]["resizable_plot"]["title"])
+                    mPlotTitleResizablePlotPane = config["glfwapp"]["resizable_plot"]["title"].as<bool>();
+            }
         }
 
         std::cout << "[Config] Loaded - Window: " << mWidth << "x" << mHeight
                   << ", Control: " << mControlPanelWidth
                   << ", Plot: " << mPlotPanelWidth
-                  << ", Rollout: " << mDefaultRolloutCount << std::endl;
+                  << ", Rollout: " << mDefaultRolloutCount
+                  << ", Playback Speed: " << mViewerPlaybackSpeed << std::endl; 
 
     } catch (const std::exception& e) {
         std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
@@ -335,6 +371,7 @@ void GLFWApp::loadRenderConfig()
 GLFWApp::~GLFWApp()
 {
     delete mRenderEnv;
+    delete mMotionCharacter;
     ImPlot::DestroyContext();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -363,7 +400,8 @@ void GLFWApp::writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const
     {
 
         _f << "JOINT\tCharacter_" << jn->getName() << std::endl;
-        _f << "{" << std::endl;
+        _f << "{"
+           << std::endl;
         Eigen::Vector3d current_joint = jn->getParentBodyNode()->getTransform() * (jn->getTransformFromParentBodyNode() * Eigen::Vector3d::Zero());
         Eigen::Vector3d parent_joint = jn->getParentBodyNode()->getTransform() * ((jn->getParentBodyNode()->getParentJoint())->getTransformFromChildBodyNode() * Eigen::Vector3d::Zero());
 
@@ -375,7 +413,8 @@ void GLFWApp::writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const
         if (jn->getChildBodyNode()->getNumChildBodyNodes() == 0)
         {
             _f << "End Site" << std::endl;
-            _f << "{" << std::endl;
+            _f << "{"
+               << std::endl;
             _f << "OFFSET\t" << (jn->getChildBodyNode()->getCOM() - current_joint).transpose() * 100.0 << std::endl;
             _f << "}" << std::endl;
         }
@@ -419,7 +458,8 @@ void GLFWApp::exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::
     dart::dynamics::BodyNode *bn = jn->getChildBodyNode();
     Eigen::Vector3d offset = bn->getTransform().translation();
     bvh << "ROOT\tCharacter_" << jn->getName() << std::endl;
-    bvh << "{" << std::endl;
+    bvh << "{"
+       << std::endl;
     bvh << "OFFSET\t" << offset.transpose() << std::endl;
     bvh << "CHANNELS\t" << 6 << "\t"
         << CHANNELS[0] << "\t" << CHANNELS[1] << "\t" << CHANNELS[2] << "\t"
@@ -587,15 +627,15 @@ void GLFWApp::plotPhaseBar(double x_min, double x_max, double y_min, double y_ma
     ImPlot::PopStyleVar();
 }
 
-void GLFWApp::_setXminToHeelStrike()
+float GLFWApp::getHeelStrikeTime()
 {
     if (!mGraphData->key_exists("contact_phaseR"))
     {
         std::cout << "[HeelStrike] contact_phaseR key not found in graph data" << std::endl;
-        return;
+        return 0.0;
     }
 
-    if (!mRenderEnv) return;
+    if (!mRenderEnv) return 0.0;
 
     std::vector<double> contact_phase_buffer = mGraphData->get("contact_phaseR");
 
@@ -603,7 +643,7 @@ void GLFWApp::_setXminToHeelStrike()
     if (contact_phase_buffer.size() < 2)
     {
         std::cout << "[HeelStrike] Not enough data points for heel strike detection" << std::endl;
-        return;
+        return 0.0;
     }
 
     bool prev_phase = static_cast<bool>(contact_phase_buffer[0]);
@@ -631,13 +671,13 @@ void GLFWApp::_setXminToHeelStrike()
 
     if (found_heel_strike)
     {
-        mXmin = heel_strike_time;
         std::cout << "[HeelStrike] Found heel strike at time: " << heel_strike_time << std::endl;
     }
     else
     {
         std::cout << "[HeelStrike] No heel strike found in current data" << std::endl;
     }
+    return heel_strike_time;
 }
 
 void GLFWApp::startLoop()
@@ -788,6 +828,27 @@ void GLFWApp::initEnv(std::string metadata)
     }
     // Create RenderEnvironment wrapper
     mRenderEnv = new RenderEnvironment(metadata, mGraphData);
+    if (!mMotionCharacter)
+    {
+        for (const auto& muscle: mRenderEnv->getCharacter(0)->getMuscles()) {
+            const auto& muscle_name = muscle->GetName();
+            if(muscle_name.find("R_") != std::string::npos) {
+                std::string key = "act_" + muscle_name;
+                mGraphData->register_key(key, 1000);
+            }
+        }
+
+        TiXmlDocument doc;
+        doc.Parse(metadata.c_str());
+        TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
+        if (skel_elem) {
+            std::string skeletonPath = Trim(std::string(skel_elem->GetText()));
+            mMotionCharacter = new Character(skeletonPath, 0, 0, 0);
+        } else {
+            std::cerr << "No skeleton path found in metadata" << std::endl;
+            exit(-1);
+        }
+    }
     
     // Set window title
     if (!mRolloutStatus.name.empty()) {
@@ -898,20 +959,10 @@ void GLFWApp::drawKinematicsControlPanel()
     ImGui::SetNextWindowPos(ImVec2(mControlPanelWidth + 10, 10), ImGuiCond_Once);
     ImGui::Begin("Kinematics Control");
 
-    // Todo: motion control panel here
-
-    if (!mRenderEnv)
-    {
-        ImGui::Separator();
-        ImGui::Text("Environment not loaded.");
-        ImGui::End();
-        return;
-    }
-    // mFGNList
+    // FGN
     ImGui::Checkbox("Draw FGN Result\t", &mDrawFGNSkeleton);
     if (ImGui::CollapsingHeader("FGN"))
     {
-
         int idx = 0;
         for (const auto &ns : mFGNList)
         {
@@ -924,19 +975,24 @@ void GLFWApp::drawKinematicsControlPanel()
         }
     }
 
-    if (ImGui::Button("Load FGN"))
+    if (mRenderEnv)
     {
-        mDrawFGNSkeleton = true;
-        py::tuple res = py::module::import("forward_gaitnet").attr("load_FGN")(mFGNList[selected_fgn], mRenderEnv->getNumParamState(), mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()).rows());
-        mFGN = res[0];
-        mFGNmetadata = res[1].cast<std::string>();
+        if (ImGui::Button("Load FGN"))
+        {
+            mDrawFGNSkeleton = true;
+            py::tuple res = py::module::import("forward_gaitnet").attr("load_FGN")(mFGNList[selected_fgn], mRenderEnv->getNumParamState(), mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()).rows());
+            mFGN = res[0];
+            mFGNmetadata = res[1].cast<std::string>();
 
-        mNetworkPaths.clear();
-        mNetworks.clear();
-        std::cout << "METADATA " << std::endl
-                  << mFGNmetadata << std::endl;
-        initEnv(mFGNmetadata);
+            mNetworkPaths.clear();
+            mNetworks.clear();
+            std::cout << "METADATA " << std::endl
+                      << mFGNmetadata << std::endl;
+            initEnv(mFGNmetadata);
+        }
     }
+
+    // BGN
     if (ImGui::CollapsingHeader("BGN"))
     {
         int idx = 0;
@@ -950,7 +1006,7 @@ void GLFWApp::drawKinematicsControlPanel()
             idx++;
         }
     }
-    if (ImGui::Button("Load BGN"))
+    if (mRenderEnv && ImGui::Button("Load BGN"))
     {
         mGVAELoaded = true;
         py::object load_gaitvae = py::module::import("advanced_vae").attr("load_gaitvae");
@@ -961,6 +1017,8 @@ void GLFWApp::drawKinematicsControlPanel()
         mPredictedMotion.param = mMotions[mMotionIdx].param;
         mPredictedMotion.name = "Unpredicted";
     }
+
+    // C3D
     if (ImGui::CollapsingHeader("C3D"))
     {
         if (mC3DList.empty())
@@ -983,20 +1041,19 @@ void GLFWApp::drawKinematicsControlPanel()
         static float femur_torsion_r = 0.0;
         static float c3d_scale = 1.0;
         static float height_offset = 0.0;
-        // ImGui Slider
         ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
         ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
         ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
         ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
     
-        if (ImGui::Button("Load C3D"))
+        if (mRenderEnv && ImGui::Button("Load C3D"))
         {
             if (selected_c3d < mC3DList.size() && !mC3DList.empty())
             {
                 mRenderC3D = true;
                 mC3DReader = new C3D_Reader("data/skeleton_gaitnet_narrow_model.xml", "data/marker_set.xml", mRenderEnv->GetEnvironment());
                 std::cout << "Loading C3D: " << mC3DList[selected_c3d] << std::endl;
-                mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset); // /* ,torsionL, torsionR*/);
+                mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset);
                 mC3DCOM = Eigen::Vector3d::Zero();
             }
             else
@@ -1005,7 +1062,7 @@ void GLFWApp::drawKinematicsControlPanel()
             }
         }
     
-        if (ImGui::Button("Convert C3D to Motion"))
+        if (mRenderEnv && ImGui::Button("Convert C3D to Motion"))
         {
             auto m = mC3DReader->convertToMotion();
             m.name = "C3D Motion" + std::to_string(mMotions.size());
@@ -1014,13 +1071,12 @@ void GLFWApp::drawKinematicsControlPanel()
         }
     }
 
-    static int mMotionPhaseOffset = 0;
-
     if (ImGui::CollapsingHeader("Motions"))
     {
+        static int mMotionPhaseOffset = 0;
 
         ImGui::Checkbox("Draw Motion\t", &mDrawMotion);
-        if (ImGui::ListBoxHeader("motion list", ImVec2(-FLT_MIN, 20 * ImGui::GetTextLineHeightWithSpacing())))
+        if (ImGui::ListBoxHeader("motion list", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
         {
             for (int i = 0; i < mMotions.size(); i++)
             {
@@ -1032,120 +1088,64 @@ void GLFWApp::drawKinematicsControlPanel()
             }
             ImGui::ListBoxFooter();
         }
-    }
-    ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, 59);
-    if (ImGui::Button("Convert Motion"))
-    {
-        int size = 101;
-        Eigen::VectorXd m = mMotions[mMotionIdx].motion;
-        mMotions[mMotionIdx].motion << m.tail((60 - mMotionPhaseOffset) * size), m.head(mMotionPhaseOffset * size);
-    }
 
-    // Button
-    if (ImGui::Button("Add Current Simulation motion to motion "))
-    {
-        Motion current_motion;
-        current_motion.name = "New Motion " + std::to_string(mMotions.size());
-        current_motion.param = mRenderEnv->getParamState();
-        current_motion.motion = Eigen::VectorXd::Zero(6060);
-
-        std::vector<double> phis;
-        // phis list of 1/60 for 2 seconds
-        for (int i = 0; i < 60; i++)
-            phis.push_back(((double)i) / mRenderEnv->getControlHz());
-
-        // rollout
-        std::vector<Eigen::VectorXd> current_trajectory;
-        std::vector<double> current_phi;
-        std::vector<Eigen::VectorXd> refined_trajectory;
-        reset();
-
-        double prev_phi = -1.0;
-        int phi_offset = -1.0;
-        while (!mRenderEnv->isEOE())
+        ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, 59);
+        if (ImGui::Button("Convert Motion"))
         {
-            for (int i = 0; i < 60 / mRenderEnv->getControlHz(); i++)
-                update();
-
-            current_trajectory.push_back(mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()));
-
-            if (prev_phi > mRenderEnv->getNormalizedPhase())
-                phi_offset += 1;
-            prev_phi = mRenderEnv->getNormalizedPhase();
-
-            current_phi.push_back(mRenderEnv->getNormalizedPhase() + phi_offset);
+            int size = 101;
+            Eigen::VectorXd m = mMotions[mMotionIdx].motion;
+            mMotions[mMotionIdx].motion << m.tail((60 - mMotionPhaseOffset) * size), m.head(mMotionPhaseOffset * size);
+        }
+        
+        if (ImGui::Button("Add Current Simulation motion to motion "))
+        {
+            if(mRenderEnv)
+                addSimulationMotion();
         }
 
-        int phi_idx = 0;
-        int current_idx = 0;
-        refined_trajectory.clear();
-        while (phi_idx < phis.size() && current_idx < current_trajectory.size() - 1)
-        {
-            // if phi is smaller than current phi, then add current trajectory to refined trajectory
-            if (current_phi[current_idx] <= phis[phi_idx] && phis[phi_idx] < current_phi[current_idx + 1])
-            {
-                // Interpolate between current_idx and current_idx+1
-                double t = (phis[phi_idx] - current_phi[current_idx]) / (current_phi[current_idx + 1] - current_phi[current_idx]);
-                // calculate v
-                Eigen::Vector3d v1 = current_trajectory[current_idx].segment(6, 3) - current_trajectory[current_idx - 1].segment(6, 3);
-                Eigen::Vector3d v2 = current_trajectory[current_idx + 1].segment(6, 3) - current_trajectory[current_idx].segment(6, 3);
+        if (mRenderEnv && ImGui::Button("Set to Param of reference"))
+            mRenderEnv->setParamState(mMotions[mMotionIdx].param, false, true);
 
-                Eigen::VectorXd interpolated = (1 - t) * current_trajectory[current_idx] + t * current_trajectory[current_idx + 1];
-                Eigen::Vector3d v = (1 - t) * v1 + t * v2;
-
-                interpolated[6] = v[0];
-                interpolated[8] = v[2];
-                int start_idx = interpolated.rows() * refined_trajectory.size();
-                current_motion.motion.segment(start_idx, interpolated.rows()) = interpolated;
-                refined_trajectory.push_back(interpolated);
-
-                phi_idx++;
-            }
-            else
-                current_idx++;
-        }
-        mMotions.push_back(current_motion);
-        mAddedMotions.push_back(current_motion);
     }
-
-    if (ImGui::Button("Set to Param of reference"))
-        mRenderEnv->setParamState(mMotions[mMotionIdx].param, false, true);
 
     if (mGVAELoaded)
     {
-        if (ImGui::Button("predict new motion"))
+        if (ImGui::CollapsingHeader("GVAE"))
         {
-            Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
-            input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
-            py::tuple res = mGVAE.attr("render_forward")(input.cast<float>());
-            Eigen::VectorXd motion = res[0].cast<Eigen::VectorXd>();
-            Eigen::VectorXd param = res[1].cast<Eigen::VectorXd>();
+            if (ImGui::Button("predict new motion"))
+            {
+                Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
+                input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
+                py::tuple res = mGVAE.attr("render_forward")(input.cast<float>());
+                Eigen::VectorXd motion = res[0].cast<Eigen::VectorXd>();
+                Eigen::VectorXd param = res[1].cast<Eigen::VectorXd>();
 
-            mPredictedMotion.motion = motion;
-            mPredictedMotion.param = mRenderEnv->getParamStateFromNormalized(param);
-        }
+                mPredictedMotion.motion = motion;
+                mPredictedMotion.param = mRenderEnv->getParamStateFromNormalized(param);
+            }
 
-        if (ImGui::Button("Sampling 1000 params"))
-        {
-            Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
-            input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
-            mGVAE.attr("sampling")(input.cast<float>(), mMotions[mMotionIdx].param);
-        }
+            if (ImGui::Button("Sampling 1000 params"))
+            {
+                Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
+                input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
+                mGVAE.attr("sampling")(input.cast<float>(), mMotions[mMotionIdx].param);
+            }
 
-        if (ImGui::Button("Set to predicted param"))
-            mRenderEnv->setParamState(mPredictedMotion.param, false, true);
+            if (ImGui::Button("Set to predicted param"))
+                mRenderEnv->setParamState(mPredictedMotion.param, false, true);
 
-        if (ImGui::Button("Predict and set param"))
-        {
-            Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
-            input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
-            py::tuple res = mGVAE.attr("render_forward")(input.cast<float>());
-            Eigen::VectorXd motion = res[0].cast<Eigen::VectorXd>();
-            Eigen::VectorXd param = res[1].cast<Eigen::VectorXd>();
+            if (ImGui::Button("Predict and set param"))
+            {
+                Eigen::VectorXd input = Eigen::VectorXd::Zero(mMotions[mMotionIdx].motion.rows() + mRenderEnv->getNumKnownParam());
+                input << mMotions[mMotionIdx].motion, mRenderEnv->getNormalizedParamStateFromParam(mMotions[mMotionIdx].param.head(mRenderEnv->getNumKnownParam()));
+                py::tuple res = mGVAE.attr("render_forward")(input.cast<float>());
+                Eigen::VectorXd motion = res[0].cast<Eigen::VectorXd>();
+                Eigen::VectorXd param = res[1].cast<Eigen::VectorXd>();
 
-            mPredictedMotion.motion = motion;
-            mPredictedMotion.param = mRenderEnv->getParamStateFromNormalized(param);
-            mRenderEnv->setParamState(mPredictedMotion.param, false, true);
+                mPredictedMotion.motion = motion;
+                mPredictedMotion.param = mRenderEnv->getParamStateFromNormalized(param);
+                mRenderEnv->setParamState(mPredictedMotion.param, false, true);
+            }
         }
     }
     if (ImGui::Button("Save added motion"))
@@ -1190,7 +1190,8 @@ void GLFWApp::drawKinematicsControlPanel()
             }
         }
     ImGui::End();
-    mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+    if(mRenderEnv)
+        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
 }
 
 void GLFWApp::drawSimVisualizationPanel()
@@ -1214,30 +1215,14 @@ void GLFWApp::drawSimVisualizationPanel()
     // Status
     if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::Text("Simulation Time : %.3f s", mRenderEnv->getWorld()->getTime());
-        ImGui::Text("Viewer Time     : %.3f s", mViewerTime);
-        ImGui::Text("Phase           : %.3f", std::fmod(mRenderEnv->getCharacter(0)->getLocalTime(), (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence())) / (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence()));
         ImGui::Text("Target Vel      : %.3f m/s", mRenderEnv->getTargetCOMVelocity());
         ImGui::Text("Average Vel     : %.3f m/s", mRenderEnv->getAvgVelocity()[2]);
-        ImGui::Text("Current Vel     : %.3f m/s", mRenderEnv->getCharacter(0)->getSkeleton()->getCOMLinearVelocity()[2]);
-
-        ImGui::Separator();
-
-        // Playback performance monitoring
-        ImGui::Text("Playback Speed  : %.2fx", mViewerPlaybackSpeed);
-        ImGui::Text("Sim Step Time   : %.1f ms", mSimStepDurationAvg * 1000.0);
-        if (mIsPlaybackTooFast)
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "WARNING: Playback too fast!");
-        }
-
         ImGui::Separator();
         
         ImGui::Indent();
         if (ImGui::CollapsingHeader("Metadata"))
         {
-            if (ImGui::Button("Print"))
-                std::cout << mRenderEnv->getMetadata() << std::endl;
+            if (ImGui::Button("Print")) std::cout << mRenderEnv->getMetadata() << std::endl;
             ImGui::TextUnformatted(mRenderEnv->getMetadata().c_str());
         }
         ImGui::Unindent();
@@ -1252,12 +1237,12 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Plot X-axis range control
-    ImGui::SetNextItemWidth(50);
-    ImGui::InputDouble("X-axis Min", &mXmin);
-    ImGui::SameLine();
-    if (ImGui::Button("HS")) _setXminToHeelStrike();
+    if (ImGui::Button("HS")) mXmin = getHeelStrikeTime();
     ImGui::SameLine();
     if (ImGui::Button("1.1")) mXmin = -1.1;
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(30);
+    ImGui::InputDouble("X(min)", &mXmin);
 
     // Plot title control
     ImGui::Checkbox("Title##PlotTitleCheckbox", &mPlotTitle);
@@ -2097,51 +2082,7 @@ void GLFWApp::drawSimControlPanel()
         ImGui::Unindent();
     }
     
-    // // Build selected muscles list based on selection states
-    // auto allMuscles = mRenderEnv->getCharacter(0)->getMuscles();
-    // for (int i = 0; i < mMuscleSelectionStates.size() && i < allMuscles.size(); i++)
-    // {
-    //     if (mMuscleSelectionStates[i])
-    //     {
-    //         mSelectedMuscles.push_back(allMuscles[i]);
-    //     }
-    // }
-    // Related Dof Muscle Rendering
-    // mSelectedMuscles.clear();
-    // Muscle Selection
-    // if (ImGui::CollapsingHeader("Muscle Selection"))
-    // {
-    //     for (int i = 0; i < mRelatedDofs.size(); i += 2)
-    //     {
-    //         bool dof_plus, dof_minus;
-    //         dof_plus = mRelatedDofs[i];
-    //         dof_minus = mRelatedDofs[i + 1];
-    //         ImGui::Checkbox((std::to_string(i / 2) + " +").c_str(), &dof_plus);
-    //         ImGui::SameLine();
-    //         ImGui::Checkbox((std::to_string(i / 2) + " -").c_str(), &dof_minus);
-    //         mRelatedDofs[i] = dof_plus;
-    //         mRelatedDofs[i + 1] = dof_minus;
-    //     }
 
-    //     // Check related dof
-    //     for (auto m : mRenderEnv->getCharacter(0)->getMuscles())
-    //     {
-    //         Eigen::VectorXd related_vec = m->GetRelatedVec();
-    //         for (int i = 0; i < related_vec.rows(); i++)
-    //         {
-    //             if (related_vec[i] > 0 && mRelatedDofs[i * 2])
-    //             {
-    //                 mSelectedMuscles.push_back(m);
-    //                 break;
-    //             }
-    //             else if (related_vec[i] < 0 && mRelatedDofs[i * 2 + 1])
-    //             {
-    //                 mSelectedMuscles.push_back(m);
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // }
 
     // Network
     if (ImGui::CollapsingHeader("Network"))
@@ -2168,6 +2109,249 @@ void GLFWApp::drawSimControlPanel()
     ImGui::End();
 }
 
+void GLFWApp::updateUnifiedKeys()
+{
+    std::string unified_str = "";
+    for (int i = 0; i < mResizablePlots.size(); ++i) {
+        for (int j = 0; j < mResizablePlots[i].keys.size(); ++j) {
+            unified_str += mResizablePlots[i].keys[j];
+            if (j < mResizablePlots[i].keys.size() - 1) {
+                unified_str += ",";
+            }
+        }
+        if (i < mResizablePlots.size() - 1) {
+            unified_str += " | ";
+        }
+    }
+    strncpy(mResizePlotKeys, unified_str.c_str(), sizeof(mResizePlotKeys) - 1);
+    mResizePlotKeys[sizeof(mResizePlotKeys) - 1] = '\0';
+}
+
+void GLFWApp::updateResizablePlotsFromKeys()
+{
+    std::string unified_keys_str(mResizePlotKeys);
+    std::vector<std::string> plot_key_groups;
+    std::string current_group;
+    std::stringstream ss(unified_keys_str);
+
+    char c;
+    while(ss.get(c)) {
+        if (c == '|') {
+            plot_key_groups.push_back(current_group);
+            current_group.clear();
+        } else {
+            current_group += c;
+        }
+    }
+    plot_key_groups.push_back(current_group);
+
+    mResizablePlots.resize(plot_key_groups.size());
+    for (int i = 0; i < mResizablePlots.size(); ++i) {
+        mResizablePlots[i].keys.clear();
+        std::stringstream key_ss(plot_key_groups[i]);
+        std::string key;
+        while(std::getline(key_ss, key, ',')) {
+            // Trim whitespace
+            key.erase(key.begin(), std::find_if(key.begin(), key.end(), [](unsigned char ch) {
+                return !std::isspace(ch);
+            }));
+            key.erase(std::find_if(key.rbegin(), key.rend(), [](unsigned char ch) {
+                return !std::isspace(ch);
+            }).base(), key.end());
+            if (!key.empty()) {
+                mResizablePlots[i].keys.push_back(key);
+            }
+        }
+    }
+    updateUnifiedKeys();
+    mResizePlotPane = true;
+}
+
+void GLFWApp::drawResizablePlotPane()
+{
+    if (!mShowResizablePlotPane) return;
+
+    const float RESIZABLE_PLOT_WIDTH = 400;
+    const float RESIZABLE_PLOT_HEIGHT = 500;
+    const float RESIZABLE_PLOT_TEXT_HEIGHT = 20;
+    const float KEY_CONFIG_HEIGHT = 70;
+    
+    if (mResizePlotPane) {
+        ImGui::SetNextWindowSize(ImVec2(RESIZABLE_PLOT_WIDTH * mResizablePlots.size(), RESIZABLE_PLOT_HEIGHT), ImGuiCond_Always);
+        mResizePlotPane = false;
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(RESIZABLE_PLOT_WIDTH * mResizablePlots.size(), RESIZABLE_PLOT_HEIGHT), ImGuiCond_Once);
+    }
+
+    ImGui::Begin("Resizable Plot Pane (A to toggle)", &mShowResizablePlotPane);
+
+    // Controls for number of plots
+    ImGui::Text("%zu plots", mResizablePlots.size());
+    ImGui::SameLine();
+    if (ImGui::Button("Add")) {
+        mResizablePlots.emplace_back();
+        updateUnifiedKeys();
+        mResizePlotPane = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove") && mResizablePlots.size() > 1) {
+        mResizablePlots.pop_back();
+        updateUnifiedKeys();
+        mResizePlotPane = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Fit")) {
+        mResizePlotPane = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("HS")) mXminResizablePlotPane = getHeelStrikeTime();
+    ImGui::SameLine();
+    if (ImGui::Button("1.1")) mXminResizablePlotPane = -1.1;
+    ImGui::SetNextItemWidth(30);
+    ImGui::SameLine();
+    if (ImGui::InputDouble("X(min)", &mXminResizablePlotPane)) {
+        mSetResizablePlotPane = true;
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(30);
+    if (ImGui::InputDouble("Y(min)", &mYminResizablePlotPane)) {
+        mSetResizablePlotPane = true;
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(30);
+    if (ImGui::InputDouble("Y(max)", &mYmaxResizablePlotPane)) {
+        mSetResizablePlotPane = true;
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Title", &mPlotTitleResizablePlotPane);
+
+    // height: ImGui::GetWindowSize().y - RESIZABLE_PLOT_TEXT_HEIGHT
+
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::InputText("Key config", mResizePlotKeys, sizeof(mResizePlotKeys), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        updateResizablePlotsFromKeys();
+    }
+
+    // height: ImGui::GetWindowSize().y - RESIZABLE_PLOT_TEXT_HEIGHT * 2 
+
+    ImGui::Separator();
+
+    // Draw each plot horizontally
+    float plot_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * (mResizablePlots.size() - 1)) / mResizablePlots.size();
+    if (plot_width <= 0) plot_width = 1;
+
+    for (int i = 0; i < mResizablePlots.size(); ++i) {
+        ImGui::BeginChild(std::string("PlotChild" + std::to_string(i)).c_str(), ImVec2(plot_width, RESIZABLE_PLOT_HEIGHT - 5 * RESIZABLE_PLOT_TEXT_HEIGHT), true);
+        ImGui::Text("Plot %d", i + 1);
+
+        ImGui::Columns(2, "##key_management_columns");
+
+        // Left column: Added keys
+        ImGui::Text("Added Keys");
+        if (ImGui::ListBoxHeader(("Keys##" + std::to_string(i)).c_str(), ImVec2(-1, KEY_CONFIG_HEIGHT))) {
+            for (int j = 0; j < mResizablePlots[i].keys.size(); ++j) {
+                if (ImGui::Selectable(mResizablePlots[i].keys[j].c_str(), mResizablePlots[i].selectedKey == j)) {
+                    mResizablePlots[i].selectedKey = j;
+                }
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+                    mResizablePlots[i].keys.erase(mResizablePlots[i].keys.begin() + j);
+                    if (mResizablePlots[i].selectedKey == j) mResizablePlots[i].selectedKey = -1;
+                    else if (mResizablePlots[i].selectedKey > j) mResizablePlots[i].selectedKey--;
+                    updateUnifiedKeys();
+                    break; 
+                }
+            }
+            ImGui::ListBoxFooter();
+        }
+
+        ImGui::NextColumn();
+
+        // Right column: Key search and candidates
+        ImGui::Text("Search Key");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        static std::vector<std::string> all_keys;
+        bool enterPressed = ImGui::InputText(("##NewKey" + std::to_string(i)).c_str(),
+                                             mResizablePlots[i].newKeyInput,
+                                             sizeof(mResizablePlots[i].newKeyInput),
+                                             ImGuiInputTextFlags_EnterReturnsTrue);
+
+        if (ImGui::IsItemActivated()) { // Update keys when input is activated
+            all_keys = mGraphData->get_keys();
+        }
+
+        std::vector<std::string> candidates;
+        if (strlen(mResizablePlots[i].newKeyInput) > 0) {
+            std::string search_str = mResizablePlots[i].newKeyInput;
+            std::transform(search_str.begin(), search_str.end(), search_str.begin(), ::tolower);
+            for (const auto& key : all_keys) {
+                std::string lower_key = key;
+                std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
+                if (lower_key.find(search_str) != std::string::npos) {
+                    candidates.push_back(key);
+                }
+            }
+        }
+
+        if (enterPressed && strlen(mResizablePlots[i].newKeyInput) > 0) {
+            if (!candidates.empty()) {
+                for (const auto& candidate : candidates) {
+                    mResizablePlots[i].keys.push_back(candidate);
+                }
+            } else {
+                mResizablePlots[i].keys.push_back(mResizablePlots[i].newKeyInput);
+            }
+            memset(mResizablePlots[i].newKeyInput, 0, sizeof(mResizablePlots[i].newKeyInput));
+            updateUnifiedKeys();
+        }
+
+        if (!candidates.empty()) {
+            if (ImGui::ListBoxHeader(("Candidates##" + std::to_string(i)).c_str(), ImVec2(-1, KEY_CONFIG_HEIGHT - RESIZABLE_PLOT_TEXT_HEIGHT))) {
+                for (const auto& candidate : candidates) {
+                    if (ImGui::Selectable(candidate.c_str())) {
+                        mResizablePlots[i].keys.push_back(candidate);
+                        memset(mResizablePlots[i].newKeyInput, 0, sizeof(mResizablePlots[i].newKeyInput));
+                        updateUnifiedKeys();
+                    }
+                }
+                ImGui::ListBoxFooter();
+            }
+        }
+
+        // height: ImGui::GetWindowSize().y - RESIZABLE_PLOT_TEXT_HEIGHT * 2 - KEY_CONFIG_HEIGHT
+
+        ImGui::Columns(1);
+        ImGui::Separator();
+
+        // The actual plot
+        if (std::abs(mXminResizablePlotPane) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXminResizablePlotPane, 0, ImGuiCond_Always);
+        else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0, ImGuiCond_Once);
+        if (mSetResizablePlotPane){
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, mYminResizablePlotPane, mYmaxResizablePlotPane, ImGuiCond_Always);
+        } else {
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, mYminResizablePlotPane, mYmaxResizablePlotPane, ImGuiCond_Once);
+        }
+        if (ImPlot::BeginPlot(("##Plot" + std::to_string(i)).c_str(), ImVec2(-1, -1))) {
+            ImPlot::SetupAxes("Time (s)", "Value");
+            plotGraphData(mResizablePlots[i].keys, ImAxis_Y1, true, false, "");
+
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+            ImPlot::EndPlot();
+        }
+
+        ImGui::EndChild();
+        if (i < mResizablePlots.size() - 1) {
+            ImGui::SameLine();
+        }
+    }
+    if (mPlotTitleResizablePlotPane) {
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(mCheckpointName.c_str()).x) * 0.5f);
+        ImGui::Text("%s", mCheckpointName.c_str());
+    }
+    mSetResizablePlotPane = false;
+    ImGui::End();
+}
+
 void GLFWApp::drawUIFrame()
 {
     ImGui_ImplOpenGL3_NewFrame();
@@ -2177,6 +2361,7 @@ void GLFWApp::drawUIFrame()
     drawSimVisualizationPanel();
     drawKinematicsControlPanel();
     drawTimingPane();
+    drawResizablePlotPane();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
@@ -2298,8 +2483,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 
 void GLFWApp::drawPlayableMotion()
 {
-    if (mMotions.empty() || !mDrawMotion)
-        return;
+    if (mMotions.empty() || !mDrawMotion) return;
 
     double phase;
     if (mRenderEnv)
@@ -2323,9 +2507,11 @@ void GLFWApp::drawPlayableMotion()
     Eigen::VectorXd motion_6dof = mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60)))
                                 + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60));
 
-    if (mRenderEnv)
+    Character* character = mRenderEnv ? mRenderEnv->getCharacter(0) : mMotionCharacter;
+
+    if (character)
     {
-        Eigen::VectorXd motion_pos = mRenderEnv->getCharacter(0)->sixDofToPos(motion_6dof);
+        Eigen::VectorXd motion_pos = character->sixDofToPos(motion_6dof);
 
         // Root Offset
         if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
@@ -2338,30 +2524,13 @@ void GLFWApp::drawPlayableMotion()
 
         drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
     }
-    else
-    {
-        // Root Offset update
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-        {
-            mMotionRootOffset[0] += motion_6dof[3] * 0.5;
-            mMotionRootOffset[1] = motion_6dof[4];
-            mMotionRootOffset[2] += motion_6dof[5] * 0.5;
-        }
-
-        // Apply root offset to motion data
-        Eigen::VectorXd motion_with_offset = motion_6dof;
-        motion_with_offset.segment(3, 3) = mMotionRootOffset;
-
-        // Note: Full implementation requires Character::sixDofToPos which needs mRenderEnv
-        // drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-    }
 }
 
 
 void GLFWApp::drawSimFrame()
 {
     initGL();
-    if (mRenderEnv) setCamera();
+    setCamera();
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -2615,6 +2784,8 @@ void GLFWApp::reset()
         mRenderEnv->reset();
         mFGNRootOffset = mRenderEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getPositions().tail(3);
         mUseWeights = mRenderEnv->getUseWeights();
+        mViewerTime = mRenderEnv->getWorld()->getTime();
+        mViewerPhase = mRenderEnv->getCharacter(0)->getLocalTime() / (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence());
     }
 }
 
@@ -2624,44 +2795,6 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
     {
         switch (key)
         {
-        // case GLFW_KEY_U:
-        //     mRenderEnv->updateParamState();
-        //     mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-        //     reset();
-        //     break;
-        // case GLFW_KEY_COMMA:
-        //     mRenderEnv->setParamState(mRenderEnv->getParamDefault(), false, true);
-        //     mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-        //     reset();
-        //     break;
-        // case GLFW_KEY_N:
-        //     mRenderEnv->setParamState(mRenderEnv->getParamMin(), false, true);
-        //     mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-        //     reset();
-        //     break;
-        // case GLFW_KEY_M:
-        //     mRenderEnv->setParamState(mRenderEnv->getParamMax(), false, true);
-        //     mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
-        //     reset();
-        //     break;
-
-        // case GLFW_KEY_Z:
-        // {
-        //     Eigen::VectorXd pos = mRenderEnv->getCharacter(0)->getSkeleton()->getPositions().setZero();
-        //     Eigen::VectorXd vel = mRenderEnv->getCharacter(0)->getSkeleton()->getVelocities().setZero();
-        //     pos[41] = 1.5;
-        //     pos[51] = -1.5;
-        //     mRenderEnv->getCharacter(0)->getSkeleton()->setPositions(pos);
-        //     mRenderEnv->getCharacter(0)->getSkeleton()->setVelocities(vel);
-        // }
-        // break;
-        // // Rendering Key
-        // case GLFW_KEY_T:
-        //     mDrawReferenceSkeleton = !mDrawReferenceSkeleton;
-        //     break;
-        // case GLFW_KEY_P:
-        //     mDrawCharacter = !mDrawCharacter;
-        //     break;
         case GLFW_KEY_S:
             update();
             break;
@@ -2674,6 +2807,9 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         case GLFW_KEY_SPACE:
             mRolloutStatus.pause = !mRolloutStatus.pause;
             mRolloutStatus.cycle = -1;
+            break;
+        case GLFW_KEY_A:
+            mShowResizablePlotPane = !mShowResizablePlotPane;
             break;
         case GLFW_KEY_T:
             mShowTimingPane = !mShowTimingPane;
@@ -2699,16 +2835,7 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         case GLFW_KEY_KP_2:
             loadCameraPreset(2);
             break;
-        // case GLFW_KEY_B:
-            // reset();
-// 
-            // {
-                // mMotionBuffer.clear();
-                // while (mRenderEnv->isEOE() == 0)
-                    // update(true);
-            // }
-            // exportBVH(mMotionBuffer, mRenderEnv->getCharacter(0)->getSkeleton());
-            // break;
+
 
         default:
             break;
@@ -2795,17 +2922,17 @@ void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
             const auto *sphere = dynamic_cast<const SphereShape *>(shape);
             GUI::DrawSphere(sphere->getRadius());
         }
-        else if (shape->is<BoxShape>())
+        else if (shape->is<BoxShape>()) 
         {
             const auto *box = dynamic_cast<const BoxShape *>(shape);
             GUI::DrawCube(box->getSize());
         }
-        else if (shape->is<CapsuleShape>())
+        else if (shape->is<CapsuleShape>()) 
         {
             const auto *capsule = dynamic_cast<const CapsuleShape *>(shape);
             GUI::DrawCapsule(capsule->getRadius(), capsule->getHeight());
         }
-        else if (shape->is<CylinderShape>())
+        else if (shape->is<CylinderShape>()) 
         {
             const auto *cylinder = dynamic_cast<const CylinderShape *>(shape);
             GUI::DrawCylinder(cylinder->getRadius(), cylinder->getHeight());
@@ -2813,7 +2940,7 @@ void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
     }
     else
     {
-        if (shape->is<MeshShape>())
+        if (shape->is<MeshShape>()) 
         {
             const auto &mesh = dynamic_cast<const MeshShape *>(shape);
             mShapeRenderer.renderMesh(mesh, false, 0.0, color);
@@ -2823,34 +2950,44 @@ void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
 
 void GLFWApp::setCamera()
 {
-    if (mFocus == 1)
+    if (mRenderEnv)
     {
-        mTrans = -mRenderEnv->getCharacter(0)->getSkeleton()->getCOM();
-        mTrans[1] = -1;
-        mTrans *= 1000;
-    }
-    else if (mFocus == 2)
-    {
-        mTrans = -mRenderEnv->getTargetPositions().segment(3, 3); //-mRenderEnv->getCharacter(0)->getSkeleton()->getCOM();
-        mTrans[1] = -1;
-        mTrans *= 1000;
-    }
-    else if (mFocus == 3)
-    {
-        if (mC3dMotion.size() == 0)
-            mFocus++;
-        else
+        if (mFocus == 1)
         {
-            mTrans = -(mC3DReader->getBVHSkeleton()->getCOM());
+            mTrans = -mRenderEnv->getCharacter(0)->getSkeleton()->getCOM();
             mTrans[1] = -1;
             mTrans *= 1000;
         }
+        else if (mFocus == 2)
+        {
+            mTrans = -mRenderEnv->getTargetPositions().segment(3, 3); //-mRenderEnv->getCharacter(0)->getSkeleton()->getCOM();
+            mTrans[1] = -1;
+            mTrans *= 1000;
+        }
+        else if (mFocus == 3)
+        {
+            if (mC3dMotion.size() == 0)
+                mFocus++;
+            else
+            {
+                mTrans = -(mC3DReader->getBVHSkeleton()->getCOM());
+                mTrans[1] = -1;
+                mTrans *= 1000;
+            }
+        }
+        else if (mFocus == 4)
+        {
+            mTrans[0] = -mFGNRootOffset[0];
+            mTrans[1] = -1;
+            mTrans[2] = -mFGNRootOffset[2];
+            mTrans *= 1000;
+        }
     }
-    else if (mFocus == 4)
+    else
     {
-        mTrans[0] = -mFGNRootOffset[0];
-        mTrans[1] = -1;
-        mTrans[2] = -mFGNRootOffset[2];
+        mTrans[0] = -mMotionRootOffset[0];
+        mTrans[1] = -mMotionRootOffset[1] - 1;
+        mTrans[2] = -mMotionRootOffset[2];
         mTrans *= 1000;
     }
 }
@@ -3082,4 +3219,69 @@ void GLFWApp::loadMotionFiles()
     } catch (const std::exception& e) {
         std::cerr << "Error importing forward_gaitnet module: " << e.what() << std::endl;
     }
+}
+void GLFWApp::addSimulationMotion()
+{
+    Motion current_motion;
+    current_motion.name = "New Motion " + std::to_string(mMotions.size());
+    current_motion.param = mRenderEnv->getParamState();
+    current_motion.motion = Eigen::VectorXd::Zero(6060);
+
+    std::vector<double> phis;
+    // phis list of 1/60 for 2 seconds
+    for (int i = 0; i < 60; i++)
+        phis.push_back(((double)i) / mRenderEnv->getControlHz());
+
+    // rollout
+    std::vector<Eigen::VectorXd> current_trajectory;
+    std::vector<double> current_phi;
+    std::vector<Eigen::VectorXd> refined_trajectory;
+    reset();
+
+    double prev_phi = -1.0;
+    int phi_offset = -1.0;
+    while (!mRenderEnv->isEOE())
+    {
+        for (int i = 0; i < 60 / mRenderEnv->getControlHz(); i++)
+            update();
+
+        current_trajectory.push_back(mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()));
+
+        if (prev_phi > mRenderEnv->getNormalizedPhase())
+            phi_offset += 1;
+        prev_phi = mRenderEnv->getNormalizedPhase();
+
+        current_phi.push_back(mRenderEnv->getNormalizedPhase() + phi_offset);
+    }
+
+    int phi_idx = 0;
+    int current_idx = 0;
+    refined_trajectory.clear();
+    while (phi_idx < phis.size() && current_idx < current_trajectory.size() - 1)
+    {
+        // if phi is smaller than current phi, then add current trajectory to refined trajectory
+        if (current_phi[current_idx] <= phis[phi_idx] && phis[phi_idx] < current_phi[current_idx + 1])
+        {
+            // Interpolate between current_idx and current_idx+1
+            double t = (phis[phi_idx] - current_phi[current_idx]) / (current_phi[current_idx + 1] - current_phi[current_idx]);
+            // calculate v
+            Eigen::Vector3d v1 = current_trajectory[current_idx].segment(6, 3) - current_trajectory[current_idx - 1].segment(6, 3);
+            Eigen::Vector3d v2 = current_trajectory[current_idx + 1].segment(6, 3) - current_trajectory[current_idx].segment(6, 3);
+
+            Eigen::VectorXd interpolated = (1 - t) * current_trajectory[current_idx] + t * current_trajectory[current_idx + 1];
+            Eigen::Vector3d v = (1 - t) * v1 + t * v2;
+
+            interpolated[6] = v[0];
+            interpolated[8] = v[2];
+            int start_idx = interpolated.rows() * refined_trajectory.size();
+            current_motion.motion.segment(start_idx, interpolated.rows()) = interpolated;
+            refined_trajectory.push_back(interpolated);
+
+            phi_idx++;
+        }
+        else
+            current_idx++;
+    }
+    mMotions.push_back(current_motion);
+    mAddedMotions.push_back(current_motion);
 }
