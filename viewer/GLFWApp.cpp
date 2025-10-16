@@ -3758,7 +3758,7 @@ void GLFWApp::loadMotionFiles()
     mMotionIdx = 0;
 
     // Load NPZ motion files
-    std::string motion_path = "motions";
+    std::string motion_path = "data/npz_motions";
     if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
         std::cerr << "Motion directory not found: " << motion_path << std::endl;
     } else {
@@ -3938,6 +3938,13 @@ void GLFWApp::loadHDF5Parameters()
         }
 
         H5::Group param_group = h5file.openGroup(param_name);
+
+        // Compute middle cycle index for initial load
+        hsize_t num_cycles = param_group.getNumObjs();
+        mMaxHDF5CycleIdx = static_cast<int>(num_cycles) - 1;
+        mSelectedHDF5CycleIdx = static_cast<int>(mMaxHDF5CycleIdx * 0.75);
+        std::cout << "Setting initial cycle to: " << mSelectedHDF5CycleIdx
+                  << " (max: " << mMaxHDF5CycleIdx << ")" << std::endl;
 
         if (!param_group.nameExists("param_state")) {
             std::cerr << "Warning: No param_state in " << param_name << std::endl;
