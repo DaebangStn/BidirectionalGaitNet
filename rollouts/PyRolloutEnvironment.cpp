@@ -27,7 +27,10 @@ void bind_RolloutEnvironment(py::module& m) {
              py::arg("params"),
              "Set simulation parameters from a dictionary {param_name: value}")
         .def("get_parameter_names", &RolloutEnvironment::GetParameterNames,
-             "Get list of available parameter names");
+             "Get list of available parameter names")
+        .def("get_param_state", &RolloutEnvironment::GetParamState,
+             py::arg("is_mirror") = false,
+             "Get current parameter state as vector");
 }
 
 PYBIND11_MODULE(pyrollout, m) {

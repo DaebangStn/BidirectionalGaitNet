@@ -37,6 +37,7 @@ public:
     // Parameter control
     void SetParameters(const std::map<std::string, double>& params);
     std::vector<std::string> GetParameterNames();
+    Eigen::VectorXd GetParamState(bool isMirror = false);
 
     // Environment getters (delegate to mEnv)
     int GetSimulationHz();

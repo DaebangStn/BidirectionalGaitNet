@@ -214,3 +214,7 @@ std::vector<std::string> RolloutEnvironment::GetParameterNames() {
     const std::vector<std::string>& param_names = mEnv.getParamName();
     return std::vector<std::string>(param_names.begin(), param_names.end());
 }
+
+Eigen::VectorXd RolloutEnvironment::GetParamState(bool isMirror) {
+    return mEnv.getParamState(isMirror);
+}
