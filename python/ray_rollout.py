@@ -242,7 +242,7 @@ def run_rollout(checkpoint_path: str,
 
     Args:
         checkpoint_path: Path to checkpoint directory
-        record_config_path: Path to rollout config YAML
+        record_config_path: Path to rollout config YAML (includes filter configuration)
         output_path: Output HDF5 file path
         sample_dir: Sample directory for error logging
         param_file: Optional CSV file with parameter sweep
@@ -266,11 +266,14 @@ def run_rollout(checkpoint_path: str,
     print(f"Loading metadata from checkpoint: {checkpoint_path}")
     metadata_xml = load_metadata_from_checkpoint(checkpoint_path)
 
-    # Load config to get target cycles
+    # Load config to get target cycles and filter settings
     print(f"Loading rollout configuration: {record_config_path}")
     config = load_config_yaml(record_config_path)
     target_cycles = config.get('sample', {}).get('cycle', 5)
     print(f"Target cycles: {target_cycles}")
+
+    # Extract filter configuration from YAML
+    filter_config = config.get('filters', {})
 
     # Load parameter sweep if provided
     parameters = []
@@ -331,16 +334,17 @@ def run_rollout(checkpoint_path: str,
     # Get muscle network weights from policy worker
     mcn_weights_ref = policy.get_mcn_weights.remote()
 
-    # Create environment workers
+    # Create environment workers with filter config for parallel filtering
     env_workers = [
-        EnvWorker.remote(i, metadata_xml, record_config_path, target_cycles)
+        EnvWorker.remote(i, metadata_xml, record_config_path, target_cycles,
+                        filter_config=filter_config, record_config=config)
         for i in range(num_workers)
     ]
 
     # Set muscle network weights on all workers
     ray.get([w.set_mcn_weights.remote(mcn_weights_ref) for w in env_workers])
 
-    # Create FileWorker for thread-safe I/O with global metadata
+    # Create FileWorker for thread-safe I/O with global metadata (filters now in EnvWorkers)
     file_worker = FileWorker.remote(
         output_path,
         sample_dir,
@@ -350,10 +354,15 @@ def run_rollout(checkpoint_path: str,
         config_content=config_content
     )
 
+    # Print filter pipeline configuration
+    from data_filters import FilterPipeline
+    temp_pipeline = FilterPipeline.from_config(filter_config, config)
+    temp_pipeline.print_pipeline()
+
     # Run appropriate rollout method
     if parameters:
         print(f"Running parameter sweep with {len(parameters)} parameter sets")
-        _run_with_parameters(env_workers, policy, file_worker, target_cycles, parameters)
+        _run_with_parameters(env_workers, policy, file_worker, parameters, target_cycles)
     else:
         # Default to num_workers if num_samples not specified
         if num_samples is None:
@@ -368,7 +377,7 @@ def run_rollout(checkpoint_path: str,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ray-based rollout for BidirectionalGaitNet")
     parser.add_argument("--checkpoint", required=True, help="Path to checkpoint directory (contains metadata)")
-    parser.add_argument("--config", required=True, help="Path to record config YAML (contains target cycles)")
+    parser.add_argument("--config", required=True, help="Path to record config YAML (contains target cycles and filters)")
     parser.add_argument("--param-file", default=None, help="CSV file with parameter sweep (optional)")
     parser.add_argument("--workers", type=int, default=16, help="Number of workers (default: auto-detect)")
     parser.add_argument("--num-samples", type=int, default=None, help="Number of random samples (when --param-file not provided, default: same as workers)")

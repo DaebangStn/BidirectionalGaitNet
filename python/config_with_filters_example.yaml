@@ -1,0 +1,33 @@
+# Example rollout configuration with data filters
+# Configure all filters in this YAML file
+
+sample:
+  cycle: 5  # Target number of cycles to collect
+
+# Data filtering and processing pipeline
+# Filters are applied sequentially in the order: drop_short -> drop_first -> drop_last -> compute
+filters:
+  # Remove cycles with too few steps (e.g., incomplete cycles)
+  drop_short_cycles:
+    enabled: true
+    min_steps: 10  # Minimum number of steps per cycle
+
+  # Remove first N cycles (e.g., transient behavior)
+  drop_first_n_cycles:
+    enabled: true
+    n: 1  # Drop first cycle
+
+  # Remove last M cycles (e.g., unstable final cycles)
+  drop_last_m_cycles:
+    enabled: false  # Disabled by default
+    m: 1  # Would drop last cycle if enabled
+
+  # Compute travel distance from root position
+  compute_travel_distance:
+    enabled: true  # Add travel_distance field to output
+
+# Usage:
+# python ray_rollout.py \
+#   --checkpoint path/to/checkpoint \
+#   --config config_with_filters_example.yaml \
+#   --workers 16
