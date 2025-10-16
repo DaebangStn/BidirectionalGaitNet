@@ -24,6 +24,12 @@ void RenderEnvironment::step() {
 
     // Record reward data after step completion
     RecordRewardData();
+
+    std::cout << "Joint Y: " << mEnv->getCharacter(0)->getSkeleton()->getPosition(4)
+    << " | COM Y: " << mEnv->getCharacter(0)->getSkeleton()->getRootBodyNode()->getCOM()[1]
+    << " | Diff: " << (mEnv->getCharacter(0)->getSkeleton()->getRootBodyNode()->getCOM()[1] - mEnv->getCharacter(0)->getSkeleton()->getPosition(4))
+    << std::endl;
+
 }
 
 void RenderEnvironment::RecordRewardData() {

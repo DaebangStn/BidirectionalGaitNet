@@ -15,6 +15,7 @@
 #include <imgui_internal.h>
 #include "C3D_Reader.h"
 #include <yaml-cpp/yaml.h>
+#include <H5Cpp.h>
 
 struct ResizablePlot {
     std::vector<std::string> keys;
@@ -66,6 +67,35 @@ struct RolloutStatus
     }
 };
 
+struct ViewerMotion
+{
+    std::string name;
+    Eigen::VectorXd param;
+    Eigen::VectorXd motion;  // Flattened motion data: NPZ: 6060 (60 cycles × 101 frames), HDF5: variable
+    int frames_per_cycle = 101;  // NPZ: timesteps per cycle (101), HDF5: skeleton DOF (56)
+    int num_cycles = 60;         // NPZ: number of cycles (60), HDF5: actual gait cycles loaded
+    std::string source_type = "npz";  // Source format: "npz" or "hdf5"
+
+    // HDF5-specific timing (for correct playback speed)
+    int hdf5_total_timesteps = 0;      // Total simulation timesteps across all cycles
+    int hdf5_timesteps_per_cycle = 0;  // Average timesteps per gait cycle (for phase mapping)
+
+    // Per-motion root positioning (clear semantics for HDF5 coordinate alignment)
+    Eigen::Vector3d initialRootPosition = Eigen::Vector3d::Zero();  // First frame root joint position [3,4,5]
+    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        // World offset: (simulated_char - motion_frame0) + overlap_prevention
+    std::vector<Eigen::Vector3d> rootBodyCOM;                       // Root body COM trajectory from root/x,y,z (HDF5 only, optional)
+    std::vector<double> timestamps;                                 // HDF5: actual simulation time for each frame (for accurate interpolation)
+
+    // Current evaluated pose (computed in updateViewerTime, used in drawPlayableMotion)
+    Eigen::VectorXd currentPose;
+};
+
+enum MotionNavigationMode
+{
+    NAVIGATION_VIEWER_TIME = 0,  // Automatic playback driven by viewer time
+    NAVIGATION_MANUAL_FRAME      // Manual frame selection via slider
+};
+
 class GLFWApp
 {
 public:
@@ -89,6 +119,7 @@ private:
     void initGL();
     void update(bool isSave = false);
     void reset();
+    void updateViewerTime(double dt);  // Update viewer time, phase, and motion state
 
     void setWindowIcon(const char* icon_path);
 
@@ -241,13 +272,30 @@ private:
     py::object mGVAE;
     bool mGVAELoaded;
     std::vector<BoneInfo> mSkelInfosForMotions;
-    std::vector<Motion> mMotions;
-    std::vector<Motion> mAddedMotions;
+    std::vector<ViewerMotion> mMotions;
+    std::vector<ViewerMotion> mAddedMotions;
     Motion mPredictedMotion;
 
     int mMotionIdx;
     int mMotionFrameIdx;
-    Eigen::Vector3d mMotionRootOffset;
+
+    // Motion playback tracking (cycle accumulation and forward progress - used for both NPZ and HDF5)
+    int mLastFrameIdx;
+    Eigen::Vector3d mCycleAccumulation;
+
+    // HDF5 selection (for selective param/cycle loading)
+    std::vector<std::string> mHDF5Files;              // Available HDF5 files
+    std::vector<std::string> mHDF5Params;             // Available params in selected file
+    std::vector<std::string> mHDF5Cycles;             // Available cycles in selected param
+    int mSelectedHDF5FileIdx;                         // Currently selected file
+    int mSelectedHDF5ParamIdx;                        // Currently selected param (drag value)
+    int mSelectedHDF5CycleIdx;                        // Currently selected cycle (drag value)
+    int mMaxHDF5ParamIdx;                             // Maximum param index for selected file
+    int mMaxHDF5CycleIdx;                             // Maximum cycle index for selected param
+    std::string mCurrentHDF5FilePath;                 // Path to current HDF5 file
+    std::string mMotionLoadError;                     // Error message for motion loading failures
+    void scanHDF5Structure();                         // Scan HDF5 file to populate params/cycles
+    void loadSelectedHDF5Motion();                    // Load specific param/cycle combination
 
     bool mDrawMotion;
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
@@ -323,6 +371,11 @@ private:
     bool mShowTimingPane;            // Toggle for timing information pane
     bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
 
+    // Motion navigation control
+    MotionNavigationMode mMotionNavigationMode;  // Current navigation mode
+    int mManualFrameIndex;                        // Manual frame index (when in manual mode)
+    int mMaxFrameIndex;                           // Maximum frame index for current motion
+
     // For Resizable Plot Pane
     std::vector<ResizablePlot> mResizablePlots;
     char mResizePlotKeys[1024];
@@ -361,4 +414,9 @@ private:
     void loadMotionFiles();
     void updateUnifiedKeys();
     void updateResizablePlotsFromKeys();
+
+    // Motion navigation helper
+    double computeFrameFloat(const ViewerMotion& motion, double phase);
+    void motionPoseEval(ViewerMotion& motion, double frame_float);
+    void alignMotionToSimulation();
 };

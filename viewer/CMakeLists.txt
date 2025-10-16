@@ -26,4 +26,5 @@ target_link_libraries(viewer
         GL GLU glut glad pybind11::embed glfw imgui
         sim
         dart-gui
+        ${HDF5_CXX_LIBRARIES}
 )

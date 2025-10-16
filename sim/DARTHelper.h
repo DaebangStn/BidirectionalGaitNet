@@ -11,7 +11,7 @@ using namespace dart::dynamics;
 typedef tinyxml2::XMLElement TiXmlElement;
 typedef tinyxml2::XMLDocument TiXmlDocument;
 
-namespace fs = std::experimental::filesystem;
+namespace dart_fs = std::experimental::filesystem;
 
 namespace Eigen
 {

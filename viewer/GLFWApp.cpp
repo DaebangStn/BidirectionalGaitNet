@@ -7,6 +7,10 @@
 #include "DARTHelper.h"
 #include <tinyxml2.h>
 #include <sstream>
+#include "dart/dynamics/BallJoint.hpp"
+#include "dart/dynamics/FreeJoint.hpp"
+
+namespace fs = std::filesystem;
 
 
 const std::vector<std::string> CHANNELS =
@@ -64,6 +68,11 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mResizePlotPane = true;
     mSetResizablePlotPane = false;
     mPlotTitleResizablePlotPane = false;
+
+    // Initialize motion navigation control
+    mMotionNavigationMode = NAVIGATION_VIEWER_TIME;
+    mManualFrameIndex = 0;
+    mMaxFrameIndex = 0;
 
     // Load configuration from render.yaml (will override defaults if file exists)
     loadRenderConfig();
@@ -150,7 +159,7 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     initializeCameraPresets();
     loadCameraPreset(0);
 
-    mDrawMotion = false;
+    mDrawMotion = true;
 
     if (argc > 1)
     {
@@ -257,7 +266,17 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mRelatedDofs.clear();
 
     mMotionFrameIdx = 0;
-    mMotionRootOffset = Eigen::Vector3d::Zero();
+    mLastFrameIdx = 0;
+    mCycleAccumulation = Eigen::Vector3d::Zero();
+
+    // Initialize HDF5 selection
+    mSelectedHDF5FileIdx = -1;
+    mSelectedHDF5ParamIdx = 0;
+    mSelectedHDF5CycleIdx = 0;
+    mMaxHDF5ParamIdx = 0;
+    mMaxHDF5CycleIdx = 0;
+    mCurrentHDF5FilePath = "";
+    mMotionLoadError = "";
 
     py::gil_scoped_acquire gil;
     
@@ -707,10 +726,10 @@ void GLFWApp::startLoop()
         }
 
         // Update viewer time (master clock for playback)
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+        // In manual frame mode, always update to sync with slider even when paused
+        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0 || mMotionNavigationMode == NAVIGATION_MANUAL_FRAME)
         {
-            mViewerTime += realDeltaTime * mViewerPlaybackSpeed;
-            mViewerPhase = fmod(mViewerTime / mViewerCycleDuration, 1.0);
+            updateViewerTime(realDeltaTime * mViewerPlaybackSpeed);
         }
 
         // Simulation Step with performance monitoring and sync control
@@ -1066,45 +1085,297 @@ void GLFWApp::drawKinematicsControlPanel()
         {
             auto m = mC3DReader->convertToMotion();
             m.name = "C3D Motion" + std::to_string(mMotions.size());
-            mMotions.push_back(m);
-            mAddedMotions.push_back(m);
+
+            // Convert Motion to ViewerMotion
+            ViewerMotion viewer_motion;
+            viewer_motion.name = m.name;
+            viewer_motion.param = m.param;
+            viewer_motion.motion = m.motion;
+            viewer_motion.source_type = "c3d";
+            // Assume standard 101 frames per cycle, 60 cycles for C3D
+            viewer_motion.frames_per_cycle = 101;
+            viewer_motion.num_cycles = viewer_motion.motion.size() / 101;
+
+            mMotions.push_back(viewer_motion);
+            mAddedMotions.push_back(viewer_motion);
         }
     }
 
-    if (ImGui::CollapsingHeader("Motions"))
+    if (ImGui::CollapsingHeader("Motions", ImGuiTreeNodeFlags_DefaultOpen))
     {
         static int mMotionPhaseOffset = 0;
 
         ImGui::Checkbox("Draw Motion\t", &mDrawMotion);
-        if (ImGui::ListBoxHeader("motion list", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
-        {
-            for (int i = 0; i < mMotions.size(); i++)
-            {
-                if (ImGui::Selectable(mMotions[i].name.c_str(), mMotionIdx == i))
-                    mMotionIdx = i;
 
-                if (mMotionIdx == i)
+        // Check if currently selected motion is NPZ or HDF5
+        bool npz_selected = false;
+        bool hdf5_selected = false;
+        if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
+            if (mMotions[mMotionIdx].source_type == "npz") {
+                npz_selected = true;
+            } else if (mMotions[mMotionIdx].source_type == "hdf5") {
+                hdf5_selected = true;
+            }
+        }
+
+        // NPZ Motions collapsing header with color based on selection
+        if (npz_selected) {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
+        }
+
+        if (ImGui::CollapsingHeader("NPZ Motions"))
+        {
+            if (ImGui::ListBoxHeader("##NPZ_List", ImVec2(-FLT_MIN, 8 * ImGui::GetTextLineHeightWithSpacing())))
+            {
+                for (int i = 0; i < mMotions.size(); i++)
+                {
+                    // Only show NPZ motions
+                    if (mMotions[i].source_type != "npz") continue;
+
+                    if (ImGui::Selectable(mMotions[i].name.c_str(), mMotionIdx == i)) {
+                        mMotionIdx = i;
+                        // Update max frame index for manual navigation
+                        mMaxFrameIndex = mMotions[i].num_cycles - 1;
+                        // Clamp manual frame index to valid range
+                        if (mManualFrameIndex > mMaxFrameIndex) {
+                            mManualFrameIndex = mMaxFrameIndex;
+                        }
+                        // Align motion with simulated character
+                        alignMotionToSimulation();
+                    }
+
+                    if (mMotionIdx == i)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::ListBoxFooter();
+            }
+        }
+
+        if (npz_selected) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // HDF5 Motions collapsing header with color based on selection
+        if (hdf5_selected) {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
+        }
+
+        if (ImGui::CollapsingHeader("HDF5 Motions", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            // Static tracking variables (moved outside to be accessible from file selection)
+            static int last_param_idx = -1;
+            static int last_cycle_idx = -1;
+            static int last_file_idx = -1;
+            static bool loading_success = false;
+
+            // HDF5 Files listbox
+            if (ImGui::ListBoxHeader("##HDF5_Files", ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing())))
+        {
+            for (int i = 0; i < mHDF5Files.size(); i++)
+            {
+                if (ImGui::Selectable(mHDF5Files[i].c_str(), mSelectedHDF5FileIdx == i))
+                {
+                    mSelectedHDF5FileIdx = i;
+                    mSelectedHDF5ParamIdx = 0;
+                    mSelectedHDF5CycleIdx = 0;
+
+                    // Scan params in selected file to get max indices
+                    try {
+                        H5::H5File h5file(mHDF5Files[i], H5F_ACC_RDONLY);
+                        hsize_t num_params = h5file.getNumObjs();
+                        mMaxHDF5ParamIdx = 0;
+                        for (hsize_t j = 0; j < num_params; j++) {
+                            std::string param_name = h5file.getObjnameByIdx(j);
+                            if (param_name.find("param_") == 0) {
+                                int param_idx = std::stoi(param_name.substr(6));
+                                if (param_idx > mMaxHDF5ParamIdx) {
+                                    mMaxHDF5ParamIdx = param_idx;
+                                }
+                            }
+                        }
+                        h5file.close();
+                        std::cout << "Selected file with max param_idx: " << mMaxHDF5ParamIdx << std::endl;
+                    } catch (const std::exception& e) {
+                        std::cerr << "Error reading params: " << e.what() << std::endl;
+                    }
+
+                    // Immediately load the motion with param_0/cycle_0
+                    loadSelectedHDF5Motion();
+                    alignMotionToSimulation();
+
+                    // Update tracking variables to reflect the load
+                    last_file_idx = mSelectedHDF5FileIdx;
+                    last_param_idx = mSelectedHDF5ParamIdx;
+                    last_cycle_idx = mSelectedHDF5CycleIdx;
+                    loading_success = true;
+                }
+                if (mSelectedHDF5FileIdx == i)
                     ImGui::SetItemDefaultFocus();
             }
             ImGui::ListBoxFooter();
         }
 
-        ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, 59);
+        // Param and Cycle sliders (only show if file is selected)
+        if (mSelectedHDF5FileIdx >= 0) {
+
+            // Param slider with status
+            ImGui::SliderInt("Param", &mSelectedHDF5ParamIdx, 0, mMaxHDF5ParamIdx);
+            ImGui::SameLine();
+            ImGui::Text("%d / %d", mSelectedHDF5ParamIdx, mMaxHDF5ParamIdx);
+
+            // When param changes, update max cycle index and build available cycle list
+            if (mSelectedHDF5ParamIdx != last_param_idx) {
+                try {
+                    H5::H5File h5file(mHDF5Files[mSelectedHDF5FileIdx], H5F_ACC_RDONLY);
+                    std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
+                    if (h5file.nameExists(param_name)) {
+                        H5::Group param_group = h5file.openGroup(param_name);
+                        hsize_t num_cycles = param_group.getNumObjs();
+                        mMaxHDF5CycleIdx = 0;
+
+                        // Find max cycle index by checking all cycle groups
+                        for (hsize_t j = 0; j < num_cycles; j++) {
+                            std::string cycle_name = param_group.getObjnameByIdx(j);
+                            if (cycle_name.find("cycle_") == 0) {
+                                int cycle_idx = std::stoi(cycle_name.substr(6));
+                                if (cycle_idx > mMaxHDF5CycleIdx) {
+                                    mMaxHDF5CycleIdx = cycle_idx;
+                                }
+                            }
+                        }
+                        param_group.close();
+
+                        // Clamp cycle index to valid range
+                        mSelectedHDF5CycleIdx = std::min(mSelectedHDF5CycleIdx, mMaxHDF5CycleIdx);
+
+                        std::cout << "Param " << mSelectedHDF5ParamIdx << " has max cycle index: " << mMaxHDF5CycleIdx << std::endl;
+                    } else {
+                        std::cerr << "Param " << param_name << " does not exist in file" << std::endl;
+                    }
+                    h5file.close();
+                } catch (const std::exception& e) {
+                    std::cerr << "Error reading cycles: " << e.what() << std::endl;
+                }
+                // NOTE: Do NOT update last_param_idx here - let auto-load section handle it
+            }
+
+            // Cycle slider with status
+            ImGui::SliderInt("Cycle", &mSelectedHDF5CycleIdx, 0, mMaxHDF5CycleIdx);
+            ImGui::SameLine();
+            ImGui::Text("%d / %d", mSelectedHDF5CycleIdx, mMaxHDF5CycleIdx);
+
+            // Show current file
+            ImGui::Text("File: %s", mHDF5Files[mSelectedHDF5FileIdx].c_str());
+
+            // Verify if selected param/cycle exists before loading
+            bool can_load = false;
+            std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
+            std::string cycle_name = "cycle_" + std::to_string(mSelectedHDF5CycleIdx);
+
+            try {
+                H5::H5File h5file(mHDF5Files[mSelectedHDF5FileIdx], H5F_ACC_RDONLY);
+                if (h5file.nameExists(param_name)) {
+                    H5::Group param_group = h5file.openGroup(param_name);
+                    if (param_group.nameExists(cycle_name)) {
+                        can_load = true;
+                    }
+                    param_group.close();
+                }
+                h5file.close();
+            } catch (const std::exception& e) {
+                // Silently ignore, will show "does not exist" status
+            }
+
+            // Auto-load when indices change (only if param/cycle exists)
+            if ((mSelectedHDF5ParamIdx != last_param_idx || mSelectedHDF5CycleIdx != last_cycle_idx) && can_load) {
+                loadSelectedHDF5Motion();
+                alignMotionToSimulation();
+                loading_success = true;
+                last_param_idx = mSelectedHDF5ParamIdx;
+                last_cycle_idx = mSelectedHDF5CycleIdx;
+            }
+
+            // Show loading status
+            if (!mMotionLoadError.empty()) {
+                // Show motion load error (e.g., too short)
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", mMotionLoadError.c_str());
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Previous motion still displayed");
+            } else if (can_load) {
+                if (loading_success) {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Status: Loaded %s / %s", param_name.c_str(), cycle_name.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Status: Ready to load %s / %s", param_name.c_str(), cycle_name.c_str());
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Status: %s / %s does not exist", param_name.c_str(), cycle_name.c_str());
+            }
+        }
+        }  // End HDF5 Motions collapsing header
+
+        if (hdf5_selected) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // Motion Navigation Control
+        ImGui::Separator();
+        ImGui::Text("Motion Navigation:");
+        int nav_mode = static_cast<int>(mMotionNavigationMode);
+        ImGui::RadioButton("Viewer Time", &nav_mode, NAVIGATION_VIEWER_TIME);
+        ImGui::SameLine();
+        ImGui::RadioButton("Manual Frame", &nav_mode, NAVIGATION_MANUAL_FRAME);
+        mMotionNavigationMode = static_cast<MotionNavigationMode>(nav_mode);
+
+        if (mMotionNavigationMode == NAVIGATION_MANUAL_FRAME) {
+            // Manual frame slider
+            if (!mMotions.empty()) {
+                static int last_manual_frame = -1;
+
+                ImGui::SliderInt("Frame Index", &mManualFrameIndex, 0, mMaxFrameIndex);
+                ImGui::Text("Frame: %d / %d", mManualFrameIndex, mMaxFrameIndex);
+
+                // Show frame time for HDF5 motions with timestamps
+                if (mMotions[mMotionIdx].source_type == "hdf5" &&
+                    !mMotions[mMotionIdx].timestamps.empty() &&
+                    mManualFrameIndex < mMotions[mMotionIdx].timestamps.size()) {
+                    double frame_time = mMotions[mMotionIdx].timestamps[mManualFrameIndex];
+                    ImGui::Text("Time: %.3f s", frame_time);
+                }
+                last_manual_frame = mManualFrameIndex;
+            }
+        } else {
+            // Show current auto-computed frame in viewer time mode
+            if (!mMotions.empty()) {
+                double phase = mViewerPhase;
+                if (mRenderEnv) {
+                    phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
+                    phase = fmod(phase, 1.0);
+                }
+                double frame_float = computeFrameFloat(mMotions[mMotionIdx], phase);
+                int current_frame = (int)frame_float;
+                ImGui::Text("Auto Frame: %d / %d", current_frame, mMaxFrameIndex);
+            }
+        }
+        ImGui::Separator();
+
+        ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotions[mMotionIdx].num_cycles - 1));
         if (ImGui::Button("Convert Motion"))
         {
-            int size = 101;
+            int frames_per_cycle = mMotions[mMotionIdx].frames_per_cycle;
+            int num_cycles = mMotions[mMotionIdx].num_cycles;
             Eigen::VectorXd m = mMotions[mMotionIdx].motion;
-            mMotions[mMotionIdx].motion << m.tail((60 - mMotionPhaseOffset) * size), m.head(mMotionPhaseOffset * size);
+            mMotions[mMotionIdx].motion << m.tail((num_cycles - mMotionPhaseOffset) * frames_per_cycle), m.head(mMotionPhaseOffset * frames_per_cycle);
         }
         
         if (ImGui::Button("Add Current Simulation motion to motion "))
         {
-            if(mRenderEnv)
-                addSimulationMotion();
+            if(mRenderEnv) addSimulationMotion();
         }
 
-        if (mRenderEnv && ImGui::Button("Set to Param of reference"))
-            mRenderEnv->setParamState(mMotions[mMotionIdx].param, false, true);
+        if (mRenderEnv && ImGui::Button("Set to Param of motion")) mRenderEnv->setParamState(mMotions[mMotionIdx].param, false, true);
 
     }
 
@@ -1167,7 +1438,7 @@ void GLFWApp::drawKinematicsControlPanel()
     {
         py::list motions;
         py::list params;
-        Motion motion = mMotions[mMotionIdx];
+        ViewerMotion motion = mMotions[mMotionIdx];
 
         motions.append(motion.motion);
         params.append(motion.param);
@@ -1217,6 +1488,11 @@ void GLFWApp::drawSimVisualizationPanel()
     {
         ImGui::Text("Target Vel      : %.3f m/s", mRenderEnv->getTargetCOMVelocity());
         ImGui::Text("Average Vel     : %.3f m/s", mRenderEnv->getAvgVelocity()[2]);
+
+        // Character position
+        Eigen::Vector3d char_pos = mRenderEnv->getCharacter(0)->getSkeleton()->getRootBodyNode()->getCOM();
+        ImGui::Text("Character Pos   : (%.3f, %.3f, %.3f)", char_pos[0], char_pos[1], char_pos[2]);
+
         ImGui::Separator();
         
         ImGui::Indent();
@@ -2483,47 +2759,17 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 
 void GLFWApp::drawPlayableMotion()
 {
+    // Motion pose is computed in updateViewerTime(), this function only renders
     if (mMotions.empty() || !mDrawMotion) return;
 
-    double phase;
-    if (mRenderEnv)
-    {
-        // Use viewer time for smooth playback independent of simulation speed
-        phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
-        phase = fmod(phase, 2.0);
-    }
-    else
-    {
-        if (!mMotionSkeleton) return;
-        // drawPhase(mViewerPhase, mViewerPhase);
-        // Use viewer phase for motion playback
-        phase = mViewerPhase * 2.0;  // Convert [0,1) to [0,2) range
-    }
+    // Get current motion and use the pre-computed pose
+    const ViewerMotion& current_motion = mMotions[mMotionIdx];
 
-    int idx_0 = (int)(phase * 30);
-    int idx_1 = (idx_0 + 1);
+    // Check if pose has been computed
+    if (current_motion.currentPose.size() == 0) return;
 
-    // Interpolation between idx_0 and idx_1
-    Eigen::VectorXd motion_6dof = mMotions[mMotionIdx].motion.segment((idx_0 % 60) * 101, 101) * (1.0 - (phase * 30 - (idx_0 % 60)))
-                                + mMotions[mMotionIdx].motion.segment((idx_1 % 60) * 101, 101) * (phase * 30 - (idx_0 % 60));
-
-    Character* character = mRenderEnv ? mRenderEnv->getCharacter(0) : mMotionCharacter;
-
-    if (character)
-    {
-        Eigen::VectorXd motion_pos = character->sixDofToPos(motion_6dof);
-
-        // Root Offset
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-        {
-            mMotionRootOffset[0] += motion_pos[3] * 0.5;
-            mMotionRootOffset[1] = motion_pos[4];
-            mMotionRootOffset[2] += motion_pos[5] * 0.5;
-        }
-        motion_pos.segment(3, 3) = mMotionRootOffset;
-
-        drawSkeleton(motion_pos, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-    }
+    // Draw the skeleton using the stored pose
+    drawSkeleton(current_motion.currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
 }
 
 
@@ -2776,9 +3022,12 @@ void GLFWApp::reset()
     mViewerPhase = 0.0;
     mC3DCount = 0;
     mGraphData->clear_all();
-    mMotionRootOffset = Eigen::Vector3d::Zero();
-    mMotionRootOffset[0] = 1.0;
     mC3DCOM = Eigen::Vector3d::Zero();
+
+    // Reset motion playback tracking for cycle accumulation
+    mLastFrameIdx = 0;
+    mCycleAccumulation = Eigen::Vector3d::Zero();
+    mCycleAccumulation[0] = 1.0;  // Initial x offset for visualization
 
     if (mRenderEnv) {
         mRenderEnv->reset();
@@ -2786,7 +3035,270 @@ void GLFWApp::reset()
         mUseWeights = mRenderEnv->getUseWeights();
         mViewerTime = mRenderEnv->getWorld()->getTime();
         mViewerPhase = mRenderEnv->getCharacter(0)->getLocalTime() / (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence());
+
+        // Align motion with simulated character position
+        alignMotionToSimulation();
     }
+}
+
+double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
+{
+    // phase: [0, 1)
+    double frame_float;
+
+    if (motion.source_type == "hdf5" && !motion.timestamps.empty()) {
+        // HDF5 with timestamps: Use actual simulation time for accurate interpolation
+        double t_start = motion.timestamps.front();
+        double t_end = motion.timestamps.back();
+        double total_duration = t_end - t_start;
+
+        // Calculate average gait cycle duration
+        double avg_cycle_duration = total_duration / motion.num_cycles;
+
+        // Map phase [0, 1) to one gait cycle worth of time
+        double motion_time = t_start + phase * avg_cycle_duration;
+
+        // Handle wrapping (keep motion_time within valid range)
+        motion_time = std::fmod(motion_time - t_start, total_duration) + t_start;
+
+        // Binary search for the frame at or after motion_time
+        auto it = std::lower_bound(motion.timestamps.begin(),
+                                  motion.timestamps.end(),
+                                  motion_time);
+
+        // Calculate frame indices and interpolation weight
+        int frame_idx_right = std::distance(motion.timestamps.begin(), it);
+
+        // Clamp to valid range
+        if (frame_idx_right >= motion.timestamps.size()) {
+            frame_idx_right = motion.timestamps.size() - 1;
+        }
+
+        int frame_idx_left = (frame_idx_right > 0) ? frame_idx_right - 1 : 0;
+
+        // Calculate interpolation weight based on timestamps
+        double t_left = motion.timestamps[frame_idx_left];
+        double t_right = motion.timestamps[frame_idx_right];
+        double weight = (frame_idx_left == frame_idx_right) ? 0.0 :
+                       (motion_time - t_left) / (t_right - t_left);
+
+        // Set frame_float to maintain compatibility with existing code
+        frame_float = frame_idx_left + weight;
+    } else if (motion.source_type == "hdf5") {
+        // HDF5 without timestamps: Fall back to uniform spacing
+        frame_float = phase * motion.hdf5_timesteps_per_cycle;
+    } else {
+        // NPZ motion: contains 2 gait cycles, use first half (1 cycle) in viewer time mode
+        // num_cycles is 60, so use 30 frames for one gait cycle
+        frame_float = phase * (motion.num_cycles / 2);
+    }
+
+    return frame_float;
+}
+
+void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
+{
+    if (mMotions.empty()) return;
+
+    Character* character = mRenderEnv ? mRenderEnv->getCharacter(0) : mMotionCharacter;
+    if (!character) return;
+
+    int frames_per_cycle = motion.frames_per_cycle;
+    int total_frames = (motion.source_type == "hdf5") ? motion.hdf5_total_timesteps : motion.num_cycles;
+
+    // Clamp frame_float to valid range for this motion
+    if (frame_float < 0) frame_float = 0;
+    if (frame_float >= total_frames) frame_float = fmod(frame_float, total_frames);
+
+    int current_frame_idx = (int)frame_float;
+    current_frame_idx = std::max(0, std::min(current_frame_idx, total_frames - 1));
+
+    // 1. Extract and interpolate frame data
+    Eigen::VectorXd interpolated_frame;
+    double weight_1 = frame_float - floor(frame_float);
+
+    // Safety check: ensure motion data is large enough
+    int required_size = total_frames * frames_per_cycle;
+    if (motion.motion.size() < required_size) {
+        std::cerr << "Warning: Motion data too small! Expected " << required_size
+                  << " but got " << motion.motion.size() << std::endl;
+        motion.currentPose = Eigen::VectorXd::Zero(frames_per_cycle);
+        return;
+    }
+
+    if (weight_1 > 1e-6) {
+        // Proper interpolation respecting joint types (FreeJoint, BallJoint, RevoluteJoint)
+        int next_frame_idx = (current_frame_idx + 1) % total_frames;
+        Eigen::VectorXd p1 = motion.motion.segment(current_frame_idx * frames_per_cycle, frames_per_cycle);
+        Eigen::VectorXd p2 = motion.motion.segment(next_frame_idx * frames_per_cycle, frames_per_cycle);
+
+        interpolated_frame = Eigen::VectorXd::Zero(frames_per_cycle);
+
+        // Iterate through skeleton joints and interpolate based on DOF
+        for (const auto jn : character->getSkeleton()->getJoints()) {
+            int dof = jn->getNumDofs();
+            if (dof == 0) continue;
+
+            int idx = jn->getIndexInSkeleton(0);
+
+            if (dof == 1) {
+                // RevoluteJoint: linear interpolation
+                interpolated_frame[idx] = p1[idx] * (1.0 - weight_1) + p2[idx] * weight_1;
+            } else if (dof == 3) {
+                // BallJoint: quaternion SLERP
+                Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, dof)));
+                Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, dof)));
+                Eigen::Quaterniond q = q1.slerp(weight_1, q2);
+                interpolated_frame.segment(idx, dof) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
+            } else if (dof == 6) {
+                // FreeJoint: quaternion SLERP for rotation, linear for translation
+                Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, 3)));
+                Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, 3)));
+                Eigen::Quaterniond q = q1.slerp(weight_1, q2);
+                interpolated_frame.segment(idx, 3) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
+                interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) * (1.0 - weight_1) + p2.segment(idx + 3, 3) * weight_1;
+            }
+        }
+    } else {
+        // No interpolation needed, use exact frame
+        interpolated_frame = motion.motion.segment(
+            current_frame_idx * frames_per_cycle, frames_per_cycle);
+    }
+
+    // 2. Convert to full skeleton pose if NPZ
+    Eigen::VectorXd motion_pos;
+    if (motion.source_type == "hdf5") {
+        motion_pos = interpolated_frame;
+    } else {
+        motion_pos = character->sixDofToPos(interpolated_frame);
+    }
+
+    // 3. Apply position offset (different handling for NPZ vs HDF5)
+    if (motion.source_type == "hdf5") {
+        // HDF5: Use delta from initial position plus cycle accumulation
+        Eigen::Vector3d current_root_pos(motion_pos[3], motion_pos[4], motion_pos[5]);
+        Eigen::Vector3d delta = current_root_pos - motion.initialRootPosition;
+
+        motion_pos[3] = delta[0] + mCycleAccumulation[0] + motion.displayOffset[0];
+        motion_pos[4] = current_root_pos[1] + motion.displayOffset[1];
+        motion_pos[5] = delta[2] + mCycleAccumulation[2] + motion.displayOffset[2];
+    } else {
+        // NPZ: Use mCycleAccumulation only (already accumulated in updateViewerTime)
+        motion_pos[3] = mCycleAccumulation[0] + motion.displayOffset[0];
+        motion_pos[4] = mCycleAccumulation[1];
+        motion_pos[5] = mCycleAccumulation[2] + motion.displayOffset[2];
+    }
+
+    // Store the computed pose
+    motion.currentPose = motion_pos;
+}
+
+void GLFWApp::alignMotionToSimulation()
+{
+    // Only align if we have both render environment and motions
+    if (!mRenderEnv || mMotions.empty()) return;
+
+    // Temporarily clear displayOffset to evaluate raw motion pose
+    Eigen::Vector3d saved_offset = mMotions[mMotionIdx].displayOffset;
+    mMotions[mMotionIdx].displayOffset = Eigen::Vector3d::Zero();
+
+    // Calculate the correct frame based on current phase
+    double phase = mViewerPhase;
+    double frame_float = computeFrameFloat(mMotions[mMotionIdx], phase);
+
+    // Evaluate motion pose at the current time/phase (without displayOffset)
+    motionPoseEval(mMotions[mMotionIdx], frame_float);
+
+    // Get simulated character's current position (from root body node)
+    Eigen::Vector3d sim_pos = mRenderEnv->getCharacter(0)->getSkeleton()->getRootBodyNode()->getCOM();
+
+    // Calculate displayOffset to align motion with simulation
+    if (mMotions[mMotionIdx].currentPose.size() > 0) {
+        double motion_x = mMotions[mMotionIdx].currentPose[3];
+        double motion_z = mMotions[mMotionIdx].currentPose[5];
+
+        // Set displayOffset: shift X to separate, align Z to coincide
+        mMotions[mMotionIdx].displayOffset[0] = sim_pos[0] - motion_x + 1.0;  // X: shift apart for visualization
+        mMotions[mMotionIdx].displayOffset[2] = sim_pos[2] - motion_z;        // Z: align perfectly
+    } else {
+        // Fallback to default offset if pose evaluation failed
+        mMotions[mMotionIdx].displayOffset[0] = 1.0;
+    }
+    motionPoseEval(mMotions[mMotionIdx], frame_float);
+}
+
+void GLFWApp::updateViewerTime(double dt)
+{
+    // Update viewer time and phase
+    mViewerTime += dt;
+    mViewerPhase = fmod(mViewerTime / mViewerCycleDuration, 1.0);
+
+    // Early return if no motions loaded or motion drawing disabled
+    if (mMotions.empty() || !mDrawMotion) return;
+
+    // Calculate phase [0, 1) for motion playback
+    double phase;
+    if (mRenderEnv) {
+        phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
+        phase = fmod(phase, 1.0);
+    } else {
+        if (!mMotionSkeleton) return;
+        phase = mViewerPhase;
+    }
+
+    // Get current motion
+    const ViewerMotion& current_motion = mMotions[mMotionIdx];
+    int frames_per_cycle = current_motion.frames_per_cycle;
+
+    // Calculate frame indices based on navigation mode
+    double frame_float;
+    if (mMotionNavigationMode == NAVIGATION_VIEWER_TIME) {
+        // Automatic playback: compute frame from phase/time
+        frame_float = computeFrameFloat(current_motion, phase);
+    } else {
+        // Manual mode: use manually set frame index
+        frame_float = (double)mManualFrameIndex;
+    }
+
+    int current_frame_idx = (int)frame_float;
+    int total_frames = (current_motion.source_type == "hdf5") ?
+                       current_motion.hdf5_total_timesteps : current_motion.num_cycles;
+    current_frame_idx = current_frame_idx % total_frames;
+
+    // Update motion state (different handling for NPZ vs HDF5)
+    Character* character = mRenderEnv ? mRenderEnv->getCharacter(0) : mMotionCharacter;
+    if (!character) return;
+
+    if (current_motion.source_type == "hdf5") {
+        // HDF5: Absolute positions, accumulate only on cycle wrap
+        Eigen::VectorXd current_frame = current_motion.motion.segment(
+            current_frame_idx * frames_per_cycle, frames_per_cycle);
+
+        // Detect cycle wrap and accumulate forward progress
+        if (current_frame_idx < mLastFrameIdx) {
+            Eigen::VectorXd last_frame = current_motion.motion.segment(
+                mLastFrameIdx * frames_per_cycle, frames_per_cycle);
+            Eigen::Vector3d last_root_pos(last_frame[3], last_frame[4], last_frame[5]);
+
+            mCycleAccumulation[0] += last_root_pos[0] - current_motion.initialRootPosition[0];
+            mCycleAccumulation[2] += last_root_pos[2] - current_motion.initialRootPosition[2];
+        }
+        mLastFrameIdx = current_frame_idx;
+    } else {
+        // NPZ: Incremental data, accumulate every frame
+        Eigen::VectorXd current_frame = current_motion.motion.segment(
+            current_frame_idx * frames_per_cycle, frames_per_cycle);
+        Eigen::VectorXd motion_pos = character->sixDofToPos(current_frame);
+
+        // NPZ root positions are deltas - accumulate them directly
+        mCycleAccumulation[0] += motion_pos[3] * 0.5;
+        mCycleAccumulation[1] = motion_pos[4];  // Y is absolute
+        mCycleAccumulation[2] += motion_pos[5] * 0.5;
+
+        mLastFrameIdx = current_frame_idx;
+    }
+
+    motionPoseEval(mMotions[mMotionIdx], frame_float);
 }
 
 void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
@@ -2796,7 +3308,13 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         switch (key)
         {
         case GLFW_KEY_S:
-            update();
+            if (mRenderEnv) {
+                update();  // Advance simulation by one control step
+                double dt = 1.0 / mRenderEnv->getControlHz();
+                updateViewerTime(dt);  // Advance viewer time and motion state
+            } else {
+                update();
+            }
             break;
         case GLFW_KEY_R:
             reset();
@@ -2985,9 +3503,52 @@ void GLFWApp::setCamera()
     }
     else
     {
-        mTrans[0] = -mMotionRootOffset[0];
-        mTrans[1] = -mMotionRootOffset[1] - 1;
-        mTrans[2] = -mMotionRootOffset[2];
+        // Motion-only viewing mode: focus on current motion position
+        if (!mMotions.empty() && mMotionSkeleton) {
+            // Calculate current position based on cycle accumulation
+            double phase = mViewerPhase;
+            const ViewerMotion& current_motion = mMotions[mMotionIdx];
+
+            double frame_float;
+            if (mMotionNavigationMode == NAVIGATION_VIEWER_TIME) {
+                frame_float = computeFrameFloat(current_motion, phase);
+            } else {
+                frame_float = (double)mManualFrameIndex;
+            }
+
+            int current_frame_idx = (int)frame_float;
+            int total_frames = (current_motion.source_type == "hdf5") ?
+                               current_motion.hdf5_total_timesteps : current_motion.num_cycles;
+            current_frame_idx = current_frame_idx % total_frames;
+
+            Eigen::VectorXd current_frame = current_motion.motion.segment(
+                current_frame_idx * current_motion.frames_per_cycle, current_motion.frames_per_cycle);
+
+            Eigen::VectorXd current_pos;
+            if (current_motion.source_type == "hdf5") {
+                current_pos = current_frame;
+            } else {
+                current_pos = mMotionCharacter->sixDofToPos(current_frame);
+            }
+
+            if (current_motion.source_type == "hdf5") {
+                // HDF5: Use delta from initial position plus cycle accumulation
+                Eigen::Vector3d root_pos(current_pos[3], current_pos[4], current_pos[5]);
+                Eigen::Vector3d delta = root_pos - current_motion.initialRootPosition;
+
+                mTrans[0] = -(delta[0] + mCycleAccumulation[0] + current_motion.displayOffset[0]);
+                mTrans[1] = -(root_pos[1] + current_motion.displayOffset[1]) - 1;
+                mTrans[2] = -(delta[2] + mCycleAccumulation[2] + current_motion.displayOffset[2]);
+            } else {
+                // NPZ: Use mCycleAccumulation only
+                mTrans[0] = -(mCycleAccumulation[0] + current_motion.displayOffset[0]);
+                mTrans[1] = -(mCycleAccumulation[1] + current_motion.displayOffset[1]) - 1;
+                mTrans[2] = -(mCycleAccumulation[2] + current_motion.displayOffset[2]);
+            }
+        } else {
+            mTrans = Eigen::Vector3d::Zero();
+            mTrans[1] = -1;
+        }
         mTrans *= 1000;
     }
 }
@@ -3162,18 +3723,17 @@ void GLFWApp::initializeMotionSkeleton()
 void GLFWApp::loadMotionFiles()
 {
     py::gil_scoped_acquire gil;
-    
+
     mMotions.clear();
     mMotionIdx = 0;
-    
+
+    // Load NPZ motion files
     std::string motion_path = "motions";
     if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
         std::cerr << "Motion directory not found: " << motion_path << std::endl;
-        return;
-    }
-
-    try {
-        py::object load_motions_from_file = py::module::import("forward_gaitnet").attr("load_motions_from_file");
+    } else {
+        try {
+            py::object load_motions_from_file = py::module::import("forward_gaitnet").attr("load_motions_from_file");
         
         for (const auto &entry : fs::directory_iterator(motion_path)) {
             std::string file_name = entry.path().string();
@@ -3205,10 +3765,11 @@ void GLFWApp::loadMotionFiles()
                 Eigen::MatrixXd motions = motions_obj.cast<Eigen::MatrixXd>();
 
                 for (int i = 0; i < params.rows(); i++) {
-                    Motion motion_elem;
+                    ViewerMotion motion_elem;
                     motion_elem.name = file_name + "_" + std::to_string(i);
                     motion_elem.param = params.row(i);
                     motion_elem.motion = motions.row(i);
+                    // NPZ data is incremental, no need for initialRootPosition
                     mMotions.push_back(motion_elem);
                 }
             } catch (const std::exception& e) {
@@ -3216,16 +3777,221 @@ void GLFWApp::loadMotionFiles()
                 continue;
             }
         }
+        } catch (const std::exception& e) {
+            std::cerr << "Error importing forward_gaitnet module: " << e.what() << std::endl;
+        }
+    }
+
+    // HDF5 files will be loaded on-demand via UI interaction
+    // Scan for available HDF5 files and auto-select first one
+    scanHDF5Structure();
+
+    // Auto-select first HDF5 file if available
+    if (!mHDF5Files.empty() && mSelectedHDF5FileIdx < 0) {
+        mSelectedHDF5FileIdx = 0;
+        mSelectedHDF5ParamIdx = 0;
+        mSelectedHDF5CycleIdx = 0;
+
+        // Scan params in first file to get max indices
+        try {
+            H5::H5File h5file(mHDF5Files[0], H5F_ACC_RDONLY);
+            hsize_t num_params = h5file.getNumObjs();
+            mMaxHDF5ParamIdx = 0;
+            for (hsize_t j = 0; j < num_params; j++) {
+                std::string param_name = h5file.getObjnameByIdx(j);
+                if (param_name.find("param_") == 0) {
+                    int param_idx = std::stoi(param_name.substr(6));
+                    if (param_idx > mMaxHDF5ParamIdx) {
+                        mMaxHDF5ParamIdx = param_idx;
+                    }
+                }
+            }
+            h5file.close();
+            std::cout << "Auto-selected first HDF5 file with max param_idx: " << mMaxHDF5ParamIdx << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Error reading params from first file: " << e.what() << std::endl;
+        }
+    }
+
+    std::cout << "Total NPZ motions loaded: " << mMotions.size() << std::endl;
+}
+
+void GLFWApp::scanHDF5Structure()
+{
+    // Scan for HDF5 files in sampled/ directory
+    std::string sampled_path = "sampled";
+    if (!fs::exists(sampled_path) || !fs::is_directory(sampled_path)) {
+        std::cerr << "Sampled directory not found: " << sampled_path << std::endl;
+        return;
+    }
+
+    mHDF5Files.clear();
+    mHDF5Params.clear();
+    mHDF5Cycles.clear();
+    mSelectedHDF5FileIdx = -1;
+    mSelectedHDF5ParamIdx = -1;
+    mSelectedHDF5CycleIdx = -1;
+
+    // Find all rollout_data.h5 files
+    try {
+        for (const auto &entry : fs::recursive_directory_iterator(sampled_path)) {
+            std::string file_name = entry.path().string();
+            if (file_name.find("rollout_data.h5") != std::string::npos) {
+                mHDF5Files.push_back(file_name);
+            }
+        }
+        std::cout << "Found " << mHDF5Files.size() << " HDF5 files" << std::endl;
     } catch (const std::exception& e) {
-        std::cerr << "Error importing forward_gaitnet module: " << e.what() << std::endl;
+        std::cerr << "Error scanning HDF5 files: " << e.what() << std::endl;
     }
 }
+
+void GLFWApp::loadSelectedHDF5Motion()
+{
+    if (mSelectedHDF5FileIdx < 0) {
+        std::cerr << "No file selected" << std::endl;
+        return;
+    }
+
+    std::string file_path = mHDF5Files[mSelectedHDF5FileIdx];
+    std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
+    std::string cycle_name = "cycle_" + std::to_string(mSelectedHDF5CycleIdx);
+
+    std::cout << "Loading: " << file_path << " / " << param_name << " / " << cycle_name << std::endl;
+
+    try {
+        H5::H5File h5file(file_path, H5F_ACC_RDONLY);
+        H5::Group param_group = h5file.openGroup(param_name);
+        H5::Group cycle_group = param_group.openGroup(cycle_name);
+
+        // Read motions dataset
+        if (!cycle_group.nameExists("motions")) {
+            std::cerr << "No motions dataset in " << cycle_name << std::endl;
+            return;
+        }
+
+        H5::DataSet motions_dataset = cycle_group.openDataSet("motions");
+        H5::DataSpace dataspace = motions_dataset.getSpace();
+
+        // Get dimensions
+        hsize_t dims[2];
+        dataspace.getSimpleExtentDims(dims);
+        int num_steps = dims[0];
+        int motion_dim = dims[1];
+
+        // Validation: check if motion has enough timesteps for interpolation
+        const int MIN_TIMESTEPS = 20;
+        if (num_steps < MIN_TIMESTEPS) {
+            std::string error_msg = "Motion too short: " + std::to_string(num_steps) + " timesteps (minimum " + std::to_string(MIN_TIMESTEPS) + " required)";
+            mMotionLoadError = error_msg;
+            std::cerr << "Error: " << error_msg << std::endl;
+            std::cerr << "Keeping previous motion." << std::endl;
+
+            // Close HDF5 resources and return without loading
+            dataspace.close();
+            motions_dataset.close();
+            cycle_group.close();
+            param_group.close();
+            h5file.close();
+            return;
+        }
+
+        // Clear error on successful validation
+        mMotionLoadError = "";
+
+        // Read motion data
+        std::vector<double> motion_data(num_steps * motion_dim);
+        motions_dataset.read(motion_data.data(), H5::PredType::NATIVE_DOUBLE);
+
+        // Convert to Eigen matrix
+        Eigen::MatrixXd cycle_motion(num_steps, motion_dim);
+        for (int i = 0; i < num_steps; i++) {
+            for (int j = 0; j < motion_dim; j++) {
+                cycle_motion(i, j) = motion_data[i * motion_dim + j];
+            }
+        }
+
+        // Load timestamps
+        std::vector<double> cycle_timestamps;
+        if (cycle_group.nameExists("time")) {
+            H5::DataSet time_ds = cycle_group.openDataSet("time");
+            cycle_timestamps.resize(num_steps);
+            time_ds.read(cycle_timestamps.data(), H5::PredType::NATIVE_DOUBLE);
+            time_ds.close();
+        }
+
+        // Create ViewerMotion
+        ViewerMotion motion_elem;
+        motion_elem.name = file_path + "_" + param_name + "_" + cycle_name;
+        motion_elem.source_type = "hdf5";
+        motion_elem.frames_per_cycle = motion_dim;
+        motion_elem.num_cycles = 1;  // Single cycle
+        motion_elem.hdf5_total_timesteps = num_steps;
+        motion_elem.hdf5_timesteps_per_cycle = num_steps;
+
+        // Flatten motion data
+        motion_elem.motion = Eigen::VectorXd::Zero(num_steps * motion_dim);
+        int offset = 0;
+        for (int i = 0; i < num_steps; i++) {
+            for (int j = 0; j < motion_dim; j++) {
+                motion_elem.motion[offset++] = cycle_motion(i, j);
+            }
+        }
+
+        // Store timestamps
+        motion_elem.timestamps = cycle_timestamps;
+
+        // Set parameters
+        motion_elem.param = Eigen::VectorXd::Zero(mRenderEnv ? mRenderEnv->getNumKnownParam() : 10);
+
+        // Extract first frame root position
+        Eigen::VectorXd first_frame = motion_elem.motion.segment(0, motion_dim);
+        motion_elem.initialRootPosition = Eigen::Vector3d(first_frame[3], first_frame[4], first_frame[5]);
+
+        // Calculate display offset
+        if (mRenderEnv && mRenderEnv->getCharacter(0)) {
+            Eigen::VectorXd char_positions = mRenderEnv->getCharacter(0)->getSkeleton()->getPositions();
+            Eigen::Vector3d char_root(char_positions[3], char_positions[4], char_positions[5]);
+            motion_elem.displayOffset = char_root - motion_elem.initialRootPosition + Eigen::Vector3d(1.0, 0, 0);
+        } else {
+            motion_elem.displayOffset = Eigen::Vector3d(1.0, 0, 0);
+        }
+
+        // Add to motions list
+        mMotions.push_back(motion_elem);
+        mMotionIdx = mMotions.size() - 1;  // Select the newly loaded motion
+
+        // Update max frame index for manual navigation
+        mMaxFrameIndex = motion_elem.hdf5_total_timesteps - 1;
+        mManualFrameIndex = 0;  // Reset to first frame
+
+        std::cout << "  Loaded: " << num_steps << " timesteps, " << motion_dim << " DOF" << std::endl;
+        if (!cycle_timestamps.empty()) {
+            std::cout << "  Time range: [" << cycle_timestamps.front() << ", " << cycle_timestamps.back() << "] seconds" << std::endl;
+        }
+
+        dataspace.close();
+        motions_dataset.close();
+        cycle_group.close();
+        param_group.close();
+        h5file.close();
+
+    } catch (const std::exception& e) {
+        mMotionLoadError = std::string("Load failed: ") + e.what();
+        std::cerr << "Error loading motion: " << e.what() << std::endl;
+    }
+}
+
+
 void GLFWApp::addSimulationMotion()
 {
-    Motion current_motion;
+    ViewerMotion current_motion;
     current_motion.name = "New Motion " + std::to_string(mMotions.size());
     current_motion.param = mRenderEnv->getParamState();
-    current_motion.motion = Eigen::VectorXd::Zero(6060);
+    current_motion.source_type = "simulation";
+    current_motion.num_cycles = 60;  // Default: 2 seconds at 30Hz
+    current_motion.frames_per_cycle = 101;  // Default frame count
+    current_motion.motion = Eigen::VectorXd::Zero(current_motion.num_cycles * current_motion.frames_per_cycle);
 
     std::vector<double> phis;
     // phis list of 1/60 for 2 seconds

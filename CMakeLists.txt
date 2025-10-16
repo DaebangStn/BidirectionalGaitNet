@@ -57,6 +57,10 @@ link_libraries(${Python3_LIBRARIES})
 find_package(pybind11 REQUIRED)
 link_libraries(stdc++fs)
 
+# Find native HDF5 C++ library from conda environment
+find_package(HDF5 REQUIRED COMPONENTS CXX)
+include_directories(${HDF5_INCLUDE_DIRS})
+
 add_subdirectory( sim )
 add_subdirectory( rollouts )
 add_subdirectory( python )
