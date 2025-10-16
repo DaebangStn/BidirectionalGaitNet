@@ -113,9 +113,7 @@ BVH::
 	return pos;
 }
 
-Eigen::VectorXd
-BVH::
-	getPose(double phase)
+Eigen::VectorXd BVH::getPose(double phase)
 {
 	if (phase < 0)
 		phase += 1.0;
@@ -143,9 +141,7 @@ BVH::
 	return pos;
 }
 
-Eigen::VectorXd
-BVH::
-	getTargetPose(double phase)
+Eigen::VectorXd BVH::getTargetPose(double phase)
 {
 	Eigen::VectorXd pos = getPose(phase);
 	if (mSymmetryMode)
@@ -155,8 +151,7 @@ BVH::
 	return pos;
 }
 
-void BVH::
-	setRefMotion(Character *_character, dart::simulation::WorldPtr _world)
+void BVH::setRefMotion(Character *_character, dart::simulation::WorldPtr _world)
 {
 	mCharacter = _character;
 	Eigen::Vector3d root_offset = Eigen::Vector3d::Zero();

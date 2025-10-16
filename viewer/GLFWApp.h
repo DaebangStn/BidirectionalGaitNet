@@ -294,7 +294,10 @@ private:
     int mMaxHDF5CycleIdx;                             // Maximum cycle index for selected param
     std::string mCurrentHDF5FilePath;                 // Path to current HDF5 file
     std::string mMotionLoadError;                     // Error message for motion loading failures
+    std::string mParamFailureMessage;                 // Error message for parameter failures
+    std::string mLastLoadedHDF5ParamsFile;            // Track which HDF5 file's parameters are loaded
     void scanHDF5Structure();                         // Scan HDF5 file to populate params/cycles
+    void loadHDF5Parameters();                        // Load parameters from selected HDF5 file
     void loadSelectedHDF5Motion();                    // Load specific param/cycle combination
 
     bool mDrawMotion;

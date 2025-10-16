@@ -1124,16 +1124,13 @@ void Environment::reset()
     // Reset Initial Time
     double time = 0.0;
 
-    if (mRewardType == deepmimic)
-        time = dart::math::Random::uniform(1E-2, mBVHs[0]->getMaxTime() - 1E-2);
+    if (mRewardType == deepmimic) time = dart::math::Random::uniform(1E-2, mBVHs[0]->getMaxTime() - 1E-2);
     else if (mRewardType == gaitnet)
     {
         time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
         time *= (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
     }
-
-    if (mIsStanceLearning)
-        time = 0.0;
+    if (mIsStanceLearning) time = 0.0;
     
     
     // Collision Detector Reset

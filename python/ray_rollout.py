@@ -219,9 +219,16 @@ def _run_with_random_sampling(env_workers, policy, file_worker, target_cycles, n
 
     # 6. Wait for all async done operations to complete
     print(f"\nWaiting for {len(pending_done_futures)} async write operations...")
+    failed_count = 0
+    success_count = 0
     for done_future, sample_idx, success, cycle, steps in tqdm(pending_done_futures, desc="Writing results", unit="write", ncols=100):
         ray.get(done_future)
-    print(f"✓ All {target_sample_count} samples completed and written")
+        if success:
+            success_count += 1
+        else:
+            failed_count += 1
+            print(f"  ✗ sample_idx={sample_idx} failed (cycles={cycle}/{target_cycles})")
+    print(f"✓ Completed: {success_count} successful, {failed_count} failed")
 
 
 def run_rollout(checkpoint_path: str,
@@ -346,7 +353,7 @@ def run_rollout(checkpoint_path: str,
     # Run appropriate rollout method
     if parameters:
         print(f"Running parameter sweep with {len(parameters)} parameter sets")
-        _run_with_parameters(env_workers, policy, file_worker, parameters, target_cycles)
+        _run_with_parameters(env_workers, policy, file_worker, target_cycles, parameters)
     else:
         # Default to num_workers if num_samples not specified
         if num_samples is None:

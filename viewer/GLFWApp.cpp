@@ -277,6 +277,8 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mMaxHDF5CycleIdx = 0;
     mCurrentHDF5FilePath = "";
     mMotionLoadError = "";
+    mParamFailureMessage = "";
+    mLastLoadedHDF5ParamsFile = "";
 
     py::gil_scoped_acquire gil;
     
@@ -726,8 +728,8 @@ void GLFWApp::startLoop()
         }
 
         // Update viewer time (master clock for playback)
-        // In manual frame mode, always update to sync with slider even when paused
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0 || mMotionNavigationMode == NAVIGATION_MANUAL_FRAME)
+        // Don't update in manual frame mode - manual slider controls frame directly
+        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
         {
             updateViewerTime(realDeltaTime * mViewerPlaybackSpeed);
         }
@@ -1125,7 +1127,7 @@ void GLFWApp::drawKinematicsControlPanel()
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
         }
 
-        if (ImGui::CollapsingHeader("NPZ Motions"))
+        if (ImGui::CollapsingHeader("NPZ Motions", ImGuiTreeNodeFlags_DefaultOpen))
         {
             if (ImGui::ListBoxHeader("##NPZ_List", ImVec2(-FLT_MIN, 8 * ImGui::GetTextLineHeightWithSpacing())))
             {
@@ -1142,6 +1144,15 @@ void GLFWApp::drawKinematicsControlPanel()
                         if (mManualFrameIndex > mMaxFrameIndex) {
                             mManualFrameIndex = mMaxFrameIndex;
                         }
+
+                        // Reset parameters to defaults when selecting NPZ file
+                        if (mRenderEnv) {
+                            Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
+                            mRenderEnv->setParamState(default_params, false, true);
+                            mLastLoadedHDF5ParamsFile = "";  // Clear HDF5 parameter tracking
+                            std::cout << "Reset parameters to defaults (NPZ motion selected)" << std::endl;
+                        }
+
                         // Align motion with simulated character
                         alignMotionToSimulation();
                     }
@@ -1203,7 +1214,8 @@ void GLFWApp::drawKinematicsControlPanel()
                         std::cerr << "Error reading params: " << e.what() << std::endl;
                     }
 
-                    // Immediately load the motion with param_0/cycle_0
+                    // Load parameters first, then motion with param_0/cycle_0
+                    loadHDF5Parameters();
                     loadSelectedHDF5Motion();
                     alignMotionToSimulation();
 
@@ -1291,7 +1303,16 @@ void GLFWApp::drawKinematicsControlPanel()
             }
 
             // Auto-load when indices change (only if param/cycle exists)
-            if ((mSelectedHDF5ParamIdx != last_param_idx || mSelectedHDF5CycleIdx != last_cycle_idx) && can_load) {
+            bool param_changed = (mSelectedHDF5ParamIdx != last_param_idx);
+            bool cycle_changed = (mSelectedHDF5CycleIdx != last_cycle_idx);
+
+            if ((param_changed || cycle_changed) && can_load) {
+                // Load parameters first if param_idx changed
+                if (param_changed) {
+                    loadHDF5Parameters();
+                }
+
+                // Then load motion data
                 loadSelectedHDF5Motion();
                 alignMotionToSimulation();
                 loading_success = true;
@@ -1300,7 +1321,11 @@ void GLFWApp::drawKinematicsControlPanel()
             }
 
             // Show loading status
-            if (!mMotionLoadError.empty()) {
+            if (!mParamFailureMessage.empty()) {
+                // Show parameter failure error (from rollout)
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", mParamFailureMessage.c_str());
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Previous motion still displayed");
+            } else if (!mMotionLoadError.empty()) {
                 // Show motion load error (e.g., too short)
                 ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", mMotionLoadError.c_str());
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Previous motion still displayed");
@@ -3127,36 +3152,41 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
     }
 
     if (weight_1 > 1e-6) {
-        // Proper interpolation respecting joint types (FreeJoint, BallJoint, RevoluteJoint)
         int next_frame_idx = (current_frame_idx + 1) % total_frames;
         Eigen::VectorXd p1 = motion.motion.segment(current_frame_idx * frames_per_cycle, frames_per_cycle);
         Eigen::VectorXd p2 = motion.motion.segment(next_frame_idx * frames_per_cycle, frames_per_cycle);
 
-        interpolated_frame = Eigen::VectorXd::Zero(frames_per_cycle);
+        if (motion.source_type == "npz") {
+            // NPZ motion: simple linear interpolation (no DOF-wise slerp)
+            interpolated_frame = p1 * (1.0 - weight_1) + p2 * weight_1;
+        } else {
+            // HDF5 motion: proper interpolation respecting joint types (FreeJoint, BallJoint, RevoluteJoint)
+            interpolated_frame = Eigen::VectorXd::Zero(frames_per_cycle);
 
-        // Iterate through skeleton joints and interpolate based on DOF
-        for (const auto jn : character->getSkeleton()->getJoints()) {
-            int dof = jn->getNumDofs();
-            if (dof == 0) continue;
+            // Iterate through skeleton joints and interpolate based on DOF
+            for (const auto jn : character->getSkeleton()->getJoints()) {
+                int dof = jn->getNumDofs();
+                if (dof == 0) continue;
 
-            int idx = jn->getIndexInSkeleton(0);
+                int idx = jn->getIndexInSkeleton(0);
 
-            if (dof == 1) {
-                // RevoluteJoint: linear interpolation
-                interpolated_frame[idx] = p1[idx] * (1.0 - weight_1) + p2[idx] * weight_1;
-            } else if (dof == 3) {
-                // BallJoint: quaternion SLERP
-                Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, dof)));
-                Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, dof)));
-                Eigen::Quaterniond q = q1.slerp(weight_1, q2);
-                interpolated_frame.segment(idx, dof) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
-            } else if (dof == 6) {
-                // FreeJoint: quaternion SLERP for rotation, linear for translation
-                Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, 3)));
-                Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, 3)));
-                Eigen::Quaterniond q = q1.slerp(weight_1, q2);
-                interpolated_frame.segment(idx, 3) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
-                interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) * (1.0 - weight_1) + p2.segment(idx + 3, 3) * weight_1;
+                if (dof == 1) {
+                    // RevoluteJoint: linear interpolation
+                    interpolated_frame[idx] = p1[idx] * (1.0 - weight_1) + p2[idx] * weight_1;
+                } else if (dof == 3) {
+                    // BallJoint: quaternion SLERP
+                    Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, dof)));
+                    Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, dof)));
+                    Eigen::Quaterniond q = q1.slerp(weight_1, q2);
+                    interpolated_frame.segment(idx, dof) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
+                } else if (dof == 6) {
+                    // FreeJoint: quaternion SLERP for rotation, linear for translation
+                    Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, 3)));
+                    Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, 3)));
+                    Eigen::Quaterniond q = q1.slerp(weight_1, q2);
+                    interpolated_frame.segment(idx, 3) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
+                    interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) * (1.0 - weight_1) + p2.segment(idx + 3, 3) * weight_1;
+                }
             }
         }
     } else {
@@ -3811,6 +3841,9 @@ void GLFWApp::loadMotionFiles()
         } catch (const std::exception& e) {
             std::cerr << "Error reading params from first file: " << e.what() << std::endl;
         }
+
+        // Load parameters from auto-selected file
+        loadHDF5Parameters();
     }
 
     std::cout << "Total NPZ motions loaded: " << mMotions.size() << std::endl;
@@ -3846,6 +3879,129 @@ void GLFWApp::scanHDF5Structure()
     }
 }
 
+void GLFWApp::loadHDF5Parameters()
+{
+    if (mSelectedHDF5FileIdx < 0) {
+        std::cerr << "No HDF5 file selected for parameter loading" << std::endl;
+        return;
+    }
+
+    if (!mRenderEnv) {
+        std::cerr << "Render environment not initialized" << std::endl;
+        return;
+    }
+
+    std::string file_path = mHDF5Files[mSelectedHDF5FileIdx];
+    std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
+
+    std::cout << "Loading parameters from: " << file_path << " / " << param_name << std::endl;
+
+    try {
+        H5::H5File h5file(file_path, H5F_ACC_RDONLY);
+
+        // Read parameter_names from root
+        if (!h5file.nameExists("parameter_names")) {
+            std::cerr << "Warning: No parameter_names dataset in HDF5 file (old format?)" << std::endl;
+            mLastLoadedHDF5ParamsFile = "";
+            return;
+        }
+
+        H5::DataSet param_names_ds = h5file.openDataSet("parameter_names");
+        H5::DataSpace param_names_space = param_names_ds.getSpace();
+
+        // Get number of parameter names
+        hsize_t num_param_names;
+        param_names_space.getSimpleExtentDims(&num_param_names);
+
+        // Read parameter names (variable-length strings)
+        // IMPORTANT: Use dataset's actual datatype, not constructed type
+        H5::DataType dtype = param_names_ds.getDataType();
+        std::vector<std::string> hdf5_param_names(num_param_names);
+        std::vector<char*> c_strs(num_param_names);
+        param_names_ds.read(c_strs.data(), dtype);
+
+        for (size_t i = 0; i < num_param_names; i++) {
+            hdf5_param_names[i] = std::string(c_strs[i]);
+            free(c_strs[i]);  // Free allocated strings from HDF5
+        }
+
+        dtype.close();
+
+        param_names_space.close();
+        param_names_ds.close();
+
+        // Read param_state from param_{idx}
+        if (!h5file.nameExists(param_name)) {
+            std::cerr << "Warning: " << param_name << " does not exist in file" << std::endl;
+            h5file.close();
+            return;
+        }
+
+        H5::Group param_group = h5file.openGroup(param_name);
+
+        if (!param_group.nameExists("param_state")) {
+            std::cerr << "Warning: No param_state in " << param_name << std::endl;
+            param_group.close();
+            h5file.close();
+            return;
+        }
+
+        H5::DataSet param_state_ds = param_group.openDataSet("param_state");
+        H5::DataSpace param_state_space = param_state_ds.getSpace();
+
+        hsize_t num_param_values;
+        param_state_space.getSimpleExtentDims(&num_param_values);
+
+        std::vector<float> hdf5_param_values(num_param_values);
+        param_state_ds.read(hdf5_param_values.data(), H5::PredType::NATIVE_FLOAT);
+
+        param_state_space.close();
+        param_state_ds.close();
+        param_group.close();
+        h5file.close();
+
+        // Verify dimensions match
+        if (hdf5_param_names.size() != hdf5_param_values.size()) {
+            std::cerr << "Error: Parameter names count (" << hdf5_param_names.size()
+                      << ") != values count (" << hdf5_param_values.size() << ")" << std::endl;
+            return;
+        }
+
+        // Get current simulation parameter names and state
+        const std::vector<std::string>& sim_param_names = mRenderEnv->getParamName();
+        Eigen::VectorXd current_params = mRenderEnv->getParamState();
+
+        std::cout << "  HDF5 has " << hdf5_param_names.size() << " parameters" << std::endl;
+        std::cout << "  Simulation has " << sim_param_names.size() << " parameters" << std::endl;
+
+        // Match and rebuild parameter vector
+        Eigen::VectorXd new_params = current_params;  // Start with current values
+        int matched_count = 0;
+
+        for (size_t i = 0; i < hdf5_param_names.size(); i++) {
+            for (size_t j = 0; j < sim_param_names.size(); j++) {
+                if (hdf5_param_names[i] == sim_param_names[j]) {
+                    new_params[j] = static_cast<double>(hdf5_param_values[i]);
+                    matched_count++;
+                    break;
+                }
+            }
+        }
+
+        std::cout << "  Matched " << matched_count << " parameters by name" << std::endl;
+
+        // Apply parameters to simulation environment
+        mRenderEnv->setParamState(new_params, false, true);
+        mLastLoadedHDF5ParamsFile = file_path;
+
+        std::cout << "✓ Successfully loaded parameters from " << param_name << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading parameters: " << e.what() << std::endl;
+        mLastLoadedHDF5ParamsFile = "";
+    }
+}
+
 void GLFWApp::loadSelectedHDF5Motion()
 {
     if (mSelectedHDF5FileIdx < 0) {
@@ -3862,6 +4018,30 @@ void GLFWApp::loadSelectedHDF5Motion()
     try {
         H5::H5File h5file(file_path, H5F_ACC_RDONLY);
         H5::Group param_group = h5file.openGroup(param_name);
+
+        // Check parameter-level failure first
+        if (param_group.attrExists("success")) {
+            H5::Attribute success_attr = param_group.openAttribute("success");
+            bool success = true;
+            success_attr.read(H5::PredType::NATIVE_HBOOL, &success);
+            success_attr.close();
+
+            if (!success) {
+                std::string error_msg = "Parameter " + std::to_string(mSelectedHDF5ParamIdx) + " failed during rollout";
+                mParamFailureMessage = error_msg;
+                std::cerr << "Error: " << error_msg << std::endl;
+                std::cerr << "Keeping previous motion." << std::endl;
+
+                // Close HDF5 resources and return without loading
+                param_group.close();
+                h5file.close();
+                return;
+            }
+        }
+
+        // Clear parameter error on successful validation
+        mParamFailureMessage = "";
+
         H5::Group cycle_group = param_group.openGroup(cycle_name);
 
         // Read motions dataset

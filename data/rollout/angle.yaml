@@ -19,4 +19,4 @@ record:
       ankle: true
 
 sample:
-  cycle: 5
+  cycle: 25
