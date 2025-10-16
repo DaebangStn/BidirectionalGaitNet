@@ -101,7 +101,7 @@ class MyEnv(gym.Env):
         if info['end'] != 0:
             done = True
 
-        if self.isTwoLevelActuactor and not self.is_rollout:
+        if self.isTwoLevelActuator and not self.is_rollout:
             mt = self.env.getRandomMuscleTuple()
             for i in range(len(mt)):
                 self.muscle_tuples[i].append(mt[i])
@@ -117,9 +117,9 @@ class MyEnv(gym.Env):
         return self.obs, reward, done, info
 
     def get_muscle_tuple(self, idx):
-        assert (self.isTwoLevelActuactor)
+        assert (self.isTwoLevelActuator)
         res = np.array(self.muscle_tuples[idx], dtype=np.float32)
-        if self.isTwoLevelActuactor:
+        if self.isTwoLevelActuator:
             self.muscle_tuples[idx] = []  # = [[],[],[]]
         return res
 
