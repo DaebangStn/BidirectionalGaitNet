@@ -314,7 +314,7 @@ private:
 
     int mSimulationCount, mSimulationStep;
     int mHeightCalibration; // 0 : No, 1 : Only avoid collision, 2: Strict
-    bool mEnforceSymmetry, mIsStanceLearning;
+    bool mEnforceSymmetry;
 
     // Muscle Learning Tuple
     bool mTupleFilled;

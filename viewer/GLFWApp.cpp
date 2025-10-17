@@ -151,11 +151,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // C3D
     selected_c3d = 0;
 
-    // BVH
-    mSelectedBVHIdx = 0;
-    mLoadedBVH = nullptr;
-    mDrawBVHSkeleton = false;
-    mBVHPlaybackTime = 0.0;
+    // BVH (deprecated variables kept for compatibility, BVH now uses mMotions)
 
     mFocus = 1;
     mRenderC3D = false;
@@ -742,10 +738,17 @@ void GLFWApp::startLoop()
         }
 
         // Update viewer time (master clock for playback)
-        // Don't update in manual frame mode - manual slider controls frame directly
+        // In manual frame mode when paused, update pose but don't advance time
+        double dt = realDeltaTime * mViewerPlaybackSpeed;
         if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
         {
-            updateViewerTime(realDeltaTime * mViewerPlaybackSpeed);
+            // Playing: normal time progression
+            updateViewerTime(dt);
+        }
+        else if (mMotionNavigationMode == NAVIGATION_MANUAL_FRAME)
+        {
+            // Paused + manual frame mode: compute pose but don't advance time
+            updateViewerTime(0.0);
         }
 
         // Simulation Step with performance monitoring and sync control
@@ -1092,60 +1095,8 @@ void GLFWApp::drawKinematicsControlPanel()
             }
         }
 
-        // BVH Motion Files
-        ImGui::Checkbox("Draw BVH Skeleton", &mDrawBVHSkeleton);
-        if (ImGui::CollapsingHeader("BVH Motion Files"))
-        {
-            if (mBVHList.empty())
-            {
-                ImGui::Text("No BVH files found in data/motion directory");
-            }
-            else
-            {
-                int idx = 0;
-                for (const auto &bvh_path : mBVHList)
-                {
-                    std::string filename = fs::path(bvh_path).filename().string();
-                    if (ImGui::Selectable(filename.c_str(), mSelectedBVHIdx == idx))
-                        mSelectedBVHIdx = idx;
-                    if (mSelectedBVHIdx == idx)
-                        ImGui::SetItemDefaultFocus();
-                    idx++;
-                }
-            }
-
-            if (mRenderEnv && ImGui::Button("Load BVH"))
-            {
-                if (mSelectedBVHIdx < mBVHList.size() && !mBVHList.empty())
-                {
-                    // Clean up previous BVH if exists
-                    if (mLoadedBVH != nullptr) {
-                        delete mLoadedBVH;
-                        mLoadedBVH = nullptr;
-                    }
-
-                    // Load new BVH file
-                    std::cout << "[BVH] Loading: " << mBVHList[mSelectedBVHIdx] << std::endl;
-                    mLoadedBVH = new BVH(mBVHList[mSelectedBVHIdx]);
-                    mLoadedBVH->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
-                    mDrawBVHSkeleton = true;
-                    mBVHPlaybackTime = 0.0;
-                    std::cout << "[BVH] Loaded successfully: " << mLoadedBVH->getNumFrame() << " frames" << std::endl;
-                }
-                else
-                {
-                    std::cout << "[BVH] Error: No BVH files available or invalid selection" << std::endl;
-                }
-            }
-
-            if (mLoadedBVH != nullptr)
-            {
-                ImGui::Text("Frames: %d | Duration: %.2fs",
-                           mLoadedBVH->getNumFrame(),
-                           mLoadedBVH->getMaxTime());
-                ImGui::SliderFloat("Playback Speed", &mViewerPlaybackSpeed, 0.1f, 3.0f);
-            }
-        }
+        // BVH motions are now integrated into mMotions (loaded via loadMotionFiles())
+        // They appear in the NPZ/HDF5 motion lists automatically with source_type="bvh"
 
         // C3D Motion Files
         if (ImGui::CollapsingHeader("C3D"))
@@ -1211,44 +1162,62 @@ void GLFWApp::drawKinematicsControlPanel()
             }
         }
 
-        // Check if currently selected motion is NPZ or HDF5
+        // Check currently selected motion type
         bool npz_selected = false;
         bool hdf5_selected = false;
+        bool bvh_selected = false;
         if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
             if (mMotions[mMotionIdx].source_type == "npz") {
                 npz_selected = true;
             } else if (mMotions[mMotionIdx].source_type == "hdf5") {
                 hdf5_selected = true;
+            } else if (mMotions[mMotionIdx].source_type == "bvh") {
+                bvh_selected = true;
             }
         }
 
-        // NPZ Motions collapsing header with color based on selection
-        if (npz_selected) {
+        // Unified Motion Files collapsing header with color based on selection
+        bool any_motion_selected = npz_selected || hdf5_selected || bvh_selected;
+        if (any_motion_selected) {
             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
         }
 
-        if (ImGui::CollapsingHeader("NPZ Motions", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::CollapsingHeader("Motion Files", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            if (ImGui::ListBoxHeader("##NPZ_List", ImVec2(-FLT_MIN, 8 * ImGui::GetTextLineHeightWithSpacing())))
+            // Loaded motions list (NPZ, HDF5, BVH)
+            ImGui::Text("Loaded Motions:");
+            if (ImGui::ListBoxHeader("##AllMotions_List", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
             {
                 for (int i = 0; i < mMotions.size(); i++)
                 {
-                    // Only show NPZ motions
-                    if (mMotions[i].source_type != "npz") continue;
+                    // Add type prefix for all motion types
+                    std::string prefix;
+                    if (mMotions[i].source_type == "npz") {
+                        prefix = "[NPZ] ";
+                    } else if (mMotions[i].source_type == "hdf5") {
+                        prefix = "[HDF] ";
+                    } else if (mMotions[i].source_type == "bvh") {
+                        prefix = "[BVH] ";
+                    }
+                    std::string display_name = prefix + mMotions[i].name;
 
-                    if (ImGui::Selectable(mMotions[i].name.c_str(), mMotionIdx == i)) {
+                    if (ImGui::Selectable(display_name.c_str(), mMotionIdx == i)) {
                         mMotionIdx = i;
                         // Update max frame index for manual navigation
-                        mMaxFrameIndex = mMotions[i].num_cycles - 1;
+                        if (mMotions[i].source_type == "bvh" || mMotions[i].source_type == "hdf5") {
+                            mMaxFrameIndex = mMotions[i].hdf5_total_timesteps - 1;
+                        } else {
+                            mMaxFrameIndex = mMotions[i].num_cycles - 1;
+                        }
                         // Clamp manual frame index to valid range
                         if (mManualFrameIndex > mMaxFrameIndex) {
                             mManualFrameIndex = mMaxFrameIndex;
                         }
 
                         // Reset parameters to defaults when selecting NPZ file
-                        if (mRenderEnv) {
+                        if (mRenderEnv && mMotions[i].source_type == "npz") {
                             Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
                             mRenderEnv->setParamState(default_params, false, true);
                             mLastLoadedHDF5ParamsFile = "";  // Clear HDF5 parameter tracking
@@ -1264,20 +1233,10 @@ void GLFWApp::drawKinematicsControlPanel()
                 }
                 ImGui::ListBoxFooter();
             }
-        }
 
-        if (npz_selected) {
-            ImGui::PopStyleColor(3);
-        }
-
-        // HDF5 Motions collapsing header with color based on selection
-        if (hdf5_selected) {
-            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
-        }
-
-        if (ImGui::CollapsingHeader("HDF5 Motions", ImGuiTreeNodeFlags_DefaultOpen))
+            // HDF5 Loading Controls (collapsible sub-section)
+            ImGui::Separator();
+            if (ImGui::TreeNode("HDF5 Loading Controls"))
         {
             // Static tracking variables (moved outside to be accessible from file selection)
             static int last_param_idx = -1;
@@ -1441,9 +1400,11 @@ void GLFWApp::drawKinematicsControlPanel()
                 ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Status: %s / %s does not exist", param_name.c_str(), cycle_name.c_str());
             }
         }
-        }  // End HDF5 Motions collapsing header
+            ImGui::TreePop();  // End HDF5 Loading Controls TreeNode
+        }
+        }  // End Motion Files collapsing header
 
-        if (hdf5_selected) {
+        if (any_motion_selected) {
             ImGui::PopStyleColor(3);
         }
 
@@ -1464,8 +1425,8 @@ void GLFWApp::drawKinematicsControlPanel()
                 ImGui::SliderInt("Frame Index", &mManualFrameIndex, 0, mMaxFrameIndex);
                 ImGui::Text("Frame: %d / %d", mManualFrameIndex, mMaxFrameIndex);
 
-                // Show frame time for HDF5 motions with timestamps
-                if (mMotions[mMotionIdx].source_type == "hdf5" &&
+                // Show frame time for HDF5/BVH motions with timestamps
+                if ((mMotions[mMotionIdx].source_type == "hdf5" || mMotions[mMotionIdx].source_type == "bvh") &&
                     !mMotions[mMotionIdx].timestamps.empty() &&
                     mManualFrameIndex < mMotions[mMotionIdx].timestamps.size()) {
                     double frame_time = mMotions[mMotionIdx].timestamps[mManualFrameIndex];
@@ -3125,19 +3086,7 @@ void GLFWApp::drawSimFrame()
         // drawSkeleton(mRenderEnv->getCharacter()->sixDofToPos(mC3DReader->mConvertedPos[mC3DCount % mC3DReader->mConvertedPos.size()]), Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
     }
 
-    // Draw BVH Motion
-    if (mLoadedBVH != nullptr && mDrawBVHSkeleton && mRenderEnv)
-    {
-        // Calculate phase from playback time
-        double max_time = mLoadedBVH->getMaxTime();
-        double phase = std::fmod(mBVHPlaybackTime, max_time) / max_time;
-
-        // Get pose from BVH at current phase
-        Eigen::VectorXd bvh_pose = mLoadedBVH->getTargetPose(phase);
-
-        // Draw the BVH skeleton with a distinct color (cyan/blue)
-        drawSkeleton(bvh_pose, Eigen::Vector4d(0.2, 0.8, 0.8, 0.7));
-    }
+    // BVH motions now drawn via drawPlayableMotion() (integrated into mMotions)
 
     if (mMouseDown) drawAxis();
 
@@ -3295,6 +3244,9 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
     } else if (motion.source_type == "hdf5") {
         // HDF5 without timestamps: Fall back to uniform spacing
         frame_float = phase * motion.hdf5_timesteps_per_cycle;
+    } else if (motion.source_type == "bvh") {
+        // BVH motion: direct frame mapping (similar to HDF5)
+        frame_float = phase * motion.num_cycles;  // num_cycles = total frames for BVH
     } else {
         // NPZ motion: contains 2 gait cycles, use first half (1 cycle) in viewer time mode
         // num_cycles is 60, so use 30 frames for one gait cycle
@@ -3312,7 +3264,8 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
     if (!character) return;
 
     int frames_per_cycle = motion.frames_per_cycle;
-    int total_frames = (motion.source_type == "hdf5") ? motion.hdf5_total_timesteps : motion.num_cycles;
+    int total_frames = (motion.source_type == "hdf5" || motion.source_type == "bvh") ?
+                       motion.hdf5_total_timesteps : motion.num_cycles;
 
     // Clamp frame_float to valid range for this motion
     if (frame_float < 0) frame_float = 0;
@@ -3343,7 +3296,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
             // NPZ motion: simple linear interpolation (no DOF-wise slerp)
             interpolated_frame = p1 * (1.0 - weight_1) + p2 * weight_1;
         } else {
-            // HDF5 motion: proper interpolation respecting joint types (FreeJoint, BallJoint, RevoluteJoint)
+            // HDF5/BVH motion: proper interpolation respecting joint types (FreeJoint, BallJoint, RevoluteJoint)
             interpolated_frame = Eigen::VectorXd::Zero(frames_per_cycle);
 
             // Iterate through skeleton joints and interpolate based on DOF
@@ -3380,15 +3333,15 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
 
     // 2. Convert to full skeleton pose if NPZ
     Eigen::VectorXd motion_pos;
-    if (motion.source_type == "hdf5") {
+    if (motion.source_type == "hdf5" || motion.source_type == "bvh") {
         motion_pos = interpolated_frame;
     } else {
         motion_pos = character->sixDofToPos(interpolated_frame);
     }
 
-    // 3. Apply position offset (different handling for NPZ vs HDF5)
-    if (motion.source_type == "hdf5") {
-        // HDF5: Use delta from initial position plus cycle accumulation
+    // 3. Apply position offset (different handling for NPZ vs HDF5/BVH)
+    if (motion.source_type == "hdf5" || motion.source_type == "bvh") {
+        // HDF5/BVH: Use delta from initial position plus cycle accumulation
         Eigen::Vector3d current_root_pos(motion_pos[3], motion_pos[4], motion_pos[5]);
         Eigen::Vector3d delta = current_root_pos - motion.initialRootPosition;
 
@@ -3474,21 +3427,22 @@ void GLFWApp::updateViewerTime(double dt)
     }
 
     int current_frame_idx = (int)frame_float;
-    int total_frames = (current_motion.source_type == "hdf5") ?
+    int total_frames = (current_motion.source_type == "hdf5" || current_motion.source_type == "bvh") ?
                        current_motion.hdf5_total_timesteps : current_motion.num_cycles;
     current_frame_idx = current_frame_idx % total_frames;
 
-    // Update motion state (different handling for NPZ vs HDF5)
+    // Update motion state (different handling for NPZ vs HDF5/BVH)
     Character* character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
     if (!character) return;
 
-    if (current_motion.source_type == "hdf5") {
-        // HDF5: Absolute positions, accumulate only on cycle wrap
+    if (current_motion.source_type == "hdf5" || current_motion.source_type == "bvh") {
+        // HDF5/BVH: Absolute positions, accumulate only on cycle wrap in automatic mode
         Eigen::VectorXd current_frame = current_motion.motion.segment(
             current_frame_idx * frames_per_cycle, frames_per_cycle);
 
-        // Detect cycle wrap and accumulate forward progress
-        if (current_frame_idx < mLastFrameIdx) {
+        // Detect cycle wrap and accumulate forward progress (only in automatic playback mode)
+        // In manual frame mode, user controls frame directly - no accumulation needed
+        if (mMotionNavigationMode == NAVIGATION_VIEWER_TIME && current_frame_idx < mLastFrameIdx) {
             Eigen::VectorXd last_frame = current_motion.motion.segment(
                 mLastFrameIdx * frames_per_cycle, frames_per_cycle);
             Eigen::Vector3d last_root_pos(last_frame[3], last_frame[4], last_frame[5]);
@@ -3498,15 +3452,18 @@ void GLFWApp::updateViewerTime(double dt)
         }
         mLastFrameIdx = current_frame_idx;
     } else {
-        // NPZ: Incremental data, accumulate every frame
+        // NPZ: Incremental data, accumulate every frame in automatic mode only
         Eigen::VectorXd current_frame = current_motion.motion.segment(
             current_frame_idx * frames_per_cycle, frames_per_cycle);
         Eigen::VectorXd motion_pos = character->sixDofToPos(current_frame);
 
-        // NPZ root positions are deltas - accumulate them directly
-        mCycleAccumulation[0] += motion_pos[3] * 0.5;
-        mCycleAccumulation[1] = motion_pos[4];  // Y is absolute
-        mCycleAccumulation[2] += motion_pos[5] * 0.5;
+        // NPZ root positions are deltas - accumulate them directly (only in automatic playback)
+        // In manual frame mode, accumulation causes unwanted jumps when moving backward
+        if (mMotionNavigationMode == NAVIGATION_VIEWER_TIME) {
+            mCycleAccumulation[0] += motion_pos[3] * 0.5;
+            mCycleAccumulation[1] = motion_pos[4];  // Y is absolute
+            mCycleAccumulation[2] += motion_pos[5] * 0.5;
+        }
 
         mLastFrameIdx = current_frame_idx;
     }
@@ -4037,6 +3994,70 @@ void GLFWApp::loadMotionFiles()
 
         // Load parameters from auto-selected file
         loadHDF5Parameters();
+        }
+    }
+
+    // Load BVH motion files (if mode is "bvh" or if BVH files are available)
+    if (mMotionLoadMode == "bvh" || mMotionLoadMode == "npz" || mMotionLoadMode == "hdf5") {
+        if (!mBVHList.empty() && mRenderEnv) {
+            std::cout << "[BVH] Loading BVH files into mMotions..." << std::endl;
+
+            for (const auto& bvh_path : mBVHList) {
+                try {
+                    // Load BVH file
+                    BVH* bvh = new BVH(bvh_path);
+                    bvh->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+
+                    // Create ViewerMotion from BVH
+                    ViewerMotion motion_elem;
+                    motion_elem.name = fs::path(bvh_path).filename().string();
+                    motion_elem.source_type = "bvh";
+                    motion_elem.param = Eigen::VectorXd::Zero(mRenderEnv->getNumKnownParam());
+
+                    // Extract all frames from BVH
+                    int num_frames = bvh->getNumFrame();
+                    int dof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
+
+                    // Store all BVH frames in flattened motion vector
+                    motion_elem.motion = Eigen::VectorXd(num_frames * dof);
+                    for (int i = 0; i < num_frames; i++) {
+                        double phase = (double)i / (double)num_frames;
+                        Eigen::VectorXd pose = bvh->getPose(phase);
+                        motion_elem.motion.segment(i * dof, dof) = pose;
+                    }
+
+                    // Set BVH-specific parameters
+                    motion_elem.frames_per_cycle = dof;  // Each frame is full skeleton DOF
+                    motion_elem.num_cycles = num_frames;  // Total number of frames
+                    motion_elem.hdf5_total_timesteps = num_frames;
+                    motion_elem.hdf5_timesteps_per_cycle = num_frames;
+
+                    // Set initial root position from first frame
+                    if (motion_elem.motion.size() >= 6) {
+                        motion_elem.initialRootPosition = Eigen::Vector3d(
+                            motion_elem.motion[3],
+                            motion_elem.motion[4],
+                            motion_elem.motion[5]
+                        );
+                    }
+
+                    // Build timestamps for each frame
+                    double frame_time = bvh->getFrameTime();
+                    for (int i = 0; i < num_frames; i++) {
+                        motion_elem.timestamps.push_back(i * frame_time);
+                    }
+
+                    mMotions.push_back(motion_elem);
+                    delete bvh;
+
+                    std::cout << "[BVH] Loaded " << motion_elem.name << " with " << num_frames << " frames" << std::endl;
+                } catch (const std::exception& e) {
+                    std::cerr << "[BVH] Error loading " << bvh_path << ": " << e.what() << std::endl;
+                }
+            }
+
+            std::cout << "[BVH] Total BVH motions loaded: " << std::count_if(mMotions.begin(), mMotions.end(),
+                [](const ViewerMotion& m) { return m.source_type == "bvh"; }) << std::endl;
         }
     }
 }

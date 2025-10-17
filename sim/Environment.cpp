@@ -5,7 +5,7 @@
 
 Environment::Environment()
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1), 
-    mHeightCalibration(0), mEnforceSymmetry(false), mIsStanceLearning(false), mLimitY(0.6), mLearningStd(false)
+    mHeightCalibration(0), mEnforceSymmetry(false), mLimitY(0.6), mLearningStd(false)
 {
     // Initialize URI resolver for path resolution
     PMuscle::URIResolver::getInstance().initialize();
@@ -175,10 +175,6 @@ void Environment::initialize(std::string metadata)
     // Action Scale
     if (doc.FirstChildElement("actionScale") != NULL)
         mActionScale = doc.FirstChildElement("actionScale")->DoubleText();
-
-    // Stance Learning
-    if (doc.FirstChildElement("stanceLearning") != NULL)
-        mIsStanceLearning = doc.FirstChildElement("stanceLearning")->BoolText();
 
     // Inference Per Sim
     if (doc.FirstChildElement("inferencePerSim") != NULL)
@@ -576,17 +572,8 @@ void Environment::updateTargetPosAndVel(bool isInit)
 {
     double dTime = 1.0 / mControlHz;
     double dPhase = dTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-
-    if (mIsStanceLearning)
-    {
-        mTargetPositions.setZero();
-        mTargetVelocities.setZero();
-    }
-    else
-    {
-        mTargetPositions = mBVHs[0]->getTargetPose(getLocalPhase() + (isInit ? 0.0 : dPhase));
-        mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(mBVHs[0]->getTargetPose(getLocalPhase() + dPhase + (isInit ? 0.0 : dPhase)), mTargetPositions) / dTime;
-    }
+    mTargetPositions = mBVHs[0]->getTargetPose(getLocalPhase() + (isInit ? 0.0 : dPhase));
+    mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(mBVHs[0]->getTargetPose(getLocalPhase() + dPhase + (isInit ? 0.0 : dPhase)), mTargetPositions) / dTime;
 }
 
 int Environment::isEOE()
@@ -1095,6 +1082,7 @@ void Environment::poseOptimization(int iter)
 void Environment::reset()
 {
     mTupleFilled = false;
+    mSimulationStep = 0;
     mPhaseCount = 0;
     mWorldPhaseCount = 0;
     mPrevWorldPhaseCount = 0;
@@ -1109,20 +1097,14 @@ void Environment::reset()
     {
         time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
         time *= (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    }
-    if (mIsStanceLearning) time = 0.0;
-    
+    }    
     
     // Collision Detector Reset
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
     mWorld->getConstraintSolver()->clearLastCollisionResult();
 
-    // time = 0.0;
-    
     mGlobalTime = time;
     mWorldTime = time;
-
-    // time = 0.0;
     mWorld->setTime(time);
 
     // Reset Skeletons
@@ -1152,9 +1134,7 @@ void Environment::reset()
 
     updateTargetPosAndVel();
 
-    if (mMusclePoseOptimization)
-        poseOptimization();
-
+    if (mMusclePoseOptimization) poseOptimization();
     if (mRewardType == gaitnet)
     {
         Eigen::Vector3d ref_initial_vel = mTargetVelocities.segment(3, 3);
@@ -1172,8 +1152,7 @@ void Environment::reset()
     Eigen::VectorXd cur_pos = mCharacter->getSkeleton()->getPositions();
     Eigen::VectorXd rom_min = mCharacter->getSkeleton()->getPositionLowerLimits();
     Eigen::VectorXd rom_max = mCharacter->getSkeleton()->getPositionUpperLimits();
-    for (int i = 0; i < cur_pos.rows(); i++)
-        cur_pos[i] = dart::math::clip(cur_pos[i], rom_min[i], rom_max[i]);
+    cur_pos = cur_pos.cwiseMax(rom_min).cwiseMin(rom_max);
     mCharacter->getSkeleton()->setPositions(cur_pos);
 
     mCharacter->setPDTarget(mTargetPositions);
@@ -1184,17 +1163,13 @@ void Environment::reset()
     }
 
     mCharacter->clearLogs();
+    mDesiredTorqueLogs.clear();
 
-    if (mRewardType == gaitnet)
-        updateFootStep(true);
-
-    mSimulationStep = 0;
+    if (mRewardType == gaitnet) updateFootStep(true);
 
     mCharacter->getSkeleton()->clearInternalForces();
     mCharacter->getSkeleton()->clearExternalForces();
     mCharacter->getSkeleton()->clearConstraintImpulses();
-
-    mDesiredTorqueLogs.clear();
 }
 
 // Check whether the character falls or not
