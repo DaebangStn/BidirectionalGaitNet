@@ -151,6 +151,12 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // C3D
     selected_c3d = 0;
 
+    // BVH
+    mSelectedBVHIdx = 0;
+    mLoadedBVH = nullptr;
+    mDrawBVHSkeleton = false;
+    mBVHPlaybackTime = 0.0;
+
     mFocus = 1;
     mRenderC3D = false;
 
@@ -942,6 +948,21 @@ void GLFWApp::initEnv(std::string metadata)
         }
     }
 
+    // BVH files
+    path = "data/motion";
+    mBVHList.clear();
+    if (fs::exists(path) && fs::is_directory(path)) {
+        for (const auto &entry : fs::directory_iterator(path)) {
+            if (fs::is_regular_file(entry)) {
+                std::string filename = entry.path().filename().string();
+                if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".bvh") {
+                    mBVHList.push_back(entry.path().string());
+                }
+            }
+        }
+        std::cout << "[BVH] Found " << mBVHList.size() << " BVH files in " << path << std::endl;
+    }
+
     // Load motion files
     loadMotionFiles();
 
@@ -1047,70 +1068,6 @@ void GLFWApp::drawKinematicsControlPanel()
         mPredictedMotion.name = "Unpredicted";
     }
 
-    // C3D
-    if (ImGui::CollapsingHeader("C3D"))
-    {
-        if (mC3DList.empty())
-        {
-            ImGui::Text("No C3D files found in c3d directory");
-        }
-        else
-        {
-            int idx = 0;
-            for (auto ns : mC3DList)
-            {
-                if (ImGui::Selectable(ns.c_str(), selected_c3d == idx))
-                    selected_c3d = idx;
-                if (selected_c3d)
-                    ImGui::SetItemDefaultFocus();
-                idx++;
-            }
-        }
-        static float femur_torsion_l = 0.0;
-        static float femur_torsion_r = 0.0;
-        static float c3d_scale = 1.0;
-        static float height_offset = 0.0;
-        ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
-        ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
-        ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
-        ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
-    
-        if (mRenderEnv && ImGui::Button("Load C3D"))
-        {
-            if (selected_c3d < mC3DList.size() && !mC3DList.empty())
-            {
-                mRenderC3D = true;
-                mC3DReader = new C3D_Reader("data/skeleton_gaitnet_narrow_model.xml", "data/marker_set.xml", mRenderEnv->GetEnvironment());
-                std::cout << "Loading C3D: " << mC3DList[selected_c3d] << std::endl;
-                mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset);
-                mC3DCOM = Eigen::Vector3d::Zero();
-            }
-            else
-            {
-                std::cout << "Error: No C3D files available or invalid selection (selected: " << selected_c3d << ", available: " << mC3DList.size() << ")" << std::endl;
-            }
-        }
-    
-        if (mRenderEnv && ImGui::Button("Convert C3D to Motion"))
-        {
-            auto m = mC3DReader->convertToMotion();
-            m.name = "C3D Motion" + std::to_string(mMotions.size());
-
-            // Convert Motion to ViewerMotion
-            ViewerMotion viewer_motion;
-            viewer_motion.name = m.name;
-            viewer_motion.param = m.param;
-            viewer_motion.motion = m.motion;
-            viewer_motion.source_type = "c3d";
-            // Assume standard 101 frames per cycle, 60 cycles for C3D
-            viewer_motion.frames_per_cycle = 101;
-            viewer_motion.num_cycles = viewer_motion.motion.size() / 101;
-
-            mMotions.push_back(viewer_motion);
-            mAddedMotions.push_back(viewer_motion);
-        }
-    }
-
     if (ImGui::CollapsingHeader("Motions", ImGuiTreeNodeFlags_DefaultOpen))
     {
         static int mMotionPhaseOffset = 0;
@@ -1132,6 +1089,125 @@ void GLFWApp::drawKinematicsControlPanel()
         } else {
             if (ImGui::Button("Unload Motion")) {
                 unloadMotion();
+            }
+        }
+
+        // BVH Motion Files
+        ImGui::Checkbox("Draw BVH Skeleton", &mDrawBVHSkeleton);
+        if (ImGui::CollapsingHeader("BVH Motion Files"))
+        {
+            if (mBVHList.empty())
+            {
+                ImGui::Text("No BVH files found in data/motion directory");
+            }
+            else
+            {
+                int idx = 0;
+                for (const auto &bvh_path : mBVHList)
+                {
+                    std::string filename = fs::path(bvh_path).filename().string();
+                    if (ImGui::Selectable(filename.c_str(), mSelectedBVHIdx == idx))
+                        mSelectedBVHIdx = idx;
+                    if (mSelectedBVHIdx == idx)
+                        ImGui::SetItemDefaultFocus();
+                    idx++;
+                }
+            }
+
+            if (mRenderEnv && ImGui::Button("Load BVH"))
+            {
+                if (mSelectedBVHIdx < mBVHList.size() && !mBVHList.empty())
+                {
+                    // Clean up previous BVH if exists
+                    if (mLoadedBVH != nullptr) {
+                        delete mLoadedBVH;
+                        mLoadedBVH = nullptr;
+                    }
+
+                    // Load new BVH file
+                    std::cout << "[BVH] Loading: " << mBVHList[mSelectedBVHIdx] << std::endl;
+                    mLoadedBVH = new BVH(mBVHList[mSelectedBVHIdx]);
+                    mLoadedBVH->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+                    mDrawBVHSkeleton = true;
+                    mBVHPlaybackTime = 0.0;
+                    std::cout << "[BVH] Loaded successfully: " << mLoadedBVH->getNumFrame() << " frames" << std::endl;
+                }
+                else
+                {
+                    std::cout << "[BVH] Error: No BVH files available or invalid selection" << std::endl;
+                }
+            }
+
+            if (mLoadedBVH != nullptr)
+            {
+                ImGui::Text("Frames: %d | Duration: %.2fs",
+                           mLoadedBVH->getNumFrame(),
+                           mLoadedBVH->getMaxTime());
+                ImGui::SliderFloat("Playback Speed", &mViewerPlaybackSpeed, 0.1f, 3.0f);
+            }
+        }
+
+        // C3D Motion Files
+        if (ImGui::CollapsingHeader("C3D"))
+        {
+            if (mC3DList.empty())
+            {
+                ImGui::Text("No C3D files found in c3d directory");
+            }
+            else
+            {
+                int idx = 0;
+                for (auto ns : mC3DList)
+                {
+                    if (ImGui::Selectable(ns.c_str(), selected_c3d == idx))
+                        selected_c3d = idx;
+                    if (selected_c3d)
+                        ImGui::SetItemDefaultFocus();
+                    idx++;
+                }
+            }
+            static float femur_torsion_l = 0.0;
+            static float femur_torsion_r = 0.0;
+            static float c3d_scale = 1.0;
+            static float height_offset = 0.0;
+            ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
+            ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
+            ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
+            ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
+
+            if (mRenderEnv && ImGui::Button("Load C3D"))
+            {
+                if (selected_c3d < mC3DList.size() && !mC3DList.empty())
+                {
+                    mRenderC3D = true;
+                    mC3DReader = new C3D_Reader("data/skeleton_gaitnet_narrow_model.xml", "data/marker_set.xml", mRenderEnv->GetEnvironment());
+                    std::cout << "Loading C3D: " << mC3DList[selected_c3d] << std::endl;
+                    mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset);
+                    mC3DCOM = Eigen::Vector3d::Zero();
+                }
+                else
+                {
+                    std::cout << "Error: No C3D files available or invalid selection (selected: " << selected_c3d << ", available: " << mC3DList.size() << ")" << std::endl;
+                }
+            }
+
+            if (mRenderEnv && ImGui::Button("Convert C3D to Motion"))
+            {
+                auto m = mC3DReader->convertToMotion();
+                m.name = "C3D Motion" + std::to_string(mMotions.size());
+
+                // Convert Motion to ViewerMotion
+                ViewerMotion viewer_motion;
+                viewer_motion.name = m.name;
+                viewer_motion.param = m.param;
+                viewer_motion.motion = m.motion;
+                viewer_motion.source_type = "c3d";
+                // Assume standard 101 frames per cycle, 60 cycles for C3D
+                viewer_motion.frames_per_cycle = 101;
+                viewer_motion.num_cycles = viewer_motion.motion.size() / 101;
+
+                mMotions.push_back(viewer_motion);
+                mAddedMotions.push_back(viewer_motion);
             }
         }
 
@@ -3047,6 +3123,20 @@ void GLFWApp::drawSimFrame()
         // drawThinSkeleton(skel);
         // drawSkeleton(mTestMotion[mC3DCount % mTestMotion.size()], Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
         // drawSkeleton(mRenderEnv->getCharacter()->sixDofToPos(mC3DReader->mConvertedPos[mC3DCount % mC3DReader->mConvertedPos.size()]), Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
+    }
+
+    // Draw BVH Motion
+    if (mLoadedBVH != nullptr && mDrawBVHSkeleton && mRenderEnv)
+    {
+        // Calculate phase from playback time
+        double max_time = mLoadedBVH->getMaxTime();
+        double phase = std::fmod(mBVHPlaybackTime, max_time) / max_time;
+
+        // Get pose from BVH at current phase
+        Eigen::VectorXd bvh_pose = mLoadedBVH->getTargetPose(phase);
+
+        // Draw the BVH skeleton with a distinct color (cyan/blue)
+        drawSkeleton(bvh_pose, Eigen::Vector4d(0.2, 0.8, 0.8, 0.7));
     }
 
     if (mMouseDown) drawAxis();

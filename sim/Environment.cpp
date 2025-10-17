@@ -1226,26 +1226,8 @@ bool Environment::isFall()
 
 double Environment::getMetabolicReward()
 {
-    double r_metabolic = 0.0;
-    if (mUseMuscle)
-    {
-        double metabolic_energy = mCharacter->getMetabolicEnergy();
-        r_metabolic = exp(-mMetabolicWeight * metabolic_energy);
-    }
-    else
-    {
-        Eigen::VectorXd torque_sum = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
-        const std::vector<Eigen::VectorXd> &torqueLogs = mCharacter->getTorqueLogs();
-        int log_size = torqueLogs.size();
-        if (log_size == 0) r_metabolic = 0.0;
-        else
-        {
-
-            for (int i = 0; i < mNumSubSteps; i++) torque_sum += torqueLogs[log_size - 1 - i].cwiseAbs();
-            torque_sum /= mNumSubSteps;
-            r_metabolic = exp(-1E-4 * mMetabolicWeight * torque_sum.squaredNorm() / torque_sum.rows());
-        }
-    }
+    double metabolic_energy = mCharacter->getMetabolicEnergy();
+    double r_metabolic = exp(-mMetabolicWeight * metabolic_energy);
     return r_metabolic;
 }
 

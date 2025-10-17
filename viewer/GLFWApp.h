@@ -5,6 +5,7 @@
 #include "CBufferData.h"
 #include "RenderEnvironment.h"
 #include "Character.h"
+#include "BVH_Parser.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -139,6 +140,7 @@ private:
     void drawFGNControl();
     void drawBGNControl();
     void drawC3DControl();
+    void drawBVHControl();
     void drawMotionControl();
     void drawGVAEControl();
     void addSimulationMotion();
@@ -261,6 +263,11 @@ private:
     std::vector<Eigen::Matrix3d> mJointCalibration;
 
     // BVH Buffer
+    std::vector<std::string> mBVHList;
+    BVH* mLoadedBVH;
+    int mSelectedBVHIdx;
+    bool mDrawBVHSkeleton;
+    double mBVHPlaybackTime;
 
     std::vector<Eigen::VectorXd> mC3dMotion;
     int mC3DCount;
