@@ -58,7 +58,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     data["phase"] = mEnv.getNormalizedPhase();
     data["cycle"] = mEnv.getWorldPhaseCount();
 
-    auto skel = mEnv.getCharacter(0)->getSkeleton();
+    auto skel = mEnv.getCharacter()->getSkeleton();
 
     // Contact and GRF fields
     if (mRecordConfig.foot.enabled) {
@@ -157,12 +157,12 @@ int RolloutEnvironment::IsEndOfEpisode() {
 }
 
 std::vector<std::string> RolloutEnvironment::GetRecordFields() const {
-    int skeleton_dof = const_cast<Environment&>(mEnv).getCharacter(0)->getSkeleton()->getNumDofs();
+    int skeleton_dof = const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
     return RolloutRecord::FieldsFromConfig(mRecordConfig, skeleton_dof);
 }
 
 int RolloutEnvironment::GetSkeletonDOF() const {
-    return const_cast<Environment&>(mEnv).getCharacter(0)->getSkeleton()->getNumDofs();
+    return const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
 }
 
 int RolloutEnvironment::GetSimulationHz() {

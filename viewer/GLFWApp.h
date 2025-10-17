@@ -329,9 +329,9 @@ private:
         std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("FemurR")->getIndexInSkeleton()]).value[4] = skel_param[12];
 
 
-        mRenderEnv->getCharacter(0)->applySkeletonBodyNode(mSkelInfosForMotions, mMotionSkeleton);
+        mRenderEnv->getCharacter()->applySkeletonBodyNode(mSkelInfosForMotions, mMotionSkeleton);
 
-        int pos_dof = mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()).rows();
+        int pos_dof = mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows();
         if (motion.rows() != pos_dof * 60) {
             std::cout << "Motion Dimension is not matched" << motion.rows()  << std::endl;
             return;
@@ -343,7 +343,7 @@ private:
         
         for(int i = 0; i < 60; i++)
         {
-            Eigen::VectorXd skel_pos = mRenderEnv->getCharacter(0)->sixDofToPos(motion.segment(i*pos_dof, pos_dof));
+            Eigen::VectorXd skel_pos = mRenderEnv->getCharacter()->sixDofToPos(motion.segment(i*pos_dof, pos_dof));
             pos[0] += motion.segment(i * pos_dof, pos_dof)[6];
             pos[1] = motion.segment(i * pos_dof, pos_dof)[7];
             pos[2] += motion.segment(i * pos_dof, pos_dof)[8];
@@ -353,7 +353,7 @@ private:
                 drawSkeleton(skel_pos, color);
         }
 
-        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
     }
 
     std::vector<Eigen::VectorXd> mTestMotion;

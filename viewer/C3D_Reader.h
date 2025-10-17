@@ -129,7 +129,7 @@ class C3D_Reader
             femurL_torsion = torsionL;
             
             // 10 , 14
-            mEnv->getCharacter(0)->applySkeletonBodyNode(mSkelInfos, mBVHSkeleton);
+            mEnv->getCharacter()->applySkeletonBodyNode(mSkelInfos, mBVHSkeleton);
         }
         const std::vector<MocapMarker>& getMarkerSet() { return mMarkerSet; }
         Motion convertToMotion();

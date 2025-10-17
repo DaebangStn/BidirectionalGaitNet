@@ -228,11 +228,11 @@ C3D_Reader::convertToMotion()
     motion.param[4] = dart::math::clip(motion.param[4], 0.0, 1.0);
 
     // Tibia L/R
-    // std::cout << "Tibia L : " << std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getJoint("TibiaL")->getIndexInSkeleton(0)]).value[3] << std::endl;
-    // std::cout << "Tibia R : " << std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getJoint("TibiaR")->getIndexInSkeleton(0)]).value[3] << std::endl;
+    // std::cout << "Tibia L : " << std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("TibiaL")->getIndexInSkeleton(0)]).value[3] << std::endl;
+    // std::cout << "Tibia R : " << std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("TibiaR")->getIndexInSkeleton(0)]).value[3] << std::endl;
 
-    motion.param[5] = std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getBodyNode("TibiaL")->getIndexInSkeleton()]).value[3] / globalRatio;
-    motion.param[6] = std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getBodyNode("TibiaR")->getIndexInSkeleton()]).value[3] / globalRatio;
+    motion.param[5] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getBodyNode("TibiaL")->getIndexInSkeleton()]).value[3] / globalRatio;
+    motion.param[6] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getBodyNode("TibiaR")->getIndexInSkeleton()]).value[3] / globalRatio;
 
     motion.param[5] = dart::math::clip(motion.param[5], 0.0, 1.0);
     motion.param[6] = dart::math::clip(motion.param[6], 0.0, 1.0);
@@ -241,12 +241,12 @@ C3D_Reader::convertToMotion()
     std::cout << "Tibia R : " << std::get<1>(mSkelInfos[mBVHSkeleton->getBodyNode("TibiaR")->getIndexInSkeleton()]).value[3] << std::endl;
 
     // // Arm L/R
-    // motion.param[7] = std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getJoint("ArmL")->getIndexInSkeleton(0)]).value[3] / globalRatio;
-    // motion.param[8] = std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getJoint("ArmR")->getIndexInSkeleton(0)]).value[3] / globalRatio;
+    // motion.param[7] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ArmL")->getIndexInSkeleton(0)]).value[3] / globalRatio;
+    // motion.param[8] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ArmR")->getIndexInSkeleton(0)]).value[3] / globalRatio;
 
     // // ForArm L/R
-    // motion.param[9] = std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getJoint("ForeArmL")->getIndexInSkeleton(0)]).value[3] / globalRatio;
-    // motion.param[10] = std::get<1>(mSkelInfos[mEnv->getCharacter(0)->getSkeleton()->getJoint("ForeArmR")->getIndexInSkeleton(0)]).value[3] / globalRatio;
+    // motion.param[9] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ForeArmL")->getIndexInSkeleton(0)]).value[3] / globalRatio;
+    // motion.param[10] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ForeArmR")->getIndexInSkeleton(0)]).value[3] / globalRatio;
 
     std::cout << "global ratio" << globalRatio << std::endl;
 
@@ -257,7 +257,7 @@ C3D_Reader::convertToMotion()
 
     // std::vector<Eigen::VectorXd> mConvertedPos;
     mConvertedPos.clear();
-    Eigen::VectorXd pos_backup = mEnv->getCharacter(0)->getSkeleton()->getPositions();
+    Eigen::VectorXd pos_backup = mEnv->getCharacter()->getSkeleton()->getPositions();
     Eigen::VectorXd pos = pos_backup;
     pos.setZero();
     for(int i = 0; i < mCurrentMotion.size(); i++)
@@ -265,15 +265,15 @@ C3D_Reader::convertToMotion()
         mBVHSkeleton->setPositions(mCurrentMotion[i]);
         for (auto jn : mBVHSkeleton->getJoints())
         {
-            auto skel_jn = mEnv->getCharacter(0)->getSkeleton()->getJoint(jn->getName());
+            auto skel_jn = mEnv->getCharacter()->getSkeleton()->getJoint(jn->getName());
             if(jn->getNumDofs() > skel_jn->getNumDofs())
                 skel_jn->setPosition(0, jn->getPositions()[0]);
             else if (jn->getNumDofs() == skel_jn->getNumDofs())
                 skel_jn->setPositions(jn->getPositions());
         }
 
-        pos = mEnv->getCharacter(0)->getSkeleton()->getPositions();
-        mConvertedPos.push_back(mEnv->getCharacter(0)->posToSixDof(pos));
+        pos = mEnv->getCharacter()->getSkeleton()->getPositions();
+        mConvertedPos.push_back(mEnv->getCharacter()->posToSixDof(pos));
     }
     std::cout << "Converted Positions : " << mConvertedPos.size() << std::endl;
 
@@ -320,7 +320,7 @@ C3D_Reader::convertToMotion()
         else
             current_idx++;
     }
-    mEnv->getCharacter(0)->getSkeleton()->setPositions(pos_backup);
+    mEnv->getCharacter()->getSkeleton()->setPositions(pos_backup);
     return motion;
 }
 

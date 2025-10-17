@@ -15,7 +15,7 @@ Environment::Environment()
     mIsResidual = true;
     mSimulationCount = 0;
     mActionScale = 0.04;
-    mIncludeMetabolicReward = false;
+    mIncludeMetabolicReward = true;
     mRewardType = deepmimic;
     mStanceOffset = 0.07;
 
@@ -97,10 +97,10 @@ void Environment::initialize(std::string metadata)
         if (doc.FirstChildElement("skeleton")->Attribute("actuator") != NULL) _actTypeString = Trim(doc.FirstChildElement("skeleton")->Attribute("actuator"));
         else if (doc.FirstChildElement("skeleton")->Attribute("actuactor") != NULL) _actTypeString = Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor"));
         ActuatorType _actType = getActuatorType(_actTypeString);
-        mCharacters.back()->setActuatorType(_actType);
+        mCharacter->setActuatorType(_actType);
 
-        mTargetPositions = mCharacters.back()->getSkeleton()->getPositions();
-        mTargetVelocities = mCharacters.back()->getSkeleton()->getVelocities();
+        mTargetPositions = mCharacter->getSkeleton()->getPositions();
+        mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
     }
 
     // Muscle Loading
@@ -121,7 +121,7 @@ void Environment::initialize(std::string metadata)
 
         std::string muscle_path = Trim(std::string(doc.FirstChildElement("muscle")->GetText()));
         std::string resolvedMusclePath = PMuscle::URIResolver::getInstance().resolve(muscle_path);
-        mCharacters[0]->setMuscles(resolvedMusclePath, useVelocityForce, meshLbsWeight);
+        mCharacter->setMuscles(resolvedMusclePath, useVelocityForce, meshLbsWeight);
         mUseMuscle = true;
     }
     
@@ -134,16 +134,16 @@ void Environment::initialize(std::string metadata)
         mPhaseDisplacementScale = doc.FirstChildElement("timeWarping")->DoubleText();
 
     // mAction Setting
-    ActuatorType _actType = mCharacters.back()->getActuatorType();
+    ActuatorType _actType = mCharacter->getActuatorType();
     if (_actType == tor || _actType == pd || _actType == mass || _actType == mass_lower)
     {
-        mAction = Eigen::VectorXd::Zero(mCharacters.back()->getSkeleton()->getNumDofs() - mCharacters.back()->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
-        mNumActuatorAction = mCharacters.back()->getSkeleton()->getNumDofs() - mCharacters.back()->getSkeleton()->getRootJoint()->getNumDofs();
+        mAction = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
+        mNumActuatorAction = mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
     }
     else if (_actType == mus)
     {
-        mAction = Eigen::VectorXd::Zero(mCharacters.back()->getMuscles().size() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
-        mNumActuatorAction = mCharacters.back()->getMuscles().size();
+        mAction = Eigen::VectorXd::Zero(mCharacter->getMuscles().size() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
+        mNumActuatorAction = mCharacter->getMuscles().size();
     }
     // Ground Loading
     if (doc.FirstChildElement("ground") != NULL) {
@@ -206,15 +206,11 @@ void Environment::initialize(std::string metadata)
 
     // Torque Clipping
     if (doc.FirstChildElement("torqueClipping") != NULL)
-        mCharacters[0]->setTorqueClipping(doc.FirstChildElement("torqueClipping")->BoolText());
+        mCharacter->setTorqueClipping(doc.FirstChildElement("torqueClipping")->BoolText());
 
     // Include JtP in SPD
     if (doc.FirstChildElement("includeJtPinSPD") != NULL)
-        mCharacters[0]->setIncludeJtPinSPD(doc.FirstChildElement("includeJtPinSPD")->BoolText());
-
-    // Metabolic Reward
-    if (doc.FirstChildElement("metabolicReward") != NULL)
-        mIncludeMetabolicReward = doc.FirstChildElement("metabolicReward")->BoolText();
+        mCharacter->setIncludeJtPinSPD(doc.FirstChildElement("includeJtPinSPD")->BoolText());
 
     if (doc.FirstChildElement("rewardType") != NULL)
     {
@@ -243,8 +239,7 @@ void Environment::initialize(std::string metadata)
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
     mWorld->setGravity(Eigen::Vector3d(0, -9.8, 0.0));
     // Add Character
-    for (auto &c : mCharacters)
-        mWorld->addSkeleton(c->getSkeleton());
+    mWorld->addSkeleton(mCharacter->getSkeleton());
     // Add Objects
     for (auto o : mObjects)
         mWorld->addSkeleton(o);
@@ -260,7 +255,7 @@ void Environment::initialize(std::string metadata)
         new_bvh->setMode(std::string(doc.FirstChildElement("bvh")->Attribute("symmetry")) == "true");
         new_bvh->setHeightCalibration(std::string(doc.FirstChildElement("bvh")->Attribute("heightCalibration")) == "true");
 
-        new_bvh->setRefMotion(mCharacters[0], mWorld);
+        new_bvh->setRefMotion(mCharacter, mWorld);
         mBVHs.push_back(new_bvh);
     }
 
@@ -280,7 +275,7 @@ void Environment::initialize(std::string metadata)
 
     if (isTwoLevelController())
     {
-        Character *character = mCharacters[0];
+        Character *character = mCharacter;
         mMuscleNN = py::module::import("python.ray_model").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
     }
 
@@ -445,8 +440,8 @@ void Environment::initialize(std::string metadata)
 
 void Environment::addCharacter(std::string path, double kp, double kv, double damping)
 {
-    mCharacters.push_back(new Character(path, kp, kv, damping));
-    // std::cout << "Skeleton Added " << mCharacters.back()->getSkeleton()->getName() << " Degree Of Freedom : " << mCharacters.back()->getSkeleton()->getNumDofs() << std::endl;
+    mCharacter = new Character(path, kp, kv, damping);
+    // std::cout << "Skeleton Added " << mCharacter->getSkeleton()->getName() << " Degree Of Freedom : " << mCharacter->getSkeleton()->getNumDofs() << std::endl;
 }
 
 void Environment::addObject(std::string path)
@@ -517,7 +512,7 @@ void Environment::setAction(Eigen::VectorXd _action)
             mWeights[i] = mPrevNetworks.front().joint.attr("weight_filter")(mDmins[i], beta).cast<double>();
 
             // Joint Anlge 부분은 add position 을 통해서
-            mAction.head(mNumActuatorAction) = mCharacters[0]->addPositions(mAction.head(mNumActuatorAction), (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights[i] * mActionScale * prev_action.head(mNumActuatorAction), false); // mAction.head(mNumActuatorAction)
+            mAction.head(mNumActuatorAction) = mCharacter->addPositions(mAction.head(mNumActuatorAction), (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights[i] * mActionScale * prev_action.head(mNumActuatorAction), false); // mAction.head(mNumActuatorAction)
             mAction.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction) += (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights[i] * prev_action.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction);
             mPhaseDisplacement += mWeights[i] * mPhaseDisplacementScale * prev_action[mNumActuatorAction];
         }
@@ -528,7 +523,7 @@ void Environment::setAction(Eigen::VectorXd _action)
             mBetas[mBetas.size() - 1] = beta;
             mWeights[mWeights.size() - 1] = mPrevNetworks.front().joint.attr("weight_filter")(mDmins.back(), beta).cast<double>();
             // mAction.head(mAction.rows() - 1) += (mUseWeights[mWeights.size() - 1] ? 1 : 0) * mWeights[mWeights.size() - 1] * _action.head(mAction.rows() - 1);
-            mAction.head(mNumActuatorAction) = mCharacters[0]->addPositions(mAction.head(mNumActuatorAction), (mUseWeights[mUseWeights.size() - (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights.back() * mActionScale * _action.head(mNumActuatorAction), false); // mAction.head(mNumActuatorAction)
+            mAction.head(mNumActuatorAction) = mCharacter->addPositions(mAction.head(mNumActuatorAction), (mUseWeights[mUseWeights.size() - (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights.back() * mActionScale * _action.head(mNumActuatorAction), false); // mAction.head(mNumActuatorAction)
             mAction.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction) += (mUseWeights[mUseWeights.size() - (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights.back() * _action.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction);
         }
     }
@@ -550,28 +545,28 @@ void Environment::setAction(Eigen::VectorXd _action)
 
     updateTargetPosAndVel();
 
-    if (mCharacters[0]->getActuatorType() == pd || 
-        mCharacters[0]->getActuatorType() == mass || 
-        mCharacters[0]->getActuatorType() == mass_lower)
+    if (mCharacter->getActuatorType() == pd || 
+        mCharacter->getActuatorType() == mass || 
+        mCharacter->getActuatorType() == mass_lower)
     {
-        Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
+        Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
         action.tail(actuatorAction.rows()) = actuatorAction;
-        if (isMirror()) action = mCharacters[0]->getMirrorPosition(action);
-        if (mIsResidual) action = mCharacters[0]->addPositions(mTargetPositions, action);
-        mCharacters[0]->setPDTarget(action);
+        if (isMirror()) action = mCharacter->getMirrorPosition(action);
+        if (mIsResidual) action = mCharacter->addPositions(mTargetPositions, action);
+        mCharacter->setPDTarget(action);
     }
-    else if (mCharacters[0]->getActuatorType() == tor)
+    else if (mCharacter->getActuatorType() == tor)
     {
-        Eigen::VectorXd torque = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
+        Eigen::VectorXd torque = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
         torque.tail(actuatorAction.rows()) = actuatorAction;
-        if (isMirror()) torque = mCharacters[0]->getMirrorPosition(torque);
-        mCharacters[0]->setTorque(torque);
+        if (isMirror()) torque = mCharacter->getMirrorPosition(torque);
+        mCharacter->setTorque(torque);
     }
-    else if (mCharacters[0]->getActuatorType() == mus)
+    else if (mCharacter->getActuatorType() == mus)
     {
-        Eigen::VectorXd activation = (!isMirror() ? actuatorAction : mCharacters[0]->getMirrorActivation(actuatorAction));
+        Eigen::VectorXd activation = (!isMirror() ? actuatorAction : mCharacter->getMirrorActivation(actuatorAction));
         // Clipping Function
-        mCharacters[0]->setActivations(activation);
+        mCharacter->setActivations(activation);
     }
 
     mSimulationStep++;
@@ -580,7 +575,7 @@ void Environment::setAction(Eigen::VectorXd _action)
 void Environment::updateTargetPosAndVel(bool isInit)
 {
     double dTime = 1.0 / mControlHz;
-    double dPhase = dTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
+    double dPhase = dTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
 
     if (mIsStanceLearning)
     {
@@ -590,15 +585,15 @@ void Environment::updateTargetPosAndVel(bool isInit)
     else
     {
         mTargetPositions = mBVHs[0]->getTargetPose(getLocalPhase() + (isInit ? 0.0 : dPhase));
-        mTargetVelocities = mCharacters[0]->getSkeleton()->getPositionDifferences(mBVHs[0]->getTargetPose(getLocalPhase() + dPhase + (isInit ? 0.0 : dPhase)), mTargetPositions) / dTime;
+        mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(mBVHs[0]->getTargetPose(getLocalPhase() + dPhase + (isInit ? 0.0 : dPhase)), mTargetPositions) / dTime;
     }
 }
 
 int Environment::isEOE()
 {
     int isEOE = 0;
-    double root_y = mCharacters[0]->getSkeleton()->getCOM()[1];
-    if (isFall() || root_y < mLimitY * mCharacters[0]->getGlobalRatio())
+    double root_y = mCharacter->getSkeleton()->getCOM()[1];
+    if (isFall() || root_y < mLimitY * mCharacter->getGlobalRatio())
         isEOE = 1;
     // else if (mWorld->getTime() > 10.0)
     else if (((mEOEType == EOEType::tuple) && (mSimulationStep >= mHorizon)) || ((mEOEType == EOEType::abstime) && (mWorld->getTime() > 10.0)))
@@ -620,14 +615,14 @@ double Environment::calcReward()
         double w_com = 0.1;
         double w_metabolic = 0.2;
 
-        auto skel = mCharacters[0]->getSkeleton();
+        auto skel = mCharacter->getSkeleton();
         Eigen::VectorXd pos = skel->getPositions();
         Eigen::VectorXd vel = skel->getVelocities();
 
         Eigen::VectorXd pos_diff = skel->getPositionDifferences(mTargetPositions, pos);
         Eigen::VectorXd vel_diff = skel->getVelocityDifferences(mTargetVelocities, vel);
 
-        auto ees = mCharacters[0]->getEndEffectors();
+        auto ees = mCharacter->getEndEffectors();
         Eigen::VectorXd ee_diff(ees.size() * 3);
         Eigen::Vector3d com_diff;
         for (int i = 0; i < ees.size(); i++)
@@ -652,18 +647,10 @@ double Environment::calcReward()
         r_com = exp(-10 * com_diff.squaredNorm() / com_diff.rows());
         r_metabolic = 0.0;
 
-        if (mRewardType == deepmimic)
-            r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee;
-        else if (mRewardType == scadiver)
-            r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee);
+        r_metabolic = getMetabolicReward();
 
-        if (mIncludeMetabolicReward)
-        {
-            r_metabolic = getMetabolicReward();
-
-            if (mRewardType == deepmimic) r += w_metabolic * r_metabolic;
-            else if (mRewardType == scadiver) r *= (0.1 + 0.9 * r_metabolic);
-        }
+        if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic;
+        else if (mRewardType == scadiver) r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee) * (0.1 + 0.9 * r_metabolic);
     }
     else if (mRewardType == gaitnet)
     {
@@ -673,7 +660,7 @@ double Environment::calcReward()
         double r_step = getStepReward();
         double r_metabolic = getMetabolicReward();
 
-        r = w_gait * r_loco * r_avg * r_step + (mIncludeMetabolicReward ? r_metabolic : 0.0);
+        r = w_gait * r_loco * r_avg * r_step + r_metabolic;
 
         // Populate reward map for gaitnet
         mRewardMap.insert(std::make_pair("r_loco", r_loco));
@@ -682,11 +669,7 @@ double Environment::calcReward()
         mRewardMap.insert(std::make_pair("r_metabolic", r_metabolic));
     }
 
-    if (mCharacters[0]->getActuatorType() == mus)
-    {
-       // Design the reward function for musculoskeletal system
-        r = 1.0;
-    }
+    if (mCharacter->getActuatorType() == mus) r = 1.0;
 
     // Always store total reward
     mRewardMap.insert(std::make_pair("r", r));
@@ -711,7 +694,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
             projectedParamIdx.push_back(i);
 
     Eigen::VectorXd p, v;
-    auto skel = mCharacters[0]->getSkeleton();
+    auto skel = mCharacter->getSkeleton();
     Eigen::Vector3d com = skel->getCOM();
 
 
@@ -744,8 +727,8 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
     else
     {
         int idx = 0;
-        std::vector<Eigen::Matrix3d> body_node_transforms = mCharacters[0]->getBodyNodeTransform();
-        for (auto j_pair : mCharacters[0]->getPairs())
+        std::vector<Eigen::Matrix3d> body_node_transforms = mCharacter->getBodyNodeTransform();
+        for (auto j_pair : mCharacter->getPairs())
         {
             int first_idx = j_pair.first->getChildBodyNode()->getIndexInSkeleton();
             int second_idx = j_pair.second->getChildBodyNode()->getIndexInSkeleton();
@@ -813,7 +796,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
     if (mRewardType == gaitnet)
     {
         step_state.resize(1);
-        step_state[0] = mNextTargetFoot[2] - mCharacters[0]->getSkeleton()->getCOM()[2];
+        step_state[0] = mNextTargetFoot[2] - mCharacter->getSkeleton()->getCOM()[2];
     }
 
     // Muscle State
@@ -848,7 +831,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
     // else if (mRewardType == gaitnet)
     // {
     //     Eigen::VectorXd d = Eigen::VectorXd::Zero(1);
-    //     d[0] = mNextTargetFoot[2] - mCharacters[0]->getSkeleton()->getCOM()[2];
+    //     d[0] = mNextTargetFoot[2] - mCharacter->getSkeleton()->getCOM()[2];
     //     state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows() + 1);
     //     state << com, p, v, phase, d;
     // }
@@ -865,23 +848,23 @@ Eigen::VectorXd Environment::getState()
 
 void Environment::calcActivation()
 {
-    MuscleTuple mt = mCharacters[0]->getMuscleTuple(isMirror());
+    MuscleTuple mt = mCharacter->getMuscleTuple(isMirror());
 
-    Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
-    if (mCharacters[0]->getIncludeJtPinSPD()) fullJtp.tail(fullJtp.rows() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs()) = mt.JtP;
-    if (isMirror()) fullJtp = mCharacters[0]->getMirrorPosition(fullJtp);
+    Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
+    if (mCharacter->getIncludeJtPinSPD()) fullJtp.tail(fullJtp.rows() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs()) = mt.JtP;
+    if (isMirror()) fullJtp = mCharacter->getMirrorPosition(fullJtp);
 
-    Eigen::VectorXd fulldt = mCharacters[0]->getSPDForces(mCharacters[0]->getPDTarget(), fullJtp);
+    Eigen::VectorXd fulldt = mCharacter->getSPDForces(mCharacter->getPDTarget(), fullJtp);
     mDesiredTorqueLogs.push_back(fulldt);
 
-    if (isMirror()) fulldt = mCharacters[0]->getMirrorPosition(fulldt);
+    if (isMirror()) fulldt = mCharacter->getMirrorPosition(fulldt);
     Eigen::VectorXd dt = fulldt.tail(mt.JtP.rows());
-    if (!mCharacters[0]->getIncludeJtPinSPD()) dt -= mt.JtP;
+    if (!mCharacter->getIncludeJtPinSPD()) dt -= mt.JtP;
 
     std::vector<Eigen::VectorXf> prev_activations;
 
     for (int j = 0; j < mPrevNetworks.size() + 1; j++) // Include Current Network
-        prev_activations.push_back(Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size()));
+        prev_activations.push_back(Eigen::VectorXf::Zero(mCharacter->getMuscles().size()));
 
     // For base network
     if (mPrevNetworks.size() > 0)
@@ -889,28 +872,28 @@ void Environment::calcActivation()
 
     for (int j = 1; j < mPrevNetworks.size(); j++)
     {
-        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
         for (int k : mChildNetworks[j]) prev_activation += prev_activations[k];
         prev_activations[j] = (mUseWeights[j * 2 + 1] ? 1 : 0) * mWeights[j] * mPrevNetworks[j].muscle.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights[j]).cast<Eigen::VectorXf>();
     }
     // Current Network
     if (mLoadedMuscleNN)
     {
-        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
         for (int k : mChildNetworks.back()) prev_activation += prev_activations[k];
 
         if (mPrevNetworks.size() > 0) prev_activations[prev_activations.size() - 1] = (mUseWeights.back() ? 1 : 0) * mWeights.back() * mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights.back()).cast<Eigen::VectorXf>();
         else prev_activations[prev_activations.size() - 1] = mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, py::cast<py::none>(Py_None), true, py::cast<py::none>(Py_None)).cast<Eigen::VectorXf>();
     }
 
-    Eigen::VectorXf activations = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+    Eigen::VectorXf activations = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
     for (Eigen::VectorXf a : prev_activations) activations += a;
 
     activations = mMuscleNN.attr("forward_filter")(activations).cast<Eigen::VectorXf>();
 
-    if (isMirror()) activations = mCharacters[0]->getMirrorActivation(activations.cast<double>()).cast<float>();
+    if (isMirror()) activations = mCharacter->getMirrorActivation(activations.cast<double>()).cast<float>();
 
-    mCharacters[0]->setActivations(activations.cast<double>());
+    mCharacter->setActivations(activations.cast<double>());
 
     if (dart::math::Random::uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mTupleFilled)
     {
@@ -918,7 +901,7 @@ void Environment::calcActivation()
         mRandomDesiredTorque = dt;
         if (mUseCascading)
         {
-            Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacters[0]->getMuscles().size());
+            Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
             for (int k : mChildNetworks.back())
                 prev_activation += prev_activations[k];
             mRandomPrevOut = prev_activation.cast<double>();
@@ -933,7 +916,7 @@ void Environment::postMuscleStep()
     mSimulationCount++;
     mGlobalTime += 1.0 / mSimulationHz;
     mWorldTime += 1.0 / mSimulationHz;
-    mCharacters[0]->updateLocalTime((1.0 + mPhaseDisplacement * mControlHz) / mSimulationHz);
+    mCharacter->updateLocalTime((1.0 + mPhaseDisplacement * mControlHz) / mSimulationHz);
 
     // Contact-based gait cycle detection: detect right foot heel strike (swing→stance transition)
     // This replaces time-based mWorldPhaseCount update for more accurate cycle tracking
@@ -945,26 +928,26 @@ void Environment::postMuscleStep()
     if (mPrevContact[1] == 0 && contact[1] == 1 && grf[1] > grf_threshold)  // Right foot: swing→stance with weight
     {
         mWorldPhaseCount++;
-        mWorldTime = mCharacters[0]->getLocalTime();
+        mWorldTime = mCharacter->getLocalTime();
     }
     mPrevContact = contact;
 
     if (mHardPhaseClipping)
     {
-        int currentGlobalCount = mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
-        int currentLocalCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
+        int currentGlobalCount = mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+        int currentLocalCount = mCharacter->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
 
-        if (currentGlobalCount > currentLocalCount) mCharacters[0]->setLocalTime(mGlobalTime);
-        else if (currentGlobalCount < currentLocalCount) mCharacters[0]->setLocalTime(currentLocalCount * ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))));
+        if (currentGlobalCount > currentLocalCount) mCharacter->setLocalTime(mGlobalTime);
+        else if (currentGlobalCount < currentLocalCount) mCharacter->setLocalTime(currentLocalCount * ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
     }
     else if (mSoftPhaseClipping)
     {
         // FIXED LOCAL PHASE TIME
-        int currentCount = mCharacters[0]->getLocalTime() / (0.5 * (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
-        // int currentCount = mCharacters[0]->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))));
+        int currentCount = mCharacter->getLocalTime() / (0.5 * (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+        // int currentCount = mCharacter->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
         if (mPhaseCount != currentCount)
         {
-            mGlobalTime = mCharacters[0]->getLocalTime();
+            mGlobalTime = mCharacter->getLocalTime();
             mPhaseCount = currentCount;
         }
     }
@@ -972,8 +955,8 @@ void Environment::postMuscleStep()
 
 void Environment::muscleStep()
 {
-    if (mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower)  calcActivation();
-    mCharacters[0]->step();
+    if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower)  calcActivation();
+    mCharacter->step();
     mWorld->step();
     postMuscleStep();
 }
@@ -986,7 +969,7 @@ void Environment::step()
 
 void Environment::postStep()
 {
-    mCharacters[0]->evalMetabolicEnergy();
+    mCharacter->evalMetabolicEnergy();
     if (mRewardType == gaitnet) updateFootStep();
     mReward = calcReward();
 }
@@ -994,14 +977,14 @@ void Environment::postStep()
 void Environment::poseOptimization(int iter)
 {
     if (!mUseMuscle) return;
-    auto skel = mCharacters[0]->getSkeleton();
+    auto skel = mCharacter->getSkeleton();
 
     double step_size = 1E-4;
     double threshold = 100.0;
     int i = 0;
     for (i = 0; i < iter; i++)
     {
-        MuscleTuple mt = mCharacters[0]->getMuscleTuple(false);
+        MuscleTuple mt = mCharacter->getMuscleTuple(false);
         Eigen::VectorXd dp = Eigen::VectorXd::Zero(skel->getNumDofs());
         dp.tail(mt.JtP.rows()) = mt.JtP;
         bool isDone = true;
@@ -1041,7 +1024,7 @@ void Environment::poseOptimization(int iter)
         Eigen::VectorXd prev_angle = femur_joint->getPositions();
         Eigen::VectorXd cur_angle = femur_joint->getPositions();
         
-        Eigen::VectorXd initial_JtP = mCharacters[0]->getMuscleTuple(false).JtP;
+        Eigen::VectorXd initial_JtP = mCharacter->getMuscleTuple(false).JtP;
 
         while (true)
         {
@@ -1060,7 +1043,7 @@ void Environment::poseOptimization(int iter)
             double step = (angle_diff > 0 ? -1.0 : 1.0) * M_PI / 180.0;
             cur_angle[0] += step;
             femur_joint->setPositions(cur_angle);
-            Eigen::VectorXd current_Jtp = mCharacters[0]->getMuscleTuple(false).JtP;
+            Eigen::VectorXd current_Jtp = mCharacter->getMuscleTuple(false).JtP;
             bool isDone = false;
             for (int i = 0; i < current_Jtp.rows(); i++)
             {
@@ -1125,7 +1108,7 @@ void Environment::reset()
     else if (mRewardType == gaitnet)
     {
         time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
-        time *= (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
+        time *= (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     }
     if (mIsStanceLearning) time = 0.0;
     
@@ -1143,32 +1126,29 @@ void Environment::reset()
     mWorld->setTime(time);
 
     // Reset Skeletons
-    for (auto c : mCharacters)
-    {
-        c->getSkeleton()->setPositions(c->getSkeleton()->getPositions().setZero());
-        c->getSkeleton()->setVelocities(c->getSkeleton()->getVelocities().setZero());
+    mCharacter->getSkeleton()->setPositions(mCharacter->getSkeleton()->getPositions().setZero());
+    mCharacter->getSkeleton()->setVelocities(mCharacter->getSkeleton()->getVelocities().setZero());
 
-        c->getSkeleton()->clearConstraintImpulses();
-        c->getSkeleton()->clearInternalForces();
-        c->getSkeleton()->clearExternalForces();
+    mCharacter->getSkeleton()->clearConstraintImpulses();
+    mCharacter->getSkeleton()->clearInternalForces();
+    mCharacter->getSkeleton()->clearExternalForces();
 
-        c->setLocalTime(time);
-    }
+    mCharacter->setLocalTime(time);
 
     // Initial Pose Setting
     updateTargetPosAndVel(true);
 
     // if (mRewardType == gaitnet)
-    //     mTargetVelocities.head(6) *= 1.2 * (mStride * (mCharacters[0]->getGlobalRatio()));
+    //     mTargetVelocities.head(6) *= 1.2 * (mStride * (mCharacter->getGlobalRatio()));
     
     if(mRewardType == gaitnet)
     {
-        // mTargetPositions.segment(6, 18) *= (mStride * (mCharacters[0]->getGlobalRatio()));
-        mTargetVelocities.head(24) *= (mStride * (mCharacters[0]->getGlobalRatio()));
+        // mTargetPositions.segment(6, 18) *= (mStride * (mCharacter->getGlobalRatio()));
+        mTargetVelocities.head(24) *= (mStride * (mCharacter->getGlobalRatio()));
     }
     
-    mCharacters[0]->getSkeleton()->setPositions(mTargetPositions);
-    mCharacters[0]->getSkeleton()->setVelocities(mTargetVelocities);
+    mCharacter->getSkeleton()->setPositions(mTargetPositions);
+    mCharacter->getSkeleton()->setVelocities(mTargetVelocities);
 
     updateTargetPosAndVel();
 
@@ -1178,44 +1158,42 @@ void Environment::reset()
     if (mRewardType == gaitnet)
     {
         Eigen::Vector3d ref_initial_vel = mTargetVelocities.segment(3, 3);
-        ref_initial_vel = FreeJoint::convertToTransform(mCharacters[0]->getSkeleton()->getRootJoint()->getPositions()).linear().transpose() * (FreeJoint::convertToTransform(mTargetPositions.head(6)).linear() * ref_initial_vel);
-        Eigen::Vector6d vel = mCharacters[0]->getSkeleton()->getRootJoint()->getVelocities();
+        ref_initial_vel = FreeJoint::convertToTransform(mCharacter->getSkeleton()->getRootJoint()->getPositions()).linear().transpose() * (FreeJoint::convertToTransform(mTargetPositions.head(6)).linear() * ref_initial_vel);
+        Eigen::Vector6d vel = mCharacter->getSkeleton()->getRootJoint()->getVelocities();
         vel.segment(3, 3) = ref_initial_vel;
-        mCharacters[0]->getSkeleton()->getRootJoint()->setVelocities(vel);
+        mCharacter->getSkeleton()->getRootJoint()->setVelocities(vel);
     }
 
     // Height / Pose Optimization
-    if (mHeightCalibration != 0) mCharacters[0]->heightCalibration(mWorld, mHeightCalibration == 2);
+    if (mHeightCalibration != 0) mCharacter->heightCalibration(mWorld, mHeightCalibration == 2);
 
 
     // Pose In ROM
-    Eigen::VectorXd cur_pos = mCharacters[0]->getSkeleton()->getPositions();
-    Eigen::VectorXd rom_min = mCharacters[0]->getSkeleton()->getPositionLowerLimits();
-    Eigen::VectorXd rom_max = mCharacters[0]->getSkeleton()->getPositionUpperLimits();
+    Eigen::VectorXd cur_pos = mCharacter->getSkeleton()->getPositions();
+    Eigen::VectorXd rom_min = mCharacter->getSkeleton()->getPositionLowerLimits();
+    Eigen::VectorXd rom_max = mCharacter->getSkeleton()->getPositionUpperLimits();
     for (int i = 0; i < cur_pos.rows(); i++)
         cur_pos[i] = dart::math::clip(cur_pos[i], rom_min[i], rom_max[i]);
-    mCharacters[0]->getSkeleton()->setPositions(cur_pos);
+    mCharacter->getSkeleton()->setPositions(cur_pos);
 
-    mCharacters[0]->setPDTarget(mTargetPositions);
-    mCharacters[0]->setTorque(mCharacters[0]->getTorque().setZero());
+    mCharacter->setPDTarget(mTargetPositions);
+    mCharacter->setTorque(mCharacter->getTorque().setZero());
     if (mUseMuscle) {
-        mCharacters[0]->setActivations(mCharacters[0]->getActivations().setZero());
-        mCharacters[0]->resetMetabolicEnergy();
+        mCharacter->setActivations(mCharacter->getActivations().setZero());
+        mCharacter->resetMetabolicEnergy();
     }
 
-    mCharacters[0]->clearLogs();
+    mCharacter->clearLogs();
 
     if (mRewardType == gaitnet)
         updateFootStep(true);
 
     mSimulationStep = 0;
 
-    for (auto c : mCharacters)
-    {
-        c->getSkeleton()->clearInternalForces();
-        c->getSkeleton()->clearExternalForces();
-        c->getSkeleton()->clearConstraintImpulses();
-    }
+    mCharacter->getSkeleton()->clearInternalForces();
+    mCharacter->getSkeleton()->clearExternalForces();
+    mCharacter->getSkeleton()->clearConstraintImpulses();
+
     mDesiredTorqueLogs.clear();
 }
 
@@ -1251,21 +1229,19 @@ double Environment::getMetabolicReward()
     double r_metabolic = 0.0;
     if (mUseMuscle)
     {
-        double metabolic_energy = mCharacters[0]->getMetabolicEnergy();
+        double metabolic_energy = mCharacter->getMetabolicEnergy();
         r_metabolic = exp(-mMetabolicWeight * metabolic_energy);
     }
     else
     {
-        Eigen::VectorXd torque_sum = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs());
-        const std::vector<Eigen::VectorXd> &torqueLogs = mCharacters[0]->getTorqueLogs();
+        Eigen::VectorXd torque_sum = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
+        const std::vector<Eigen::VectorXd> &torqueLogs = mCharacter->getTorqueLogs();
         int log_size = torqueLogs.size();
-        if (log_size == 0)
-            r_metabolic = 0.0;
+        if (log_size == 0) r_metabolic = 0.0;
         else
         {
 
-            for (int i = 0; i < mNumSubSteps; i++)
-                torque_sum += torqueLogs[log_size - 1 - i].cwiseAbs();
+            for (int i = 0; i < mNumSubSteps; i++) torque_sum += torqueLogs[log_size - 1 - i].cwiseAbs();
             torque_sum /= mNumSubSteps;
             r_metabolic = exp(-1E-4 * mMetabolicWeight * torque_sum.squaredNorm() / torque_sum.rows());
         }
@@ -1275,13 +1251,13 @@ double Environment::getMetabolicReward()
 
 double Environment::getLocoReward()
 {
-    const std::vector<Eigen::Vector3d> &headVels = mCharacters[0]->getHeadVelLogs();
+    const std::vector<Eigen::Vector3d> &headVels = mCharacter->getHeadVelLogs();
     if (headVels.size() == 0)
         return 1.0;
 
     Eigen::Vector3d headLinearAcc = headVels.back() - headVels[headVels.size() - mNumSubSteps];
 
-    double headRotDiff = Eigen::AngleAxisd(mCharacters[0]->getSkeleton()->getBodyNode("Head")->getTransform().linear()).angle();
+    double headRotDiff = Eigen::AngleAxisd(mCharacter->getSkeleton()->getBodyNode("Head")->getTransform().linear()).angle();
     double r_head_linear_acc = exp(-mHeadLinearAccWeight * headLinearAcc.squaredNorm() / headLinearAcc.rows());
     double r_head_rot_diff = exp(-mHeadRotWeight * headRotDiff * headRotDiff);
     double r_loco = r_head_linear_acc * r_head_rot_diff;
@@ -1307,13 +1283,13 @@ double Environment::getStepReward()
 Eigen::Vector3d Environment::getAvgVelocity()
 {
     Eigen::Vector3d avg_vel = Eigen::Vector3d::Zero();
-    const std::vector<Eigen::Vector3d> &coms = mCharacters[0]->getCOMLogs();
-    int horizon = (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))) * mSimulationHz;
+    const std::vector<Eigen::Vector3d> &coms = mCharacter->getCOMLogs();
+    int horizon = (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) * mSimulationHz;
     if (coms.size() > horizon)
     {
         Eigen::Vector3d cur_com = coms.back();
         Eigen::Vector3d prev_com = coms[coms.size() - horizon];
-        avg_vel = (cur_com - prev_com) / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())));
+        avg_vel = (cur_com - prev_com) / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     }
     else
         avg_vel[2] = getTargetCOMVelocity();
@@ -1333,11 +1309,11 @@ double Environment::getAvgVelReward()
 
 Eigen::VectorXd Environment::getJointState(bool isMirror)
 {
-    Eigen::VectorXd joint_state = Eigen::VectorXd::Zero(3 * (mCharacters[0]->getSkeleton()->getNumDofs() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs()));
-    Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs());
-    Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(mCharacters[0]->getSkeleton()->getNumDofs() - mCharacters[0]->getSkeleton()->getRootJoint()->getNumDofs());
+    Eigen::VectorXd joint_state = Eigen::VectorXd::Zero(3 * (mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs()));
+    Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs());
+    Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs());
 
-    auto mt = mCharacters[0]->getMuscleTuple(isMirror);
+    auto mt = mCharacter->getMuscleTuple(isMirror);
 
     for (int i = 0; i < mt.JtA.rows(); i++)
     {
@@ -1364,16 +1340,16 @@ void Environment::updateFootStep(bool isInit)
             if (mIsLeftLegStance)
             {
                 mCurrentTargetFoot = mNextTargetFoot;
-                mNextTargetFoot = mCurrentFoot + Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacters[0]->getGlobalRatio();
+                mNextTargetFoot = mCurrentFoot + Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
             }
 
         mIsLeftLegStance = false;
-        mCurrentFoot = mCharacters[0]->getSkeleton()->getBodyNode("TalusR")->getCOM();
+        mCurrentFoot = mCharacter->getSkeleton()->getBodyNode("TalusR")->getCOM();
 
         if (isInit)
         {
             mCurrentTargetFoot = mCurrentFoot;
-            mNextTargetFoot = mCurrentFoot + 0.5 * Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacters[0]->getGlobalRatio();
+            mNextTargetFoot = mCurrentFoot + 0.5 * Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
         }
     }
     else
@@ -1383,17 +1359,17 @@ void Environment::updateFootStep(bool isInit)
             if (!mIsLeftLegStance)
             {
                 mCurrentTargetFoot = mNextTargetFoot;
-                mNextTargetFoot = mCurrentFoot + Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacters[0]->getGlobalRatio();
+                mNextTargetFoot = mCurrentFoot + Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
             }
 
         mIsLeftLegStance = true;
 
-        mCurrentFoot = mCharacters[0]->getSkeleton()->getBodyNode("TalusL")->getCOM();
+        mCurrentFoot = mCharacter->getSkeleton()->getBodyNode("TalusL")->getCOM();
 
         if (isInit)
         {
             mCurrentTargetFoot = mCurrentFoot;
-            mNextTargetFoot = mCurrentFoot + 0.5 * Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacters[0]->getGlobalRatio();
+            mNextTargetFoot = mCurrentFoot + 0.5 * Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
         }
     }
     mCurrentTargetFoot[1] = 0.0;
@@ -1424,7 +1400,7 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
 
             idx++;
         }
-        mCharacters[0]->setSkelParam(skel_info, doOptimization);
+        mCharacter->setSkelParam(skel_info, doOptimization);
     }
 
     idx = 0;
@@ -1432,15 +1408,15 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
     {
         if (name.find("muscle_length") != std::string::npos)
         {
-            mCharacters[0]->setMuscleParam(name.substr(14), "length", _param_state[idx]);
+            mCharacter->setMuscleParam(name.substr(14), "length", _param_state[idx]);
         }
         else if (name.find("muscle_force") != std::string::npos)
         {
-            mCharacters[0]->setMuscleParam(name.substr(13), "force", _param_state[idx]);
+            mCharacter->setMuscleParam(name.substr(13), "force", _param_state[idx]);
         }
         idx++;
     }
-    mCharacters[0]->cacheMuscleMass();
+    mCharacter->cacheMuscleMass();
 }
 
 void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
@@ -1459,7 +1435,7 @@ void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onl
             if (name.find("torsion") != std::string::npos) skel_info.push_back(std::make_pair(name, mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx])));
             idx++;
         }
-        mCharacters[0]->setSkelParam(skel_info, doOptimization);
+        mCharacter->setSkelParam(skel_info, doOptimization);
     }
 
     idx = 0;
@@ -1467,17 +1443,17 @@ void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onl
     {
         if (name.find("muscle_length") != std::string::npos)
         {
-            mCharacters[0]->setMuscleParam(name.substr(14), "length",
+            mCharacter->setMuscleParam(name.substr(14), "length",
                 mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]));
         }
         else if (name.find("muscle_force") != std::string::npos)
         {
-            mCharacters[0]->setMuscleParam(name.substr(13), "force",
+            mCharacter->setMuscleParam(name.substr(13), "force",
                 mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]));
         }
         idx++;
     }
-    mCharacters[0]->cacheMuscleMass();
+    mCharacter->cacheMuscleMass();
 }
 
 Eigen::VectorXd Environment::getParamState(bool isMirror)
@@ -1491,13 +1467,13 @@ Eigen::VectorXd Environment::getParamState(bool isMirror)
         if (name.find("cadence") != std::string::npos)
             ParamState[idx] = mCadence;
         if (name.find("skeleton") != std::string::npos)
-            ParamState[idx] = mCharacters[0]->getSkelParamValue(name.substr(9));
+            ParamState[idx] = mCharacter->getSkelParamValue(name.substr(9));
 
         if (name.find("torsion") != std::string::npos)
-            ParamState[idx] = mCharacters[0]->getTorsionValue(name.substr(8));
+            ParamState[idx] = mCharacter->getTorsionValue(name.substr(8));
 
         if (name.find("muscle_length") != std::string::npos)
-            for (auto m : mCharacters[0]->getMuscles())
+            for (auto m : mCharacter->getMuscles())
                 if (name.substr(14) == m->GetName())
                 {
                     ParamState[idx] = m->ratio_l();
@@ -1505,7 +1481,7 @@ Eigen::VectorXd Environment::getParamState(bool isMirror)
                 }
 
         if (name.find("muscle_force") != std::string::npos)
-            for (auto m : mCharacters[0]->getMuscles())
+            for (auto m : mCharacter->getMuscles())
                 if (name.substr(13) == m->GetName())
                 {
                     ParamState[idx] = m->ratio_f();
@@ -1611,7 +1587,7 @@ Eigen::Vector2d Environment::getFootGRF()
 {
     Eigen::Vector2d grf = Eigen::Vector2d::Zero();
     const auto results = mWorld->getConstraintSolver()->getLastCollisionResult();
-    const double mass = mCharacters[0]->getSkeleton()->getMass();
+    const double mass = mCharacter->getSkeleton()->getMass();
     const double g = 9.81;
 
     for (std::size_t i = 0; i < results.getNumContacts(); ++i)

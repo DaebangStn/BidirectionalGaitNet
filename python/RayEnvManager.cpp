@@ -105,15 +105,15 @@ public:
         return py_map;
     }
     void setAction(py::array_t<float> action) { Environment::setAction(toEigenVector(action)); }
-    int getNumMuscles() { return Environment::getCharacter(0)->getMuscles().size(); }
+    int getNumMuscles() { return Environment::getCharacter()->getMuscles().size(); }
 
-    int getNumMuscleDof() { return Environment::getCharacter(0)->getNumMuscleRelatedDof(); }
+    int getNumMuscleDof() { return Environment::getCharacter()->getNumMuscleRelatedDof(); }
 
     py::array_t<float> getParamState() { return toNumPyArray(Environment::getParamState()); }
     py::array_t<float> getNormalizedParamState() { return toNumPyArray(Environment::getNormalizedParamState(Environment::getParamMin(), Environment::getParamMax())); }
-    py::array_t<float> getPositions() { return toNumPyArray(Environment::getCharacter(0)->getSkeleton()->getPositions()); }
-    py::array_t<float> posToSixDof(py::array_t<float> pos) { return toNumPyArray(Environment::getCharacter(0)->posToSixDof(toEigenVector(pos))); }
-    py::array_t<float> sixDofToPos(py::array_t<float> raw_pos) { return toNumPyArray(Environment::getCharacter(0)->sixDofToPos(toEigenVector(raw_pos))); }
+    py::array_t<float> getPositions() { return toNumPyArray(Environment::getCharacter()->getSkeleton()->getPositions()); }
+    py::array_t<float> posToSixDof(py::array_t<float> pos) { return toNumPyArray(Environment::getCharacter()->posToSixDof(toEigenVector(pos))); }
+    py::array_t<float> sixDofToPos(py::array_t<float> raw_pos) { return toNumPyArray(Environment::getCharacter()->sixDofToPos(toEigenVector(raw_pos))); }
 
     py::array_t<float> getMirrorParamState(py::array_t<float> param)
     {
@@ -125,7 +125,7 @@ public:
         return toNumPyArray(res);
     }
 
-    py::array_t<float> getMirrorPositions(py::array_t<float> pos) { return toNumPyArray(getCharacter(0)->getMirrorPosition(toEigenVector(pos))); }
+    py::array_t<float> getMirrorPositions(py::array_t<float> pos) { return toNumPyArray(getCharacter()->getMirrorPosition(toEigenVector(pos))); }
 
     py::array_t<float> getParamStateFromNormalized(py::array_t<float> normalized_param)
     {

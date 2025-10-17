@@ -66,7 +66,7 @@ public:
     void addCharacter(std::string path, double kp, double kv, double damping);
     void addObject(std::string path = nullptr);
 
-    Character *getCharacter(int idx) { return mCharacters[idx]; }
+    Character *getCharacter() { return mCharacter; }
     BVH *getBVH(int idx) { return mBVHs[idx]; }
 
     void setAction(Eigen::VectorXd _action);
@@ -84,7 +84,7 @@ public:
     Eigen::VectorXd getTargetPositions() { return mTargetPositions; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }
 
-    double getLocalPhase(bool mod_one = false, int character_idx = 0, int bvh_idx = 0) { return (mCharacters[character_idx]->getLocalTime() / (mBVHs[bvh_idx]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))) - (mod_one ? (int)(mCharacters[character_idx]->getLocalTime() / (mBVHs[bvh_idx]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))) : 0.0); }
+    double getLocalPhase(bool mod_one = false, int character_idx = 0, int bvh_idx = 0) { return (mCharacter->getLocalTime() / (mBVHs[bvh_idx]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mCharacter->getLocalTime() / (mBVHs[bvh_idx]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
 
     Eigen::VectorXd getState();
     std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
@@ -159,7 +159,7 @@ public:
 
     bool getUseCascading() { return mUseCascading; }
     bool getUseMuscle() { return mUseMuscle; }
-    bool isTwoLevelController() { return mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower; }
+    bool isTwoLevelController() { return mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower; }
 
     // get Reward Term
     void updateFootStep(bool isInit = false);
@@ -174,9 +174,9 @@ public:
     double getAvgVelReward();
     double getLocoReward();
     Eigen::Vector3d getAvgVelocity();
-    double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacters[0]->getGlobalRatio()) / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))); }
-    double getNormalizedPhase() { return mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))) - (int)(mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))); }
-    double getWorldPhase() { return mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio()))) - (int)(mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacters[0]->getGlobalRatio())))); }
+    double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))); }
+    double getNormalizedPhase() { return mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
+    double getWorldPhase() { return mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
     
     // Time and cycle getters for rollout
     double getWorldTime() const { return mWorldTime; }
@@ -296,7 +296,7 @@ private:
     Eigen::VectorXd mAction;
 
     dart::simulation::WorldPtr mWorld;
-    std::vector<Character *> mCharacters;
+    Character *mCharacter;
     std::vector<dart::dynamics::SkeletonPtr> mObjects;
     std::vector<BVH *> mBVHs;
 

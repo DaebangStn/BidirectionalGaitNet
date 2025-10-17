@@ -483,7 +483,7 @@ void GLFWApp::exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::
     Eigen::VectorXd pos_bkup = skel->getPositions();
     skel->setPositions(Eigen::VectorXd::Zero(pos_bkup.rows()));
     bvh << "HIERARCHY" << std::endl;
-    dart::dynamics::Joint *jn = mRenderEnv->getCharacter(0)->getSkeleton()->getRootJoint();
+    dart::dynamics::Joint *jn = mRenderEnv->getCharacter()->getSkeleton()->getRootJoint();
     dart::dynamics::BodyNode *bn = jn->getChildBodyNode();
     Eigen::Vector3d offset = bn->getTransform().translation();
     bvh << "ROOT\tCharacter_" << jn->getName() << std::endl;
@@ -532,7 +532,7 @@ void GLFWApp::update(bool _isSave)
     if (_isSave)
     {
         mRenderEnv->step();
-        mMotionBuffer.push_back(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions());
+        mMotionBuffer.push_back(mRenderEnv->getCharacter()->getSkeleton()->getPositions());
     }
     else mRenderEnv->step();
 
@@ -859,7 +859,7 @@ void GLFWApp::initEnv(std::string metadata)
     mRenderEnv = new RenderEnvironment(metadata, mGraphData);
     if (!mMotionCharacter)
     {
-        for (const auto& muscle: mRenderEnv->getCharacter(0)->getMuscles()) {
+        for (const auto& muscle: mRenderEnv->getCharacter()->getMuscles()) {
             const auto& muscle_name = muscle->GetName();
             if(muscle_name.find("R_") != std::string::npos) {
                 std::string key = "act_" + muscle_name;
@@ -893,7 +893,7 @@ void GLFWApp::initEnv(std::string metadata)
     initializeMotionSkeleton();
     
     // Load networks
-    auto character = mRenderEnv->getCharacter(0);
+    auto character = mRenderEnv->getCharacter();
     mNetworks.clear();
     for (const auto& path : mNetworkPaths) {
         loadNetworkFromPath(path);
@@ -905,7 +905,7 @@ void GLFWApp::initEnv(std::string metadata)
 
     // Initialize DOF tracking
     mRelatedDofs.clear();
-    mRelatedDofs.resize(mRenderEnv->getCharacter(0)->getSkeleton()->getNumDofs() * 2, false);
+    mRelatedDofs.resize(mRenderEnv->getCharacter()->getSkeleton()->getNumDofs() * 2, false);
 
     // Initialize muscle selection states
     if (mRenderEnv->getUseMuscle()) {
@@ -1009,7 +1009,7 @@ void GLFWApp::drawKinematicsControlPanel()
         if (ImGui::Button("Load FGN"))
         {
             mDrawFGNSkeleton = true;
-            py::tuple res = py::module::import("forward_gaitnet").attr("load_FGN")(mFGNList[selected_fgn], mRenderEnv->getNumParamState(), mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()).rows());
+            py::tuple res = py::module::import("forward_gaitnet").attr("load_FGN")(mFGNList[selected_fgn], mRenderEnv->getNumParamState(), mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows());
             mFGN = res[0];
             mFGNmetadata = res[1].cast<std::string>();
 
@@ -1039,7 +1039,7 @@ void GLFWApp::drawKinematicsControlPanel()
     {
         mGVAELoaded = true;
         py::object load_gaitvae = py::module::import("advanced_vae").attr("load_gaitvae");
-        int rows = mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()).rows();
+        int rows = mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows();
         mGVAE = load_gaitvae(mBGNList[selected_fgn], rows, 60, mRenderEnv->getNumKnownParam(), mRenderEnv->getNumParamState());
 
         mPredictedMotion.motion = mMotions[mMotionIdx].motion;
@@ -1402,7 +1402,7 @@ void GLFWApp::drawKinematicsControlPanel()
             if (!mMotions.empty()) {
                 double phase = mViewerPhase;
                 if (mRenderEnv) {
-                    phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
+                    phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
                     phase = fmod(phase, 1.0);
                 }
                 double frame_float = computeFrameFloat(mMotions[mMotionIdx], phase);
@@ -1513,7 +1513,7 @@ void GLFWApp::drawKinematicsControlPanel()
         }
     ImGui::End();
     if(mRenderEnv)
-        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
 }
 
 void GLFWApp::drawSimVisualizationPanel()
@@ -1541,7 +1541,7 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::Text("Average Vel     : %.3f m/s", mRenderEnv->getAvgVelocity()[2]);
 
         // Character position
-        Eigen::Vector3d char_pos = mRenderEnv->getCharacter(0)->getSkeleton()->getRootBodyNode()->getCOM();
+        Eigen::Vector3d char_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
         ImGui::Text("Character Pos   : (%.3f, %.3f, %.3f)", char_pos[0], char_pos[1], char_pos[2]);
 
         ImGui::Separator();
@@ -1595,7 +1595,7 @@ void GLFWApp::drawSimVisualizationPanel()
     if (ImGui::CollapsingHeader("Metabolic Energy", ImGuiTreeNodeFlags_DefaultOpen))
     {
         // Display current metabolic type
-        MetabolicType currentType = mRenderEnv->getCharacter(0)->getMetabolicType();
+        MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
         const char* typeNames[] = {"LEGACY (Disabled)", "A", "A2", "MA"};
         if (currentType == MetabolicType::LEGACY) {
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Mode: %s", typeNames[currentType]);
@@ -1604,7 +1604,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImGui::SameLine();
 
             // Display current metabolic energy value
-            ImGui::Text("Current: %.2f", mRenderEnv->getCharacter(0)->getMetabolicStepEnergy());
+            ImGui::Text("Current: %.2f", mRenderEnv->getCharacter()->getMetabolicStepEnergy());
 
             ImGui::Separator();
 
@@ -1726,7 +1726,7 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::Separator();
 
         // Constraint Force
-        Eigen::VectorXd cf = mRenderEnv->getCharacter(0)->getSkeleton()->getConstraintForces();
+        Eigen::VectorXd cf = mRenderEnv->getCharacter()->getSkeleton()->getConstraintForces();
         ImPlot::SetNextAxisLimits(0, -0.5, cf.rows() + 0.5, ImGuiCond_Always);
         ImPlot::SetNextAxisLimits(3, -5, 5);
         double *x_cf = new double[cf.rows()]();
@@ -1750,7 +1750,7 @@ void GLFWApp::drawSimVisualizationPanel()
         {
             int idx = 0;
 
-            for (int i = 0; i < mRenderEnv->getCharacter(0)->getSkeleton()->getNumDofs(); i++)
+            for (int i = 0; i < mRenderEnv->getCharacter()->getSkeleton()->getNumDofs(); i++)
             {
                 if (ImGui::Selectable((std::to_string(i) + "_force").c_str(), joint_selected == i))
                     joint_selected = i;
@@ -1787,14 +1787,14 @@ void GLFWApp::drawSimVisualizationPanel()
         // Torque bars
         if (mRenderEnv->getUseMuscle())
         {
-            MuscleTuple tp = mRenderEnv->getCharacter(0)->getMuscleTuple(false);
+            MuscleTuple tp = mRenderEnv->getCharacter()->getMuscleTuple(false);
 
-            Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mRenderEnv->getCharacter(0)->getSkeleton()->getNumDofs());
-            if (mRenderEnv->getCharacter(0)->getIncludeJtPinSPD())
-                fullJtp.tail(fullJtp.rows() - mRenderEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getNumDofs()) = tp.JtP;
-            Eigen::VectorXd dt = mRenderEnv->getCharacter(0)->getSPDForces(mRenderEnv->getCharacter(0)->getPDTarget(), fullJtp).tail(tp.JtP.rows());
+            Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mRenderEnv->getCharacter()->getSkeleton()->getNumDofs());
+            if (mRenderEnv->getCharacter()->getIncludeJtPinSPD())
+                fullJtp.tail(fullJtp.rows() - mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getNumDofs()) = tp.JtP;
+            Eigen::VectorXd dt = mRenderEnv->getCharacter()->getSPDForces(mRenderEnv->getCharacter()->getPDTarget(), fullJtp).tail(tp.JtP.rows());
 
-            auto mtl = mRenderEnv->getCharacter(0)->getMuscleTorqueLogs();
+            auto mtl = mRenderEnv->getCharacter()->getMuscleTorqueLogs();
 
             Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
             Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
@@ -1835,7 +1835,7 @@ void GLFWApp::drawSimVisualizationPanel()
         }
         else
         {
-            Eigen::VectorXd dt = mRenderEnv->getCharacter(0)->getTorque();
+            Eigen::VectorXd dt = mRenderEnv->getCharacter()->getTorque();
             ImPlot::SetNextAxisLimits(0, -0.5, dt.rows() + 0.5, ImGuiCond_Always);
             ImPlot::SetNextAxisLimits(3, -5, 5);
             double *x_tau = new double[dt.rows()]();
@@ -1854,7 +1854,7 @@ void GLFWApp::drawSimVisualizationPanel()
     if (ImGui::CollapsingHeader("Muscles"))
     {
 
-        auto m = mRenderEnv->getCharacter(0)->getMuscles()[selected];
+        auto m = mRenderEnv->getCharacter()->getMuscles()[selected];
 
         ImPlot::SetNextAxisLimits(3, 500, 0);
         ImPlot::SetNextAxisLimits(0, 0, 1.5, ImGuiCond_Always);
@@ -1899,7 +1899,7 @@ void GLFWApp::drawSimVisualizationPanel()
         // Activation bars
         if (mRenderEnv->getUseMuscle())
         {
-            Eigen::VectorXd activation = mRenderEnv->getCharacter(0)->getActivations();
+            Eigen::VectorXd activation = mRenderEnv->getCharacter()->getActivations();
 
             ImPlot::SetNextAxisLimits(0, -0.5, activation.rows() + 0.5, ImGuiCond_Always);
             ImPlot::SetNextAxisLimits(3, 0, 1);
@@ -1924,7 +1924,7 @@ void GLFWApp::drawSimVisualizationPanel()
         if (ImGui::ListBoxHeader("Muscle", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
         {
             int idx = 0;
-            for (auto m : mRenderEnv->getCharacter(0)->getMuscles())
+            for (auto m : mRenderEnv->getCharacter()->getMuscles())
             {
                 if (ImGui::Selectable((m->name + "_force").c_str(), selected == idx))
                     selected = idx;
@@ -2036,10 +2036,10 @@ void GLFWApp::drawCameraStatusSection() {
 
 void GLFWApp::drawJointControlSection() {
     if (ImGui::CollapsingHeader("Joint")) {
-        if (!mRenderEnv || !mRenderEnv->getCharacter(0)) {
+        if (!mRenderEnv || !mRenderEnv->getCharacter()) {
             ImGui::TextDisabled("Load environment first");
         } else {
-            auto skel = mRenderEnv->getCharacter(0)->getSkeleton();
+            auto skel = mRenderEnv->getCharacter()->getSkeleton();
             
             // Joint Position Control
             Eigen::VectorXd pos_lower_limit = skel->getPositionLowerLimits();
@@ -2262,7 +2262,7 @@ void GLFWApp::drawSimControlPanel()
     if (ImGui::CollapsingHeader("Metabolic Energy", ImGuiTreeNodeFlags_DefaultOpen))
     {
         // Get current metabolic type
-        MetabolicType currentType = mRenderEnv->getCharacter(0)->getMetabolicType();
+        MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
         int currentTypeInt = static_cast<int>(currentType);
 
         // Dropdown for metabolic type selection
@@ -2271,13 +2271,13 @@ void GLFWApp::drawSimControlPanel()
         if (ImGui::Combo("Type", &currentTypeInt, metabolicTypes, IM_ARRAYSIZE(metabolicTypes)))
         {
             // Update metabolic type when selection changes
-            mRenderEnv->getCharacter(0)->setMetabolicType(static_cast<MetabolicType>(currentTypeInt));
+            mRenderEnv->getCharacter()->setMetabolicType(static_cast<MetabolicType>(currentTypeInt));
         }
         ImGui::SameLine();
         // Button to reset metabolic energy accumulation
         if (ImGui::Button("Reset"))
         {
-            mRenderEnv->getCharacter(0)->resetMetabolicEnergy();
+            mRenderEnv->getCharacter()->resetMetabolicEnergy();
         }
 
         ImGui::SameLine();
@@ -2320,14 +2320,14 @@ void GLFWApp::drawSimControlPanel()
     // Muscle Control
     if (ImGui::CollapsingHeader("Muscle"))
     {
-        Eigen::VectorXf activation = mRenderEnv->getCharacter(0)->getActivations().cast<float>(); // * mRenderEnv->getActionScale();
+        Eigen::VectorXf activation = mRenderEnv->getCharacter()->getActivations().cast<float>(); // * mRenderEnv->getActionScale();
         int idx = 0;
-        for (auto m : mRenderEnv->getCharacter(0)->getMuscles())
+        for (auto m : mRenderEnv->getCharacter()->getMuscles())
         {
             ImGui::SliderFloat((m->GetName().c_str()), &activation[idx], 0.0, 1.0);
             idx++;
         }
-        mRenderEnv->getCharacter(0)->setActivations((activation.cast<double>()));
+        mRenderEnv->getCharacter()->setActivations((activation.cast<double>()));
     }
 
     // Joint Control - use new detailed control method
@@ -2347,7 +2347,7 @@ void GLFWApp::drawSimControlPanel()
             idx++;
         }
         mRenderEnv->setParamState(ParamState.cast<double>(), false, true);
-        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
     }
 
     // Body Parameters
@@ -2366,7 +2366,7 @@ void GLFWApp::drawSimControlPanel()
             idx++;
         }
         mRenderEnv->setGroupParam(group_v.cast<double>());
-        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
     }
 
     // Rendering
@@ -2393,7 +2393,7 @@ void GLFWApp::drawSimControlPanel()
             ImGui::Separator();
 
             // Get all muscles
-            auto allMuscles = mRenderEnv->getCharacter(0)->getMuscles();
+            auto allMuscles = mRenderEnv->getCharacter()->getMuscles();
 
             // Initialize selection states if needed
             if (mMuscleSelectionStates.size() != allMuscles.size())
@@ -2461,7 +2461,7 @@ void GLFWApp::drawSimControlPanel()
             ImGui::EndChild();
         }
 
-        if (mRenderEnv->getUseMuscle()) mRenderEnv->getCharacter(0)->getMuscleTuple(false);
+        if (mRenderEnv->getUseMuscle()) mRenderEnv->getCharacter()->getMuscleTuple(false);
 
         
         // If no muscles are manually selected, show none (empty list)
@@ -2923,14 +2923,14 @@ void GLFWApp::drawSimFrame()
         drawPhase(mViewerPhase, mViewerPhase);
         if (mDrawCharacter)
         {
-            drawSkeleton(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 1.0));
+            drawSkeleton(mRenderEnv->getCharacter()->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 1.0));
             if (!mRenderConditions) drawShadow();
             if (mMuscleSelectionStates.size() > 0) drawMuscles(mMuscleRenderType);
         }
         if ((mRenderEnv->getRewardType() == gaitnet) && mDrawFootStep) drawFootStep();
         if (mDrawJointSphere)
         {
-            for (auto jn : mRenderEnv->getCharacter(0)->getSkeleton()->getJoints())
+            for (auto jn : mRenderEnv->getCharacter()->getSkeleton()->getJoints())
             {
                 Eigen::Vector3d jn_pos = jn->getChildBodyNode()->getTransform() * jn->getTransformFromChildBodyNode() * Eigen::Vector3d::Zero();
                 glColor4f(0.0, 0.0, 0.0, 1.0);
@@ -2941,19 +2941,19 @@ void GLFWApp::drawSimFrame()
         }
         if (mDrawReferenceSkeleton && !mRenderConditions)
         {
-            Eigen::VectorXd pos = (mDrawPDTarget ? mRenderEnv->getCharacter(0)->getPDTarget() : mRenderEnv->getTargetPositions());
+            Eigen::VectorXd pos = (mDrawPDTarget ? mRenderEnv->getCharacter()->getPDTarget() : mRenderEnv->getTargetPositions());
             drawSkeleton(pos, Eigen::Vector4d(1.0, 0.35, 0.35, 1.0));
         }
         if (mDrawEOE)
         {
             glColor4f(1.0, 0.0, 0.0, 1.0);
-            GUI::DrawSphere(mRenderEnv->getCharacter(0)->getSkeleton()->getCOM(), 0.01);
+            GUI::DrawSphere(mRenderEnv->getCharacter()->getSkeleton()->getCOM(), 0.01);
             glColor4f(0.5, 0.5, 0.8, 0.2);
             glBegin(GL_QUADS);
-            glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), -10);
-            glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), -10);
-            glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), 10);
-            glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter(0)->getGlobalRatio(), 10);
+            glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter()->getGlobalRatio(), -10);
+            glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter()->getGlobalRatio(), -10);
+            glVertex3f(10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter()->getGlobalRatio(), 10);
+            glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter()->getGlobalRatio(), 10);
             glEnd();
         }
 
@@ -2979,7 +2979,7 @@ void GLFWApp::drawSimFrame()
             res[6] = mFGNRootOffset[0];
             res[8] = mFGNRootOffset[2];
 
-            Eigen::VectorXd pos = mRenderEnv->getCharacter(0)->sixDofToPos(res);
+            Eigen::VectorXd pos = mRenderEnv->getCharacter()->sixDofToPos(res);
             drawSkeleton(pos, Eigen::Vector4d(0.35, 0.35, 1.0, 1.0));
         }
     }
@@ -3046,7 +3046,7 @@ void GLFWApp::drawSimFrame()
             GUI::DrawSphere(m.getGlobalPos(), 0.015);
         // drawThinSkeleton(skel);
         // drawSkeleton(mTestMotion[mC3DCount % mTestMotion.size()], Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
-        // drawSkeleton(mRenderEnv->getCharacter(0)->sixDofToPos(mC3DReader->mConvertedPos[mC3DCount % mC3DReader->mConvertedPos.size()]), Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
+        // drawSkeleton(mRenderEnv->getCharacter()->sixDofToPos(mC3DReader->mConvertedPos[mC3DCount % mC3DReader->mConvertedPos.size()]), Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
     }
 
     if (mMouseDown) drawAxis();
@@ -3149,10 +3149,10 @@ void GLFWApp::reset()
 
     if (mRenderEnv) {
         mRenderEnv->reset();
-        mFGNRootOffset = mRenderEnv->getCharacter(0)->getSkeleton()->getRootJoint()->getPositions().tail(3);
+        mFGNRootOffset = mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getPositions().tail(3);
         mUseWeights = mRenderEnv->getUseWeights();
         mViewerTime = mRenderEnv->getWorld()->getTime();
-        mViewerPhase = mRenderEnv->getCharacter(0)->getLocalTime() / (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence());
+        mViewerPhase = mRenderEnv->getCharacter()->getLocalTime() / (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence());
 
         // Align motion with simulated character position
         alignMotionToSimulation();
@@ -3218,7 +3218,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
 {
     if (mMotions.empty()) return;
 
-    Character* character = mRenderEnv ? mRenderEnv->getCharacter(0) : mMotionCharacter;
+    Character* character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
     if (!character) return;
 
     int frames_per_cycle = motion.frames_per_cycle;
@@ -3333,7 +3333,7 @@ void GLFWApp::alignMotionToSimulation()
     motionPoseEval(mMotions[mMotionIdx], frame_float);
 
     // Get simulated character's current position (from root body node)
-    Eigen::Vector3d sim_pos = mRenderEnv->getCharacter(0)->getSkeleton()->getRootBodyNode()->getCOM();
+    Eigen::Vector3d sim_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
 
     // Calculate displayOffset to align motion with simulation
     if (mMotions[mMotionIdx].currentPose.size() > 0) {
@@ -3362,7 +3362,7 @@ void GLFWApp::updateViewerTime(double dt)
     // Calculate phase [0, 1) for motion playback
     double phase;
     if (mRenderEnv) {
-        phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter(0)->getGlobalRatio())));
+        phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
         phase = fmod(phase, 1.0);
     } else {
         if (!mMotionSkeleton) return;
@@ -3389,7 +3389,7 @@ void GLFWApp::updateViewerTime(double dt)
     current_frame_idx = current_frame_idx % total_frames;
 
     // Update motion state (different handling for NPZ vs HDF5)
-    Character* character = mRenderEnv ? mRenderEnv->getCharacter(0) : mMotionCharacter;
+    Character* character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
     if (!character) return;
 
     if (current_motion.source_type == "hdf5") {
@@ -3595,13 +3595,13 @@ void GLFWApp::setCamera()
     {
         if (mFocus == 1)
         {
-            mTrans = -mRenderEnv->getCharacter(0)->getSkeleton()->getCOM();
+            mTrans = -mRenderEnv->getCharacter()->getSkeleton()->getCOM();
             mTrans[1] = -1;
             mTrans *= 1000;
         }
         else if (mFocus == 2)
         {
-            mTrans = -mRenderEnv->getTargetPositions().segment(3, 3); //-mRenderEnv->getCharacter(0)->getSkeleton()->getCOM();
+            mTrans = -mRenderEnv->getTargetPositions().segment(3, 3); //-mRenderEnv->getCharacter()->getSkeleton()->getCOM();
             mTrans[1] = -1;
             mTrans *= 1000;
         }
@@ -3705,7 +3705,7 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
     glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_DEPTH_TEST);
 
-    auto muscles = mRenderEnv->getCharacter(0)->getMuscles();
+    auto muscles = mRenderEnv->getCharacter()->getMuscles();
     for (int i = 0; i < muscles.size(); i++)
     {
         // Skip if muscle is not selected (using same order as environment)
@@ -3778,7 +3778,7 @@ void GLFWApp::drawFootStep()
 
 void GLFWApp::drawShadow()
 {
-    Eigen::VectorXd pos = mRenderEnv->getCharacter(0)->getSkeleton()->getPositions();
+    Eigen::VectorXd pos = mRenderEnv->getCharacter()->getSkeleton()->getPositions();
 
     glDisable(GL_LIGHTING);
     glDisable(GL_COLOR_MATERIAL);
@@ -3800,7 +3800,7 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
     }
 
     try {
-        auto character = mRenderEnv->getCharacter(0);
+        auto character = mRenderEnv->getCharacter();
         Network new_elem;
         new_elem.name = path;
         
@@ -3821,12 +3821,12 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
 
 void GLFWApp::initializeMotionSkeleton()
 {
-    mMotionSkeleton = mRenderEnv->getCharacter(0)->getSkeleton()->cloneSkeleton();
+    mMotionSkeleton = mRenderEnv->getCharacter()->getSkeleton()->cloneSkeleton();
     
     // Setup BVH joint calibration
     mJointCalibration.clear();
-    for (auto jn : mRenderEnv->getCharacter(0)->getSkeleton()->getJoints()) {
-        if (jn == mRenderEnv->getCharacter(0)->getSkeleton()->getRootJoint()) {
+    for (auto jn : mRenderEnv->getCharacter()->getSkeleton()->getJoints()) {
+        if (jn == mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()) {
             mJointCalibration.push_back(Eigen::Matrix3d::Identity());
         } else {
             mJointCalibration.push_back(
@@ -4238,8 +4238,8 @@ void GLFWApp::loadSelectedHDF5Motion()
         motion_elem.initialRootPosition = Eigen::Vector3d(first_frame[3], first_frame[4], first_frame[5]);
 
         // Calculate display offset
-        if (mRenderEnv && mRenderEnv->getCharacter(0)) {
-            Eigen::VectorXd char_positions = mRenderEnv->getCharacter(0)->getSkeleton()->getPositions();
+        if (mRenderEnv && mRenderEnv->getCharacter()) {
+            Eigen::VectorXd char_positions = mRenderEnv->getCharacter()->getSkeleton()->getPositions();
             Eigen::Vector3d char_root(char_positions[3], char_positions[4], char_positions[5]);
             motion_elem.displayOffset = char_root - motion_elem.initialRootPosition + Eigen::Vector3d(1.0, 0, 0);
         } else {
@@ -4300,7 +4300,7 @@ void GLFWApp::addSimulationMotion()
         for (int i = 0; i < 60 / mRenderEnv->getControlHz(); i++)
             update();
 
-        current_trajectory.push_back(mRenderEnv->getCharacter(0)->posToSixDof(mRenderEnv->getCharacter(0)->getSkeleton()->getPositions()));
+        current_trajectory.push_back(mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()));
 
         if (prev_phi > mRenderEnv->getNormalizedPhase())
             phi_offset += 1;
@@ -4372,7 +4372,7 @@ void GLFWApp::unloadMotion()
     if (mRenderEnv) {
         Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
         mRenderEnv->setParamState(default_params, false, true);
-        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
         std::cout << "[Motion] All motions unloaded, parameters reset to defaults" << std::endl;
     }
 }

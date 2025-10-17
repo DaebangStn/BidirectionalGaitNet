@@ -56,7 +56,7 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("grf_right", grf[1]);
     
     // Log kinematic data
-    auto skel = mEnv->getCharacter(0)->getSkeleton();
+    auto skel = mEnv->getCharacter()->getSkeleton();
     
     if (mGraphData->key_exists("sway_Torso_X")) {
         const double root_x = skel->getRootBodyNode()->getCOM()[0];
@@ -104,7 +104,7 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("angle_Tilt", angleTilt);
     }
 
-    const auto character = mEnv->getCharacter(0);
+    const auto character = mEnv->getCharacter();
     // Log metabolic energy
     if (mGraphData->key_exists("metabolic_energy_step")) {
         const double metabolicStepEnergy = character->getMetabolicStepEnergy();

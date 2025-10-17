@@ -19,7 +19,7 @@ public:
 
     // ===== Environment Delegation Methods =====
     // Character access
-    Character* getCharacter(int idx) { return mEnv->getCharacter(idx); }
+    Character* getCharacter() { return mEnv->getCharacter(); }
 
     // State and action
     Eigen::VectorXd getState() { return mEnv->getState(); }
