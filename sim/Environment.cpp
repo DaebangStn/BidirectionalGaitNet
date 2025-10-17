@@ -661,10 +661,8 @@ double Environment::calcReward()
         {
             r_metabolic = getMetabolicReward();
 
-            if (mRewardType == deepmimic)
-                r += w_metabolic * r_metabolic;
-            else if (mRewardType == scadiver)
-                r *= (0.1 + 0.9 * r_metabolic);
+            if (mRewardType == deepmimic) r += w_metabolic * r_metabolic;
+            else if (mRewardType == scadiver) r *= (0.1 + 0.9 * r_metabolic);
         }
     }
     else if (mRewardType == gaitnet)
@@ -974,9 +972,7 @@ void Environment::postMuscleStep()
 
 void Environment::muscleStep()
 {
-    if (mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower) 
-        calcActivation();
-
+    if (mCharacters[0]->getActuatorType() == mass || mCharacters[0]->getActuatorType() == mass_lower)  calcActivation();
     mCharacters[0]->step();
     mWorld->step();
     postMuscleStep();
@@ -990,11 +986,12 @@ void Environment::step()
 
 void Environment::postStep()
 {
+    mCharacters[0]->evalMetabolicEnergy();
     if (mRewardType == gaitnet) updateFootStep();
     mReward = calcReward();
 }
 
-void Environment::poseOptimiziation(int iter)
+void Environment::poseOptimization(int iter)
 {
     if (!mUseMuscle) return;
     auto skel = mCharacters[0]->getSkeleton();
@@ -1176,7 +1173,7 @@ void Environment::reset()
     updateTargetPosAndVel();
 
     if (mMusclePoseOptimization)
-        poseOptimiziation();
+        poseOptimization();
 
     if (mRewardType == gaitnet)
     {
@@ -1188,8 +1185,7 @@ void Environment::reset()
     }
 
     // Height / Pose Optimization
-    if (mHeightCalibration != 0)
-        mCharacters[0]->heightCalibration(mWorld, mHeightCalibration == 2);
+    if (mHeightCalibration != 0) mCharacters[0]->heightCalibration(mWorld, mHeightCalibration == 2);
 
 
     // Pose In ROM
@@ -1202,10 +1198,11 @@ void Environment::reset()
 
     mCharacters[0]->setPDTarget(mTargetPositions);
     mCharacters[0]->setTorque(mCharacters[0]->getTorque().setZero());
-    if (mUseMuscle)
+    if (mUseMuscle) {
         mCharacters[0]->setActivations(mCharacters[0]->getActivations().setZero());
+        mCharacters[0]->resetMetabolicEnergy();
+    }
 
-    // Initial Velocitiy Setting
     mCharacters[0]->clearLogs();
 
     if (mRewardType == gaitnet)
@@ -1254,23 +1251,8 @@ double Environment::getMetabolicReward()
     double r_metabolic = 0.0;
     if (mUseMuscle)
     {
-        Eigen::VectorXd activation_sum = Eigen::VectorXd::Zero(mCharacters[0]->getNumMuscles());
-        const std::vector<Eigen::VectorXd> &muscleLogs = mCharacters[0]->getActivationLogs();
-        int log_size = muscleLogs.size();
-
-        if (log_size == 0)
-            r_metabolic = 1.0;
-        else
-        {
-            
-            for (int i = 0; i < mNumSubSteps; i++)
-            {
-                for (int j = 0; j < activation_sum.rows(); j++)
-                    activation_sum[j] += abs(muscleLogs[log_size - 1 - i][j]);
-            }
-            activation_sum /= mNumSubSteps;
-            r_metabolic = exp(-mMetabolicWeight * activation_sum.squaredNorm() / activation_sum.rows());
-        }
+        double metabolic_energy = mCharacters[0]->getMetabolicEnergy();
+        r_metabolic = exp(-mMetabolicWeight * metabolic_energy);
     }
     else
     {
@@ -1449,22 +1431,16 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
     for (auto name : mParamName)
     {
         if (name.find("muscle_length") != std::string::npos)
-            for (auto m : mCharacters[0]->getMuscles())
-                if (name.substr(14) == m->GetName())
-                {
-                    m->change_l(_param_state[idx]);
-                    break;
-                }
-
-        if (name.find("muscle_force") != std::string::npos)
-            for (auto m : mCharacters[0]->getMuscles())
-                if (name.substr(13) == m->GetName())
-                {
-                    m->change_f(_param_state[idx]);
-                    break;
-                }
+        {
+            mCharacters[0]->setMuscleParam(name.substr(14), "length", _param_state[idx]);
+        }
+        else if (name.find("muscle_force") != std::string::npos)
+        {
+            mCharacters[0]->setMuscleParam(name.substr(13), "force", _param_state[idx]);
+        }
         idx++;
     }
+    mCharacters[0]->cacheMuscleMass();
 }
 
 void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
@@ -1477,19 +1453,10 @@ void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onl
         for (auto name : mParamName)
         {
             // gait parameter
-
-            if (name.find("stride") != std::string::npos)
-                mStride = mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]);
-
-            if (name.find("cadence") != std::string::npos)
-                mCadence = mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]);
-
-            if (name.find("skeleton") != std::string::npos)
-                skel_info.push_back(std::make_pair((name.substr(9)), mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx])));
-
-            if (name.find("torsion") != std::string::npos)
-                skel_info.push_back(std::make_pair(name, mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx])));
-
+            if (name.find("stride") != std::string::npos) mStride = mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]);
+            if (name.find("cadence") != std::string::npos) mCadence = mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]);
+            if (name.find("skeleton") != std::string::npos) skel_info.push_back(std::make_pair((name.substr(9)), mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx])));
+            if (name.find("torsion") != std::string::npos) skel_info.push_back(std::make_pair(name, mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx])));
             idx++;
         }
         mCharacters[0]->setSkelParam(skel_info, doOptimization);
@@ -1499,22 +1466,18 @@ void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onl
     for (auto name : mParamName)
     {
         if (name.find("muscle_length") != std::string::npos)
-            for (auto m : mCharacters[0]->getMuscles())
-                if (name.substr(14) == m->GetName())
-                {
-                    m->change_l(mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]));
-                    break;
-                }
-
-        if (name.find("muscle_force") != std::string::npos)
-            for (auto m : mCharacters[0]->getMuscles())
-                if (name.substr(13) == m->GetName())
-                {
-                    m->change_f(mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]));
-                    break;
-                }
+        {
+            mCharacters[0]->setMuscleParam(name.substr(14), "length",
+                mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]));
+        }
+        else if (name.find("muscle_force") != std::string::npos)
+        {
+            mCharacters[0]->setMuscleParam(name.substr(13), "force",
+                mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx]));
+        }
         idx++;
     }
+    mCharacters[0]->cacheMuscleMass();
 }
 
 Eigen::VectorXd Environment::getParamState(bool isMirror)

@@ -29,7 +29,7 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
     "PRESET|Foot view|0,0,1.26824|0,1,0|0,900,15|1|0.707,0.0,0.707,0.0",
 };
 
-GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
+GLFWApp::GLFWApp(int argc, char **argv)
 {
     mRenderEnv = nullptr;
     mMotionCharacter = nullptr;
@@ -138,6 +138,8 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     mGraphData->register_key("angle_Rotation", 1000);
     mGraphData->register_key("angle_Obliquity", 1000);
     mGraphData->register_key("angle_Tilt", 1000);
+    mGraphData->register_key("metabolic_energy_step", 1000);
+    mGraphData->register_key("metabolic_energy_reward", 1000);
 
     // Forward GaitNEt
     selected_fgn = 0;
@@ -159,7 +161,8 @@ GLFWApp::GLFWApp(int argc, char **argv, bool rendermode)
     initializeCameraPresets();
     loadCameraPreset(0);
 
-    mDrawMotion = true;
+    // Initialize motion load mode with default value
+    mMotionLoadMode = "hdf5";  // Default: load both NPZ and HDF5
 
     if (argc > 1)
     {
@@ -360,6 +363,10 @@ void GLFWApp::loadRenderConfig()
                 mLastPlaybackSpeed = mViewerPlaybackSpeed;
             }
 
+            if (config["glfwapp"]["motion_load_mode"]) {
+                mMotionLoadMode = config["glfwapp"]["motion_load_mode"].as<std::string>();
+            }
+
             if (config["glfwapp"]["resizable_plot"]) {
                 if (config["glfwapp"]["resizable_plot"]["x_min"])
                     mXminResizablePlotPane = config["glfwapp"]["resizable_plot"]["x_min"].as<double>();
@@ -381,7 +388,8 @@ void GLFWApp::loadRenderConfig()
                   << ", Control: " << mControlPanelWidth
                   << ", Plot: " << mPlotPanelWidth
                   << ", Rollout: " << mDefaultRolloutCount
-                  << ", Playback Speed: " << mViewerPlaybackSpeed << std::endl; 
+                  << ", Playback Speed: " << mViewerPlaybackSpeed
+                  << ", Motion Load Mode: " << mMotionLoadMode << std::endl; 
 
     } catch (const std::exception& e) {
         std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
@@ -1107,7 +1115,25 @@ void GLFWApp::drawKinematicsControlPanel()
     {
         static int mMotionPhaseOffset = 0;
 
-        ImGui::Checkbox("Draw Motion\t", &mDrawMotion);
+        // Display motion status
+        bool has_motions = !mMotions.empty();
+        if (has_motions) {
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Motion Loaded (%zu)", mMotions.size());
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "No Motion Loaded");
+        }
+
+        // Load/Unload motion buttons
+        ImGui::SameLine();
+        if (!has_motions) {
+            if (ImGui::Button("Load Motion")) {
+                loadMotionFiles();
+            }
+        } else {
+            if (ImGui::Button("Unload Motion")) {
+                unloadMotion();
+            }
+        }
 
         // Check if currently selected motion is NPZ or HDF5
         bool npz_selected = false;
@@ -1565,6 +1591,37 @@ void GLFWApp::drawSimVisualizationPanel()
         }
     }
 
+    // Metabolic Energy
+    if (ImGui::CollapsingHeader("Metabolic Energy", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        // Display current metabolic type
+        MetabolicType currentType = mRenderEnv->getCharacter(0)->getMetabolicType();
+        const char* typeNames[] = {"LEGACY (Disabled)", "A", "A2", "MA"};
+        if (currentType == MetabolicType::LEGACY) {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Mode: %s", typeNames[currentType]);
+        } else {
+            ImGui::Text("Mode: %s", typeNames[currentType]);
+            ImGui::SameLine();
+
+            // Display current metabolic energy value
+            ImGui::Text("Current: %.2f", mRenderEnv->getCharacter(0)->getMetabolicStepEnergy());
+
+            ImGui::Separator();
+
+            std::string title_metabolic = mPlotTitle ? mCheckpointName : "Metabolic Energy";
+            if (ImPlot::BeginPlot((title_metabolic + "##MetabolicEnergy").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Energy");
+
+                // Plot metabolic energy data
+                std::vector<std::string> metabolicKeys = {"metabolic_energy_step", "metabolic_energy_reward"};
+                plotGraphData(metabolicKeys, ImAxis_Y1, true, false, "");
+
+                ImPlot::EndPlot();
+            }
+        }
+    }
+
     // Kinematics
     if (ImGui::CollapsingHeader("Kinematics", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -1818,23 +1875,22 @@ void GLFWApp::drawSimVisualizationPanel()
         ImPlot::SetNextAxisLimits(0, 0, 2.5, ImGuiCond_Always);
         if (ImPlot::BeginPlot((m->name + "_activation_graph").c_str(), ImVec2(-1, 250)))
         {
-            std::vector<std::vector<double>> p; // = m->GetGraphData();
-            std::vector<double> px;
-            std::vector<double> py;
-            p.clear();
-            px.clear();
-            py.clear();
-
-            for (int i = 0; i < mRenderEnv->getCharacter(0)->getActivationLogs().size(); i++)
+            // Only plot if this is a right-side muscle (has data in mGraphData)
+            std::string key = "act_" + m->name;
+            if (mGraphData->key_exists(key))
             {
-                px.push_back(0.01 * i - mRenderEnv->getCharacter(0)->getActivationLogs().size() * 0.01 + 2.5);
-                py.push_back(mRenderEnv->getCharacter(0)->getActivationLogs()[i][selected]);
+                std::vector<double> activation_data = mGraphData->get(key);
+                std::vector<double> px;
+                std::vector<double> py;
+
+                for (int i = 0; i < activation_data.size(); i++)
+                {
+                    px.push_back(0.01 * i - activation_data.size() * 0.01 + 2.5);
+                    py.push_back(activation_data[i]);
+                }
+
+                ImPlot::PlotLine("##activation_graph", px.data(), py.data(), px.size());
             }
-
-            p.push_back(px);
-            p.push_back(py);
-
-            ImPlot::PlotLine("##activation_graph", p[0].data(), p[1].data(), p[0].size());
             ImPlot::EndPlot();
         }
 
@@ -1843,21 +1899,21 @@ void GLFWApp::drawSimVisualizationPanel()
         // Activation bars
         if (mRenderEnv->getUseMuscle())
         {
-            Eigen::VectorXd acitvation = mRenderEnv->getCharacter(0)->getActivations();
+            Eigen::VectorXd activation = mRenderEnv->getCharacter(0)->getActivations();
 
-            ImPlot::SetNextAxisLimits(0, -0.5, acitvation.rows() + 0.5, ImGuiCond_Always);
+            ImPlot::SetNextAxisLimits(0, -0.5, activation.rows() + 0.5, ImGuiCond_Always);
             ImPlot::SetNextAxisLimits(3, 0, 1);
-            double *x_act = new double[acitvation.rows()]();
-            double *y_act = new double[acitvation.rows()]();
+            double *x_act = new double[activation.rows()]();
+            double *y_act = new double[activation.rows()]();
 
-            for (int i = 0; i < acitvation.rows(); i++)
+            for (int i = 0; i < activation.rows(); i++)
             {
                 x_act[i] = i;
-                y_act[i] = acitvation[i];
+                y_act[i] = activation[i];
             }
             if (ImPlot::BeginPlot("activation"))
             {
-                ImPlot::PlotBars("activation_level", x_act, y_act, acitvation.rows(), 1.0);
+                ImPlot::PlotBars("activation_level", x_act, y_act, activation.rows(), 1.0);
                 ImPlot::EndPlot();
             }
         }
@@ -2200,6 +2256,43 @@ void GLFWApp::drawSimControlPanel()
     if (!mRenderEnv) {
         ImGui::End();
         return;
+    }
+
+    // Metabolic Energy Control
+    if (ImGui::CollapsingHeader("Metabolic Energy", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        // Get current metabolic type
+        MetabolicType currentType = mRenderEnv->getCharacter(0)->getMetabolicType();
+        int currentTypeInt = static_cast<int>(currentType);
+
+        // Dropdown for metabolic type selection
+        const char* metabolicTypes[] = {"LEGACY", "A", "A2", "MA"};
+        ImGui::SetNextItemWidth(50);
+        if (ImGui::Combo("Type", &currentTypeInt, metabolicTypes, IM_ARRAYSIZE(metabolicTypes)))
+        {
+            // Update metabolic type when selection changes
+            mRenderEnv->getCharacter(0)->setMetabolicType(static_cast<MetabolicType>(currentTypeInt));
+        }
+        ImGui::SameLine();
+        // Button to reset metabolic energy accumulation
+        if (ImGui::Button("Reset"))
+        {
+            mRenderEnv->getCharacter(0)->resetMetabolicEnergy();
+        }
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::Text("LEGACY: No metabolic computation");
+            ImGui::Text("A: Sum of absolute activations");
+            ImGui::Text("A2: Sum of squared activations");
+            ImGui::Text("MA: Mass-weighted absolute activations");
+            ImGui::Separator();
+            ImGui::Text("Note: Call cacheMuscleMass() before using MA mode");
+            ImGui::EndTooltip();
+        }
     }
 
     // Rollout Control
@@ -2785,7 +2878,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 void GLFWApp::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
-    if (mMotions.empty() || !mDrawMotion) return;
+    if (mMotions.empty()) return;
 
     // Get current motion and use the pre-computed pose
     const ViewerMotion& current_motion = mMotions[mMotionIdx];
@@ -3263,8 +3356,8 @@ void GLFWApp::updateViewerTime(double dt)
     mViewerTime += dt;
     mViewerPhase = fmod(mViewerTime / mViewerCycleDuration, 1.0);
 
-    // Early return if no motions loaded or motion drawing disabled
-    if (mMotions.empty() || !mDrawMotion) return;
+    // Early return if no motions loaded
+    if (mMotions.empty()) return;
 
     // Calculate phase [0, 1) for motion playback
     double phase;
@@ -3619,7 +3712,7 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
         if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
         auto muscle = muscles[i];
-        muscle->Update();
+        muscle->UpdateGeometry();
         double a = muscle->activation;
         Eigen::Vector4d color;
         switch (renderingType)
@@ -3757,11 +3850,18 @@ void GLFWApp::loadMotionFiles()
     mMotions.clear();
     mMotionIdx = 0;
 
-    // Load NPZ motion files
-    std::string motion_path = "data/npz_motions";
-    if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
-        std::cerr << "Motion directory not found: " << motion_path << std::endl;
-    } else {
+    // Check motion load mode from config
+    if (mMotionLoadMode == "no") {
+        std::cout << "[Motion] Motion loading disabled by config (motion_load_mode: no)" << std::endl;
+        return;
+    }
+
+    // Load NPZ motion files (if mode is "npz" or "hdf5")
+    if (mMotionLoadMode == "npz" || mMotionLoadMode == "hdf5") {
+        std::string motion_path = "data/npz_motions";
+        if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
+            std::cerr << "Motion directory not found: " << motion_path << std::endl;
+        } else {
         try {
             py::object load_motions_from_file = py::module::import("forward_gaitnet").attr("load_motions_from_file");
         
@@ -3810,14 +3910,17 @@ void GLFWApp::loadMotionFiles()
         } catch (const std::exception& e) {
             std::cerr << "Error importing forward_gaitnet module: " << e.what() << std::endl;
         }
+        }
+        std::cout << "Total NPZ motions loaded: " << mMotions.size() << std::endl;
     }
 
-    // HDF5 files will be loaded on-demand via UI interaction
-    // Scan for available HDF5 files and auto-select first one
-    scanHDF5Structure();
+    // HDF5 files will be loaded on-demand via UI interaction (only if mode is "hdf5")
+    if (mMotionLoadMode == "hdf5") {
+        // Scan for available HDF5 files and auto-select first one
+        scanHDF5Structure();
 
-    // Auto-select first HDF5 file if available
-    if (!mHDF5Files.empty() && mSelectedHDF5FileIdx < 0) {
+        // Auto-select first HDF5 file if available
+        if (!mHDF5Files.empty() && mSelectedHDF5FileIdx < 0) {
         mSelectedHDF5FileIdx = 0;
         mSelectedHDF5ParamIdx = 0;
         mSelectedHDF5CycleIdx = 0;
@@ -3844,9 +3947,8 @@ void GLFWApp::loadMotionFiles()
 
         // Load parameters from auto-selected file
         loadHDF5Parameters();
+        }
     }
-
-    std::cout << "Total NPZ motions loaded: " << mMotions.size() << std::endl;
 }
 
 void GLFWApp::scanHDF5Structure()
@@ -4237,4 +4339,40 @@ void GLFWApp::addSimulationMotion()
     }
     mMotions.push_back(current_motion);
     mAddedMotions.push_back(current_motion);
+}
+
+void GLFWApp::unloadMotion()
+{
+    // Clear all loaded motions
+    mMotions.clear();
+    mAddedMotions.clear();
+    mMotionIdx = 0;
+    mMotionFrameIdx = 0;
+    mLastFrameIdx = 0;
+    mCycleAccumulation = Eigen::Vector3d::Zero();
+
+    // Reset HDF5 selection indices
+    mSelectedHDF5FileIdx = -1;
+    mSelectedHDF5ParamIdx = 0;
+    mSelectedHDF5CycleIdx = 0;
+    mMaxHDF5ParamIdx = 0;
+    mMaxHDF5CycleIdx = 0;
+
+    // Clear HDF5 file lists
+    mHDF5Files.clear();
+    mHDF5Params.clear();
+    mHDF5Cycles.clear();
+
+    // Clear error messages
+    mMotionLoadError.clear();
+    mParamFailureMessage.clear();
+    mLastLoadedHDF5ParamsFile.clear();
+
+    // Reset simulation parameters to default from XML metadata
+    if (mRenderEnv) {
+        Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
+        mRenderEnv->setParamState(default_params, false, true);
+        mRenderEnv->getCharacter(0)->updateRefSkelParam(mMotionSkeleton);
+        std::cout << "[Motion] All motions unloaded, parameters reset to defaults" << std::endl;
+    }
 }

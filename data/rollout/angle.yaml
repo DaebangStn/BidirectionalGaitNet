@@ -19,4 +19,25 @@ record:
       ankle: true
 
 sample:
-  cycle: 25
+  cycle: 20
+
+# Data filtering and processing pipeline
+filters:
+  # Remove cycles with too few steps (incomplete cycles)
+  drop_short_cycles:
+    enabled: true
+    min_steps: 30
+
+  # Remove first N cycles (transient behavior)
+  drop_first_n_cycles:
+    enabled: true
+    n: 5
+
+  # Remove last M cycles (unstable final cycles)
+  drop_last_m_cycles:
+    enabled: true
+    m: 5
+
+  # Compute travel distance from root position
+  compute_travel_distance:
+    enabled: true

@@ -208,9 +208,11 @@ class FilterPipeline:
         self.filters.append(filter)
 
     def print_pipeline(self):
-        """Print the filter pipeline execution order"""
+        """Print the filter pipeline execution order in a visible box format"""
         if not self.filters:
-            print("Filter Pipeline: [empty]")
+            print("\n╔════════════════════════════════════╗")
+            print("║     FILTER PIPELINE: [EMPTY]      ║")
+            print("╚════════════════════════════════════╝\n")
             return
 
         filter_names = []
@@ -226,7 +228,22 @@ class FilterPipeline:
             else:
                 filter_names.append(f.__class__.__name__)
 
-        print("Filter Pipeline: " + " -> ".join(filter_names))
+        # Find max width for box
+        max_width = max(len(name) for name in filter_names)
+        box_width = max(max_width + 4, 40)
+
+        print("\n╔" + "═" * box_width + "╗")
+        print("║" + " FILTER PIPELINE".center(box_width) + "║")
+        print("╠" + "═" * box_width + "╣")
+
+        for i, name in enumerate(filter_names):
+            if i == 0:
+                print("║  " + name.ljust(box_width - 3) + "║")
+            else:
+                print("║  " + "↓".ljust(box_width - 3) + "║")
+                print("║  " + name.ljust(box_width - 3) + "║")
+
+        print("╚" + "═" * box_width + "╝\n")
 
     def apply(
         self,

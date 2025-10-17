@@ -228,7 +228,7 @@ public:
 
     bool getLearningStd() { return mLearningStd; }
     void setLearningStd(bool learningStd) { mLearningStd = learningStd; }
-    void poseOptimiziation(int iter = 100);
+    void poseOptimization(int iter = 100);
 
     Eigen::Vector2i getIsContact();
     Eigen::Vector2d getFootGRF(); // Get normalized GRF for left and right foot

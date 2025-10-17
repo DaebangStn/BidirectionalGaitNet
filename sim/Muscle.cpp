@@ -156,7 +156,7 @@ void Muscle::SetMuscle()
     lmt_base = lmt_ref;
     lmt = lmt_ref;
 
-    Update();
+    UpdateGeometry();
     Eigen::MatrixXd Jt = GetJacobianTranspose();
     auto Ap = GetForceJacobianAndPassive();
     Eigen::VectorXd JtA = Jt * Ap.first;
@@ -230,7 +230,7 @@ void Muscle::ApplyForceToBody()
     }
 }
 
-bool Muscle::Update()
+bool Muscle::UpdateGeometry()
 {
     for (int i = 0; i < mAnchors.size(); i++) mCachedAnchorPositions[i] = mAnchors[i]->GetPoint();
     lmt = 0.0;
@@ -488,7 +488,7 @@ double Muscle::F_V(double _v_m)
 
 double Muscle::GetMass()
 {
-    return 1059.7 * f0 / 250000 * lmt_ref;
+    return f0 * (1.0 - lt_rel) * lmt_ref / 100.0;
 }
 
 double Muscle::Getdl_velocity()
@@ -514,7 +514,7 @@ std::vector<std::vector<double>> Muscle::GetGraphData()
     std::vector<double> p;
     std::vector<double> current;
 
-    Update();
+    UpdateGeometry();
 
     result.clear();
     x.clear();

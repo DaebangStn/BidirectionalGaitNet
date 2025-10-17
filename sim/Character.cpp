@@ -241,6 +241,10 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     mLongOpt = false;
     mTorqueClipping = false;
 
+    mMetabolicType = LEGACY;
+    mMetabolicEnergyAccum = 0.0;
+    mMetabolicAccumDivisor = 0.0;
+
     mRefSkeleton = BuildFromFile(path, defaultDamping);
     for (auto bn : mSkeleton->getBodyNodes())
     {
@@ -326,6 +330,26 @@ Eigen::VectorXd Character::getSPDForces(const Eigen::VectorXd &p_desired, const 
 
 void Character::step()
 {
+    if (mMetabolicType != LEGACY)
+    {
+        switch (mMetabolicType)
+        {
+        case A:
+            mMetabolicStepEnergy = mActivations.array().abs().sum();
+            break;
+        case A2:
+            mMetabolicStepEnergy = (mActivations.array() * mActivations.array()).sum();
+            break;
+        case MA:
+            mMetabolicStepEnergy = (mMuscleMassCache.array() * mActivations.array().abs()).sum();
+            break;
+        default:
+            break;
+        }
+        mMetabolicEnergyAccum += mMetabolicStepEnergy;
+        mMetabolicAccumDivisor += 1.0;
+    }
+
     switch (mActuatorType)
     {
     case tor:
@@ -334,9 +358,6 @@ void Character::step()
         break;
     case pd:
         mTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
-        // Cwise Product
-        // if (mTorque[10] < -1.0)
-        //     mTorque[10] = -1.0;
         mTorqueLogs.push_back(mTorqueWeight.cwiseProduct(mTorque));
         mSkeleton->setForces(mTorque);
         break;
@@ -344,14 +365,10 @@ void Character::step()
     case mass:
     case mass_lower:
     {
-        if (mActuatorType == mus) mActivationLogs.push_back(mActivations);
-        else mActivationLogs.push_back(dart::math::clip(mActivations, Eigen::VectorXd::Zero(mActivations.rows()), Eigen::VectorXd::Ones(mActivations.rows())));
         Eigen::VectorXd muscleTorque = mSkeleton->getExternalForces();
         for (int i = 0; i < mMuscles.size(); i++)
         {
-            mMuscles[i]->Update();
-            // muscle Activation Clipping
-            mMuscles[i]->activation = dart::math::clip(mActivations[i], 0.0, 1.0);
+            mMuscles[i]->UpdateGeometry();
             mMuscles[i]->ApplyForceToBody();
         }
         muscleTorque = mSkeleton->getExternalForces() - muscleTorque;
@@ -385,6 +402,12 @@ void Character::step()
     }
     mCOMLogs.push_back(mSkeleton->getCOM());
     mHeadVelLogs.push_back(mSkeleton->getBodyNode("Head")->getCOMLinearVelocity());
+}
+
+void Character::setActivations(Eigen::VectorXd _activation)
+{
+    mActivations = _activation.cwiseMax(0.0).cwiseMin(1.0);
+    for (int i = 0; i < mMuscles.size(); i++) mMuscles[i]->activation = mActivations[i];
 }
 
 void Character::setZeroForces()
@@ -547,17 +570,56 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
     mActivations = Eigen::VectorXd::Zero(mMuscles.size());
 }
 
+void Character::cacheMuscleMass()
+{
+    mMuscleMassCache = Eigen::VectorXd::Zero(mMuscles.size());
+    for (int i = 0; i < mMuscles.size(); i++)
+    {
+        mMuscleMassCache[i] = mMuscles[i]->GetMass();
+    }
+}
+
+double Character::evalMetabolicEnergy()
+{
+    if (mMetabolicAccumDivisor < 1e-6) mMetabolicEnergy = 0.0;
+    else mMetabolicEnergy = mMetabolicEnergyAccum / mMetabolicAccumDivisor;
+    mMetabolicEnergyAccum = 0.0;
+    mMetabolicAccumDivisor = 0.0;
+    
+    return mMetabolicEnergy;
+}
+
+void Character::resetMetabolicEnergy()
+{
+    mMetabolicEnergyAccum = 0.0;
+    mMetabolicAccumDivisor = 0.0;
+    mMetabolicEnergy = 0.0;
+    mMetabolicStepEnergy = 0.0;
+}
+
+void Character::setMuscleParam(const std::string& muscleName, const std::string& paramType, double value)
+{
+    for (auto m : mMuscles)
+    {
+        if (m->GetName() == muscleName)
+        {
+            if (paramType == "length") m->change_l(value);
+            else if (paramType == "force") m->change_f(value);
+            return;
+        }
+    }
+}
+
 void Character::clearLogs()
 {
     mTorqueLogs.clear();
-    mActivationLogs.clear();
     mCOMLogs.clear();
     mHeadVelLogs.clear();
     mMuscleTorqueLogs.clear();
+    resetMetabolicEnergy();
 }
 
-Eigen::VectorXd Character::
-    getMirrorActivation(Eigen::VectorXd _activation)
+Eigen::VectorXd Character::getMirrorActivation(Eigen::VectorXd _activation)
 {
     Eigen::VectorXd mirrored_activations = _activation;
     for (int i = 0; i < _activation.rows(); i += 2)
@@ -568,8 +630,7 @@ Eigen::VectorXd Character::
     return mirrored_activations;
 }
 
-MuscleTuple Character::
-    getMuscleTuple(bool isMirror)
+MuscleTuple Character::getMuscleTuple(bool isMirror)
 {
     if (mMuscles.size() == 0)
     {
@@ -591,7 +652,7 @@ MuscleTuple Character::
     int idx = 0;
     for (auto m : mMuscles)
     {
-        m->Update();
+        m->UpdateGeometry();
         m->related_vec.setZero();
         Eigen::MatrixXd Jt_reduced = m->GetReducedJacobianTranspose();
         auto Ap = m->GetForceJacobianAndPassive();
@@ -968,8 +1029,8 @@ Character::calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const std::vect
             }
 
             // shape term
-            stdMuscle->Update();
-            rtgMuscle->Update();
+            stdMuscle->UpdateGeometry();
+            rtgMuscle->UpdateGeometry();
             shapeTerm += (rep == 0 || rep == numSampling ? 0.5 : 1) * fShape(stdMuscle, rtgMuscle);
 
             // length curve term

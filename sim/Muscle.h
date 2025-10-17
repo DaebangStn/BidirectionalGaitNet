@@ -22,7 +22,7 @@ public:
 	void AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos, int num_related_bodies, bool meshLbsWeight);
 	void AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos);
 	const std::vector<Anchor *> &GetAnchors() { return mAnchors; }
-	bool Update();
+	bool UpdateGeometry();
 	void UpdateVelocities();
 	void ApplyForceToBody();
 

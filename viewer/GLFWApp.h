@@ -99,7 +99,7 @@ enum MotionNavigationMode
 class GLFWApp
 {
 public:
-    GLFWApp(int argc, char **argv, bool rendermode = true);
+    GLFWApp(int argc, char **argv);
     ~GLFWApp();
     void startLoop();
     
@@ -299,8 +299,9 @@ private:
     void scanHDF5Structure();                         // Scan HDF5 file to populate params/cycles
     void loadHDF5Parameters();                        // Load parameters from selected HDF5 file
     void loadSelectedHDF5Motion();                    // Load specific param/cycle combination
+    void unloadMotion();                              // Unload all motions and reset parameters
 
-    bool mDrawMotion;
+    std::string mMotionLoadMode;  // Motion loading mode: "no", "npz", or "hdf5"
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
         
         // (1) Set Motion Skeleton

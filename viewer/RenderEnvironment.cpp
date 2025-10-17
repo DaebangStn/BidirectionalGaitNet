@@ -104,8 +104,17 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("angle_Tilt", angleTilt);
     }
 
-    // Log muscle activations for the right side
-    auto character = mEnv->getCharacter(0);
+    const auto character = mEnv->getCharacter(0);
+    // Log metabolic energy
+    if (mGraphData->key_exists("metabolic_energy_step")) {
+        const double metabolicStepEnergy = character->getMetabolicStepEnergy();
+        mGraphData->push("metabolic_energy_step", metabolicStepEnergy);
+    }
+    if (mGraphData->key_exists("metabolic_energy_reward")) {
+        const double metabolicEnergy = character->getMetabolicEnergy();
+        mGraphData->push("metabolic_energy_reward", metabolicEnergy);
+    }
+
     for (const auto& muscle : character->getMuscles()) {
         const auto& muscle_name = muscle->GetName();
         if(muscle_name.find("R_") != std::string::npos) {

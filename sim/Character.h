@@ -38,6 +38,14 @@ enum ActuatorType
     mass_lower
 };
 
+enum MetabolicType
+{
+    LEGACY,  // No metabolic computation (backward compatible)
+    A,       // abs(activation)
+    A2,      // activation^2
+    MA       // mass * abs(activation)
+};
+
 ActuatorType getActuatorType(std::string type);
 struct MuscleTuple
 {
@@ -72,7 +80,7 @@ public:
     void setTorque(Eigen::VectorXd _torque) { mTorque = _torque; }
     Eigen::VectorXd getTorque() { return mTorque; }
     void setZeroForces();
-    void setActivations(Eigen::VectorXd _activation) { mActivations = _activation; }
+    void setActivations(Eigen::VectorXd _activation);
     Eigen::VectorXd getActivations() { return mActivations; }
     void step();
 
@@ -89,12 +97,23 @@ public:
     void clearLogs();
 
     const std::vector<Eigen::VectorXd> &getTorqueLogs() { return mTorqueLogs; }
-    const std::vector<Eigen::VectorXd> &getActivationLogs() { return mActivationLogs; }
     const std::vector<Eigen::Vector3d> &getCOMLogs() { return mCOMLogs; }
     const std::vector<Eigen::Vector3d> &getHeadVelLogs() { return mHeadVelLogs; }
     const std::vector<Eigen::VectorXd> &getMuscleTorqueLogs() { return mMuscleTorqueLogs; }
 
     Eigen::VectorXd getMirrorActivation(Eigen::VectorXd _activation);
+
+    // Metabolic Energy Methods
+    void cacheMuscleMass();
+    void setMetabolicType(MetabolicType type) { mMetabolicType = type; }
+    MetabolicType getMetabolicType() const { return mMetabolicType; }
+    double getMetabolicEnergy() const { return mMetabolicEnergy; }
+    double getMetabolicStepEnergy() const { return mMetabolicStepEnergy; }
+    double evalMetabolicEnergy();
+    void resetMetabolicEnergy();
+
+    // Muscle Parameter Modification
+    void setMuscleParam(const std::string& muscleName, const std::string& paramType, double value);
 
     // MuscleTuple getMuscleTuple(Eigen::VectorXd dt, bool isMirror = false);
     MuscleTuple getMuscleTuple(bool isMirror = false);
@@ -168,9 +187,13 @@ private:
     int mNumMuscleRelatedDof;
     Eigen::VectorXd mActivations;
 
+    // Metabolic Energy Tracking
+    MetabolicType mMetabolicType;
+    Eigen::VectorXd mMuscleMassCache;
+    double mMetabolicEnergyAccum, mMetabolicAccumDivisor, mMetabolicEnergy, mMetabolicStepEnergy;
+
     // Log
     std::vector<Eigen::VectorXd> mTorqueLogs;
-    std::vector<Eigen::VectorXd> mActivationLogs;
     std::vector<Eigen::Vector3d> mCOMLogs;
     std::vector<Eigen::Vector3d> mHeadVelLogs;
     std::vector<Eigen::VectorXd> mMuscleTorqueLogs;

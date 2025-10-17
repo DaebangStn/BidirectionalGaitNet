@@ -451,7 +451,7 @@ class SelectiveUnpickler(Unpickler):
             return Dummy
 
 
-def loading_network(path, num_states=0, num_actions=0, use_musclenet=False, device="cpu"):
+def loading_network(path, num_states, num_actions, use_mcn, device="cpu"):
 
     # Resolve URI before loading
     from uri_resolver import resolve_path
@@ -469,9 +469,12 @@ def loading_network(path, num_states=0, num_actions=0, use_musclenet=False, devi
     policy = PolicyNN(num_states, num_actions, policy_state, filter_state, device, learningStd)
 
     muscle = None
-    if use_musclenet:
+    if use_mcn:
         env_config = worker_state['policy_config']['env_config']
-        num_actuator_action = env_config['num_actuactor_action']
+        if 'num_actuactor_action' in env_config.keys():
+            num_actuator_action = env_config['num_actuactor_action']
+        else:
+            num_actuator_action = env_config['num_actuator_action']
         num_muscles = env_config['num_muscles']
         num_total_muscle_related_dofs = env_config['num_muscle_dofs']
 
