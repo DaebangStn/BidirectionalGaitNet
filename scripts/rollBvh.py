@@ -8,7 +8,7 @@ from pathlib import Path
 from bvh import Bvh
 
 
-rolling_frame_index = 119
+rolling_frame_index = 39
 bvh_file_path = "data/motion/walk.bvh"
 
 
@@ -52,8 +52,33 @@ def roll_bvh_frames(input_path, output_path, frame_offset):
         print(f"   → Adjusted offset to: {frame_offset}")
     
     # Reorder frames
-    reordered = frames[frame_offset:] + frames[:frame_offset]
-    print(f"   ✓ Reordered frames (new start: frame {frame_offset})")
+    frames_b = frames[frame_offset:]  # sequence B (will be at start)
+    frames_a = frames[:frame_offset]  # sequence A (will be at end)
+
+    # Calculate position offset from last frame of sequence B to first frame of sequence A
+    # Root position is in the first 3 channels (Xposition, Yposition, Zposition)
+    last_frame_b = frames_b[-1]
+    first_frame_a = frames_a[0]
+
+    # Calculate offset (last_B - first_A)
+    offset_x = float(last_frame_b[0]) - float(first_frame_a[0])
+    offset_y = float(last_frame_b[1]) - float(first_frame_a[1])
+    offset_z = float(last_frame_b[2]) - float(first_frame_a[2])
+
+    print(f"   📐 Position offset: X={offset_x:.3f}, Y={offset_y:.3f}, Z={offset_z:.3f}")
+
+    # Apply offset to all frames in sequence A
+    frames_a_adjusted = []
+    for frame in frames_a:
+        adjusted_frame = frame.copy()
+        adjusted_frame[0] = str(float(frame[0]) + offset_x)
+        adjusted_frame[1] = str(float(frame[1]) + offset_y)
+        adjusted_frame[2] = str(float(frame[2]) + offset_z)
+        frames_a_adjusted.append(adjusted_frame)
+
+    # Combine: B + adjusted A
+    reordered = frames_b + frames_a_adjusted
+    print(f"   ✓ Reordered frames with continuity fix (new start: frame {frame_offset})")
     
     # Write output file
     try:
