@@ -330,11 +330,12 @@ Eigen::VectorXd Character::getSPDForces(const Eigen::VectorXd &p_desired, const 
 
 void Character::step()
 {
-    if (mMetabolicType != LEGACY)
+    if (mActuatorType == mus || mActuatorType == mass || mActuatorType == mass_lower)
     {
         switch (mMetabolicType)
         {
         case A:
+        case LEGACY:
             mMetabolicStepEnergy = mActivations.array().abs().sum();
             break;
         case A2:
@@ -348,6 +349,22 @@ void Character::step()
         }
         mMetabolicEnergyAccum += mMetabolicStepEnergy;
         mMetabolicAccumDivisor += 1.0;
+    }
+    else if (mActuatorType == tor || mActuatorType == pd)
+    {
+        if (!mTorqueLogs.empty())
+        {
+            Eigen::VectorXd torque_sum = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
+            int log_size = mTorqueLogs.size();
+            for (const auto& torque : mTorqueLogs)
+            {
+                torque_sum += torque.cwiseAbs();
+            }
+            torque_sum /= log_size;
+            mMetabolicStepEnergy = 1E-4 * torque_sum.squaredNorm() / torque_sum.rows();
+            mMetabolicEnergyAccum += mMetabolicStepEnergy;
+            mMetabolicAccumDivisor += 1.0;
+        }
     }
 
     switch (mActuatorType)

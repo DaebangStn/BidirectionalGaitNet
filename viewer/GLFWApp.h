@@ -5,6 +5,7 @@
 #include "CBufferData.h"
 #include "RenderEnvironment.h"
 #include "Character.h"
+#include "BVH_Parser.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -74,7 +75,7 @@ struct ViewerMotion
     Eigen::VectorXd motion;  // Flattened motion data: NPZ: 6060 (60 cycles × 101 frames), HDF5: variable
     int frames_per_cycle = 101;  // NPZ: timesteps per cycle (101), HDF5: skeleton DOF (56)
     int num_cycles = 60;         // NPZ: number of cycles (60), HDF5: actual gait cycles loaded
-    std::string source_type = "npz";  // Source format: "npz" or "hdf5"
+    std::string source_type = "npz";  // Source format: "npz", "hdf5", or "bvh"
 
     // HDF5-specific timing (for correct playback speed)
     int hdf5_total_timesteps = 0;      // Total simulation timesteps across all cycles
@@ -139,6 +140,7 @@ private:
     void drawFGNControl();
     void drawBGNControl();
     void drawC3DControl();
+    void drawBVHControl();
     void drawMotionControl();
     void drawGVAEControl();
     void addSimulationMotion();
@@ -261,6 +263,11 @@ private:
     std::vector<Eigen::Matrix3d> mJointCalibration;
 
     // BVH Buffer
+    std::vector<std::string> mBVHList;
+    BVH* mLoadedBVH;  // Deprecated: BVH now loaded into mMotions
+    int mSelectedBVHIdx;
+    bool mDrawBVHSkeleton;  // Deprecated: use mMotions source_type check
+    double mBVHPlaybackTime;  // Deprecated: use updateViewerTime
 
     std::vector<Eigen::VectorXd> mC3dMotion;
     int mC3DCount;
