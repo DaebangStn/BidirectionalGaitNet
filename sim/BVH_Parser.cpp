@@ -106,6 +106,15 @@ Eigen::VectorXd BVH::getInterpolation(Eigen::VectorXd p1, Eigen::VectorXd p2, do
 	return pos;
 }
 
+Eigen::VectorXd BVH::getPose(int frameIdx)
+{
+	// Frame-based access: direct indexing into motion array
+	if (frameIdx < 0 || frameIdx >= mNumFrame) {
+		frameIdx = ((frameIdx % mNumFrame) + mNumFrame) % mNumFrame;  // Wrap to valid range
+	}
+	return mMotion[frameIdx];
+}
+
 Eigen::VectorXd BVH::getPose(double phase)
 {
 	if (phase < 0) phase += 1.0;
@@ -150,7 +159,7 @@ void BVH::setRefMotion(Character *_character, dart::simulation::WorldPtr _world)
 	mCharacter = _character;
 	Eigen::Vector3d root_offset = Eigen::Vector3d::Zero();
 	bool is_walk = (getName().find("walk") != std::string::npos);
-	for (int i = 0; i < getNumFrame(); i++)
+	for (int i = 0; i < getNumFrames(); i++)
 	{
 		Eigen::VectorXd pos = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
 		for (auto m : mCharacter->getBVHMap())

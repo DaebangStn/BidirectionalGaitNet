@@ -2,6 +2,7 @@ add_compile_options(-fvisibility=hidden)
 
 link_directories(../sim/)
 include_directories(../sim/)
+include_directories(../libs/imgui)
 
 find_package(GLUT REQUIRED)
 find_package(TinyXML2 REQUIRED)

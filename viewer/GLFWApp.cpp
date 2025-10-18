@@ -9,6 +9,8 @@
 #include <sstream>
 #include "dart/dynamics/BallJoint.hpp"
 #include "dart/dynamics/FreeJoint.hpp"
+#include "Motion.h"
+#include "NPZ.h"
 
 namespace fs = std::filesystem;
 
@@ -901,7 +903,25 @@ void GLFWApp::initEnv(std::string metadata)
 
     // Initialize motion skeleton
     initializeMotionSkeleton();
-    
+
+    // Hardcoded: Load Sim_Healthy.npz as reference motion
+    // Use mMotionCharacter which matches the NPZ data format (not render character)
+    try {
+        std::string npz_path = "data/npz_motions/Sim_Healthy.npz";
+        if (fs::exists(npz_path)) {
+            std::cout << "[GLFWApp] Loading hardcoded reference motion: " << npz_path << std::endl;
+            NPZ* npz = new NPZ(npz_path);
+            // CRITICAL: Use mMotionCharacter (NPZ-compatible) not mRenderEnv->getCharacter()
+            npz->setRefMotion(mMotionCharacter, mRenderEnv->getWorld());
+            mRenderEnv->setMotion(npz);
+            std::cout << "[GLFWApp] Successfully loaded hardcoded NPZ reference motion" << std::endl;
+        } else {
+            std::cerr << "[GLFWApp] Hardcoded NPZ file not found: " << npz_path << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[GLFWApp] Error loading hardcoded NPZ: " << e.what() << std::endl;
+    }
+
     // Load networks
     auto character = mRenderEnv->getCharacter();
     mNetworks.clear();
@@ -1155,8 +1175,8 @@ void GLFWApp::drawKinematicsControlPanel()
                 viewer_motion.motion = m.motion;
                 viewer_motion.source_type = "c3d";
                 // Assume standard 101 frames per cycle, 60 cycles for C3D
-                viewer_motion.frames_per_cycle = 101;
-                viewer_motion.num_cycles = viewer_motion.motion.size() / 101;
+                viewer_motion.values_per_frame = 101;
+                viewer_motion.num_frames = viewer_motion.motion.size() / 101;
 
                 mMotions.push_back(viewer_motion);
                 mAddedMotions.push_back(viewer_motion);
@@ -1189,7 +1209,7 @@ void GLFWApp::drawKinematicsControlPanel()
         {
             // Loaded motions list (NPZ, HDF5, BVH)
             ImGui::Text("Loaded Motions:");
-            if (ImGui::ListBoxHeader("##AllMotions_List", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
+            if (ImGui::BeginListBox("##AllMotions_List", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
             {
                 for (int i = 0; i < mMotions.size(); i++)
                 {
@@ -1210,7 +1230,7 @@ void GLFWApp::drawKinematicsControlPanel()
                         if (mMotions[i].source_type == "bvh" || mMotions[i].source_type == "hdf5") {
                             mMaxFrameIndex = mMotions[i].hdf5_total_timesteps - 1;
                         } else {
-                            mMaxFrameIndex = mMotions[i].num_cycles - 1;
+                            mMaxFrameIndex = mMotions[i].num_frames - 1;
                         }
                         // Clamp manual frame index to valid range
                         if (mManualFrameIndex > mMaxFrameIndex) {
@@ -1232,7 +1252,7 @@ void GLFWApp::drawKinematicsControlPanel()
                     if (mMotionIdx == i)
                         ImGui::SetItemDefaultFocus();
                 }
-                ImGui::ListBoxFooter();
+                ImGui::EndListBox();
             }
 
             // HDF5 Loading Controls (collapsible sub-section)
@@ -1246,7 +1266,7 @@ void GLFWApp::drawKinematicsControlPanel()
             static bool loading_success = false;
 
             // HDF5 Files listbox
-            if (ImGui::ListBoxHeader("##HDF5_Files", ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing())))
+            if (ImGui::BeginListBox("##HDF5_Files", ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing())))
         {
             for (int i = 0; i < mHDF5Files.size(); i++)
             {
@@ -1290,7 +1310,7 @@ void GLFWApp::drawKinematicsControlPanel()
                 if (mSelectedHDF5FileIdx == i)
                     ImGui::SetItemDefaultFocus();
             }
-            ImGui::ListBoxFooter();
+            ImGui::EndListBox();
         }
 
         // Param and Cycle sliders (only show if file is selected)
@@ -1440,7 +1460,7 @@ void GLFWApp::drawKinematicsControlPanel()
             if (!mMotions.empty()) {
                 double phase = mViewerPhase;
                 if (mRenderEnv) {
-                    phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
+                    phase = mViewerTime / (mRenderEnv->getMotion()->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
                     phase = fmod(phase, 1.0);
                 }
                 double frame_float = computeFrameFloat(mMotions[mMotionIdx], phase);
@@ -1450,11 +1470,11 @@ void GLFWApp::drawKinematicsControlPanel()
         }
         ImGui::Separator();
 
-        ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotions[mMotionIdx].num_cycles - 1));
+        ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotions[mMotionIdx].num_frames - 1));
         if (ImGui::Button("Convert Motion"))
         {
-            int frames_per_cycle = mMotions[mMotionIdx].frames_per_cycle;
-            int num_cycles = mMotions[mMotionIdx].num_cycles;
+            int frames_per_cycle = mMotions[mMotionIdx].values_per_frame;
+            int num_cycles = mMotions[mMotionIdx].num_frames;
             Eigen::VectorXd m = mMotions[mMotionIdx].motion;
             mMotions[mMotionIdx].motion << m.tail((num_cycles - mMotionPhaseOffset) * frames_per_cycle), m.head(mMotionPhaseOffset * frames_per_cycle);
         }
@@ -1784,7 +1804,7 @@ void GLFWApp::drawSimVisualizationPanel()
     static int joint_selected = 0;
     if (ImGui::CollapsingHeader("Torques"))
     {
-        if (ImGui::ListBoxHeader("Joint", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
+        if (ImGui::BeginListBox("Joint", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
         {
             int idx = 0;
 
@@ -1794,7 +1814,7 @@ void GLFWApp::drawSimVisualizationPanel()
                     joint_selected = i;
                 ImGui::SetItemDefaultFocus();
             }
-            ImGui::ListBoxFooter();
+            ImGui::EndListBox();
         }
         ImPlot::SetNextAxisLimits(3, 0, 1.5);
         ImPlot::SetNextAxisLimits(0, 0, 2.5, ImGuiCond_Always);
@@ -1905,7 +1925,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::PlotLine("##active_with_activation", p[1].data(), p[3].data(), 250);
             ImPlot::PlotLine("##passive", p[1].data(), p[4].data(), 250);
 
-            ImPlot::PlotVLines("current", p[0].data(), 1);
+            ImPlot::PlotInfLines("current", p[0].data(), 1);
             ImPlot::EndPlot();
         }
 
@@ -1959,7 +1979,7 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::Separator();
 
         ImGui::Text("Muscle Name");
-        if (ImGui::ListBoxHeader("Muscle", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
+        if (ImGui::BeginListBox("Muscle", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
         {
             int idx = 0;
             for (auto m : mRenderEnv->getCharacter()->getMuscles())
@@ -1970,7 +1990,7 @@ void GLFWApp::drawSimVisualizationPanel()
                     ImGui::SetItemDefaultFocus();
                 idx++;
             }
-            ImGui::ListBoxFooter();
+            ImGui::EndListBox();
         }
     }
 
@@ -2420,6 +2440,62 @@ void GLFWApp::drawSimControlPanel()
     if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::Checkbox("Draw Reference Motion", &mDrawReferenceSkeleton);
+        ImGui::SameLine();
+        if (ImGui::Button("Load Ref Motion..."))
+        {
+            IGFD::FileDialogConfig config;
+            config.path = "data/motion";
+            ImGuiFileDialog::Instance()->OpenDialog("ChooseRefMotionDlgKey", "Choose Reference Motion File",
+                ".bvh,.npz", config);
+        }
+
+        // File dialog display and handling
+        if (ImGuiFileDialog::Instance()->Display("ChooseRefMotionDlgKey"))
+        {
+            if (ImGuiFileDialog::Instance()->IsOk())
+            {
+                std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
+                std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
+                std::string fileName = ImGuiFileDialog::Instance()->GetCurrentFileName();
+
+                // Load the selected motion file
+                try {
+                    std::cout << "[RefMotion] Loading reference motion from: " << filePathName << std::endl;
+
+                    // Determine file type and create appropriate Motion object
+                    Motion* newMotion = nullptr;
+
+                    if (filePathName.find(".bvh") != std::string::npos) {
+                        // Load BVH file
+                        BVH* bvh = new BVH(filePathName);
+                        bvh->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+                        newMotion = bvh;
+                        std::cout << "[RefMotion] Loaded BVH file with " << bvh->getNumFrames() << " frames" << std::endl;
+                    }
+                    else if (filePathName.find(".npz") != std::string::npos) {
+                        // Load NPZ file
+                        NPZ* npz = new NPZ(filePathName);
+                        npz->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+                        newMotion = npz;
+                        std::cout << "[RefMotion] Loaded NPZ file with " << npz->getNumFrames() << " frames" << std::endl;
+                    }
+                    else {
+                        std::cerr << "[RefMotion] Unsupported file format: " << filePathName << std::endl;
+                    }
+
+                    // Update environment with new motion
+                    if (newMotion) {
+                        mRenderEnv->setMotion(newMotion);
+                        std::cout << "[RefMotion] Successfully updated reference motion" << std::endl;
+                    }
+
+                } catch (const std::exception& e) {
+                    std::cerr << "[RefMotion] Error loading motion file: " << e.what() << std::endl;
+                }
+            }
+            ImGuiFileDialog::Instance()->Close();
+        }
+
         ImGui::Checkbox("Draw PD Target Motion", &mDrawPDTarget);
         ImGui::Checkbox("Draw Joint Sphere", &mDrawJointSphere);
         ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
@@ -2689,7 +2765,7 @@ void GLFWApp::drawResizablePlotPane()
 
         // Left column: Added keys
         ImGui::Text("Added Keys");
-        if (ImGui::ListBoxHeader(("Keys##" + std::to_string(i)).c_str(), ImVec2(-1, KEY_CONFIG_HEIGHT))) {
+        if (ImGui::BeginListBox(("Keys##" + std::to_string(i)).c_str(), ImVec2(-1, KEY_CONFIG_HEIGHT))) {
             for (int j = 0; j < mResizablePlots[i].keys.size(); ++j) {
                 if (ImGui::Selectable(mResizablePlots[i].keys[j].c_str(), mResizablePlots[i].selectedKey == j)) {
                     mResizablePlots[i].selectedKey = j;
@@ -2702,7 +2778,7 @@ void GLFWApp::drawResizablePlotPane()
                     break; 
                 }
             }
-            ImGui::ListBoxFooter();
+            ImGui::EndListBox();
         }
 
         ImGui::NextColumn();
@@ -2746,7 +2822,7 @@ void GLFWApp::drawResizablePlotPane()
         }
 
         if (!candidates.empty()) {
-            if (ImGui::ListBoxHeader(("Candidates##" + std::to_string(i)).c_str(), ImVec2(-1, KEY_CONFIG_HEIGHT - RESIZABLE_PLOT_TEXT_HEIGHT))) {
+            if (ImGui::BeginListBox(("Candidates##" + std::to_string(i)).c_str(), ImVec2(-1, KEY_CONFIG_HEIGHT - RESIZABLE_PLOT_TEXT_HEIGHT))) {
                 for (const auto& candidate : candidates) {
                     if (ImGui::Selectable(candidate.c_str())) {
                         mResizablePlots[i].keys.push_back(candidate);
@@ -2754,7 +2830,7 @@ void GLFWApp::drawResizablePlotPane()
                         updateUnifiedKeys();
                     }
                 }
-                ImGui::ListBoxFooter();
+                ImGui::EndListBox();
             }
         }
 
@@ -3229,7 +3305,7 @@ void GLFWApp::reset()
         mFGNRootOffset = mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getPositions().tail(3);
         mUseWeights = mRenderEnv->getUseWeights();
         mViewerTime = mRenderEnv->getWorld()->getTime();
-        mViewerPhase = mRenderEnv->getCharacter()->getLocalTime() / (mRenderEnv->getBVH(0)->getMaxTime() / mRenderEnv->getCadence());
+        mViewerPhase = mRenderEnv->getCharacter()->getLocalTime() / (mRenderEnv->getMotion()->getMaxTime() / mRenderEnv->getCadence());
 
         // Align motion with simulated character position
         alignMotionToSimulation();
@@ -3248,7 +3324,7 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
         double total_duration = t_end - t_start;
 
         // Calculate average gait cycle duration
-        double avg_cycle_duration = total_duration / motion.num_cycles;
+        double avg_cycle_duration = total_duration / motion.num_frames;
 
         // Map phase [0, 1) to one gait cycle worth of time
         double motion_time = t_start + phase * avg_cycle_duration;
@@ -3284,11 +3360,11 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
         frame_float = phase * motion.hdf5_timesteps_per_cycle;
     } else if (motion.source_type == "bvh") {
         // BVH motion: direct frame mapping (similar to HDF5)
-        frame_float = phase * motion.num_cycles;  // num_cycles = total frames for BVH
+        frame_float = phase * motion.num_frames;  // num_cycles = total frames for BVH
     } else {
         // NPZ motion: contains 2 gait cycles, use first half (1 cycle) in viewer time mode
         // num_cycles is 60, so use 30 frames for one gait cycle
-        frame_float = phase * (motion.num_cycles / 2);
+        frame_float = phase * (motion.num_frames / 2);
     }
 
     return frame_float;
@@ -3301,9 +3377,9 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
     Character* character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
     if (!character) return;
 
-    int frames_per_cycle = motion.frames_per_cycle;
+    int frames_per_cycle = motion.values_per_frame;
     int total_frames = (motion.source_type == "hdf5" || motion.source_type == "bvh") ?
-                       motion.hdf5_total_timesteps : motion.num_cycles;
+                       motion.hdf5_total_timesteps : motion.num_frames;
 
     // Clamp frame_float to valid range for this motion
     if (frame_float < 0) frame_float = 0;
@@ -3374,6 +3450,15 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
     if (motion.source_type == "hdf5" || motion.source_type == "bvh") {
         motion_pos = interpolated_frame;
     } else {
+        // NPZ: convert from 6D rotation format to angles
+        static bool logged_once = false;
+        if (!logged_once) {
+            std::cout << "[drawPlayableMotion] Converting NPZ motion:" << std::endl;
+            std::cout << "  Input frame size: " << interpolated_frame.size() << std::endl;
+            std::cout << "  Character pointer: " << character << std::endl;
+            std::cout << "  Character DOF: " << character->getSkeleton()->getNumDofs() << std::endl;
+            logged_once = true;
+        }
         motion_pos = character->sixDofToPos(interpolated_frame);
     }
 
@@ -3443,7 +3528,7 @@ void GLFWApp::updateViewerTime(double dt)
     // Calculate phase [0, 1) for motion playback
     double phase;
     if (mRenderEnv) {
-        phase = mViewerTime / (mRenderEnv->getBVH(0)->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
+        phase = mViewerTime / (mRenderEnv->getMotion()->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
         phase = fmod(phase, 1.0);
     } else {
         if (!mMotionSkeleton) return;
@@ -3452,7 +3537,7 @@ void GLFWApp::updateViewerTime(double dt)
 
     // Get current motion
     const ViewerMotion& current_motion = mMotions[mMotionIdx];
-    int frames_per_cycle = current_motion.frames_per_cycle;
+    int frames_per_cycle = current_motion.values_per_frame;
 
     // Calculate frame indices based on navigation mode
     double frame_float;
@@ -3466,7 +3551,7 @@ void GLFWApp::updateViewerTime(double dt)
 
     int current_frame_idx = (int)frame_float;
     int total_frames = (current_motion.source_type == "hdf5" || current_motion.source_type == "bvh") ?
-                       current_motion.hdf5_total_timesteps : current_motion.num_cycles;
+                       current_motion.hdf5_total_timesteps : current_motion.num_frames;
     current_frame_idx = current_frame_idx % total_frames;
 
     // Update motion state (different handling for NPZ vs HDF5/BVH)
@@ -3493,6 +3578,16 @@ void GLFWApp::updateViewerTime(double dt)
         // NPZ: Incremental data, accumulate every frame in automatic mode only
         Eigen::VectorXd current_frame = current_motion.motion.segment(
             current_frame_idx * frames_per_cycle, frames_per_cycle);
+
+        static bool logged_npz_once = false;
+        if (!logged_npz_once) {
+            std::cout << "[NPZ incremental mode] Frame extraction:" << std::endl;
+            std::cout << "  frames_per_cycle: " << frames_per_cycle << std::endl;
+            std::cout << "  current_frame size: " << current_frame.size() << std::endl;
+            std::cout << "  Character for conversion: " << character << std::endl;
+            logged_npz_once = true;
+        }
+
         Eigen::VectorXd motion_pos = character->sixDofToPos(current_frame);
 
         // NPZ root positions are deltas - accumulate them directly (only in automatic playback)
@@ -3726,11 +3821,11 @@ void GLFWApp::setCamera()
 
             int current_frame_idx = (int)frame_float;
             int total_frames = (current_motion.source_type == "hdf5") ?
-                               current_motion.hdf5_total_timesteps : current_motion.num_cycles;
+                               current_motion.hdf5_total_timesteps : current_motion.num_frames;
             current_frame_idx = current_frame_idx % total_frames;
 
             Eigen::VectorXd current_frame = current_motion.motion.segment(
-                current_frame_idx * current_motion.frames_per_cycle, current_motion.frames_per_cycle);
+                current_frame_idx * current_motion.values_per_frame, current_motion.values_per_frame);
 
             Eigen::VectorXd current_pos;
             if (current_motion.source_type == "hdf5") {
@@ -3979,12 +4074,30 @@ void GLFWApp::loadMotionFiles()
                 Eigen::MatrixXd params = params_obj.cast<Eigen::MatrixXd>();
                 Eigen::MatrixXd motions = motions_obj.cast<Eigen::MatrixXd>();
 
+                std::cout << "[loadMotionFiles] NPZ file: " << file_name << std::endl;
+                std::cout << "  Params shape: (" << params.rows() << ", " << params.cols() << ")" << std::endl;
+                std::cout << "  Motions shape: (" << motions.rows() << ", " << motions.cols() << ")" << std::endl;
+                std::cout << "  Per-sequence data size: " << motions.cols() << " values" << std::endl;
+
                 for (int i = 0; i < params.rows(); i++) {
                     ViewerMotion motion_elem;
                     motion_elem.name = file_name + "_" + std::to_string(i);
                     motion_elem.param = params.row(i);
-                    motion_elem.motion = motions.row(i);
-                    // NPZ data is incremental, no need for initialRootPosition
+
+                    // NPZ structure: 6060 values = 60 frames × 101 values/frame
+                    // Extract only first 30 frames (first cycle)
+                    motion_elem.source_type = "npz";
+                    motion_elem.values_per_frame = 101;  // NPZ 6D rotation format
+                    motion_elem.npz_total_frames = 60;   // Total frames in file
+                    motion_elem.npz_frames_per_cycle = 30;  // Frames per cycle
+                    motion_elem.num_frames = 30;         // Use only first cycle
+
+                    // Extract first 30 frames only
+                    Eigen::VectorXd full_motion = motions.row(i);
+                    motion_elem.motion = full_motion.head(30 * 101);  // 3030 values
+
+                    std::cout << "  Motion " << i << ": loaded " << motion_elem.num_frames
+                              << " frames (first cycle of " << motion_elem.npz_total_frames << " total)" << std::endl;
                     mMotions.push_back(motion_elem);
                 }
             } catch (const std::exception& e) {
@@ -4053,7 +4166,7 @@ void GLFWApp::loadMotionFiles()
                     motion_elem.param = Eigen::VectorXd::Zero(mRenderEnv->getNumKnownParam());
 
                     // Extract all frames from BVH
-                    int num_frames = bvh->getNumFrame();
+                    int num_frames = bvh->getNumFrames();
                     int dof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
 
                     // Store all BVH frames in flattened motion vector
@@ -4065,8 +4178,8 @@ void GLFWApp::loadMotionFiles()
                     }
 
                     // Set BVH-specific parameters
-                    motion_elem.frames_per_cycle = dof;  // Each frame is full skeleton DOF
-                    motion_elem.num_cycles = num_frames;  // Total number of frames
+                    motion_elem.values_per_frame = dof;  // Each frame is full skeleton DOF
+                    motion_elem.num_frames = num_frames;  // Total number of frames
                     motion_elem.hdf5_total_timesteps = num_frames;
                     motion_elem.hdf5_timesteps_per_cycle = num_frames;
 
@@ -4362,8 +4475,8 @@ void GLFWApp::loadSelectedHDF5Motion()
         ViewerMotion motion_elem;
         motion_elem.name = file_path + "_" + param_name + "_" + cycle_name;
         motion_elem.source_type = "hdf5";
-        motion_elem.frames_per_cycle = motion_dim;
-        motion_elem.num_cycles = 1;  // Single cycle
+        motion_elem.values_per_frame = motion_dim;
+        motion_elem.num_frames = 1;  // Single cycle
         motion_elem.hdf5_total_timesteps = num_steps;
         motion_elem.hdf5_timesteps_per_cycle = num_steps;
 
@@ -4427,9 +4540,9 @@ void GLFWApp::addSimulationMotion()
     current_motion.name = "New Motion " + std::to_string(mMotions.size());
     current_motion.param = mRenderEnv->getParamState();
     current_motion.source_type = "simulation";
-    current_motion.num_cycles = 60;  // Default: 2 seconds at 30Hz
-    current_motion.frames_per_cycle = 101;  // Default frame count
-    current_motion.motion = Eigen::VectorXd::Zero(current_motion.num_cycles * current_motion.frames_per_cycle);
+    current_motion.num_frames = 60;  // Default: 2 seconds at 30Hz
+    current_motion.values_per_frame = 101;  // Default frame count
+    current_motion.motion = Eigen::VectorXd::Zero(current_motion.num_frames * current_motion.values_per_frame);
 
     std::vector<double> phis;
     // phis list of 1/60 for 2 seconds

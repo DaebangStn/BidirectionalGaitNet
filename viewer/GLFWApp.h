@@ -12,12 +12,13 @@
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <implot.h>
-#include <examples/imgui_impl_glfw.h>
-#include <examples/imgui_impl_opengl3.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
 #include <imgui_internal.h>
 #include "C3D_Reader.h"
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
+#include "ImGuiFileDialog.h"
 
 struct ResizablePlot {
     std::vector<std::string> keys;
@@ -73,10 +74,14 @@ struct ViewerMotion
 {
     std::string name;
     Eigen::VectorXd param;
-    Eigen::VectorXd motion;  // Flattened motion data: NPZ: 6060 (60 cycles × 101 frames), HDF5: variable
-    int frames_per_cycle = 101;  // NPZ: timesteps per cycle (101), HDF5: skeleton DOF (56)
-    int num_cycles = 60;         // NPZ: number of cycles (60), HDF5: actual gait cycles loaded
-    std::string source_type = "npz";  // Source format: "npz", "hdf5", or "bvh"
+    Eigen::VectorXd motion;  // Flattened motion data: NPZ: 3030 (30 frames × 101 values), HDF5: variable
+    int values_per_frame = 101;  // Values per frame: NPZ=101 (6D rotation), HDF5/BVH=56 (skeleton DOF), C3D=101
+    int num_frames = 30;         // Number of frames loaded: NPZ=30 (first cycle only), HDF5=total frames
+    std::string source_type = "npz";  // Source format: "npz", "hdf5", "bvh", or "c3d"
+
+    // NPZ-specific: track total frames in file vs frames loaded
+    int npz_total_frames = 60;   // Total frames in NPZ file (60 = 2 cycles × 30 frames/cycle)
+    int npz_frames_per_cycle = 30;  // Frames per gait cycle (30)
 
     // HDF5-specific timing (for correct playback speed)
     int hdf5_total_timesteps = 0;      // Total simulation timesteps across all cycles
@@ -278,7 +283,7 @@ private:
     std::vector<BoneInfo> mSkelInfosForMotions;
     std::vector<ViewerMotion> mMotions;
     std::vector<ViewerMotion> mAddedMotions;
-    Motion mPredictedMotion;
+    MotionData mPredictedMotion;
 
     int mMotionIdx;
     int mMotionFrameIdx;

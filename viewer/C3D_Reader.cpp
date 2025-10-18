@@ -179,10 +179,10 @@ std::vector<Eigen::VectorXd> C3D_Reader::loadC3D(std::string path, double torsio
 }
 
 // std::vector<Eigen::VectorXd>
-Motion
+MotionData
 C3D_Reader::convertToMotion()
 {
-    Motion motion;
+    MotionData motion;
     motion.name = "C3D";
     motion.motion = Eigen::VectorXd::Zero(6060);
     motion.param = mEnv->getParamState(0);

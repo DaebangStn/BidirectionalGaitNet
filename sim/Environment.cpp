@@ -1,6 +1,7 @@
 #include "Environment.h"
 #include "UriResolver.h"
 #include "CBufferData.h"
+#include "NPZ.h"
 
 
 Environment::Environment()
@@ -240,7 +241,7 @@ void Environment::initialize(std::string metadata)
     for (auto o : mObjects)
         mWorld->addSkeleton(o);
 
-    // BVH Loading
+    // Motion Loading (BVH or NPZ)
     // World Setting 후에 함. 왜냐하면 Height Calibration 을 위해서는 충돌 감지를 필요로 하기 때문.
     if (doc.FirstChildElement("bvh") != NULL)
     {
@@ -252,7 +253,18 @@ void Environment::initialize(std::string metadata)
         new_bvh->setHeightCalibration(std::string(doc.FirstChildElement("bvh")->Attribute("heightCalibration")) == "true");
 
         new_bvh->setRefMotion(mCharacter, mWorld);
-        mBVHs.push_back(new_bvh);
+        mMotion = new_bvh;
+    }
+    else if (doc.FirstChildElement("npz") != NULL)
+    {
+        std::string npz_path = Trim(std::string(doc.FirstChildElement("npz")->GetText()));
+        std::string resolvedNpzPath = PMuscle::URIResolver::getInstance().resolve(npz_path);
+        std::cout << "[Environment] NPZ Path resolved: " << npz_path << " -> " << resolvedNpzPath << std::endl;
+        NPZ *new_npz = new NPZ(resolvedNpzPath);
+        new_npz->setHeightCalibration(std::string(doc.FirstChildElement("npz")->Attribute("heightCalibration")) == "true");
+
+        new_npz->setRefMotion(mCharacter, mWorld);
+        mMotion = new_npz;
     }
 
     // Advanced Option
@@ -582,11 +594,11 @@ void Environment::setAction(Eigen::VectorXd _action)
 void Environment::updateTargetPosAndVel(bool isInit)
 {
     double dTime = 1.0 / mControlHz;
-    double dPhase = dTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+    double dPhase = dTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     double ofsPhase = (isInit ? 0.0 : dPhase) + getLocalPhase();
     
-    mTargetPositions = mBVHs[0]->getTargetPose(ofsPhase);
-    const auto nextPose = mBVHs[0]->getTargetPose(ofsPhase + dPhase);
+    mTargetPositions = mMotion->getTargetPose(ofsPhase);
+    const auto nextPose = mMotion->getTargetPose(ofsPhase + dPhase);
     mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mTargetPositions) / dTime;
 }
 
@@ -935,17 +947,17 @@ void Environment::postMuscleStep()
 
     if (mHardPhaseClipping)
     {
-        int currentGlobalCount = mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-        int currentLocalCount = mCharacter->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+        int currentGlobalCount = mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+        int currentLocalCount = mCharacter->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
 
         if (currentGlobalCount > currentLocalCount) mCharacter->setLocalTime(mGlobalTime);
-        else if (currentGlobalCount < currentLocalCount) mCharacter->setLocalTime(currentLocalCount * ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
+        else if (currentGlobalCount < currentLocalCount) mCharacter->setLocalTime(currentLocalCount * ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
     }
     else if (mSoftPhaseClipping)
     {
         // FIXED LOCAL PHASE TIME
-        int currentCount = mCharacter->getLocalTime() / (0.5 * (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
-        // int currentCount = mCharacter->getLocalTime() / ((mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+        int currentCount = mCharacter->getLocalTime() / (0.5 * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+        // int currentCount = mCharacter->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
         if (mPhaseCount != currentCount)
         {
             mGlobalTime = mCharacter->getLocalTime();
@@ -1105,11 +1117,11 @@ void Environment::reset()
 
     // Reset Initial Time
     double time = 0.0;
-    if (mRewardType == deepmimic) time = dart::math::Random::uniform(1E-2, mBVHs[0]->getMaxTime() - 1E-2);
+    if (mRewardType == deepmimic) time = dart::math::Random::uniform(1E-2, mMotion->getMaxTime() - 1E-2);
     else if (mRewardType == gaitnet)
     {
         time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
-        time *= (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+        time *= (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     }    
     
     // Collision Detector Reset
@@ -1261,12 +1273,12 @@ Eigen::Vector3d Environment::getAvgVelocity()
 {
     Eigen::Vector3d avg_vel = Eigen::Vector3d::Zero();
     const std::vector<Eigen::Vector3d> &coms = mCharacter->getCOMLogs();
-    int horizon = (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) * mSimulationHz;
+    int horizon = (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) * mSimulationHz;
     if (coms.size() > horizon)
     {
         Eigen::Vector3d cur_com = coms.back();
         Eigen::Vector3d prev_com = coms[coms.size() - horizon];
-        avg_vel = (cur_com - prev_com) / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+        avg_vel = (cur_com - prev_com) / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     }
     else
         avg_vel[2] = getTargetCOMVelocity();

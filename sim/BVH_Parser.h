@@ -10,6 +10,7 @@
 #include "dart/dart.hpp"
 // #include <algorithm>
 #include "Character.h"
+#include "Motion.h"
 
 class BVHJoint
 {
@@ -42,33 +43,36 @@ private:
 	std::vector<BVHJoint *> mChildren;
 };
 
-class BVH
+class BVH : public Motion
 {
 public:
 	BVH(const std::string file);
-	~BVH();
+	~BVH() override;
 
+	// Motion interface implementation
+	Eigen::VectorXd getTargetPose(double phase) override;
+	Eigen::VectorXd getPose(int frameIdx) override;
+	Eigen::VectorXd getPose(double phase) override;
+
+	double getMaxTime() const override { return mNumFrame * mFrameTime; }
+	int getNumFrames() const override { return mNumFrame; }
+	double getFrameTime() const override { return mFrameTime; }
+	std::string getName() const override { return filename; }
+
+	void setRefMotion(Character* character, dart::simulation::WorldPtr world) override;
+
+	void setHeightCalibration(bool enable) override { mHeightCalibration = enable; }
+	bool getHeightCalibration() const override { return mHeightCalibration; }
+
+	// BVH-specific methods
 	int setSkeleton(BVHJoint *joint, int idx);
-	int getNumFrame() { return mNumFrame; }
 	Eigen::Isometry3d getTransform(Eigen::VectorXd _pos, std::vector<std::string> _list);
 	Eigen::VectorXd getRawPose(int idx) { return mRawMotion[idx]; }
 	BVHJoint *getRoot() { return mRoot; }
 	void addMotion(Eigen::VectorXd p) { mMotion.push_back(p); }
 
 	Eigen::VectorXd getInterpolation(Eigen::VectorXd q1, Eigen::VectorXd q2, double t);
-	Eigen::VectorXd getPose(double phase);
-	Eigen::VectorXd getTargetPose(double phase);
-
-	double getMaxTime() { return mNumFrame * mFrameTime; }
-	std::string getName() { return filename; }
-	double getFrameTime() { return mFrameTime; }
-
 	void setMode(bool _symmetry);
-
-	void setRefMotion(Character *_character, dart::simulation::WorldPtr _world);
-
-	void setHeightCalibration(bool _b) { mHeightCalibration = _b; }
-	bool getHeightCalibration() { return mHeightCalibration; }
 
 private:
 	std::vector<Eigen::VectorXd> mMotion;

@@ -1186,17 +1186,43 @@ Eigen::VectorXd Character::sixDofToPos(Eigen::VectorXd raw_pos)
     int p_idx = 0;
     Eigen::VectorXd pos = mSkeleton->getPositions();
 
+    // Debug: Check input size
+    static bool first_call = true;
+    if (first_call) {
+        std::cout << "[sixDofToPos] Input size: " << raw_pos.size() << std::endl;
+        std::cout << "[sixDofToPos] Output size: " << pos.size() << std::endl;
+        std::cout << "[sixDofToPos] Joint structure:" << std::endl;
+        for (auto jn : mSkeleton->getJoints()) {
+            if (jn->getNumDofs() == 0) continue;
+            std::cout << "  " << jn->getName() << ": " << jn->getNumDofs() << " DOF" << std::endl;
+        }
+        first_call = false;
+    }
+
     for (auto jn : mSkeleton->getJoints())
     {
         if (jn->getNumDofs() == 0)
             continue;
 
         int idx = jn->getIndexInSkeleton(0);
-        if (jn->getNumDofs() == 1)
+        if (jn->getNumDofs() == 1) {
+            if (p_idx >= raw_pos.size()) {
+                std::cerr << "[sixDofToPos] ERROR: Trying to read index " << p_idx
+                          << " from vector of size " << raw_pos.size()
+                          << " for joint " << jn->getName() << std::endl;
+                return pos;
+            }
             pos[idx] = raw_pos[p_idx++];
+        }
         else if (jn->getNumDofs() == 3)
         {
-            // convert 6d-rotation to angle axis rotation 
+            // convert 6d-rotation to angle axis rotation
+            if (p_idx + 6 > raw_pos.size()) {
+                std::cerr << "[sixDofToPos] ERROR: Trying to read 6 values starting at index " << p_idx
+                          << " from vector of size " << raw_pos.size()
+                          << " for 3-DOF joint " << jn->getName() << std::endl;
+                return pos;
+            }
             Eigen::Matrix3d r = Eigen::Matrix3d::Identity();
             Eigen::Vector3d v1 = raw_pos.segment<3>(p_idx).normalized();
             p_idx += 3;
@@ -1215,6 +1241,12 @@ Eigen::VectorXd Character::sixDofToPos(Eigen::VectorXd raw_pos)
         }
         else if (jn->getNumDofs() == 6)
         {
+            if (p_idx + 9 > raw_pos.size()) {
+                std::cerr << "[sixDofToPos] ERROR: Trying to read 9 values starting at index " << p_idx
+                          << " from vector of size " << raw_pos.size()
+                          << " for 6-DOF joint " << jn->getName() << std::endl;
+                return pos;
+            }
             Eigen::Matrix3d r = Eigen::Matrix3d::Identity();
             Eigen::Vector3d v1 = raw_pos.segment<3>(p_idx).normalized();
             p_idx += 3;

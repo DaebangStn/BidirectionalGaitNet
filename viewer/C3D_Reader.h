@@ -132,7 +132,7 @@ class C3D_Reader
             mEnv->getCharacter()->applySkeletonBodyNode(mSkelInfos, mBVHSkeleton);
         }
         const std::vector<MocapMarker>& getMarkerSet() { return mMarkerSet; }
-        Motion convertToMotion();
+        MotionData convertToMotion();
         std::vector<Eigen::VectorXd> mConvertedPos;
 
     private:

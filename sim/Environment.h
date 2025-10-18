@@ -11,8 +11,8 @@
 // Forward declaration
 template <typename T> class CBufferData;
 
-// Struct Motion (include motion (eigen vectorxd) and param (eigen vectorxd)
-struct Motion
+// MotionData struct (for storing motion vector with parameters and name)
+struct MotionData
 {
     std::string name;
     Eigen::VectorXd motion;
@@ -59,7 +59,7 @@ public:
     ~Environment();
 
     double getRefStride() { return mRefStride; }
-    double getRefCadence() { return mBVHs[0]->getMaxTime(); }
+    double getRefCadence() { return mMotion->getMaxTime(); }
     void initialize(std::string metadata);
 
     // 시뮬레이션 환경 구성
@@ -67,7 +67,8 @@ public:
     void addObject(std::string path = nullptr);
 
     Character *getCharacter() { return mCharacter; }
-    BVH *getBVH(int idx) { return mBVHs[idx]; }
+    Motion *getMotion() { return mMotion; }
+    void setMotion(Motion* motion) { mMotion = motion; }
 
     void setAction(Eigen::VectorXd _action);
 
@@ -84,7 +85,7 @@ public:
     Eigen::VectorXd getTargetPositions() { return mTargetPositions; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }
 
-    double getLocalPhase(bool mod_one = false, int character_idx = 0, int bvh_idx = 0) { return (mCharacter->getLocalTime() / (mBVHs[bvh_idx]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mCharacter->getLocalTime() / (mBVHs[bvh_idx]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
+    double getLocalPhase(bool mod_one = false, int character_idx = 0) { return (mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
 
     Eigen::VectorXd getState();
     std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
@@ -175,9 +176,9 @@ public:
     double getAvgVelReward();
     double getLocoReward();
     Eigen::Vector3d getAvgVelocity();
-    double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))); }
-    double getNormalizedPhase() { return mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mGlobalTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
-    double getWorldPhase() { return mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mWorldTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
+    double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))); }
+    double getNormalizedPhase() { return mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
+    double getWorldPhase() { return mWorldTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mWorldTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
     
     // Time and cycle getters for rollout
     double getWorldTime() const { return mWorldTime; }
@@ -301,7 +302,7 @@ private:
     dart::simulation::WorldPtr mWorld;
     Character *mCharacter;
     std::vector<dart::dynamics::SkeletonPtr> mObjects;
-    std::vector<BVH *> mBVHs;
+    Motion *mMotion;
 
     // Metadata
     std::string mMetadata;

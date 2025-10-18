@@ -35,8 +35,8 @@ public:
 
     // Phase and timing
     double getNormalizedPhase() { return mEnv->getNormalizedPhase(); }
-    double getLocalPhase(bool mod_one = false, int character_idx = 0, int bvh_idx = 0) {
-        return mEnv->getLocalPhase(mod_one, character_idx, bvh_idx);
+    double getLocalPhase(bool mod_one = false, int character_idx = 0) {
+        return mEnv->getLocalPhase(mod_one, character_idx);
     }
     double getGlobalTime() { return mEnv->getGlobalTime(); }
 
@@ -68,8 +68,9 @@ public:
     const std::vector<param_group>& getGroupParam() { return mEnv->getGroupParam(); }
     void setGroupParam(const Eigen::VectorXd& param) { mEnv->setGroupParam(param); }
 
-    // BVH and motion reference
-    BVH* getBVH(int idx) { return mEnv->getBVH(idx); }
+    // Motion reference
+    Motion* getMotion() { return mEnv->getMotion(); }
+    void setMotion(Motion* motion) { mEnv->setMotion(motion); }
     Eigen::VectorXd getTargetPositions() { return mEnv->getTargetPositions(); }
 
     // Velocity and COM
