@@ -80,6 +80,7 @@ public:
     Eigen::Vector3d getCurrentFootStep() { return mEnv->getCurrentFootStep(); }
     Eigen::Vector3d getCurrentTargetFootStep() { return mEnv->getCurrentTargetFootStep(); }
     Eigen::Vector3d getNextTargetFootStep() { return mEnv->getNextTargetFootStep(); }
+    bool getIsLeftLegStance() { return mEnv->getIsLeftLegStance(); }
 
     // Muscle network
     bool getUseMuscle() { return mEnv->getUseMuscle(); }

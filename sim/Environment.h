@@ -166,6 +166,7 @@ public:
     Eigen::Vector3d getCurrentFootStep() { return mCurrentFoot; }
     Eigen::Vector3d getCurrentTargetFootStep() { return mCurrentTargetFoot; }
     Eigen::Vector3d getNextTargetFootStep() { return mNextTargetFoot; }
+    bool getIsLeftLegStance() { return mIsLeftLegStance; }
 
     RewardType getRewardType() { return mRewardType; }
 

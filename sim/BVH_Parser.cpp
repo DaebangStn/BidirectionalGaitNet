@@ -66,9 +66,7 @@ int BVH::setSkeleton(BVHJoint *joint, int idx)
 	return dof;
 }
 
-Eigen::Isometry3d
-BVH::
-	getTransform(Eigen::VectorXd _pos, std::vector<std::string> _list)
+Eigen::Isometry3d BVH::getTransform(Eigen::VectorXd _pos, std::vector<std::string> _list)
 {
 	Eigen::Isometry3d result = Eigen::Isometry3d::Identity();
 	for (auto j : _list)
@@ -80,20 +78,15 @@ BVH::
 	return result;
 }
 
-Eigen::VectorXd
-BVH::
-	getInterpolation(Eigen::VectorXd p1, Eigen::VectorXd p2, double t)
+Eigen::VectorXd BVH::getInterpolation(Eigen::VectorXd p1, Eigen::VectorXd p2, double t)
 {
 	Eigen::VectorXd pos = Eigen::VectorXd::Zero(p1.rows());
 	for (const auto jn : mCharacter->getSkeleton()->getJoints())
 	{
 		int dof = jn->getNumDofs();
-		if (dof == 0)
-			continue;
-
+		if (dof == 0) continue;
 		int idx = jn->getIndexInSkeleton(0);
-		if (dof == 1)
-			pos[idx] = p1[idx] * (1 - t) + p2[idx] * t;
+		if (dof == 1) pos[idx] = p1[idx] * (1 - t) + p2[idx] * t;
 		else if (dof == 3)
 		{
 			Eigen::Quaterniond q1 = Eigen::Quaterniond(BallJoint::convertToRotation(p1.segment(idx, dof)));
@@ -115,11 +108,9 @@ BVH::
 
 Eigen::VectorXd BVH::getPose(double phase)
 {
-	if (phase < 0)
-		phase += 1.0;
+	if (phase < 0) phase += 1.0;
 
 	int idx = phase * mNumFrame;
-
 	double idx_f = phase * mNumFrame - idx;
 
 	Eigen::VectorXd p1 = mMotion[idx % mNumFrame];
@@ -134,8 +125,7 @@ Eigen::VectorXd BVH::getPose(double phase)
 	Eigen::VectorXd pos = getInterpolation(p1, p2, idx_f);
 
 	// Height Calibration
-	if (mHeightCalibration)
-		pos[4] += mHeightOffset;
+	if (mHeightCalibration) pos[4] += mHeightOffset;
 	pos[3] -= mXOffset;
 	pos[3] *= 0.1;
 	return pos;
@@ -144,10 +134,14 @@ Eigen::VectorXd BVH::getPose(double phase)
 Eigen::VectorXd BVH::getTargetPose(double phase)
 {
 	Eigen::VectorXd pos = getPose(phase);
-	if (mSymmetryMode)
-		pos = getInterpolation(pos, mCharacter->getMirrorPosition(getPose(phase + 0.5)), 0.5);
-	// pos = (pos + mCharacter->getMirrorPosition(getPose(phase + 0.5))) * 0.5;
+	Eigen::VectorXd pos_mirror = getPose(phase + 0.5);
+	// std::cout << "[getTargetPose] phase ("<< phase << ") pos: " << pos.head(3).transpose() * 180.0 / M_PI << std::endl;
+	// std::cout << "[getTargetPose] pos_mirror: " << pos_mirror.head(3).transpose() * 180.0 / M_PI << std::endl;
+	// std::cout << "[getTargetPose] mirror(pos_mirror): " << mCharacter->getMirrorPosition(pos_mirror).head(3).transpose() * 180.0 / M_PI << std::endl;
 
+	if (mSymmetryMode) pos = getInterpolation(pos, mCharacter->getMirrorPosition(pos_mirror), 0.5);
+	// pos = (pos + mCharacter->getMirrorPosition(getPose(phase + 0.5))) * 0.5;
+	// std::cout << "[getTargetPose] mean pos: " << pos.head(3).transpose() * 180.0 / M_PI << std::endl;
 	return pos;
 }
 
@@ -164,8 +158,7 @@ void BVH::setRefMotion(Character *_character, dart::simulation::WorldPtr _world)
 
 			auto ms = m.second;
 			int dof = mCharacter->getSkeleton()->getJoint(m.first)->getNumDofs();
-			if (dof == 0)
-				continue;
+			if (dof == 0) continue;
 			int idx = mCharacter->getSkeleton()->getJoint(m.first)->getIndexInSkeleton(0);
 			auto p = getTransform(getRawPose(i), ms);
 			if (dof == 1)
@@ -220,8 +213,7 @@ void BVH::setRefMotion(Character *_character, dart::simulation::WorldPtr _world)
 			}
 			else if (dof == 6)
 			{
-				if (is_walk)
-					p.linear() *= 0.1;
+				if (is_walk) p.linear() *= 0.1;
 
 				if (i == 0)
 				{
@@ -236,8 +228,7 @@ void BVH::setRefMotion(Character *_character, dart::simulation::WorldPtr _world)
 				pos.segment(idx, dof) = FreeJoint::convertToPositions(p);
 			}
 		}
-		for (int i = 0; i < pos.rows(); i++)
-			pos[i] = dart::math::clip(pos[i], mCharacter->getSkeleton()->getPositionLowerLimit(i), mCharacter->getSkeleton()->getPositionUpperLimit(i));
+		for (int i = 0; i < pos.rows(); i++) pos[i] = dart::math::clip(pos[i], mCharacter->getSkeleton()->getPositionLowerLimit(i), mCharacter->getSkeleton()->getPositionUpperLimit(i));
 
 		addMotion(pos);
 	}

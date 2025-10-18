@@ -538,6 +538,7 @@ void GLFWApp::update(bool _isSave)
     }
     else mRenderEnv->step();
 
+    const ViewerMotion& current_motion = mMotions[mMotionIdx];
     // Check for gait cycle completion AFTER step (when phase counters are updated)
     if (mRenderEnv->isGaitCycleComplete())
     {
@@ -2077,13 +2078,13 @@ void GLFWApp::drawJointControlSection() {
             ImGui::TextDisabled("Load environment first");
         } else {
             auto skel = mRenderEnv->getCharacter()->getSkeleton();
-            
+
             // Joint Position Control
             Eigen::VectorXd pos_lower_limit = skel->getPositionLowerLimits();
             Eigen::VectorXd pos_upper_limit = skel->getPositionUpperLimits();
             Eigen::VectorXd currentPos = skel->getPositions();
             Eigen::VectorXf pos_rad = currentPos.cast<float>();
-            
+
             // Convert to degrees for display
             Eigen::VectorXf pos_deg = pos_rad * (180.0f / M_PI);
             
@@ -2903,6 +2904,34 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
     glBegin(GL_POINTS);
     glVertex2d(mHeight * 0.04 * sin(phase * 2 * M_PI), mHeight * 0.04 * cos(phase * 2 * M_PI));
     glEnd();
+
+    // Draw foot contact indicators
+    if (mRenderEnv) {
+        const double indicator_size = mHeight * 0.03;  // Size of the indicator squares
+        const double spacing = indicator_size * 2.8;  // Space between indicators
+
+        bool isLeftLegStance = mRenderEnv->getIsLeftLegStance();
+
+        // Left foot indicator (slightly to the left of center)
+        // Active (stance) when isLeftLegStance is true
+        glColor4f(1.0f, 0.0f, 0.0f, isLeftLegStance ? 1.0f : 0.2f);
+        glBegin(GL_QUADS);
+        glVertex2d(-spacing, -indicator_size * 0.5);
+        glVertex2d(-spacing + indicator_size, -indicator_size * 0.5);
+        glVertex2d(-spacing + indicator_size, indicator_size * 0.5);
+        glVertex2d(-spacing, indicator_size * 0.5);
+        glEnd();
+
+        // Right foot indicator (slightly to the right of center)
+        // Active (stance) when isLeftLegStance is false
+        glColor4f(1.0f, 0.0f, 0.0f, !isLeftLegStance ? 1.0f : 0.2f);
+        glBegin(GL_QUADS);
+        glVertex2d(spacing - indicator_size, -indicator_size * 0.5);
+        glVertex2d(spacing, -indicator_size * 0.5);
+        glVertex2d(spacing, indicator_size * 0.5);
+        glVertex2d(spacing - indicator_size, indicator_size * 0.5);
+        glEnd();
+    }
 
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
