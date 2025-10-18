@@ -299,6 +299,17 @@ void Environment::initialize(std::string metadata)
     if (doc.FirstChildElement("AvgVelWeight") != NULL)
         mAvgVelWeight = doc.FirstChildElement("AvgVelWeight")->DoubleText();
 
+    // Parse MetabolicType configuration
+    if (doc.FirstChildElement("MetabolicType") != NULL)
+    {
+        std::string metabolicTypeStr = Trim(std::string(doc.FirstChildElement("MetabolicType")->GetText()));
+        if (metabolicTypeStr == "LEGACY") mCharacter->setMetabolicType(LEGACY);
+        else if (metabolicTypeStr == "A") mCharacter->setMetabolicType(A);
+        else if (metabolicTypeStr == "A2") mCharacter->setMetabolicType(A2);
+        else if (metabolicTypeStr == "MA") mCharacter->setMetabolicType(MA);
+        else if (metabolicTypeStr == "MA2") mCharacter->setMetabolicType(MA2);
+    }
+
     // ============= For parameterization ==============
     // =================================================
 

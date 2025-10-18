@@ -240,6 +240,8 @@ public:
     std::vector<double> getWeights() { return mWeights; }
     std::vector<double> getDmins() { return mDmins; }
     std::vector<double> getBetas() { return mBetas; }
+    double getMetabolicWeight() { return mMetabolicWeight; }
+    void setMetabolicWeight(double weight) { mMetabolicWeight = weight; }
 
     void setUseWeights(std::vector<bool> _useWeights)
     {

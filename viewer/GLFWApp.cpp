@@ -1615,7 +1615,7 @@ void GLFWApp::drawSimVisualizationPanel()
     ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
     // Rewards
-    if (ImGui::CollapsingHeader("Rewards"))
+    if (ImGui::CollapsingHeader("Rewards", ImGuiTreeNodeFlags_DefaultOpen))
     {
         std::string title_str = mPlotTitle ? mCheckpointName : "Reward";
         if (ImPlot::BeginPlot((title_str + "##Reward").c_str()))
@@ -2304,7 +2304,7 @@ void GLFWApp::drawSimControlPanel()
         int currentTypeInt = static_cast<int>(currentType);
 
         // Dropdown for metabolic type selection
-        const char* metabolicTypes[] = {"LEGACY", "A", "A2", "MA"};
+        const char* metabolicTypes[] = {"LEGACY", "A", "A2", "MA", "MA2"};
         ImGui::SetNextItemWidth(50);
         if (ImGui::Combo("Type", &currentTypeInt, metabolicTypes, IM_ARRAYSIZE(metabolicTypes)))
         {
@@ -2327,9 +2327,18 @@ void GLFWApp::drawSimControlPanel()
             ImGui::Text("A: Sum of absolute activations");
             ImGui::Text("A2: Sum of squared activations");
             ImGui::Text("MA: Mass-weighted absolute activations");
+            ImGui::Text("MA2: Mass-weighted squared activations");
             ImGui::Separator();
-            ImGui::Text("Note: Call cacheMuscleMass() before using MA mode");
+            ImGui::Text("Note: Call cacheMuscleMass() before using MA/MA2 modes");
             ImGui::EndTooltip();
+        }
+
+        // Metabolic weight slider
+        float metabolicWeight = static_cast<float>(mRenderEnv->getMetabolicWeight());
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Weight", &metabolicWeight, 0.0f, 0.0f, "%.3f"))
+        {
+            mRenderEnv->setMetabolicWeight(static_cast<double>(metabolicWeight));
         }
     }
 

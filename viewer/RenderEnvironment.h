@@ -93,6 +93,8 @@ public:
     std::vector<double> getDmins() { return mEnv->getDmins(); }
     std::vector<double> getBetas() { return mEnv->getBetas(); }
     double getLimitY() { return mEnv->getLimitY(); }
+    double getMetabolicWeight() { return mEnv->getMetabolicWeight(); }
+    void setMetabolicWeight(double weight) { mEnv->setMetabolicWeight(weight); }
 
     // Logging and debugging
     const std::vector<Eigen::VectorXd>& getDesiredTorqueLogs() { return mEnv->getDesiredTorqueLogs(); }

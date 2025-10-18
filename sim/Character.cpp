@@ -336,13 +336,16 @@ void Character::step()
         {
         case A:
         case LEGACY:
-            mMetabolicStepEnergy = mActivations.array().abs().sum();
+            mMetabolicStepEnergy = mActivations.array().sum();
             break;
         case A2:
             mMetabolicStepEnergy = (mActivations.array() * mActivations.array()).sum();
             break;
         case MA:
             mMetabolicStepEnergy = (mMuscleMassCache.array() * mActivations.array().abs()).sum();
+            break;
+        case MA2:
+            mMetabolicStepEnergy = (mMuscleMassCache.array() * mActivations.array() * mActivations.array()).sum();
             break;
         default:
             break;

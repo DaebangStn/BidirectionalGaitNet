@@ -43,7 +43,8 @@ enum MetabolicType
     LEGACY,  // No metabolic computation (backward compatible)
     A,       // abs(activation)
     A2,      // activation^2
-    MA       // mass * abs(activation)
+    MA,      // mass * abs(activation)
+    MA2      // mass * activation^2
 };
 
 ActuatorType getActuatorType(std::string type);
