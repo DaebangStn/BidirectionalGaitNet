@@ -572,8 +572,11 @@ void Environment::updateTargetPosAndVel(bool isInit)
 {
     double dTime = 1.0 / mControlHz;
     double dPhase = dTime / (mBVHs[0]->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    mTargetPositions = mBVHs[0]->getTargetPose(getLocalPhase() + (isInit ? 0.0 : dPhase));
-    mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(mBVHs[0]->getTargetPose(getLocalPhase() + dPhase + (isInit ? 0.0 : dPhase)), mTargetPositions) / dTime;
+    double ofsPhase = (isInit ? 0.0 : dPhase) + getLocalPhase();
+    
+    mTargetPositions = mBVHs[0]->getTargetPose(ofsPhase);
+    const auto nextPose = mBVHs[0]->getTargetPose(ofsPhase + dPhase);
+    mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mTargetPositions) / dTime;
 }
 
 int Environment::isEOE()
@@ -1091,7 +1094,6 @@ void Environment::reset()
 
     // Reset Initial Time
     double time = 0.0;
-
     if (mRewardType == deepmimic) time = dart::math::Random::uniform(1E-2, mBVHs[0]->getMaxTime() - 1E-2);
     else if (mRewardType == gaitnet)
     {
@@ -1119,9 +1121,6 @@ void Environment::reset()
 
     // Initial Pose Setting
     updateTargetPosAndVel(true);
-
-    // if (mRewardType == gaitnet)
-    //     mTargetVelocities.head(6) *= 1.2 * (mStride * (mCharacter->getGlobalRatio()));
     
     if(mRewardType == gaitnet)
     {
@@ -1133,20 +1132,31 @@ void Environment::reset()
     mCharacter->getSkeleton()->setVelocities(mTargetVelocities);
 
     updateTargetPosAndVel();
+    
+    // auto pose = mCharacter->getSkeleton()->getPositions().head(6);
+    // std::cout << "skel orientation: " << pose.transpose() * 180.0 / M_PI << std::endl;
+    // auto r_before = FreeJoint::convertToTransform(pose).linear();
+    // std::cout << "r_before: " << r_before.transpose() << std::endl;
 
-    if (mMusclePoseOptimization) poseOptimization();
+    // if (mMusclePoseOptimization) poseOptimization();
     if (mRewardType == gaitnet)
     {
         Eigen::Vector3d ref_initial_vel = mTargetVelocities.segment(3, 3);
-        ref_initial_vel = FreeJoint::convertToTransform(mCharacter->getSkeleton()->getRootJoint()->getPositions()).linear().transpose() * (FreeJoint::convertToTransform(mTargetPositions.head(6)).linear() * ref_initial_vel);
+        ref_initial_vel = 
+            FreeJoint::convertToTransform(mCharacter->getSkeleton()->getRootJoint()->getPositions()).linear().transpose() * 
+            (FreeJoint::convertToTransform(mTargetPositions.head(6)).linear() * ref_initial_vel);
         Eigen::Vector6d vel = mCharacter->getSkeleton()->getRootJoint()->getVelocities();
         vel.segment(3, 3) = ref_initial_vel;
         mCharacter->getSkeleton()->getRootJoint()->setVelocities(vel);
     }
-
+    
+    // pose = mCharacter->getSkeleton()->getPositions().head(6);
+    // std::cout << "skel2 orientation: " << pose.transpose() * 180.0 / M_PI << std::endl;
+    // auto r_after = FreeJoint::convertToTransform(pose).linear();
+    // std::cout << "r_after: " << r_after.transpose() << std::endl;
+    
     // Height / Pose Optimization
     if (mHeightCalibration != 0) mCharacter->heightCalibration(mWorld, mHeightCalibration == 2);
-
 
     // Pose In ROM
     Eigen::VectorXd cur_pos = mCharacter->getSkeleton()->getPositions();
@@ -1227,11 +1237,10 @@ double Environment::getStepReward()
     Eigen::Vector3d foot_diff = mCurrentFoot - mCurrentTargetFoot;
     foot_diff[0] = 0; // Ignore X axis difference
 
-    Eigen::Vector3d clipped_foot_diff = dart::math::clip(foot_diff, -0.075 * Eigen::Vector3d::Ones(), 0.075 * Eigen::Vector3d::Ones());
+    Eigen::Vector3d clipped_foot_diff = foot_diff.cwiseMax(-0.075).cwiseMin(0.075);
     foot_diff -= clipped_foot_diff;
     Eigen::Vector2i is_contact = getIsContact();
-    if ((mIsLeftLegStance && is_contact[0] == 1) || (!mIsLeftLegStance && is_contact[1] == 1))
-        foot_diff[1] = 0;
+    if ((mIsLeftLegStance && is_contact[0] == 1) || (!mIsLeftLegStance && is_contact[1] == 1)) foot_diff[1] = 0;
     foot_diff *= 8;
     double r = exp(-mStepWeight * foot_diff.squaredNorm() / foot_diff.rows());
     return r;
