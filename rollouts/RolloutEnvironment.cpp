@@ -218,3 +218,7 @@ std::vector<std::string> RolloutEnvironment::GetParameterNames() {
 Eigen::VectorXd RolloutEnvironment::GetParamState(bool isMirror) {
     return mEnv.getParamState(isMirror);
 }
+
+Eigen::VectorXd RolloutEnvironment::GetParamDefault() {
+    return mEnv.getParamDefault();
+}

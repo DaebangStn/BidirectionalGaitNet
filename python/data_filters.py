@@ -238,10 +238,10 @@ class FilterPipeline:
 
         for i, name in enumerate(filter_names):
             if i == 0:
-                print("║  " + name.ljust(box_width - 3) + "║")
+                print("║  " + name.ljust(box_width - 3) + " ║")
             else:
-                print("║  " + "↓".ljust(box_width - 3) + "║")
-                print("║  " + name.ljust(box_width - 3) + "║")
+                print("║  " + "↓".ljust(box_width - 3) + " ║")
+                print("║  " + name.ljust(box_width - 3) + " ║")
 
         print("╚" + "═" * box_width + "╝\n")
 

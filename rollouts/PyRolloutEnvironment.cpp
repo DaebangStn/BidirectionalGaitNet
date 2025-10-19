@@ -30,7 +30,9 @@ void bind_RolloutEnvironment(py::module& m) {
              "Get list of available parameter names")
         .def("get_param_state", &RolloutEnvironment::GetParamState,
              py::arg("is_mirror") = false,
-             "Get current parameter state as vector");
+             "Get current parameter state as vector")
+        .def("get_param_default", &RolloutEnvironment::GetParamDefault,
+             "Get default parameter values as vector");
 }
 
 PYBIND11_MODULE(pyrollout, m) {

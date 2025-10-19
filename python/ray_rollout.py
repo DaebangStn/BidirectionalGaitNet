@@ -318,6 +318,22 @@ def run_rollout(checkpoint_path: str,
     # Extract parameter names for HDF5 metadata
     parameter_names = temp_env.get_parameter_names()
 
+    # If parameter file was provided, check if param_dicts are empty and fill with defaults
+    if parameters:
+        # Get default parameters from temporary environment
+        default_params = temp_env.get_param_default()
+        default_param_dict = {name: float(default_params[i]) for i, name in enumerate(parameter_names)}
+
+        # Replace empty param_dicts with default parameters
+        updated_parameters = []
+        for param_idx, param_dict in parameters:
+            if not param_dict:  # Empty dictionary - use defaults
+                print(f"param_idx={param_idx}: No parameters specified, using defaults")
+                updated_parameters.append((param_idx, default_param_dict))
+            else:
+                updated_parameters.append((param_idx, param_dict))
+        parameters = updated_parameters
+
     # Clean up temp file
     os.unlink(temp_metadata_file.name)
 
