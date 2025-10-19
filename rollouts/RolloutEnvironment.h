@@ -53,6 +53,10 @@ private:
     Environment mEnv;
     RecordConfig mRecordConfig;
     int mTargetCycles = 5;
+
+    // Metabolic energy tracking
+    double mCumulativeMetabolicEnergy = 0.0;
+    int mLastCycleCount = 0;
 };
 
 #endif // ROLLOUT_ENVIRONMENT_H

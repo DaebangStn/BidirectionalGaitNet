@@ -58,8 +58,16 @@ py::dict PyRolloutRecord::get_matrix_data() const {
 void bind_PyRolloutRecord(py::module& m) {
     py::class_<RecordConfig>(m, "RecordConfig")
         .def(py::init<>())
-        .def_static("load_from_yaml", &RecordConfig::LoadFromYAML);
-    
+        .def_static("load_from_yaml", &RecordConfig::LoadFromYAML)
+        .def_readwrite("metabolic", &RecordConfig::metabolic);
+
+    py::class_<RecordConfig::MetabolicConfig>(m, "MetabolicConfig")
+        .def(py::init<>())
+        .def_readwrite("enabled", &RecordConfig::MetabolicConfig::enabled)
+        .def_readwrite("type", &RecordConfig::MetabolicConfig::type)
+        .def_readwrite("step_energy", &RecordConfig::MetabolicConfig::step_energy)
+        .def_readwrite("cumulative", &RecordConfig::MetabolicConfig::cumulative);
+
     py::class_<PyRolloutRecord>(m, "RolloutRecord")
         .def(py::init<const std::vector<std::string>&>())
         .def(py::init<const RecordConfig&>())
@@ -68,6 +76,8 @@ void bind_PyRolloutRecord(py::module& m) {
         .def_property_readonly("fields", &PyRolloutRecord::get_fields)
         .def_property_readonly("nrow", &PyRolloutRecord::get_nrow)
         .def_property_readonly("ncol", &PyRolloutRecord::get_ncol)
-        .def("reset", &PyRolloutRecord::reset);
+        .def("reset", &PyRolloutRecord::reset)
+        .def_static("FieldsFromConfig", &RolloutRecord::FieldsFromConfig,
+                    py::arg("config"), py::arg("skeleton_dof") = 0);
 }
 

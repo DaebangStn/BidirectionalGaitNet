@@ -133,7 +133,6 @@ class MuscleLearner:
         loss_reg_avg = 0.
         loss_target_avg = 0.
         loss_act_reg = 0.
-        print(self.num_epochs_muscle)
         for _ in range(self.num_epochs_muscle):
             np.random.shuffle(idx_all)
             loss_avg = 0.

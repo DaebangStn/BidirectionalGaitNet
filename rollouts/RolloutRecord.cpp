@@ -57,6 +57,14 @@ RecordConfig RecordConfig::LoadFromYAML(const std::string& yaml_path) {
             }
         }
 
+        // Metabolic configuration
+        if (record["metabolic"] && record["metabolic"]["enabled"].as<bool>(false)) {
+            config.metabolic.enabled = true;
+            config.metabolic.type = record["metabolic"]["type"].as<std::string>("LEGACY");
+            config.metabolic.step_energy = record["metabolic"]["step_energy"].as<bool>(false);
+            config.metabolic.cumulative = record["metabolic"]["cumulative"].as<bool>(false);
+        }
+
     } catch (const YAML::Exception& e) {
         std::cerr << "Error loading record config: " << e.what() << std::endl;
     }
@@ -112,6 +120,12 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
             if (config.kinematics.anvel.knee) fields.push_back("anvel/KneeR");
             if (config.kinematics.anvel.ankle) fields.push_back("anvel/AnkleR");
         }
+    }
+
+    // Metabolic fields
+    if (config.metabolic.enabled) {
+        if (config.metabolic.step_energy) fields.push_back("metabolic/step_energy");
+        if (config.metabolic.cumulative) fields.push_back("metabolic/cumulative");
     }
 
     return fields;

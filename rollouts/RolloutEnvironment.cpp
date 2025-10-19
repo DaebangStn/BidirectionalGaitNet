@@ -12,7 +12,28 @@ RolloutEnvironment::~RolloutEnvironment() = default;
 
 void RolloutEnvironment::LoadRecordConfig(const std::string& yaml_path) {
     mRecordConfig = RecordConfig::LoadFromYAML(yaml_path);
-    
+
+    // Apply MetabolicType override if enabled
+    if (mRecordConfig.metabolic.enabled) {
+        const std::string& type = mRecordConfig.metabolic.type;
+        if (type == "LEGACY") {
+            mEnv.getCharacter()->setMetabolicType(LEGACY);
+        } else if (type == "A") {
+            mEnv.getCharacter()->setMetabolicType(A);
+        } else if (type == "A2") {
+            mEnv.getCharacter()->setMetabolicType(A2);
+        } else if (type == "MA") {
+            mEnv.getCharacter()->setMetabolicType(MA);
+        } else if (type == "MA2") {
+            mEnv.getCharacter()->setMetabolicType(MA2);
+        } else {
+            std::cerr << "Warning: Unknown MetabolicType '" << type
+                      << "', using LEGACY" << std::endl;
+            mEnv.getCharacter()->setMetabolicType(LEGACY);
+        }
+        std::cout << "MetabolicType set to: " << type << std::endl;
+    }
+
     // Also load target cycles from YAML if present
     try {
         YAML::Node root = YAML::LoadFile(yaml_path);
@@ -26,6 +47,8 @@ void RolloutEnvironment::LoadRecordConfig(const std::string& yaml_path) {
 
 void RolloutEnvironment::Reset() {
     mEnv.reset();
+    mCumulativeMetabolicEnergy = 0.0;
+    mLastCycleCount = 0;
 }
 
 Eigen::VectorXd RolloutEnvironment::GetState() {
@@ -142,6 +165,29 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
             if (mRecordConfig.kinematics.anvel.ankle) {
                 data["anvel/AnkleR"] = skel->getJoint("TalusR")->getVelocity(0);
             }
+        }
+    }
+
+    // Metabolic energy recording
+    if (mRecordConfig.metabolic.enabled) {
+        double stepEnergy = mEnv.getCharacter()->getMetabolicStepEnergy();
+
+        // Accumulate energy
+        mCumulativeMetabolicEnergy += stepEnergy;
+
+        // Record per-step energy if enabled
+        if (mRecordConfig.metabolic.step_energy) {
+            data["metabolic/step_energy"] = stepEnergy;
+        }
+
+        // Check for cycle boundary
+        int currentCycle = mEnv.getWorldPhaseCount();
+        if (currentCycle != mLastCycleCount && mRecordConfig.metabolic.cumulative) {
+            // Record cumulative energy for completed cycle
+            data["metabolic/cumulative"] = mCumulativeMetabolicEnergy;
+            // Reset for next cycle
+            mCumulativeMetabolicEnergy = 0.0;
+            mLastCycleCount = currentCycle;
         }
     }
 
