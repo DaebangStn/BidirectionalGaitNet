@@ -117,20 +117,20 @@ def surgery_tool():
     """
     Run the surgery_tool binary to execute surgery scripts
     Usage: uv run surgery-tool [options]
-    
+
     Options:
       --skeleton PATH    Path to skeleton XML file
-      --muscle PATH      Path to muscle XML file  
+      --muscle PATH      Path to muscle XML file
       --script PATH      Path to surgery script YAML file
       --help, -h         Show help message
-      
+
     Examples:
       # Use all defaults
       uv run surgery-tool
-      
+
       # Use custom script
       uv run surgery-tool --script data/my_surgery.yaml
-      
+
       # Specify all parameters
       uv run surgery-tool --skeleton data/skeleton_gaitnet_narrow_model.xml \\
                           --muscle data/muscle_gaitnet.xml \\
@@ -150,6 +150,56 @@ def surgery_tool():
     # Run the binary with micromamba environment
     micromamba = get_micromamba_path()
     cmd = [micromamba, "run", "-n", "bidir", str(binary_path)] + args
+    try:
+        subprocess.run(cmd, cwd=project_root, check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+        sys.exit(0)
+
+
+def extract_cycle():
+    """
+    Run the extract_cycle tool to extract single gait cycles from HDF5 rollout data
+    Usage: uv run extract-cycle [options]
+
+    Interactive mode (ncurses UI):
+      uv run extract-cycle
+
+    Non-interactive mode:
+      uv run extract-cycle -f INPUT.h5 -p PARAM_IDX -c CYCLE_IDX [-o OUTPUT.h5]
+
+    Options:
+      -f, --file FILE       Input HDF5 file path
+      -p, --param PARAM     Parameter index
+      -c, --cycle CYCLE     Cycle index
+      -o, --output OUTPUT   Output file path (optional, auto-generated if not specified)
+      -h, --help            Show help message
+
+    Examples:
+      # Interactive mode
+      uv run extract-cycle
+
+      # Extract param_7/cycle_5 with auto-generated output
+      uv run extract-cycle -f sampled/rollout_data.h5 -p 7 -c 5
+
+      # Extract with custom output filename
+      uv run extract-cycle -f sampled/rollout_data.h5 -p 7 -c 5 -o output.h5
+    """
+    project_root = get_project_root()
+    binary_path = project_root / "build/release/tools/extract_cycle"
+
+    if not binary_path.exists():
+        print(f"Error: Binary not found at {binary_path}", file=sys.stderr)
+        print("Please build the project first with: ninja -j 6 -C build/release", file=sys.stderr)
+        sys.exit(1)
+
+    # Pass all arguments to the binary (skip the script name)
+    args = sys.argv[1:]
+
+    # Run the binary directly (no micromamba needed for this tool)
+    cmd = [str(binary_path)] + args
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:

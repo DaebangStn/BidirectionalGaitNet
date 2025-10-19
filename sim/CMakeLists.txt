@@ -12,4 +12,5 @@ target_link_libraries(sim PUBLIC
         dart-collision-bullet
         CURL::libcurl
         yaml-cpp
+        ${HDF5_CXX_LIBRARIES}
 )

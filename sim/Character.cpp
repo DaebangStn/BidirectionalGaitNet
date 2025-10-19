@@ -1186,19 +1186,6 @@ Eigen::VectorXd Character::sixDofToPos(Eigen::VectorXd raw_pos)
     int p_idx = 0;
     Eigen::VectorXd pos = mSkeleton->getPositions();
 
-    // Debug: Check input size
-    static bool first_call = true;
-    if (first_call) {
-        std::cout << "[sixDofToPos] Input size: " << raw_pos.size() << std::endl;
-        std::cout << "[sixDofToPos] Output size: " << pos.size() << std::endl;
-        std::cout << "[sixDofToPos] Joint structure:" << std::endl;
-        for (auto jn : mSkeleton->getJoints()) {
-            if (jn->getNumDofs() == 0) continue;
-            std::cout << "  " << jn->getName() << ": " << jn->getNumDofs() << " DOF" << std::endl;
-        }
-        first_call = false;
-    }
-
     for (auto jn : mSkeleton->getJoints())
     {
         if (jn->getNumDofs() == 0)

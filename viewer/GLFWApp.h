@@ -74,20 +74,20 @@ struct ViewerMotion
 {
     std::string name;
     Eigen::VectorXd param;
-    Eigen::VectorXd motion;  // Flattened motion data: NPZ: 3030 (30 frames × 101 values), HDF5: variable
-    int values_per_frame = 101;  // Values per frame: NPZ=101 (6D rotation), HDF5/BVH=56 (skeleton DOF), C3D=101
-    int num_frames = 30;         // Number of frames loaded: NPZ=30 (first cycle only), HDF5=total frames
-    std::string source_type = "npz";  // Source format: "npz", "hdf5", "bvh", or "c3d"
+    Eigen::VectorXd motion;  // Flattened motion data: NPZ: 3030 (30 frames × 101 values), HDF: variable
+    int values_per_frame = 101;  // Values per frame: NPZ=101 (6D rotation), HDF/BVH=56 (skeleton DOF), C3D=101
+    int num_frames = 30;         // Number of frames loaded: NPZ=30 (first cycle only), HDF=total frames
+    std::string source_type = "npz";  // Source format: "npz", "hdfRollout", "hdfSingle", "bvh", or "c3d"
 
     // NPZ-specific: track total frames in file vs frames loaded
     int npz_total_frames = 60;   // Total frames in NPZ file (60 = 2 cycles × 30 frames/cycle)
     int npz_frames_per_cycle = 30;  // Frames per gait cycle (30)
 
-    // HDF5-specific timing (for correct playback speed)
+    // HDF-specific timing (for correct playback speed)
     int hdf5_total_timesteps = 0;      // Total simulation timesteps across all cycles
     int hdf5_timesteps_per_cycle = 0;  // Average timesteps per gait cycle (for phase mapping)
 
-    // Per-motion root positioning (clear semantics for HDF5 coordinate alignment)
+    // Per-motion root positioning (clear semantics for HDF coordinate alignment)
     Eigen::Vector3d initialRootPosition = Eigen::Vector3d::Zero();  // First frame root joint position [3,4,5]
     Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        // World offset: (simulated_char - motion_frame0) + overlap_prevention
     std::vector<Eigen::Vector3d> rootBodyCOM;                       // Root body COM trajectory from root/x,y,z (HDF5 only, optional)
@@ -269,8 +269,6 @@ private:
     std::vector<Eigen::VectorXd> mMotionBuffer;
     std::vector<Eigen::Matrix3d> mJointCalibration;
 
-    // BVH Buffer
-
     std::vector<Eigen::VectorXd> mC3dMotion;
     int mC3DCount;
 
@@ -310,7 +308,7 @@ private:
     void loadSelectedHDF5Motion();                    // Load specific param/cycle combination
     void unloadMotion();                              // Unload all motions and reset parameters
 
-    std::string mMotionLoadMode;  // Motion loading mode: "no", "npz", or "hdf5"
+    std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads all types (npz, hdfRollout, hdfSingle, bvh)
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
         
         // (1) Set Motion Skeleton
@@ -425,6 +423,10 @@ private:
     void loadNetworkFromPath(const std::string& path);
     void initializeMotionSkeleton();
     void loadMotionFiles();
+    void loadNPZMotion();
+    void loadHDFRolloutMotion();
+    void loadBVHMotion();
+    void loadHDFSingleMotion();
     void updateUnifiedKeys();
     void updateResizablePlotsFromKeys();
 

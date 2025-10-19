@@ -87,25 +87,3 @@ def load_FGN(checkpoint_file, num_paramstates, ref_dof):
     ref = RefNN(num_paramstates + 2, ref_dof, 'cpu')
     ref.load_state_dict(convert_to_torch_tensor(state['ref']))
     return ref, state['metadata']
-
-
-def load_motions_from_file(motion_file_path, num_known_param):
-    
-    result_motion = []
-    result_param = []
-
-    motion_file = np.load(motion_file_path)
-    # from IPython import embed; embed()
-
-    motions = motion_file["motions"]
-    params = motion_file["params"]
-    
-    for i in range(len(motions)):
-        if(len(motions[i]) == 6060): ## Hard coding 
-            result_motion.append(motions[i])
-            result_param.append(params[i])
-        else:
-            result_motion.append(motions[i].flatten())
-            result_param.append(params[i])
-
-    return np.array(result_param), np.array(result_motion)

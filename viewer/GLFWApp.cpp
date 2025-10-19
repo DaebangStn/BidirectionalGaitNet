@@ -11,6 +11,7 @@
 #include "dart/dynamics/FreeJoint.hpp"
 #include "Motion.h"
 #include "NPZ.h"
+#include "HDF.h"
 
 namespace fs = std::filesystem;
 
@@ -152,8 +153,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // C3D
     selected_c3d = 0;
-
-    // BVH (deprecated variables kept for compatibility, BVH now uses mMotions)
 
     mFocus = 1;
     mRenderC3D = false;
@@ -904,23 +903,23 @@ void GLFWApp::initEnv(std::string metadata)
     // Initialize motion skeleton
     initializeMotionSkeleton();
 
-    // Hardcoded: Load Sim_Healthy.npz as reference motion
-    // Use mMotionCharacter which matches the NPZ data format (not render character)
-    try {
-        std::string npz_path = "data/npz_motions/Sim_Healthy.npz";
-        if (fs::exists(npz_path)) {
-            std::cout << "[GLFWApp] Loading hardcoded reference motion: " << npz_path << std::endl;
-            NPZ* npz = new NPZ(npz_path);
-            // CRITICAL: Use mMotionCharacter (NPZ-compatible) not mRenderEnv->getCharacter()
-            npz->setRefMotion(mMotionCharacter, mRenderEnv->getWorld());
-            mRenderEnv->setMotion(npz);
-            std::cout << "[GLFWApp] Successfully loaded hardcoded NPZ reference motion" << std::endl;
-        } else {
-            std::cerr << "[GLFWApp] Hardcoded NPZ file not found: " << npz_path << std::endl;
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "[GLFWApp] Error loading hardcoded NPZ: " << e.what() << std::endl;
-    }
+    // // Hardcoded: Load Sim_Healthy.npz as reference motion
+    // // Use mMotionCharacter which matches the NPZ data format (not render character)
+    // try {
+    //     std::string npz_path = "data/npz_motions/Sim_Healthy.npz";
+    //     if (fs::exists(npz_path)) {
+    //         std::cout << "[GLFWApp] Loading hardcoded reference motion: " << npz_path << std::endl;
+    //         NPZ* npz = new NPZ(npz_path);
+    //         // CRITICAL: Use mMotionCharacter (NPZ-compatible) not mRenderEnv->getCharacter()
+    //         npz->setRefMotion(mMotionCharacter, mRenderEnv->getWorld());
+    //         mRenderEnv->setMotion(npz);
+    //         std::cout << "[GLFWApp] Successfully loaded hardcoded NPZ reference motion" << std::endl;
+    //     } else {
+    //         std::cerr << "[GLFWApp] Hardcoded NPZ file not found: " << npz_path << std::endl;
+    //     }
+    // } catch (const std::exception& e) {
+    //     std::cerr << "[GLFWApp] Error loading hardcoded NPZ: " << e.what() << std::endl;
+    // }
 
     // Load networks
     auto character = mRenderEnv->getCharacter();
@@ -972,22 +971,7 @@ void GLFWApp::initEnv(std::string metadata)
         }
     }
 
-    // BVH files
-    path = "data/motion";
-    mBVHList.clear();
-    if (fs::exists(path) && fs::is_directory(path)) {
-        for (const auto &entry : fs::directory_iterator(path)) {
-            if (fs::is_regular_file(entry)) {
-                std::string filename = entry.path().filename().string();
-                if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".bvh") {
-                    mBVHList.push_back(entry.path().string());
-                }
-            }
-        }
-        std::cout << "[BVH] Found " << mBVHList.size() << " BVH files in " << path << std::endl;
-    }
-
-    // Load motion files
+    // Load motion files (includes BVH and HDF5 scanning)
     loadMotionFiles();
 
     reset();
@@ -1185,20 +1169,21 @@ void GLFWApp::drawKinematicsControlPanel()
 
         // Check currently selected motion type
         bool npz_selected = false;
-        bool hdf5_selected = false;
+        bool hdf_selected = false;
         bool bvh_selected = false;
         if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
             if (mMotions[mMotionIdx].source_type == "npz") {
                 npz_selected = true;
-            } else if (mMotions[mMotionIdx].source_type == "hdf5") {
-                hdf5_selected = true;
+            } else if (mMotions[mMotionIdx].source_type == "hdfRollout" ||
+                       mMotions[mMotionIdx].source_type == "hdfSingle") {
+                hdf_selected = true;
             } else if (mMotions[mMotionIdx].source_type == "bvh") {
                 bvh_selected = true;
             }
         }
 
         // Unified Motion Files collapsing header with color based on selection
-        bool any_motion_selected = npz_selected || hdf5_selected || bvh_selected;
+        bool any_motion_selected = npz_selected || hdf_selected || bvh_selected;
         if (any_motion_selected) {
             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
@@ -1207,17 +1192,23 @@ void GLFWApp::drawKinematicsControlPanel()
 
         if (ImGui::CollapsingHeader("Motion Files", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            // Loaded motions list (NPZ, HDF5, BVH)
+            // Loaded motions list (NPZ, HDF Single, BVH)
+            // Note: hdfRollout motions are loaded via HDF5 Loading Controls, not shown here
             ImGui::Text("Loaded Motions:");
             if (ImGui::BeginListBox("##AllMotions_List", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
             {
                 for (int i = 0; i < mMotions.size(); i++)
                 {
-                    // Add type prefix for all motion types
+                    // Skip hdfRollout motions (loaded via HDF5 Loading Controls)
+                    if (mMotions[i].source_type == "hdfRollout") {
+                        continue;
+                    }
+
+                    // Add type prefix for displayed motion types
                     std::string prefix;
                     if (mMotions[i].source_type == "npz") {
                         prefix = "[NPZ] ";
-                    } else if (mMotions[i].source_type == "hdf5") {
+                    } else if (mMotions[i].source_type == "hdfSingle") {
                         prefix = "[HDF] ";
                     } else if (mMotions[i].source_type == "bvh") {
                         prefix = "[BVH] ";
@@ -1227,7 +1218,7 @@ void GLFWApp::drawKinematicsControlPanel()
                     if (ImGui::Selectable(display_name.c_str(), mMotionIdx == i)) {
                         mMotionIdx = i;
                         // Update max frame index for manual navigation
-                        if (mMotions[i].source_type == "bvh" || mMotions[i].source_type == "hdf5") {
+                        if (mMotions[i].source_type == "bvh" || mMotions[i].source_type == "hdfSingle") {
                             mMaxFrameIndex = mMotions[i].hdf5_total_timesteps - 1;
                         } else {
                             mMaxFrameIndex = mMotions[i].num_frames - 1;
@@ -1257,7 +1248,7 @@ void GLFWApp::drawKinematicsControlPanel()
 
             // HDF5 Loading Controls (collapsible sub-section)
             ImGui::Separator();
-            if (ImGui::TreeNode("HDF5 Loading Controls"))
+            if (ImGui::TreeNode("Load HDF rollout data"))
         {
             // Static tracking variables (moved outside to be accessible from file selection)
             static int last_param_idx = -1;
@@ -1447,7 +1438,7 @@ void GLFWApp::drawKinematicsControlPanel()
                 ImGui::Text("Frame: %d / %d", mManualFrameIndex, mMaxFrameIndex);
 
                 // Show frame time for HDF5/BVH motions with timestamps
-                if ((mMotions[mMotionIdx].source_type == "hdf5" || mMotions[mMotionIdx].source_type == "bvh") &&
+                if ((mMotions[mMotionIdx].source_type == "hdfRollout" || mMotions[mMotionIdx].source_type == "hdfSingle" || mMotions[mMotionIdx].source_type == "bvh") &&
                     !mMotions[mMotionIdx].timestamps.empty() &&
                     mManualFrameIndex < mMotions[mMotionIdx].timestamps.size()) {
                     double frame_time = mMotions[mMotionIdx].timestamps[mManualFrameIndex];
@@ -2439,16 +2430,15 @@ void GLFWApp::drawSimControlPanel()
     // Rendering
     if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::Checkbox("Draw Reference Motion", &mDrawReferenceSkeleton);
-        ImGui::SameLine();
         if (ImGui::Button("Load Ref Motion..."))
         {
             IGFD::FileDialogConfig config;
             config.path = "data/motion";
             ImGuiFileDialog::Instance()->OpenDialog("ChooseRefMotionDlgKey", "Choose Reference Motion File",
-                ".bvh,.npz", config);
+                ".*", config);
         }
-
+        ImGui::Checkbox("Draw Reference Motion", &mDrawReferenceSkeleton);
+            
         // File dialog display and handling
         if (ImGuiFileDialog::Instance()->Display("ChooseRefMotionDlgKey"))
         {
@@ -2478,6 +2468,15 @@ void GLFWApp::drawSimControlPanel()
                         npz->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
                         newMotion = npz;
                         std::cout << "[RefMotion] Loaded NPZ file with " << npz->getNumFrames() << " frames" << std::endl;
+                    }
+                    else if (filePathName.find(".h5") != std::string::npos ||
+                             filePathName.find(".hdf5") != std::string::npos) {
+                        // Load HDF5 file
+                        // For extracted single-cycle HDF files, use param_0/cycle_0 by default
+                        HDF* hdf = new HDF(filePathName, 0, 0);
+                        hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+                        newMotion = hdf;
+                        std::cout << "[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames" << std::endl;
                     }
                     else {
                         std::cerr << "[RefMotion] Unsupported file format: " << filePathName << std::endl;
@@ -3317,7 +3316,7 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
     // phase: [0, 1)
     double frame_float;
 
-    if (motion.source_type == "hdf5" && !motion.timestamps.empty()) {
+    if (motion.source_type == "hdfRollout" && !motion.timestamps.empty()) {
         // HDF5 with timestamps: Use actual simulation time for accurate interpolation
         double t_start = motion.timestamps.front();
         double t_end = motion.timestamps.back();
@@ -3355,12 +3354,12 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
 
         // Set frame_float to maintain compatibility with existing code
         frame_float = frame_idx_left + weight;
-    } else if (motion.source_type == "hdf5") {
-        // HDF5 without timestamps: Fall back to uniform spacing
+    } else if (motion.source_type == "hdfRollout" || motion.source_type == "hdfSingle") {
+        // HDF5 single cycle: direct frame mapping
         frame_float = phase * motion.hdf5_timesteps_per_cycle;
     } else if (motion.source_type == "bvh") {
-        // BVH motion: direct frame mapping (similar to HDF5)
-        frame_float = phase * motion.num_frames;  // num_cycles = total frames for BVH
+        // BVH single cycle: direct frame mapping
+        frame_float = phase * motion.num_frames;
     } else {
         // NPZ motion: contains 2 gait cycles, use first half (1 cycle) in viewer time mode
         // num_cycles is 60, so use 30 frames for one gait cycle
@@ -3378,7 +3377,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
     if (!character) return;
 
     int frames_per_cycle = motion.values_per_frame;
-    int total_frames = (motion.source_type == "hdf5" || motion.source_type == "bvh") ?
+    int total_frames = (motion.source_type == "hdfRollout" || motion.source_type == "hdfSingle" || motion.source_type == "bvh") ?
                        motion.hdf5_total_timesteps : motion.num_frames;
 
     // Clamp frame_float to valid range for this motion
@@ -3447,7 +3446,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
 
     // 2. Convert to full skeleton pose if NPZ
     Eigen::VectorXd motion_pos;
-    if (motion.source_type == "hdf5" || motion.source_type == "bvh") {
+    if (motion.source_type == "hdfRollout" || motion.source_type == "hdfSingle" || motion.source_type == "bvh") {
         motion_pos = interpolated_frame;
     } else {
         // NPZ: convert from 6D rotation format to angles
@@ -3462,9 +3461,9 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
         motion_pos = character->sixDofToPos(interpolated_frame);
     }
 
-    // 3. Apply position offset (different handling for NPZ vs HDF5/BVH)
-    if (motion.source_type == "hdf5" || motion.source_type == "bvh") {
-        // HDF5/BVH: Use delta from initial position plus cycle accumulation
+    // 3. Apply position offset (different handling for NPZ vs HDF/BVH)
+    if (motion.source_type == "hdfRollout" || motion.source_type == "hdfSingle" || motion.source_type == "bvh") {
+        // HDF/BVH: Use delta from initial position plus cycle accumulation
         Eigen::Vector3d current_root_pos(motion_pos[3], motion_pos[4], motion_pos[5]);
         Eigen::Vector3d delta = current_root_pos - motion.initialRootPosition;
 
@@ -3550,7 +3549,7 @@ void GLFWApp::updateViewerTime(double dt)
     }
 
     int current_frame_idx = (int)frame_float;
-    int total_frames = (current_motion.source_type == "hdf5" || current_motion.source_type == "bvh") ?
+    int total_frames = (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle" || current_motion.source_type == "bvh") ?
                        current_motion.hdf5_total_timesteps : current_motion.num_frames;
     current_frame_idx = current_frame_idx % total_frames;
 
@@ -3558,8 +3557,8 @@ void GLFWApp::updateViewerTime(double dt)
     Character* character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
     if (!character) return;
 
-    if (current_motion.source_type == "hdf5" || current_motion.source_type == "bvh") {
-        // HDF5/BVH: Absolute positions, accumulate only on cycle wrap in automatic mode
+    if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle" || current_motion.source_type == "bvh") {
+        // HDF/BVH: Absolute positions, accumulate only on cycle wrap in automatic mode
         Eigen::VectorXd current_frame = current_motion.motion.segment(
             current_frame_idx * frames_per_cycle, frames_per_cycle);
 
@@ -3820,7 +3819,7 @@ void GLFWApp::setCamera()
             }
 
             int current_frame_idx = (int)frame_float;
-            int total_frames = (current_motion.source_type == "hdf5") ?
+            int total_frames = (current_motion.source_type == "hdfRollout") ?
                                current_motion.hdf5_total_timesteps : current_motion.num_frames;
             current_frame_idx = current_frame_idx % total_frames;
 
@@ -3828,14 +3827,14 @@ void GLFWApp::setCamera()
                 current_frame_idx * current_motion.values_per_frame, current_motion.values_per_frame);
 
             Eigen::VectorXd current_pos;
-            if (current_motion.source_type == "hdf5") {
+            if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle") {
                 current_pos = current_frame;
             } else {
                 current_pos = mMotionCharacter->sixDofToPos(current_frame);
             }
 
-            if (current_motion.source_type == "hdf5") {
-                // HDF5: Use delta from initial position plus cycle accumulation
+            if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle") {
+                // HDF: Use delta from initial position plus cycle accumulation
                 Eigen::Vector3d root_pos(current_pos[3], current_pos[4], current_pos[5]);
                 Eigen::Vector3d delta = root_pos - current_motion.initialRootPosition;
 
@@ -4023,205 +4022,290 @@ void GLFWApp::initializeMotionSkeleton()
     }
 }
 
+void GLFWApp::loadNPZMotion()
+{
+	std::string motion_path = "data/npz_motions";
+	if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
+		std::cerr << "Motion directory not found: " << motion_path << std::endl;
+		return;
+	}
+
+	for (const auto &entry : fs::directory_iterator(motion_path)) {
+		std::string file_path = entry.path().string();
+		std::string ext = entry.path().extension().string();
+		if (ext != ".npz")
+			continue;
+
+		try {
+			// Load NPZ file using NPZ class
+			NPZ* npz = new NPZ(file_path);
+
+			// Get parameters if available
+			Eigen::VectorXd params = npz->getParams();
+			if (params.size() == 0) {
+				// If no params in file, use default zeros
+				params = Eigen::VectorXd::Zero(mRenderEnv->getNumKnownParam());
+			}
+
+			// Create ViewerMotion from NPZ
+			ViewerMotion motion_elem;
+			motion_elem.name = entry.path().filename().string();
+			motion_elem.source_type = "npz";
+			motion_elem.param = params;
+
+			// NPZ format: 101 values per frame (6D rotation)
+			int num_frames = npz->getNumFrames();
+			motion_elem.values_per_frame = 101;
+			motion_elem.npz_total_frames = num_frames;
+			motion_elem.npz_frames_per_cycle = 30;  // Assume 30 frames per cycle
+
+			// Extract only first cycle (first 30 frames)
+			int frames_to_load = std::min(30, num_frames);
+			motion_elem.num_frames = frames_to_load;
+
+			// Store all frames in flattened motion vector
+			motion_elem.motion = Eigen::VectorXd(frames_to_load * 101);
+			for (int i = 0; i < frames_to_load; i++) {
+				// Get raw pose (6D rotation format)
+				// Note: getPose() returns raw data since setRefMotion() not called yet
+				Eigen::VectorXd pose = npz->getPose(i);
+				if (pose.size() != 101) {
+					std::cerr << "[NPZ] Warning: Expected 101 DOF, got " << pose.size() << std::endl;
+					delete npz;
+					throw std::runtime_error("Unexpected DOF count in NPZ file");
+				}
+				motion_elem.motion.segment(i * 101, 101) = pose;
+			}
+
+			mMotions.push_back(motion_elem);
+			delete npz;
+
+			std::cout << "[NPZ] Loaded " << motion_elem.name << ": " << frames_to_load
+					  << " frames (first cycle of " << num_frames << " total)" << std::endl;
+
+		} catch (const std::exception& e) {
+			std::cerr << "[NPZ] Error loading " << file_path << ": " << e.what() << std::endl;
+			continue;
+		}
+	}
+
+	std::cout << "[NPZ] Total NPZ motions loaded: "
+			  << std::count_if(mMotions.begin(), mMotions.end(),
+				  [](const ViewerMotion& m) { return m.source_type == "npz"; }) << std::endl;
+}
+
+void GLFWApp::loadHDFRolloutMotion()
+{
+	scanHDF5Structure();
+
+	// Auto-select first HDF5 file if available
+	if (!mHDF5Files.empty() && mSelectedHDF5FileIdx < 0) {
+		mSelectedHDF5FileIdx = 0;
+		mSelectedHDF5ParamIdx = 0;
+		mSelectedHDF5CycleIdx = 0;
+
+		// Scan params in first file to get max indices
+		try {
+			H5::H5File h5file(mHDF5Files[0], H5F_ACC_RDONLY);
+			hsize_t num_params = h5file.getNumObjs();
+			mMaxHDF5ParamIdx = 0;
+			for (hsize_t j = 0; j < num_params; j++) {
+				std::string param_name = h5file.getObjnameByIdx(j);
+				if (param_name.find("param_") == 0) {
+					int param_idx = std::stoi(param_name.substr(6));
+					if (param_idx > mMaxHDF5ParamIdx) {
+						mMaxHDF5ParamIdx = param_idx;
+					}
+				}
+			}
+			h5file.close();
+			std::cout << "Auto-selected first HDF5 file with max param_idx: " << mMaxHDF5ParamIdx << std::endl;
+		} catch (const std::exception& e) {
+			std::cerr << "Error reading params from first file: " << e.what() << std::endl;
+		}
+
+		// Load parameters from auto-selected file
+		loadHDF5Parameters();
+	}
+}
+
+void GLFWApp::loadBVHMotion()
+{
+	// Scan for BVH files in data/motion directory
+	std::vector<std::string> bvh_files;
+	std::string motion_dir = "data/motion";
+	if (fs::exists(motion_dir) && fs::is_directory(motion_dir)) {
+		for (const auto &entry : fs::directory_iterator(motion_dir)) {
+			if (fs::is_regular_file(entry)) {
+				std::string filename = entry.path().filename().string();
+				if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".bvh") {
+					bvh_files.push_back(entry.path().string());
+				}
+			}
+		}
+	}
+
+	if (!bvh_files.empty() && mRenderEnv) {
+		std::cout << "[BVH] Loading " << bvh_files.size() << " BVH files into mMotions..." << std::endl;
+
+		for (const auto& bvh_path : bvh_files) {
+			try {
+				// Load BVH file
+				BVH* bvh = new BVH(bvh_path);
+				bvh->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+
+				// Create ViewerMotion from BVH
+				ViewerMotion motion_elem;
+				motion_elem.name = fs::path(bvh_path).filename().string();
+				motion_elem.source_type = "bvh";
+				motion_elem.param = Eigen::VectorXd::Zero(mRenderEnv->getNumKnownParam());
+
+				// Extract all frames from BVH
+				int num_frames = bvh->getNumFrames();
+				int dof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
+
+				// Store all BVH frames in flattened motion vector
+				motion_elem.motion = Eigen::VectorXd(num_frames * dof);
+				for (int i = 0; i < num_frames; i++) {
+					double phase = (double)i / (double)num_frames;
+					Eigen::VectorXd pose = bvh->getPose(phase);
+					motion_elem.motion.segment(i * dof, dof) = pose;
+				}
+
+				// Set BVH-specific parameters
+				motion_elem.values_per_frame = dof;  // Each frame is full skeleton DOF
+				motion_elem.num_frames = num_frames;  // Total number of frames
+				motion_elem.hdf5_total_timesteps = num_frames;
+				motion_elem.hdf5_timesteps_per_cycle = num_frames;
+
+				// Set initial root position from first frame
+				if (motion_elem.motion.size() >= 6) {
+					motion_elem.initialRootPosition = Eigen::Vector3d(
+						motion_elem.motion[3],
+						motion_elem.motion[4],
+						motion_elem.motion[5]
+					);
+				}
+
+				// Build timestamps for each frame
+				double frame_time = bvh->getFrameTime();
+				for (int i = 0; i < num_frames; i++) {
+					motion_elem.timestamps.push_back(i * frame_time);
+				}
+
+				mMotions.push_back(motion_elem);
+				delete bvh;
+
+				std::cout << "[BVH] Loaded " << motion_elem.name << " with " << num_frames << " frames" << std::endl;
+			} catch (const std::exception& e) {
+				std::cerr << "[BVH] Error loading " << bvh_path << ": " << e.what() << std::endl;
+			}
+		}
+
+		std::cout << "[BVH] Total BVH motions loaded: " << std::count_if(mMotions.begin(), mMotions.end(),
+			[](const ViewerMotion& m) { return m.source_type == "bvh"; }) << std::endl;
+	}
+}
+
+void GLFWApp::loadHDFSingleMotion()
+{
+	std::vector<std::string> hdf_single_files;
+	std::string motion_dir = "data/motion";
+
+	if (fs::exists(motion_dir) && fs::is_directory(motion_dir)) {
+		for (const auto &entry : fs::directory_iterator(motion_dir)) {
+			if (fs::is_regular_file(entry)) {
+				std::string ext = entry.path().extension().string();
+				if (ext == ".h5" || ext == ".hdf5") {
+					hdf_single_files.push_back(entry.path().string());
+				}
+			}
+		}
+	}
+
+	if (!hdf_single_files.empty() && mRenderEnv) {
+		std::cout << "[HDF Single] Loading " << hdf_single_files.size() << " extracted HDF5 files..." << std::endl;
+
+		for (const auto& hdf_path : hdf_single_files) {
+			try {
+				// Load HDF file (param_idx and cycle_idx are ignored for flat structure)
+				HDF* hdf = new HDF(hdf_path, 0, 0);
+				hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+
+				// Create ViewerMotion from HDF
+				ViewerMotion motion_elem;
+				motion_elem.name = fs::path(hdf_path).filename().string();
+				motion_elem.source_type = "hdfSingle";
+				motion_elem.param = Eigen::VectorXd::Zero(mRenderEnv->getNumKnownParam());
+
+				// Extract all frames from HDF
+				int num_frames = hdf->getNumFrames();
+				int dof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
+
+				// Store all HDF frames in flattened motion vector
+				motion_elem.motion = Eigen::VectorXd(num_frames * dof);
+				for (int i = 0; i < num_frames; i++) {
+					Eigen::VectorXd pose = hdf->getPose(i);
+					motion_elem.motion.segment(i * dof, dof) = pose;
+				}
+
+				// Set HDF-specific parameters
+				motion_elem.values_per_frame = dof;
+				motion_elem.num_frames = num_frames;
+				motion_elem.hdf5_total_timesteps = num_frames;
+				motion_elem.hdf5_timesteps_per_cycle = num_frames;
+
+				// Set initial root position from first frame
+				if (motion_elem.motion.size() >= 6) {
+					motion_elem.initialRootPosition = Eigen::Vector3d(
+						motion_elem.motion[3],
+						motion_elem.motion[4],
+						motion_elem.motion[5]
+					);
+				}
+
+				// Build timestamps from HDF time data
+				Eigen::VectorXd time_data = hdf->getTimeData();
+				for (int i = 0; i < num_frames; i++) {
+					motion_elem.timestamps.push_back(time_data[i]);
+				}
+
+				mMotions.push_back(motion_elem);
+				delete hdf;
+
+				std::cout << "[HDF Single] Loaded " << motion_elem.name << " with " << num_frames << " frames" << std::endl;
+			} catch (const std::exception& e) {
+				std::cerr << "[HDF Single] Error loading " << hdf_path << ": " << e.what() << std::endl;
+			}
+		}
+
+		std::cout << "[HDF Single] Total: "
+				  << std::count_if(mMotions.begin(), mMotions.end(),
+					  [](const ViewerMotion& m) { return m.source_type == "hdfSingle"; }) << std::endl;
+	}
+}
+
 void GLFWApp::loadMotionFiles()
 {
-    py::gil_scoped_acquire gil;
+	py::gil_scoped_acquire gil;
 
-    mMotions.clear();
-    mMotionIdx = 0;
+	mMotions.clear();
+	mMotionIdx = 0;
 
-    // Check motion load mode from config
-    if (mMotionLoadMode == "no") {
-        std::cout << "[Motion] Motion loading disabled by config (motion_load_mode: no)" << std::endl;
-        return;
-    }
+	// Check motion load mode from config
+	if (mMotionLoadMode == "no") {
+		std::cout << "[Motion] Motion loading disabled" << std::endl;
+		return;
+	}
 
-    // Load NPZ motion files (if mode is "npz" or "hdf5")
-    if (mMotionLoadMode == "npz" || mMotionLoadMode == "hdf5") {
-        std::string motion_path = "data/npz_motions";
-        if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
-            std::cerr << "Motion directory not found: " << motion_path << std::endl;
-        } else {
-        try {
-            py::object load_motions_from_file = py::module::import("forward_gaitnet").attr("load_motions_from_file");
-        
-        for (const auto &entry : fs::directory_iterator(motion_path)) {
-            std::string file_name = entry.path().string();
-            if (file_name.find(".npz") == std::string::npos)
-                continue;
-
-            try {
-                py::tuple results = load_motions_from_file(file_name, mRenderEnv->getNumKnownParam());
-                
-                // Handle potential type conversion issues
-                py::object params_obj = results[0];
-                py::object motions_obj = results[1];
-                
-                // Unwrap nested tuples if needed (debug build issue)
-                if (py::isinstance<py::tuple>(params_obj)) {
-                    py::tuple params_tuple = params_obj.cast<py::tuple>();
-                    if (params_tuple.size() > 0) {
-                        params_obj = params_tuple[0];
-                    }
-                }
-                if (py::isinstance<py::tuple>(motions_obj)) {
-                    py::tuple motions_tuple = motions_obj.cast<py::tuple>();
-                    if (motions_tuple.size() > 0) {
-                        motions_obj = motions_tuple[0];
-                    }
-                }
-                
-                Eigen::MatrixXd params = params_obj.cast<Eigen::MatrixXd>();
-                Eigen::MatrixXd motions = motions_obj.cast<Eigen::MatrixXd>();
-
-                std::cout << "[loadMotionFiles] NPZ file: " << file_name << std::endl;
-                std::cout << "  Params shape: (" << params.rows() << ", " << params.cols() << ")" << std::endl;
-                std::cout << "  Motions shape: (" << motions.rows() << ", " << motions.cols() << ")" << std::endl;
-                std::cout << "  Per-sequence data size: " << motions.cols() << " values" << std::endl;
-
-                for (int i = 0; i < params.rows(); i++) {
-                    ViewerMotion motion_elem;
-                    motion_elem.name = file_name + "_" + std::to_string(i);
-                    motion_elem.param = params.row(i);
-
-                    // NPZ structure: 6060 values = 60 frames × 101 values/frame
-                    // Extract only first 30 frames (first cycle)
-                    motion_elem.source_type = "npz";
-                    motion_elem.values_per_frame = 101;  // NPZ 6D rotation format
-                    motion_elem.npz_total_frames = 60;   // Total frames in file
-                    motion_elem.npz_frames_per_cycle = 30;  // Frames per cycle
-                    motion_elem.num_frames = 30;         // Use only first cycle
-
-                    // Extract first 30 frames only
-                    Eigen::VectorXd full_motion = motions.row(i);
-                    motion_elem.motion = full_motion.head(30 * 101);  // 3030 values
-
-                    std::cout << "  Motion " << i << ": loaded " << motion_elem.num_frames
-                              << " frames (first cycle of " << motion_elem.npz_total_frames << " total)" << std::endl;
-                    mMotions.push_back(motion_elem);
-                }
-            } catch (const std::exception& e) {
-                std::cerr << "Error loading motion file " << file_name << ": " << e.what() << std::endl;
-                continue;
-            }
-        }
-        } catch (const std::exception& e) {
-            std::cerr << "Error importing forward_gaitnet module: " << e.what() << std::endl;
-        }
-        }
-        std::cout << "Total NPZ motions loaded: " << mMotions.size() << std::endl;
-    }
-
-    // HDF5 files will be loaded on-demand via UI interaction (only if mode is "hdf5")
-    if (mMotionLoadMode == "hdf5") {
-        // Scan for available HDF5 files and auto-select first one
-        scanHDF5Structure();
-
-        // Auto-select first HDF5 file if available
-        if (!mHDF5Files.empty() && mSelectedHDF5FileIdx < 0) {
-        mSelectedHDF5FileIdx = 0;
-        mSelectedHDF5ParamIdx = 0;
-        mSelectedHDF5CycleIdx = 0;
-
-        // Scan params in first file to get max indices
-        try {
-            H5::H5File h5file(mHDF5Files[0], H5F_ACC_RDONLY);
-            hsize_t num_params = h5file.getNumObjs();
-            mMaxHDF5ParamIdx = 0;
-            for (hsize_t j = 0; j < num_params; j++) {
-                std::string param_name = h5file.getObjnameByIdx(j);
-                if (param_name.find("param_") == 0) {
-                    int param_idx = std::stoi(param_name.substr(6));
-                    if (param_idx > mMaxHDF5ParamIdx) {
-                        mMaxHDF5ParamIdx = param_idx;
-                    }
-                }
-            }
-            h5file.close();
-            std::cout << "Auto-selected first HDF5 file with max param_idx: " << mMaxHDF5ParamIdx << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "Error reading params from first file: " << e.what() << std::endl;
-        }
-
-        // Load parameters from auto-selected file
-        loadHDF5Parameters();
-        }
-    }
-
-    // Load BVH motion files (if mode is "bvh" or if BVH files are available)
-    if (mMotionLoadMode == "bvh" || mMotionLoadMode == "npz" || mMotionLoadMode == "hdf5") {
-        if (!mBVHList.empty() && mRenderEnv) {
-            std::cout << "[BVH] Loading BVH files into mMotions..." << std::endl;
-
-            for (const auto& bvh_path : mBVHList) {
-                try {
-                    // Load BVH file
-                    BVH* bvh = new BVH(bvh_path);
-                    bvh->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
-
-                    // Create ViewerMotion from BVH
-                    ViewerMotion motion_elem;
-                    motion_elem.name = fs::path(bvh_path).filename().string();
-                    motion_elem.source_type = "bvh";
-                    motion_elem.param = Eigen::VectorXd::Zero(mRenderEnv->getNumKnownParam());
-
-                    // Extract all frames from BVH
-                    int num_frames = bvh->getNumFrames();
-                    int dof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
-
-                    // Store all BVH frames in flattened motion vector
-                    motion_elem.motion = Eigen::VectorXd(num_frames * dof);
-                    for (int i = 0; i < num_frames; i++) {
-                        double phase = (double)i / (double)num_frames;
-                        Eigen::VectorXd pose = bvh->getPose(phase);
-                        motion_elem.motion.segment(i * dof, dof) = pose;
-                    }
-
-                    // Set BVH-specific parameters
-                    motion_elem.values_per_frame = dof;  // Each frame is full skeleton DOF
-                    motion_elem.num_frames = num_frames;  // Total number of frames
-                    motion_elem.hdf5_total_timesteps = num_frames;
-                    motion_elem.hdf5_timesteps_per_cycle = num_frames;
-
-                    // Set initial root position from first frame
-                    if (motion_elem.motion.size() >= 6) {
-                        motion_elem.initialRootPosition = Eigen::Vector3d(
-                            motion_elem.motion[3],
-                            motion_elem.motion[4],
-                            motion_elem.motion[5]
-                        );
-                    }
-
-                    // Build timestamps for each frame
-                    double frame_time = bvh->getFrameTime();
-                    for (int i = 0; i < num_frames; i++) {
-                        motion_elem.timestamps.push_back(i * frame_time);
-                    }
-
-                    mMotions.push_back(motion_elem);
-                    delete bvh;
-
-                    std::cout << "[BVH] Loaded " << motion_elem.name << " with " << num_frames << " frames" << std::endl;
-                } catch (const std::exception& e) {
-                    std::cerr << "[BVH] Error loading " << bvh_path << ": " << e.what() << std::endl;
-                }
-            }
-
-            std::cout << "[BVH] Total BVH motions loaded: " << std::count_if(mMotions.begin(), mMotions.end(),
-                [](const ViewerMotion& m) { return m.source_type == "bvh"; }) << std::endl;
-        }
-    }
+	loadNPZMotion();
+	loadHDFRolloutMotion();
+	loadBVHMotion();
+	loadHDFSingleMotion();
 }
 
 void GLFWApp::scanHDF5Structure()
 {
-    // Scan for HDF5 files in sampled/ directory
-    std::string sampled_path = "sampled";
-    if (!fs::exists(sampled_path) || !fs::is_directory(sampled_path)) {
-        std::cerr << "Sampled directory not found: " << sampled_path << std::endl;
-        return;
-    }
-
     mHDF5Files.clear();
     mHDF5Params.clear();
     mHDF5Cycles.clear();
@@ -4229,18 +4313,27 @@ void GLFWApp::scanHDF5Structure()
     mSelectedHDF5ParamIdx = -1;
     mSelectedHDF5CycleIdx = -1;
 
-    // Find all rollout_data.h5 files
+    // Only scan sampled/ directory for hdfRollout files (nested structure)
+    // Note: hdfSingle files (flat structure from data/motion/) are loaded separately
+    std::string search_path = "sampled";
+
+    if (!fs::exists(search_path) || !fs::is_directory(search_path)) {
+        std::cout << "[Motion] HDF5 rollout directory not found: " << search_path << std::endl;
+        return;
+    }
+
     try {
-        for (const auto &entry : fs::recursive_directory_iterator(sampled_path)) {
+        for (const auto &entry : fs::recursive_directory_iterator(search_path)) {
             std::string file_name = entry.path().string();
             if (file_name.find("rollout_data.h5") != std::string::npos) {
                 mHDF5Files.push_back(file_name);
             }
         }
-        std::cout << "Found " << mHDF5Files.size() << " HDF5 files" << std::endl;
     } catch (const std::exception& e) {
-        std::cerr << "Error scanning HDF5 files: " << e.what() << std::endl;
+        std::cerr << "Error scanning " << search_path << " for HDF5 rollout files: " << e.what() << std::endl;
     }
+
+    std::cout << "[Motion] Found " << mHDF5Files.size() << " HDF5 rollout files" << std::endl;
 }
 
 void GLFWApp::loadHDF5Parameters()
@@ -4474,7 +4567,7 @@ void GLFWApp::loadSelectedHDF5Motion()
         // Create ViewerMotion
         ViewerMotion motion_elem;
         motion_elem.name = file_path + "_" + param_name + "_" + cycle_name;
-        motion_elem.source_type = "hdf5";
+        motion_elem.source_type = "hdfRollout";
         motion_elem.values_per_frame = motion_dim;
         motion_elem.num_frames = 1;  // Single cycle
         motion_elem.hdf5_total_timesteps = num_steps;
