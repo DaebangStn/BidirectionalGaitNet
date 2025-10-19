@@ -146,8 +146,6 @@ private:
     void drawFGNControl();
     void drawBGNControl();
     void drawC3DControl();
-    void drawBVHControl();
-    void drawBVHControl();
     void drawMotionControl();
     void drawGVAEControl();
     void addSimulationMotion();
