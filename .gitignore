@@ -1,8 +1,4 @@
 build/
-release
-server
-debug
-build_debug/
 *.so
 *.a
 
@@ -10,15 +6,11 @@ legacy_data/
 
 nn/
 python/CMakeFiles/
-python/core
-python/python
-python/render
 __pycache__
 python/cmake_install.cmake
 python/Makefile
 python/ray_results
 python/vae_result
-python/rollout*
 
 frames/
 output.mp4
