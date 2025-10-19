@@ -21,12 +21,10 @@ class Character;
 class HDF : public Motion {
 public:
     /**
-     * @brief Construct HDF motion from file and indices
-     * @param filepath Path to .h5/.hdf5 file
-     * @param param_idx Parameter index (e.g., 0 for param_0)
-     * @param cycle_idx Cycle index (e.g., 0 for cycle_0)
+     * @brief Construct HDF motion from single-cycle extracted file
+     * @param filepath Path to .h5/.hdf5 file with flat structure (/motions, /phase, /time)
      */
-    explicit HDF(const std::string& filepath, int param_idx, int cycle_idx);
+    explicit HDF(const std::string& filepath);
     ~HDF() override = default;
 
     // ==================== Motion Interface Implementation ====================
@@ -56,22 +54,8 @@ public:
      */
     Eigen::VectorXd getTimeData() const { return mTimeData; }
 
-    /**
-     * @brief Get parameter index
-     * @return Parameter index used in construction
-     */
-    int getParamIdx() const { return mParamIdx; }
-
-    /**
-     * @brief Get cycle index
-     * @return Cycle index used in construction
-     */
-    int getCycleIdx() const { return mCycleIdx; }
-
 private:
     std::string mFilename;
-    int mParamIdx;
-    int mCycleIdx;
 
     Eigen::MatrixXd mMotionData;  ///< Motion data in angle format: (numFrames, 56)
     Eigen::VectorXd mPhaseData;   ///< Phase values: (numFrames,)
@@ -89,12 +73,10 @@ private:
     // ==================== Private Helper Methods ====================
 
     /**
-     * @brief Load HDF5 file and extract cycle data
+     * @brief Load HDF5 file with flat structure
      * @param filepath Path to .h5/.hdf5 file
-     * @param param_idx Parameter index
-     * @param cycle_idx Cycle index
      */
-    void loadFromFile(const std::string& filepath, int param_idx, int cycle_idx);
+    void loadFromFile(const std::string& filepath);
 
     /**
      * @brief Interpolate between two frames

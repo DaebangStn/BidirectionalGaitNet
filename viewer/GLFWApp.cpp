@@ -2465,9 +2465,8 @@ void GLFWApp::drawSimControlPanel()
                     }
                     else if (filePathName.find(".h5") != std::string::npos ||
                              filePathName.find(".hdf5") != std::string::npos) {
-                        // Load HDF5 file
-                        // For extracted single-cycle HDF files, use param_0/cycle_0 by default
-                        HDF* hdf = new HDF(filePathName, 0, 0);
+                        // Load HDF5 file (single-cycle extracted format)
+                        HDF* hdf = new HDF(filePathName);
                         hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
                         newMotion = hdf;
                         std::cout << "[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames" << std::endl;
@@ -4222,8 +4221,8 @@ void GLFWApp::loadHDFSingleMotion()
 
 		for (const auto& hdf_path : hdf_single_files) {
 			try {
-				// Load HDF file (param_idx and cycle_idx are ignored for flat structure)
-				HDF* hdf = new HDF(hdf_path, 0, 0);
+				// Load HDF file (single-cycle extracted format)
+				HDF* hdf = new HDF(hdf_path);
 				hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 				// Create ViewerMotion from HDF

@@ -3,7 +3,8 @@
 <ground>@data/ground.xml</ground>
 
 <!-- symmetry : making BVH symmetry , heightCalibration : calibration of the motion's height based on height of the character in the first frame  -->
-<bvh symmetry="true" heightCalibration="true">@data/motion/walk.h5</bvh>
+<!-- <bvh symmetry="true" heightCalibration="true">@data/motion/walk.h5</bvh> -->
+<h5>@data/motion/walk.h5</h5>
 
 <!-- Making BVH Cyclic -->
 <cyclicbvh>true</cyclicbvh>

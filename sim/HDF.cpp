@@ -7,18 +7,16 @@
 
 using namespace dart::dynamics;
 
-HDF::HDF(const std::string& filepath, int param_idx, int cycle_idx)
+HDF::HDF(const std::string& filepath)
     : mFilename(filepath)
-    , mParamIdx(param_idx)
-    , mCycleIdx(cycle_idx)
     , mFrameTime(1.0 / 60.0)
     , mNumFrames(0)
     , mDofPerFrame(56)  // HDF format: 56 values per frame (angle format, no conversion needed)
 {
-    loadFromFile(filepath, param_idx, cycle_idx);
+    loadFromFile(filepath);
 }
 
-void HDF::loadFromFile(const std::string& filepath, int param_idx, int cycle_idx)
+void HDF::loadFromFile(const std::string& filepath)
 {
     try {
         // Open HDF5 file
@@ -107,7 +105,7 @@ void HDF::loadFromFile(const std::string& filepath, int param_idx, int cycle_idx
 
         file.close();
 
-        std::cout << "[HDF] Loaded " << filepath << " param_" << param_idx << "/cycle_" << cycle_idx
+        std::cout << "[HDF] Loaded " << filepath
                   << " with " << mNumFrames << " frames (" << mDofPerFrame << " DOF/frame, "
                   << mFrameTime << " s/frame)" << std::endl;
 

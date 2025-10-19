@@ -2,6 +2,7 @@
 #include "UriResolver.h"
 #include "CBufferData.h"
 #include "NPZ.h"
+#include "HDF.h"
 
 
 Environment::Environment()
@@ -265,6 +266,20 @@ void Environment::initialize(std::string metadata)
 
         new_npz->setRefMotion(mCharacter, mWorld);
         mMotion = new_npz;
+    }
+    else if (doc.FirstChildElement("hdf") != NULL || doc.FirstChildElement("h5") != NULL)
+    {
+        TiXmlElement* hdfElement = doc.FirstChildElement("hdf");
+        if (hdfElement == NULL)
+            hdfElement = doc.FirstChildElement("h5");
+
+        std::string hdf_path = Trim(std::string(hdfElement->GetText()));
+        std::string resolvedHdfPath = PMuscle::URIResolver::getInstance().resolve(hdf_path);
+        std::cout << "[Environment] HDF Path resolved: " << hdf_path << " -> " << resolvedHdfPath << std::endl;
+
+        HDF *new_hdf = new HDF(resolvedHdfPath);
+        new_hdf->setRefMotion(mCharacter, mWorld);
+        mMotion = new_hdf;
     }
 
     // Advanced Option
