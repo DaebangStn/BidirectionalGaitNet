@@ -1200,19 +1200,13 @@ void GLFWApp::drawKinematicsControlPanel()
                 for (int i = 0; i < mMotions.size(); i++)
                 {
                     // Skip hdfRollout motions (loaded via HDF5 Loading Controls)
-                    if (mMotions[i].source_type == "hdfRollout") {
-                        continue;
-                    }
+                    if (mMotions[i].source_type == "hdfRollout") continue;
 
                     // Add type prefix for displayed motion types
                     std::string prefix;
-                    if (mMotions[i].source_type == "npz") {
-                        prefix = "[NPZ] ";
-                    } else if (mMotions[i].source_type == "hdfSingle") {
-                        prefix = "[HDF] ";
-                    } else if (mMotions[i].source_type == "bvh") {
-                        prefix = "[BVH] ";
-                    }
+                    if (mMotions[i].source_type == "npz") prefix = "[NPZ] ";
+                    else if (mMotions[i].source_type == "hdfSingle") prefix = "[HDF] ";
+                    else if (mMotions[i].source_type == "bvh") prefix = "[BVH] ";
                     std::string display_name = prefix + mMotions[i].name;
 
                     if (ImGui::Selectable(display_name.c_str(), mMotionIdx == i)) {
@@ -4298,10 +4292,10 @@ void GLFWApp::loadMotionFiles()
 		return;
 	}
 
+	loadHDFSingleMotion();
+	loadBVHMotion();
 	loadNPZMotion();
 	loadHDFRolloutMotion();
-	loadBVHMotion();
-	loadHDFSingleMotion();
 }
 
 void GLFWApp::scanHDF5Structure()

@@ -4,7 +4,7 @@ import numpy as np
 import dill
 from dill import Unpickler
 from io import BytesIO
-from python.dummy import Dummy
+from dummy import Dummy
 
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
