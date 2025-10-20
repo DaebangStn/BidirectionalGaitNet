@@ -414,6 +414,9 @@ private:
     // Rollout configuration
     int mDefaultRolloutCount;
 
+    // Reset phase configuration
+    double mResetPhase;  // -1.0 for randomized, 0.0-1.0 for specific phase
+
     // Cached metadata path
     std::string mCachedMetadata;
 

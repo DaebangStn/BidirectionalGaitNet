@@ -73,7 +73,7 @@ public:
     void setAction(Eigen::VectorXd _action);
 
     void step();
-    void reset();
+    void reset(double phase = -1.0);  // phase: 0.0-1.0 for specific phase, -1.0 for randomized
     double getReward() { return mReward; }
     const std::map<std::string, double>& getRewardMap() const { return mRewardMap; }
 
@@ -205,6 +205,7 @@ public:
     Eigen::VectorXd getParamMin() { return mParamMin; }
     Eigen::VectorXd getParamMax() { return mParamMax; }
     Eigen::VectorXd getParamDefault() { return mParamDefault; }
+    void setParamDefault() { setParamState(getParamDefault(), false, true); }
     Eigen::VectorXd getParamSample();
     const std::vector<param_group> &getGroupParam() { return mParamGroups; }
     void setGroupParam(Eigen::VectorXd v)

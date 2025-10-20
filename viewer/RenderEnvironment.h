@@ -29,7 +29,7 @@ public:
     int getNumActuatorAction() { return mEnv->getNumActuatorAction(); }
 
     // Reset and episode control
-    void reset() { mEnv->reset(); }
+    void reset(double phase = -1.0) { mEnv->reset(phase); }
     bool isEOE() { return mEnv->isEOE(); }
     bool isGaitCycleComplete() { return mEnv->isGaitCycleComplete(); }
 
@@ -54,6 +54,7 @@ public:
     void setParamState(const Eigen::VectorXd& param, bool onlyMuscle = false, bool doOptimization = false) {
         mEnv->setParamState(param, onlyMuscle, doOptimization);
     }
+    void setParamDefault() { mEnv->setParamDefault(); }
     void updateParamState() { mEnv->updateParamState(); }
     Eigen::VectorXd getParamStateFromNormalized(const Eigen::VectorXd& normalized_param) {
         return mEnv->getParamStateFromNormalized(normalized_param);

@@ -66,6 +66,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mIsPlaybackTooFast = false;
     mShowTimingPane = false;
     mShowResizablePlotPane = false;
+    mResetPhase = -1.0;  // Default to randomized reset
     mResizablePlots.resize(1);
     strcpy(mResizePlotKeys, "");
     mResizePlotPane = true;
@@ -364,6 +365,12 @@ void GLFWApp::loadRenderConfig()
             if (config["glfwapp"]["playback_speed"]) {
                 mViewerPlaybackSpeed = config["glfwapp"]["playback_speed"].as<float>();
                 mLastPlaybackSpeed = mViewerPlaybackSpeed;
+            }
+
+            if (config["glfwapp"]["resetPhase"]) {
+                mResetPhase = config["glfwapp"]["resetPhase"].as<double>();
+                std::cout << "[Config] Reset phase set to: " << mResetPhase
+                          << (mResetPhase < 0.0 ? " (randomized)" : "") << std::endl;
             }
 
             if (config["glfwapp"]["motion_load_mode"]) {
@@ -974,6 +981,8 @@ void GLFWApp::initEnv(std::string metadata)
     // Load motion files (includes BVH and HDF5 scanning)
     loadMotionFiles();
 
+    mRenderEnv->setParamDefault();
+    reset();
     reset();
 }
 
@@ -2115,27 +2124,7 @@ void GLFWApp::drawJointControlSection() {
                     // Prepare limits and display value
                     float lower_limit, upper_limit;
                     float display_value;
-                    
-                    if (dof_idx < 6) {
-                        // Root joint - expand limits
-                        if (is_translation) {
-                            // Translation: use raw values (meters)
-                            lower_limit = -2.0f;
-                            upper_limit = 2.0f;
-                            display_value = pos_rad[dof_idx];
-                        } else {
-                            // Rotation: convert to degrees
-                            lower_limit = -360.0f;
-                            upper_limit = 360.0f;
-                            display_value = pos_deg[dof_idx];
-                        }
-                    } else {
-                        // Non-root joints: always rotation, convert to degrees
-                        lower_limit = pos_lower_limit[dof_idx] * (180.0f / M_PI);
-                        upper_limit = pos_upper_limit[dof_idx] * (180.0f / M_PI);
-                        display_value = pos_deg[dof_idx];
-                    }
-                    
+
                     // Create label: "JointName Direction" or just "JointName" for single DOF
                     std::string label;
                     if (num_dofs > 1 && d < 6) {
@@ -2146,25 +2135,53 @@ void GLFWApp::drawJointControlSection() {
                         label = "";
                     }
                     
-                    // Store previous value to detect changes
-                    float prev_value = display_value;
-                    
-                    // DragFloat with limits
-                    std::string drag_label = label + "##drag_" + joint_name + std::to_string(d);
-                    ImGui::SetNextItemWidth(200);
-                    const char* format = is_translation ? "%.3fm" : "%.1f°";
-                    ImGui::SliderFloat(drag_label.c_str(), &display_value, lower_limit, upper_limit, format);
-                    
-                    // InputFloat on same line
-                    ImGui::SameLine();
-                    std::string input_label = "##input_" + joint_name + std::to_string(d);
-                    ImGui::SetNextItemWidth(50);
-                    const char* input_format = is_translation ? "%.3f" : "%.1f";
-                    ImGui::InputFloat(input_label.c_str(), &display_value, 0.0f, 0.0f, input_format);
-                    
-                    // Clamp to limits after input
-                    if (display_value < lower_limit) display_value = lower_limit;
-                    if (display_value > upper_limit) display_value = upper_limit;
+                    if (is_translation) {
+                        // Root joint - expand limits
+                        // Translation: use raw values (meters), use InputFloat instead of SliderFloat
+                        display_value = pos_rad[dof_idx];
+
+                        std::string drag_label = label + "##drag_" + joint_name + std::to_string(d);
+                        ImGui::SetNextItemWidth(200);
+                        ImGui::InputFloat(drag_label.c_str(), &display_value, 0.0f, 0.0f, "%.3fm");
+                    } else {
+                        // Non-root joints: always rotation, convert to degrees
+                        lower_limit = pos_lower_limit[dof_idx] * (180.0f / M_PI);
+                        upper_limit = pos_upper_limit[dof_idx] * (180.0f / M_PI);
+                        display_value = pos_deg[dof_idx];
+
+                        // Store previous value to detect changes
+                        float prev_value = display_value;
+
+                        std::string drag_label = label + "##drag_" + joint_name + std::to_string(d);
+                        ImGui::SetNextItemWidth(200);
+                        const char* format = is_translation ? "%.3fm" : "%.1f°";
+
+                        // Check if limits are valid for SliderFloat (must be finite and within ImGui's range)
+                        const float max_slider_range = 1e37f; // ImGui's acceptable range is roughly ±FLT_MAX/2
+                        bool valid_limits = std::isfinite(lower_limit) && std::isfinite(upper_limit) &&
+                                          std::abs(lower_limit) < max_slider_range &&
+                                          std::abs(upper_limit) < max_slider_range;
+
+                        if (valid_limits) {
+                            // Use SliderFloat with valid limits
+                            ImGui::SliderFloat(drag_label.c_str(), &display_value, lower_limit, upper_limit, format);
+
+                            // InputFloat on same line
+                            ImGui::SameLine();
+                            std::string input_label = "##input_" + joint_name + std::to_string(d);
+                            ImGui::SetNextItemWidth(50);
+                            const char* input_format = is_translation ? "%.3f" : "%.1f";
+                            ImGui::InputFloat(input_label.c_str(), &display_value, 0.0f, 0.0f, input_format);
+
+                            // Clamp to limits after input
+                            if (display_value < lower_limit) display_value = lower_limit;
+                            if (display_value > upper_limit) display_value = upper_limit;
+                        } else {
+                            // Use InputFloat without limits (similar to dof_idx < 3 case)
+                            ImGui::InputFloat(drag_label.c_str(), &display_value, 0.0f, 0.0f, format);
+                        }
+                    }
+                   
                     
                     // Update internal storage
                     if (is_translation) {
@@ -2385,25 +2402,8 @@ void GLFWApp::drawSimControlPanel()
     // Joint Control - use new detailed control method
     drawJointControlSection();
 
-    // Gait Parameters
-    if (ImGui::CollapsingHeader("Gait Parameters"))
-    {
-        Eigen::VectorXf ParamState = mRenderEnv->getParamState().cast<float>();
-        Eigen::VectorXf ParamMin = mRenderEnv->getParamMin().cast<float>();
-        Eigen::VectorXf ParamMax = mRenderEnv->getParamMax().cast<float>();
-
-        int idx = 0;
-        for (auto c : mRenderEnv->getParamName())
-        {
-            ImGui::SliderFloat(c.c_str(), &ParamState[idx], ParamMin[idx], ParamMax[idx] + 1E-10);
-            idx++;
-        }
-        mRenderEnv->setParamState(ParamState.cast<double>(), false, true);
-        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
-    }
-
     // Body Parameters
-    if (ImGui::CollapsingHeader("Body Parameters"))
+    if (ImGui::CollapsingHeader("Sim Parameters"))
     {
         Eigen::VectorXf group_v = Eigen::VectorXf::Ones(mRenderEnv->getGroupParam().size());
         int idx = 0;
@@ -3022,14 +3022,11 @@ void GLFWApp::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
     if (mMotions.empty()) return;
-
-    // Get current motion and use the pre-computed pose
     const ViewerMotion& current_motion = mMotions[mMotionIdx];
-
-    // Check if pose has been computed
-    if (current_motion.currentPose.size() == 0) return;
-
-    // Draw the skeleton using the stored pose
+    if (current_motion.currentPose.size() == 0) {
+        std::cout << "[drawPlayableMotion] currentPose is empty" << std::endl;
+        return;
+    }
     drawSkeleton(current_motion.currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
 }
 
@@ -3293,15 +3290,16 @@ void GLFWApp::reset()
     mCycleAccumulation[0] = 1.0;  // Initial x offset for visualization
 
     if (mRenderEnv) {
-        mRenderEnv->reset();
+        mRenderEnv->reset(mResetPhase);
+        
         mFGNRootOffset = mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getPositions().tail(3);
         mUseWeights = mRenderEnv->getUseWeights();
         mViewerTime = mRenderEnv->getWorld()->getTime();
         mViewerPhase = mRenderEnv->getCharacter()->getLocalTime() / (mRenderEnv->getMotion()->getMaxTime() / mRenderEnv->getCadence());
 
         // Align motion with simulated character position
-        alignMotionToSimulation();
     }
+    alignMotionToSimulation();
 }
 
 double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
@@ -3433,8 +3431,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
         }
     } else {
         // No interpolation needed, use exact frame
-        interpolated_frame = motion.motion.segment(
-            current_frame_idx * frames_per_cycle, frames_per_cycle);
+        interpolated_frame = motion.motion.segment(current_frame_idx * frames_per_cycle, frames_per_cycle);
     }
 
     // 2. Convert to full skeleton pose if NPZ
@@ -3476,9 +3473,6 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
 
 void GLFWApp::alignMotionToSimulation()
 {
-    // Only align if we have both render environment and motions
-    if (!mRenderEnv || mMotions.empty()) return;
-
     // Temporarily clear displayOffset to evaluate raw motion pose
     Eigen::Vector3d saved_offset = mMotions[mMotionIdx].displayOffset;
     mMotions[mMotionIdx].displayOffset = Eigen::Vector3d::Zero();
@@ -3489,6 +3483,8 @@ void GLFWApp::alignMotionToSimulation()
 
     // Evaluate motion pose at the current time/phase (without displayOffset)
     motionPoseEval(mMotions[mMotionIdx], frame_float);
+
+    if (!mRenderEnv || mMotions.empty()) return;
 
     // Get simulated character's current position (from root body node)
     Eigen::Vector3d sim_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
@@ -3571,15 +3567,6 @@ void GLFWApp::updateViewerTime(double dt)
         Eigen::VectorXd current_frame = current_motion.motion.segment(
             current_frame_idx * frames_per_cycle, frames_per_cycle);
 
-        static bool logged_npz_once = false;
-        if (!logged_npz_once) {
-            std::cout << "[NPZ incremental mode] Frame extraction:" << std::endl;
-            std::cout << "  frames_per_cycle: " << frames_per_cycle << std::endl;
-            std::cout << "  current_frame size: " << current_frame.size() << std::endl;
-            std::cout << "  Character for conversion: " << character << std::endl;
-            logged_npz_once = true;
-        }
-
         Eigen::VectorXd motion_pos = character->sixDofToPos(current_frame);
 
         // NPZ root positions are deltas - accumulate them directly (only in automatic playback)
@@ -3607,8 +3594,27 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
                 update();  // Advance simulation by one control step
                 double dt = 1.0 / mRenderEnv->getControlHz();
                 updateViewerTime(dt);  // Advance viewer time and motion state
-            } else {
-                update();
+            } else if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
+                // Step viewer time by single frame duration when no simulation environment
+                const ViewerMotion& current_motion = mMotions[mMotionIdx];
+                double frame_duration = 0.0;
+
+                if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle" || current_motion.source_type == "bvh") {
+                    // For HDF5/BVH motions with timestamps, calculate frame duration
+                    if (!current_motion.timestamps.empty() && current_motion.timestamps.size() > 1) {
+                        // Use average frame duration from timestamps
+                        frame_duration = (current_motion.timestamps.back() - current_motion.timestamps.front()) /
+                                       (current_motion.timestamps.size() - 1);
+                    } else {
+                        // Default to 30 FPS if no timestamps available
+                        frame_duration = 1.0 / 30.0;
+                    }
+                } else {
+                    // For NPZ motions, use cycle duration divided by number of frames
+                    frame_duration = mViewerCycleDuration / current_motion.num_frames;
+                }
+
+                updateViewerTime(frame_duration);  // Advance by single frame
             }
             break;
         case GLFW_KEY_R:
@@ -3812,21 +3818,25 @@ void GLFWApp::setCamera()
             }
 
             int current_frame_idx = (int)frame_float;
-            int total_frames = (current_motion.source_type == "hdfRollout") ?
-                               current_motion.hdf5_total_timesteps : current_motion.num_frames;
+            int total_frames = (current_motion.source_type == "hdfRollout") ? current_motion.hdf5_total_timesteps : current_motion.num_frames;
             current_frame_idx = current_frame_idx % total_frames;
 
             Eigen::VectorXd current_frame = current_motion.motion.segment(
                 current_frame_idx * current_motion.values_per_frame, current_motion.values_per_frame);
 
             Eigen::VectorXd current_pos;
-            if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle") {
-                current_pos = current_frame;
-            } else {
+            if (current_motion.source_type == "npz") {
                 current_pos = mMotionCharacter->sixDofToPos(current_frame);
+            } else {
+                current_pos = current_frame;
             }
 
-            if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle") {
+            if (current_motion.source_type == "npz") {
+                // NPZ: Use mCycleAccumulation only
+                mTrans[0] = -(mCycleAccumulation[0] + current_motion.displayOffset[0]);
+                mTrans[1] = -(mCycleAccumulation[1] + current_motion.displayOffset[1]) - 1;
+                mTrans[2] = -(mCycleAccumulation[2] + current_motion.displayOffset[2]);
+            } else {
                 // HDF: Use delta from initial position plus cycle accumulation
                 Eigen::Vector3d root_pos(current_pos[3], current_pos[4], current_pos[5]);
                 Eigen::Vector3d delta = root_pos - current_motion.initialRootPosition;
@@ -3834,11 +3844,6 @@ void GLFWApp::setCamera()
                 mTrans[0] = -(delta[0] + mCycleAccumulation[0] + current_motion.displayOffset[0]);
                 mTrans[1] = -(root_pos[1] + current_motion.displayOffset[1]) - 1;
                 mTrans[2] = -(delta[2] + mCycleAccumulation[2] + current_motion.displayOffset[2]);
-            } else {
-                // NPZ: Use mCycleAccumulation only
-                mTrans[0] = -(mCycleAccumulation[0] + current_motion.displayOffset[0]);
-                mTrans[1] = -(mCycleAccumulation[1] + current_motion.displayOffset[1]) - 1;
-                mTrans[2] = -(mCycleAccumulation[2] + current_motion.displayOffset[2]);
             }
         } else {
             mTrans = Eigen::Vector3d::Zero();
