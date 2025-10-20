@@ -10,7 +10,7 @@ void bind_RolloutEnvironment(py::module& m) {
     py::class_<RolloutEnvironment>(m, "RolloutEnvironment")
         .def(py::init<const std::string&>())
         .def("load_config", &RolloutEnvironment::LoadRecordConfig)
-        .def("reset", &RolloutEnvironment::Reset)
+        .def("reset", &RolloutEnvironment::Reset, py::arg("phase") = -1.0)
         .def("get_state", &RolloutEnvironment::GetState)
         .def("set_action", &RolloutEnvironment::SetAction)
         .def("step", [](RolloutEnvironment& env, PyRolloutRecord* record) {

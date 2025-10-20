@@ -19,7 +19,7 @@ public:
     void LoadRecordConfig(const std::string& yaml_path);
     
     // Environment delegation
-    void Reset();
+    void Reset(double phase = -1.0);
     Eigen::VectorXd GetState();
     void SetAction(const Eigen::VectorXd& action);
     void Step(RolloutRecord* record = nullptr);

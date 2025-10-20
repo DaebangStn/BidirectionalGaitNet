@@ -45,8 +45,8 @@ void RolloutEnvironment::LoadRecordConfig(const std::string& yaml_path) {
     }
 }
 
-void RolloutEnvironment::Reset() {
-    mEnv.reset();
+void RolloutEnvironment::Reset(double phase) {
+    mEnv.reset(phase);
     mCumulativeMetabolicEnergy = 0.0;
     mLastCycleCount = 0;
 }
