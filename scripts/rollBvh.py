@@ -12,6 +12,19 @@ rolling_frame_index = 39
 bvh_file_path = "data/motion/walk.bvh"
 
 
+def format_frame_values(frame):
+    """
+    Format all values in a frame to 5 decimal places.
+
+    Args:
+        frame: List of string values representing frame data
+
+    Returns:
+        List of formatted string values with 5 decimal places
+    """
+    return [f"{float(value):.5f}" for value in frame]
+
+
 def roll_bvh_frames(input_path, output_path, frame_offset):
     """
     Roll frames in a BVH file by the specified offset.
@@ -65,7 +78,7 @@ def roll_bvh_frames(input_path, output_path, frame_offset):
     offset_y = float(last_frame_b[1]) - float(first_frame_a[1])
     offset_z = float(last_frame_b[2]) - float(first_frame_a[2])
 
-    print(f"   📐 Position offset: X={offset_x:.3f}, Y={offset_y:.3f}, Z={offset_z:.3f}")
+    print(f"   📐 Position offset: X={offset_x:.5f}, Y={offset_y:.5f}, Z={offset_z:.5f}")
 
     # Apply offset to all frames in sequence A
     frames_a_adjusted = []
@@ -109,7 +122,8 @@ def roll_bvh_frames(input_path, output_path, frame_offset):
             
             # Write frame data
             for frame in reordered:
-                f.write(" ".join(frame) + "\n")
+                formatted_frame = format_frame_values(frame)
+                f.write(" ".join(formatted_frame) + "\n")
         
         print(f"   ✓ Successfully wrote output file: {output_path}")
         print(f"✅ Done!\n")

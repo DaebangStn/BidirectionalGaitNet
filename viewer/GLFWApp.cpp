@@ -3354,7 +3354,7 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
     } else {
         // NPZ motion: contains 2 gait cycles, use first half (1 cycle) in viewer time mode
         // num_cycles is 60, so use 30 frames for one gait cycle
-        frame_float = phase * (motion.num_frames / 2);
+        frame_float = phase * (motion.num_frames / 2.0);
     }
 
     return frame_float;
@@ -3393,6 +3393,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
 
     if (weight_1 > 1e-6) {
         int next_frame_idx = (current_frame_idx + 1) % total_frames;
+        bool phase_overflow = (next_frame_idx < current_frame_idx);  // Detect cycle wraparound
         Eigen::VectorXd p1 = motion.motion.segment(current_frame_idx * frames_per_cycle, frames_per_cycle);
         Eigen::VectorXd p2 = motion.motion.segment(next_frame_idx * frames_per_cycle, frames_per_cycle);
 
@@ -3420,12 +3421,22 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
                     Eigen::Quaterniond q = q1.slerp(weight_1, q2);
                     interpolated_frame.segment(idx, dof) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
                 } else if (dof == 6) {
-                    // FreeJoint: quaternion SLERP for rotation, linear for translation
+                    // FreeJoint: quaternion SLERP for rotation, linear/extrapolated for translation
                     Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, 3)));
                     Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, 3)));
                     Eigen::Quaterniond q = q1.slerp(weight_1, q2);
                     interpolated_frame.segment(idx, 3) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
-                    interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) * (1.0 - weight_1) + p2.segment(idx + 3, 3) * weight_1;
+
+                    // Root position (indices 3, 4, 5): extrapolate on phase overflow to avoid jumping back
+                    if (phase_overflow && idx == 0) {  // idx == 0 means root joint
+                        int prev_frame_idx = current_frame_idx - 1;  // Safe: overflow only occurs at cycle end
+                        Eigen::VectorXd p0 = motion.motion.segment(prev_frame_idx * frames_per_cycle, frames_per_cycle);
+                        Eigen::Vector3d velocity = p1.segment(idx + 3, 3) - p0.segment(idx + 3, 3);
+                        interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) + velocity * weight_1;
+                    } else {
+                        // Normal linear interpolation for translation
+                        interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) * (1.0 - weight_1) + p2.segment(idx + 3, 3) * weight_1;
+                    }
                 }
             }
         }
@@ -3440,14 +3451,6 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
         motion_pos = interpolated_frame;
     } else {
         // NPZ: convert from 6D rotation format to angles
-        static bool logged_once = false;
-        if (!logged_once) {
-            std::cout << "[drawPlayableMotion] Converting NPZ motion:" << std::endl;
-            std::cout << "  Input frame size: " << interpolated_frame.size() << std::endl;
-            std::cout << "  Character pointer: " << character << std::endl;
-            std::cout << "  Character DOF: " << character->getSkeleton()->getNumDofs() << std::endl;
-            logged_once = true;
-        }
         motion_pos = character->sixDofToPos(interpolated_frame);
     }
 
@@ -3456,6 +3459,8 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
         // HDF/BVH: Use delta from initial position plus cycle accumulation
         Eigen::Vector3d current_root_pos(motion_pos[3], motion_pos[4], motion_pos[5]);
         Eigen::Vector3d delta = current_root_pos - motion.initialRootPosition;
+
+        std::cout << "motion pos: " << motion_pos.segment(3, 3).transpose() << std::endl;
 
         motion_pos[3] = delta[0] + mCycleAccumulation[0] + motion.displayOffset[0];
         motion_pos[4] = current_root_pos[1] + motion.displayOffset[1];
@@ -3525,7 +3530,7 @@ void GLFWApp::updateViewerTime(double dt)
 
     // Get current motion
     const ViewerMotion& current_motion = mMotions[mMotionIdx];
-    int frames_per_cycle = current_motion.values_per_frame;
+    int value_per_frame = current_motion.values_per_frame;
 
     // Calculate frame indices based on navigation mode
     double frame_float;
@@ -3549,23 +3554,26 @@ void GLFWApp::updateViewerTime(double dt)
     if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle" || current_motion.source_type == "bvh") {
         // HDF/BVH: Absolute positions, accumulate only on cycle wrap in automatic mode
         Eigen::VectorXd current_frame = current_motion.motion.segment(
-            current_frame_idx * frames_per_cycle, frames_per_cycle);
+            current_frame_idx * value_per_frame, value_per_frame);
 
         // Detect cycle wrap and accumulate forward progress (only in automatic playback mode)
         // In manual frame mode, user controls frame directly - no accumulation needed
         if (mMotionNavigationMode == NAVIGATION_VIEWER_TIME && current_frame_idx < mLastFrameIdx) {
             Eigen::VectorXd last_frame = current_motion.motion.segment(
-                mLastFrameIdx * frames_per_cycle, frames_per_cycle);
+                mLastFrameIdx * value_per_frame, value_per_frame);
             Eigen::Vector3d last_root_pos(last_frame[3], last_frame[4], last_frame[5]);
+            const int frame_per_cycle = current_motion.source_type == "bvh" ? current_motion.num_frames : current_motion.hdf5_timesteps_per_cycle;
 
-            mCycleAccumulation[0] += last_root_pos[0] - current_motion.initialRootPosition[0];
-            mCycleAccumulation[2] += last_root_pos[2] - current_motion.initialRootPosition[2];
+            mCycleAccumulation[0] += (last_root_pos[0] - current_motion.initialRootPosition[0]) * (frame_per_cycle) / (frame_per_cycle - 1);
+            mCycleAccumulation[2] += (last_root_pos[2] - current_motion.initialRootPosition[2]) * (frame_per_cycle) / (frame_per_cycle - 1);
+
+            std::cout << "updateViewerTime: mCycleAccumulation: " << mCycleAccumulation.transpose() << std::endl;
         }
         mLastFrameIdx = current_frame_idx;
     } else {
         // NPZ: Incremental data, accumulate every frame in automatic mode only
         Eigen::VectorXd current_frame = current_motion.motion.segment(
-            current_frame_idx * frames_per_cycle, frames_per_cycle);
+            current_frame_idx * value_per_frame, value_per_frame);
 
         Eigen::VectorXd motion_pos = character->sixDofToPos(current_frame);
 
@@ -3581,6 +3589,10 @@ void GLFWApp::updateViewerTime(double dt)
     }
 
     motionPoseEval(mMotions[mMotionIdx], frame_float);
+    std::cout << "phase: " << phase << std::endl;
+    std::cout << "frame_float: " << frame_float << std::endl;
+    std::cout << "root position: " << mMotions[mMotionIdx].currentPose.segment(3, 3).transpose() << std::endl;
+    std::cout << "================================================" << std::endl;
 }
 
 void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
@@ -3600,15 +3612,12 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
                 double frame_duration = 0.0;
 
                 if (current_motion.source_type == "hdfRollout" || current_motion.source_type == "hdfSingle" || current_motion.source_type == "bvh") {
-                    // For HDF5/BVH motions with timestamps, calculate frame duration
-                    if (!current_motion.timestamps.empty() && current_motion.timestamps.size() > 1) {
-                        // Use average frame duration from timestamps
-                        frame_duration = (current_motion.timestamps.back() - current_motion.timestamps.front()) /
-                                       (current_motion.timestamps.size() - 1);
-                    } else {
-                        // Default to 30 FPS if no timestamps available
-                        frame_duration = 1.0 / 30.0;
-                    }
+                    // For HDF5/BVH motions: use mViewerCycleDuration for consistent frame increment
+                    // This ensures pressing 'S' advances exactly 1 frame regardless of actual timestamps
+                    int num_frames = (current_motion.source_type == "bvh") ?
+                                     current_motion.num_frames :
+                                     current_motion.hdf5_timesteps_per_cycle;
+                    frame_duration = mViewerCycleDuration / num_frames;
                 } else {
                     // For NPZ motions, use cycle duration divided by number of frames
                     frame_duration = mViewerCycleDuration / current_motion.num_frames;

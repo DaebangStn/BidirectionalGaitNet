@@ -46,7 +46,8 @@
       "system_error": "cpp",
       "bitset": "cpp",
       "regex": "cpp",
-      "valarray": "cpp"
+      "valarray": "cpp",
+      "ratio": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",
