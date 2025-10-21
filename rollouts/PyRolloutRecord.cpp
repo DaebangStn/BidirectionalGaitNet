@@ -28,6 +28,11 @@ void PyRolloutRecord::reset() {
     RolloutRecord::reset();
     mMatrixData.clear();
     mMatrixRows.clear();
+    mCycleAttributes.clear();
+}
+
+void PyRolloutRecord::addCycleAttribute(int cycle_idx, const std::string& key, double value) {
+    mCycleAttributes[cycle_idx][key] = value;
 }
 
 py::array_t<double> PyRolloutRecord::get_data_array() const {
@@ -55,6 +60,18 @@ py::dict PyRolloutRecord::get_matrix_data() const {
     return dict;
 }
 
+py::dict PyRolloutRecord::get_cycle_attributes() const {
+    py::dict outer_dict;
+    for (const auto& [cycle_idx, attrs] : mCycleAttributes) {
+        py::dict inner_dict;
+        for (const auto& [key, value] : attrs) {
+            inner_dict[py::str(key)] = value;
+        }
+        outer_dict[py::int_(cycle_idx)] = inner_dict;
+    }
+    return outer_dict;
+}
+
 void bind_PyRolloutRecord(py::module& m) {
     py::class_<RecordConfig>(m, "RecordConfig")
         .def(py::init<>())
@@ -73,6 +90,7 @@ void bind_PyRolloutRecord(py::module& m) {
         .def(py::init<const RecordConfig&>())
         .def_property_readonly("data", &PyRolloutRecord::get_data_array)
         .def_property_readonly("matrix_data", &PyRolloutRecord::get_matrix_data)
+        .def_property_readonly("cycle_attributes", &PyRolloutRecord::get_cycle_attributes)
         .def_property_readonly("fields", &PyRolloutRecord::get_fields)
         .def_property_readonly("nrow", &PyRolloutRecord::get_nrow)
         .def_property_readonly("ncol", &PyRolloutRecord::get_ncol)

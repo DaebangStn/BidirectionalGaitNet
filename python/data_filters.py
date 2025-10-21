@@ -122,6 +122,171 @@ class DropLastMCyclesFilter(DataFilter):
         return filtered_cycles, filtered_matrix_cycles, fields
 
 
+class MetabolicCumulativeFilter(DataFilter):
+    """Compute cumulative metabolic energy per cycle
+
+    Adds cycle-level attribute 'metabolic/cumulative/{TYPE}' where TYPE is the metabolic energy type.
+    Requires 'metabolic/step_energy' in fields.
+    """
+
+    def __init__(self, metabolic_type: str, record_config: Optional[Dict] = None):
+        """Initialize and validate config
+
+        Args:
+            metabolic_type: Energy type (A, A2, MA, MA2, LEGACY)
+            record_config: Optional full record config dict for validation
+        """
+        self.metabolic_type = metabolic_type
+
+        # Check config if provided
+        if record_config:
+            metabolic = record_config.get('record', {}).get('metabolic', {})
+            metabolic_enabled = metabolic.get('enabled', False)
+
+            if not metabolic_enabled:
+                print(f"⚠️  WARNING: MetabolicCumulativeFilter enabled but step_energy recording is disabled")
+                print(f"    record.metabolic.enabled = {metabolic_enabled}")
+
+    def filter_cycles(
+        self,
+        cycles_dict: Dict[int, np.ndarray],
+        matrix_cycles_dict: Dict[str, Dict[int, np.ndarray]],
+        fields: List[str]
+    ) -> Tuple[Dict[int, np.ndarray], Dict[str, Dict[int, np.ndarray]], List[str]]:
+        """Compute cumulative metabolic energy for each cycle"""
+
+        # Check if metabolic/step_energy exists in scalar fields
+        if 'metabolic/step_energy' not in fields:
+            # Skip silently - metabolic recording not enabled
+            return cycles_dict, matrix_cycles_dict, fields
+
+        # Get column index for metabolic/step_energy
+        step_energy_idx = fields.index('metabolic/step_energy')
+
+        # Compute cumulative energy for each cycle
+        # Store as cycle-level metadata with metabolic type in key
+        cumulative_key = f'_metabolic_cumulative_{self.metabolic_type}'
+        cumulative_energies = {}
+
+        for cycle_idx, cycle_data in cycles_dict.items():
+            if cycle_data.shape[0] > 0:
+                # Extract step energies and sum
+                step_energies = cycle_data[:, step_energy_idx]
+                cumulative_energy = np.sum(step_energies)
+                cumulative_energies[cycle_idx] = cumulative_energy
+            else:
+                cumulative_energies[cycle_idx] = 0.0
+
+        # Store cumulative energies in matrix_cycles_dict with special key
+        matrix_cycles_dict[cumulative_key] = cumulative_energies
+
+        return cycles_dict, matrix_cycles_dict, fields
+
+
+class ComputeCoTFilter(DataFilter):
+    """Compute Cost of Transport (CoT) per cycle
+
+    CoT = cumulative_energy / (character_mass × travel_distance)
+
+    Adds cycle-level attribute 'metabolic/cot/{TYPE}' where TYPE is the metabolic energy type.
+    Requires both '_metabolic_cumulative_{TYPE}' and '_travel_distance' in matrix_cycles_dict.
+    """
+
+    def __init__(self, metabolic_type: str, character_mass: float, record_config: Optional[Dict] = None,
+                 filter_config: Optional[Dict] = None):
+        """Initialize and validate config
+
+        Args:
+            metabolic_type: Energy type (A, A2, MA, MA2, LEGACY)
+            character_mass: Character mass in kg
+            record_config: Optional full record config dict for validation
+            filter_config: Optional filter config dict for dependency validation
+        """
+        self.metabolic_type = metabolic_type
+        self.character_mass = character_mass
+
+        if character_mass <= 0:
+            raise ValueError(f"character_mass must be positive, got {character_mass}")
+
+        # Check record config if provided
+        if record_config:
+            metabolic = record_config.get('record', {}).get('metabolic', {})
+            kinematics = record_config.get('record', {}).get('kinematics', {})
+
+            metabolic_enabled = metabolic.get('enabled', False)
+            kinematics_enabled = kinematics.get('enabled', False)
+            root_enabled = kinematics.get('root', False)
+
+            if not metabolic_enabled:
+                print(f"⚠️  WARNING: ComputeCoTFilter requires metabolic energy recording")
+                print(f"    record.metabolic.enabled = {metabolic_enabled}")
+
+            if not (kinematics_enabled and root_enabled):
+                print(f"⚠️  WARNING: ComputeCoTFilter requires travel distance (root position)")
+                print(f"    record.kinematics.enabled = {kinematics_enabled}")
+                print(f"    record.kinematics.root = {root_enabled}")
+
+        # Check filter dependencies
+        if filter_config:
+            cumulative_enabled = filter_config.get('metabolic_cumulative', {}).get('enabled', False)
+            travel_enabled = filter_config.get('compute_travel_distance', {}).get('enabled', False)
+
+            if not cumulative_enabled:
+                print(f"⚠️  WARNING: ComputeCoTFilter requires metabolic_cumulative filter")
+                print(f"    filters.metabolic_cumulative.enabled = {cumulative_enabled}")
+
+            if not travel_enabled:
+                print(f"⚠️  WARNING: ComputeCoTFilter requires compute_travel_distance filter")
+                print(f"    filters.compute_travel_distance.enabled = {travel_enabled}")
+
+    def filter_cycles(
+        self,
+        cycles_dict: Dict[int, np.ndarray],
+        matrix_cycles_dict: Dict[str, Dict[int, np.ndarray]],
+        fields: List[str]
+    ) -> Tuple[Dict[int, np.ndarray], Dict[str, Dict[int, np.ndarray]], List[str]]:
+        """Compute Cost of Transport for each cycle"""
+
+        cumulative_key = f'_metabolic_cumulative_{self.metabolic_type}'
+        travel_key = '_travel_distance'
+
+        # Check if both dependencies exist
+        if cumulative_key not in matrix_cycles_dict:
+            print(f"⚠️  WARNING: {cumulative_key} not found, skipping CoT computation")
+            return cycles_dict, matrix_cycles_dict, fields
+
+        if travel_key not in matrix_cycles_dict:
+            print(f"⚠️  WARNING: {travel_key} not found, skipping CoT computation")
+            return cycles_dict, matrix_cycles_dict, fields
+
+        # Compute CoT for each cycle
+        cot_key = f'_metabolic_cot_{self.metabolic_type}'
+        cot_values = {}
+
+        cumulative_energies = matrix_cycles_dict[cumulative_key]
+        travel_distances = matrix_cycles_dict[travel_key]
+
+        for cycle_idx in cycles_dict.keys():
+            if cycle_idx in cumulative_energies and cycle_idx in travel_distances:
+                cumulative = cumulative_energies[cycle_idx]
+                distance = travel_distances[cycle_idx]
+
+                # CoT = Energy / (Mass × Distance)
+                # Avoid division by zero
+                if distance > 0 and self.character_mass > 0:
+                    cot = cumulative / (self.character_mass * distance)
+                    cot_values[cycle_idx] = cot
+                else:
+                    cot_values[cycle_idx] = 0.0
+            else:
+                cot_values[cycle_idx] = 0.0
+
+        # Store CoT values in matrix_cycles_dict with special key
+        matrix_cycles_dict[cot_key] = cot_values
+
+        return cycles_dict, matrix_cycles_dict, fields
+
+
 class ComputeTravelDistanceFilter(DataFilter):
     """Compute travel distance from root position data
 
@@ -193,6 +358,84 @@ class ComputeTravelDistanceFilter(DataFilter):
         return cycles_dict, matrix_cycles_dict, fields
 
 
+class StatisticsFilter(DataFilter):
+    """Compute statistics (mean, std) of cycle-level attributes and store as param-level attributes
+
+    Takes specified attribute keys (e.g., 'metabolic/cot/MA', 'metabolic/cumulative/MA')
+    and computes their mean and standard deviation across all cycles. Stores results in a special
+    '_averaged_attributes' dictionary that the HDF5 writer recognizes and writes
+    to param-level group instead of cycle-level.
+
+    Example:
+        If you have 'metabolic/cot/MA' for cycles [0, 1, 2] with values [1.5, 1.6, 1.4],
+        this filter will compute:
+        - 'metabolic/cot/MA/mean' = 1.5
+        - 'metabolic/cot/MA/std' = 0.0816...
+
+    Config:
+        stat_filter:
+          enabled: true
+          keys: ['metabolic/cot/MA', 'metabolic/cumulative/MA']
+    """
+
+    def __init__(self, keys: List[str]):
+        """Initialize with list of attribute keys for statistics computation
+
+        Args:
+            keys: List of attribute keys to compute statistics for (e.g., ['metabolic/cot/MA'])
+        """
+        self.keys = keys
+        if not keys:
+            print("⚠️  WARNING: StatisticsFilter initialized with empty keys list")
+
+    def filter_cycles(
+        self,
+        cycles_dict: Dict[int, np.ndarray],
+        matrix_cycles_dict: Dict[str, Dict[int, np.ndarray]],
+        fields: List[str]
+    ) -> Tuple[Dict[int, np.ndarray], Dict[str, Dict[int, np.ndarray]], List[str]]:
+        """Compute statistics (mean, std) for specified attributes across all cycles"""
+
+        if not self.keys:
+            return cycles_dict, matrix_cycles_dict, fields
+
+        # Initialize statistics attributes dictionary
+        stat_attributes = {}
+
+        # Process each key
+        for key in self.keys:
+            # Convert external key to internal key format (add _ prefix for internal keys)
+            internal_key = f'_{key.replace("/", "_")}'
+
+            # Check if this key exists in matrix_cycles_dict
+            if internal_key not in matrix_cycles_dict:
+                print(f"⚠️  WARNING: StatisticsFilter key '{key}' not found in matrix_cycles_dict (looking for '{internal_key}')")
+                continue
+
+            # Get all values for this attribute across cycles
+            attribute_dict = matrix_cycles_dict[internal_key]
+
+            if not attribute_dict:
+                print(f"⚠️  WARNING: StatisticsFilter key '{key}' has no cycle data")
+                continue
+
+            # Compute statistics
+            values = list(attribute_dict.values())
+            if values:
+                mean_value = np.mean(values)
+                std_value = np.std(values)
+
+                # Store with /mean and /std suffixes
+                stat_attributes[f'{key}/mean'] = mean_value
+                stat_attributes[f'{key}/std'] = std_value
+
+        # Store statistics attributes in special key for HDF5 writer
+        if stat_attributes:
+            matrix_cycles_dict['_averaged_attributes'] = stat_attributes
+
+        return cycles_dict, matrix_cycles_dict, fields
+
+
 class FilterPipeline:
     """Composable pipeline of data filters
 
@@ -223,8 +466,17 @@ class FilterPipeline:
                 filter_names.append(f"drop_first_n_cycles(n={f.n})")
             elif isinstance(f, DropLastMCyclesFilter):
                 filter_names.append(f"drop_last_m_cycles(m={f.m})")
+            elif isinstance(f, MetabolicCumulativeFilter):
+                filter_names.append("metabolic_cumulative")
             elif isinstance(f, ComputeTravelDistanceFilter):
                 filter_names.append("compute_travel_distance")
+            elif isinstance(f, ComputeCoTFilter):
+                filter_names.append(f"compute_cot(type={f.metabolic_type})")
+            elif isinstance(f, StatisticsFilter):
+                keys_str = ", ".join(f.keys[:3])  # Show first 3 keys
+                if len(f.keys) > 3:
+                    keys_str += f" (+{len(f.keys)-3} more)"
+                filter_names.append(f"statistics({keys_str})")
             else:
                 filter_names.append(f.__class__.__name__)
 
@@ -353,12 +605,17 @@ class FilterPipeline:
         matrix_data = {}
         for field_name, matrix_dict in matrix_cycles_dict.items():
             if field_name.startswith('_'):
-                # Renumber metadata dict keys to match renumbered cycle indices
-                renumbered_metadata = {}
-                for new_cycle_idx, old_cycle_idx in enumerate(sorted_cycle_indices):
-                    if old_cycle_idx in matrix_dict:
-                        renumbered_metadata[new_cycle_idx] = matrix_dict[old_cycle_idx]
-                matrix_data[field_name] = renumbered_metadata
+                # Special case: _averaged_attributes is NOT cycle-indexed
+                if field_name == '_averaged_attributes':
+                    # Pass through unchanged - it's a simple {attr_name: value} dict
+                    matrix_data[field_name] = matrix_dict
+                else:
+                    # Renumber metadata dict keys to match renumbered cycle indices
+                    renumbered_metadata = {}
+                    for new_cycle_idx, old_cycle_idx in enumerate(sorted_cycle_indices):
+                        if old_cycle_idx in matrix_dict:
+                            renumbered_metadata[new_cycle_idx] = matrix_dict[old_cycle_idx]
+                    matrix_data[field_name] = renumbered_metadata
             else:
                 # Concatenate array data
                 matrix_data[field_name] = np.concatenate(
@@ -368,12 +625,15 @@ class FilterPipeline:
         return data, matrix_data
 
     @staticmethod
-    def from_config(filter_config: Dict, record_config: Optional[Dict] = None) -> 'FilterPipeline':
+    def from_config(filter_config: Dict, record_config: Optional[Dict] = None,
+                   metabolic_type: str = 'LEGACY', character_mass: float = 0.0) -> 'FilterPipeline':
         """Create FilterPipeline from configuration dict
 
         Args:
             filter_config: Filter configuration dictionary
             record_config: Optional full record config for validation
+            metabolic_type: Metabolic energy type (A, A2, MA, MA2, LEGACY)
+            character_mass: Character mass in kg (required for CoT filter)
 
         Returns:
             Configured FilterPipeline
@@ -383,11 +643,16 @@ class FilterPipeline:
                 'drop_short_cycles': {'enabled': True, 'min_steps': 10},
                 'drop_first_n_cycles': {'enabled': True, 'n': 1},
                 'drop_last_m_cycles': {'enabled': True, 'm': 1},
-                'compute_travel_distance': {'enabled': True}
+                'metabolic_cumulative': {'enabled': True},
+                'compute_travel_distance': {'enabled': True},
+                'metabolic_cot': {'enabled': True}  # Auto-enables dependencies
             }
         """
         pipeline = FilterPipeline()
 
+        # Check if CoT is enabled - if so, auto-enable dependencies
+        # CoT requires: metabolic_cumulative AND compute_travel_distance
+        cot_enabled = filter_config.get('metabolic_cot', {}).get('enabled', False)
 
         # Drop first N cycles
         if filter_config.get('drop_first_n_cycles', {}).get('enabled', False):
@@ -404,8 +669,35 @@ class FilterPipeline:
             min_steps = filter_config['drop_short_cycles'].get('min_steps', 10)
             pipeline.add_filter(DropShortCyclesFilter(min_steps))
 
-        # Compute travel distance
-        if filter_config.get('compute_travel_distance', {}).get('enabled', False):
+        # Metabolic cumulative energy (auto-enabled by CoT if needed)
+        metabolic_enabled = filter_config.get('metabolic_cumulative', {}).get('enabled', False)
+        if cot_enabled:
+            metabolic_enabled = True  # Auto-enable for CoT
+
+        if metabolic_enabled:
+            pipeline.add_filter(MetabolicCumulativeFilter(metabolic_type, record_config))
+
+        # Compute travel distance (auto-enabled by CoT if needed)
+        travel_distance_enabled = filter_config.get('compute_travel_distance', {}).get('enabled', False)
+        if cot_enabled:
+            travel_distance_enabled = True  # Auto-enable for CoT
+
+        if travel_distance_enabled:
             pipeline.add_filter(ComputeTravelDistanceFilter(record_config))
+
+        # Compute Cost of Transport (requires cumulative and travel_distance)
+        if cot_enabled:
+            if character_mass > 0:
+                pipeline.add_filter(ComputeCoTFilter(metabolic_type, character_mass, record_config, filter_config))
+            else:
+                print(f"⚠️  WARNING: metabolic_cot enabled but character_mass not provided or invalid")
+
+        # Compute statistics across cycles (must be last - operates on all cycle data)
+        if filter_config.get('stat_filter', {}).get('enabled', False):
+            keys = filter_config['stat_filter'].get('keys', [])
+            if keys:
+                pipeline.add_filter(StatisticsFilter(keys))
+            else:
+                print(f"⚠️  WARNING: stat_filter enabled but no keys specified")
 
         return pipeline

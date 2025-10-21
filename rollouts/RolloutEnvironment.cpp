@@ -47,8 +47,6 @@ void RolloutEnvironment::LoadRecordConfig(const std::string& yaml_path) {
 
 void RolloutEnvironment::Reset(double phase) {
     mEnv.reset(phase);
-    mCumulativeMetabolicEnergy = 0.0;
-    mLastCycleCount = 0;
 }
 
 Eigen::VectorXd RolloutEnvironment::GetState() {
@@ -76,7 +74,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     std::unordered_map<std::string, double> data;
 
     // Basic fields (always recorded)
-    data["step"] = mEnv.getSimulationConut();
+    data["step"] = mEnv.getSimulationCount();
     data["time"] = mEnv.getWorldTime();
     data["phase"] = mEnv.getNormalizedPhase();
     data["cycle"] = mEnv.getWorldPhaseCount();
@@ -106,7 +104,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     if (mRecordConfig.kinematics.enabled) {
         // All joint positions as a single vector
         if (mRecordConfig.kinematics.all) {
-            record->addVector("motions", mEnv.getSimulationConut() - 1, skel->getPositions());
+            record->addVector("motions", mEnv.getSimulationCount() - 1, skel->getPositions());
         }
 
         // Root position
@@ -171,27 +169,10 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     // Metabolic energy recording
     if (mRecordConfig.metabolic.enabled) {
         double stepEnergy = mEnv.getCharacter()->getMetabolicStepEnergy();
-
-        // Accumulate energy
-        mCumulativeMetabolicEnergy += stepEnergy;
-
-        // Record per-step energy if enabled
-        if (mRecordConfig.metabolic.step_energy) {
-            data["metabolic/step_energy"] = stepEnergy;
-        }
-
-        // Check for cycle boundary
-        int currentCycle = mEnv.getWorldPhaseCount();
-        if (currentCycle != mLastCycleCount && mRecordConfig.metabolic.cumulative) {
-            // Record cumulative energy for completed cycle
-            data["metabolic/cumulative"] = mCumulativeMetabolicEnergy;
-            // Reset for next cycle
-            mCumulativeMetabolicEnergy = 0.0;
-            mLastCycleCount = currentCycle;
-        }
+        data["metabolic/step_energy"] = stepEnergy;
     }
 
-    record->add(mEnv.getSimulationConut() - 1, data);
+    record->add(mEnv.getSimulationCount() - 1, data);
 }
 
 int RolloutEnvironment::GetCycleCount() {
@@ -209,6 +190,10 @@ std::vector<std::string> RolloutEnvironment::GetRecordFields() const {
 
 int RolloutEnvironment::GetSkeletonDOF() const {
     return const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
+}
+
+double RolloutEnvironment::GetMass() const {
+    return const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getMass();
 }
 
 int RolloutEnvironment::GetSimulationHz() {

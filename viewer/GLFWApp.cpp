@@ -3354,7 +3354,7 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
     } else {
         // NPZ motion: contains 2 gait cycles, use first half (1 cycle) in viewer time mode
         // num_cycles is 60, so use 30 frames for one gait cycle
-        frame_float = phase * (motion.num_frames / 2.0);
+        frame_float = phase * motion.num_frames;
     }
 
     return frame_float;
@@ -3460,8 +3460,6 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
         Eigen::Vector3d current_root_pos(motion_pos[3], motion_pos[4], motion_pos[5]);
         Eigen::Vector3d delta = current_root_pos - motion.initialRootPosition;
 
-        std::cout << "motion pos: " << motion_pos.segment(3, 3).transpose() << std::endl;
-
         motion_pos[3] = delta[0] + mCycleAccumulation[0] + motion.displayOffset[0];
         motion_pos[4] = current_root_pos[1] + motion.displayOffset[1];
         motion_pos[5] = delta[2] + mCycleAccumulation[2] + motion.displayOffset[2];
@@ -3566,8 +3564,6 @@ void GLFWApp::updateViewerTime(double dt)
 
             mCycleAccumulation[0] += (last_root_pos[0] - current_motion.initialRootPosition[0]) * (frame_per_cycle) / (frame_per_cycle - 1);
             mCycleAccumulation[2] += (last_root_pos[2] - current_motion.initialRootPosition[2]) * (frame_per_cycle) / (frame_per_cycle - 1);
-
-            std::cout << "updateViewerTime: mCycleAccumulation: " << mCycleAccumulation.transpose() << std::endl;
         }
         mLastFrameIdx = current_frame_idx;
     } else {
@@ -3589,10 +3585,6 @@ void GLFWApp::updateViewerTime(double dt)
     }
 
     motionPoseEval(mMotions[mMotionIdx], frame_float);
-    std::cout << "phase: " << phase << std::endl;
-    std::cout << "frame_float: " << frame_float << std::endl;
-    std::cout << "root position: " << mMotions[mMotionIdx].currentPose.segment(3, 3).transpose() << std::endl;
-    std::cout << "================================================" << std::endl;
 }
 
 void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)

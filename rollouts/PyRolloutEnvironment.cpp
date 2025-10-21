@@ -20,6 +20,8 @@ void bind_RolloutEnvironment(py::module& m) {
         .def("get_cycle_count", &RolloutEnvironment::GetCycleCount)
         .def("is_eoe", &RolloutEnvironment::IsEndOfEpisode)
         .def("get_record_fields", &RolloutEnvironment::GetRecordFields)
+        .def("get_metabolic_type", &RolloutEnvironment::GetMetabolicType)
+        .def("get_mass", &RolloutEnvironment::GetMass)
         .def("get_simulation_hz", &RolloutEnvironment::GetSimulationHz)
         .def("get_control_hz", &RolloutEnvironment::GetControlHz)
         .def("set_mcn_weights", &RolloutEnvironment::SetMuscleNetworkWeight)

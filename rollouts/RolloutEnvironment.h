@@ -3,6 +3,7 @@
 
 #include "Environment.h"
 #include "RolloutRecord.h"
+#include "PyRolloutRecord.h"
 #include <pybind11/pybind11.h>
 #include <map>
 #include <memory>
@@ -32,7 +33,9 @@ public:
     // Record configuration
     std::vector<std::string> GetRecordFields() const;
     RecordConfig GetRecordConfig() const { return mRecordConfig; }
+    std::string GetMetabolicType() const { return mRecordConfig.metabolic.type; }
     int GetSkeletonDOF() const;
+    double GetMass() const;
     
     // Parameter control
     void SetParameters(const std::map<std::string, double>& params);
@@ -53,10 +56,6 @@ private:
     Environment mEnv;
     RecordConfig mRecordConfig;
     int mTargetCycles = 5;
-
-    // Metabolic energy tracking
-    double mCumulativeMetabolicEnergy = 0.0;
-    int mLastCycleCount = 0;
 };
 
 #endif // ROLLOUT_ENVIRONMENT_H

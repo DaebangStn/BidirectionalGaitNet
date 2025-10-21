@@ -5,10 +5,22 @@ import yaml
 import pickle
 import tempfile
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, NamedTuple
 from pyrollout import RolloutEnvironment, RolloutRecord
 from ray_model import SelectiveUnpickler, loading_network
 from io import BytesIO
+
+
+class RolloutData(NamedTuple):
+    """Structured rollout data for HDF5 storage"""
+    param_idx: int
+    data: np.ndarray
+    matrix_data: Dict[str, np.ndarray]
+    fields: List[str]
+    success: bool
+    param_state: Optional[np.ndarray]
+    cycle_attributes: Optional[Dict]
+    character_mass: float
 
 
 def load_metadata_from_checkpoint(checkpoint_path: str) -> str:
@@ -97,7 +109,7 @@ def load_parameters_from_csv(csv_path: str) -> List[Tuple[int, Dict[str, float]]
     return parameters
 
 
-def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, Dict[str, np.ndarray], List[str], bool, Optional[np.ndarray]]],
+def save_to_hdf5(rollout_data: List[Tuple],
                  output_path: str,
                  sample_dir: Path,
                  mode: str = 'w',
@@ -109,7 +121,7 @@ def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, Dict[str, np.ndarray]
         /param_{idx}/cycle_{idx}/field_name datasets
 
     Args:
-        rollout_data: List of (param_idx, data, matrix_data, fields, success, param_state) tuples
+        rollout_data: List of (param_idx, data, matrix_data, fields, success, param_state, cycle_attributes, param_attributes) tuples
         output_path: Output HDF5 file path
         sample_dir: Sample directory for error log
         mode: File mode - 'w' for create/overwrite, 'a' for append
@@ -148,7 +160,7 @@ def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, Dict[str, np.ndarray]
             f.attrs['failed_samples'] = 0
             f.attrs['success_samples'] = 0
 
-        for param_idx, data, matrix_data, fields, success, param_state in rollout_data:
+        for param_idx, data, matrix_data, fields, success, param_state, cycle_attributes, param_attributes in rollout_data:
             # Create group for this parameter index
             param_group_name = f"param_{param_idx}"
             param_grp = f.create_group(param_group_name)
@@ -161,17 +173,39 @@ def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, Dict[str, np.ndarray]
                 param_grp.attrs['num_steps'] = 0
                 param_grp.attrs['success'] = False
                 param_grp.attrs['error'] = 'empty_data'
+                # Write param attributes generically
+                for attr_name, attr_value in (param_attributes or {}).items():
+                    if isinstance(attr_value, (int, float, bool, str)):
+                        param_grp.attrs[attr_name] = attr_value
+                    elif isinstance(attr_value, np.ndarray) and attr_value.size == 1:
+                        param_grp.attrs[attr_name] = float(attr_value)
                 continue
 
-            # Store metadata as attributes
+            # Store standard metadata as attributes
             param_grp.attrs['param_idx'] = param_idx
             param_grp.attrs['num_steps'] = data.shape[0]
             param_grp.attrs['success'] = success
+
+            # Write param attributes generically (flexible - any new attribute auto-written!)
+            for attr_name, attr_value in (param_attributes or {}).items():
+                if isinstance(attr_value, (int, float, bool, str)):
+                    param_grp.attrs[attr_name] = attr_value
+                elif isinstance(attr_value, np.ndarray) and attr_value.size == 1:
+                    param_grp.attrs[attr_name] = float(attr_value)
 
             # Store parameter state if available
             if param_state is not None:
                 param_grp.create_dataset('param_state', data=param_state.astype(np.float32),
                                         compression='gzip', compression_opts=4)
+
+            # Write averaged attributes (from AverageAttributesFilter)
+            if '_averaged_attributes' in matrix_data:
+                averaged_attrs = matrix_data['_averaged_attributes']
+                for attr_name, attr_value in averaged_attrs.items():
+                    if isinstance(attr_value, (int, float, bool)):
+                        param_grp.attrs[attr_name] = attr_value
+                    elif isinstance(attr_value, np.ndarray) and attr_value.size == 1:
+                        param_grp.attrs[attr_name] = float(attr_value)
 
             # Group by cycle
             if 'cycle' in fields:
@@ -195,8 +229,30 @@ def save_to_hdf5(rollout_data: List[Tuple[int, np.ndarray, Dict[str, np.ndarray]
                     if '_travel_distance' in matrix_data and cycle_idx in matrix_data['_travel_distance']:
                         cycle_grp.attrs['travel_distance'] = float(matrix_data['_travel_distance'][cycle_idx])
 
+                    # Store metabolic cumulative energy and CoT if computed
+                    # Check for any _metabolic_* keys in matrix_data
+                    for key, value_dict in matrix_data.items():
+                        if key.startswith('_metabolic_cumulative_'):
+                            # Extract metabolic type from key (e.g., _metabolic_cumulative_A -> A)
+                            metabolic_type = key.replace('_metabolic_cumulative_', '')
+                            if cycle_idx in value_dict:
+                                attr_name = f'metabolic/cumulative/{metabolic_type}'
+                                cycle_grp.attrs[attr_name] = float(value_dict[cycle_idx])
+                        elif key.startswith('_metabolic_cot_'):
+                            # Extract metabolic type from key (e.g., _metabolic_cot_A -> A)
+                            metabolic_type = key.replace('_metabolic_cot_', '')
+                            if cycle_idx in value_dict:
+                                attr_name = f'metabolic/cot/{metabolic_type}'
+                                cycle_grp.attrs[attr_name] = float(value_dict[cycle_idx])
+
+                    # Store cycle-level attributes from C++ (if any)
+                    if cycle_attributes and cycle_idx in cycle_attributes:
+                        for attr_name, attr_value in cycle_attributes[cycle_idx].items():
+                            cycle_grp.attrs[attr_name] = float(attr_value)
+
                     # Store each scalar field as a separate dataset
                     for field_idx, field_name in enumerate(fields):
+                        # Skip matrix data and cycle field
                         if field_name in matrix_data or field_name == 'cycle':
                             continue
 
@@ -326,9 +382,30 @@ class EnvWorker:
         self.fields = self.rollout_env.get_record_fields()
         self.record = RolloutRecord(self.fields)
 
+        # Get metabolic type and character mass from environment
+        metabolic_type = self.rollout_env.get_metabolic_type()
+        character_mass = self.rollout_env.get_mass()
+
+        # Collect param-level attributes based on config
+        self.param_attributes = {}
+
+        # Add environment attributes if configured
+        env_config = (record_config or {}).get('environment', {})
+        if env_config.get('character_mass', False):
+            self.param_attributes['character_mass'] = character_mass
+
+        # Add new attributes here - easy to extend based on config!
+        # if env_config.get('skeleton_dof', False):
+        #     self.param_attributes['skeleton_dof'] = self.rollout_env.get_skeleton_dof()
+        # if env_config.get('simulation_hz', False):
+        #     self.param_attributes['simulation_hz'] = self.rollout_env.get_simulation_hz()
+
         # Initialize filter pipeline for parallel filtering
         from data_filters import FilterPipeline
-        self.filter_pipeline = FilterPipeline.from_config(filter_config or {}, record_config)
+        self.filter_pipeline = FilterPipeline.from_config(
+            filter_config or {}, record_config,
+            metabolic_type=metabolic_type, character_mass=character_mass
+        )
 
     def reset(self, param_dict: Optional[Dict[str, float]] = None) -> np.ndarray:
         """Reset environment and record buffer, optionally setting parameters"""
@@ -383,6 +460,7 @@ class EnvWorker:
         """
         data = self.record.data.copy()
         matrix_data = self.record.matrix_data
+        cycle_attributes = self.record.cycle_attributes
         fields = self.fields
 
         # Extract parameter state
@@ -400,7 +478,9 @@ class EnvWorker:
             matrix_data=matrix_data,
             fields=fields,
             success=success,
-            param_state=param_state
+            param_state=param_state,
+            cycle_attributes=cycle_attributes,
+            param_attributes=self.param_attributes
         ))
 
         return param_idx, success
@@ -442,9 +522,10 @@ class FileWorker:
         sample_dir.mkdir(parents=True, exist_ok=True)
 
     def write_rollout(self, param_idx: int, data: np.ndarray, matrix_data: Dict[str, np.ndarray],
-                     fields: List[str], success: bool, param_state: np.ndarray = None):
+                     fields: List[str], success: bool, param_state: np.ndarray = None,
+                     cycle_attributes: Dict = None, param_attributes: Dict = None):
         """Buffer rollout data and flush if buffer is full"""
-        self.buffer.append((param_idx, data, matrix_data, fields, success, param_state))
+        self.buffer.append((param_idx, data, matrix_data, fields, success, param_state, cycle_attributes, param_attributes or {}))
 
         # Track statistics
         self.total_samples += 1

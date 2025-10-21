@@ -60,7 +60,7 @@ struct RecordConfig {
         bool enabled = false;
         std::string type = "LEGACY";  // LEGACY, A, A2, MA, MA2
         bool step_energy = false;      // Record per-step energy (array)
-        bool cumulative = false;       // Record cumulative energy per cycle (scalar)
+        bool cumulative = false;       // Record cumulative energy per cycle (computed in Python filter)
     } metabolic;
 
     static RecordConfig LoadFromYAML(const std::string& yaml_path);

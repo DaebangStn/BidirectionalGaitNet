@@ -20,12 +20,14 @@ record:
 
   metabolic:
     enabled: true
-    type: "MA"              # Options: LEGACY, A, A2, MA, MA2
-    step_energy: true       # Record energy per simulation step (array)
-    cumulative: true        # Record cumulative energy per cycle (scalar)
+    type: "MA"
 
 sample:
   cycle: 30
+
+# Environment attributes to save as param-level attributes
+environment:
+  character_mass: true    # Save character mass
 
 # Data filtering and processing pipeline
 filters:
@@ -46,4 +48,19 @@ filters:
 
   # Compute travel distance from root position
   compute_travel_distance:
-    enabled: false
+    enabled: true
+
+  # Compute cumulative metabolic energy per cycle
+  metabolic_cumulative:
+    enabled: true
+
+  # Compute Cost of Transport (CoT)
+  # Note: Enabling CoT will auto-enable metabolic_cumulative and compute_travel_distance
+  metabolic_cot:
+    enabled: true
+
+  # Compute statistics (mean, std) across cycles
+  stat_filter:
+    enabled: true
+    keys:
+      - 'metabolic/cot/MA'

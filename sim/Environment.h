@@ -183,7 +183,7 @@ public:
     // Time and cycle getters for rollout
     double getWorldTime() const { return mWorldTime; }
     int getWorldPhaseCount() const { return mWorldPhaseCount; }
-    int getSimulationConut() const { return mSimulationCount; }
+    int getSimulationCount() const { return mSimulationCount; }
 
     // For Parameterization
 
