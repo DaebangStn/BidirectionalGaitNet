@@ -226,10 +226,10 @@ void RolloutEnvironment::SetParameters(const std::map<std::string, double>& para
     // Get parameter names from environment
     const std::vector<std::string>& param_names = mEnv.getParamName();
 
-    // Create parameter vector with default values (0.0)
-    Eigen::VectorXd param_state = Eigen::VectorXd::Zero(param_names.size());
+    // Get default parameter values (1.0 for skeleton scaling, etc.)
+    Eigen::VectorXd param_state = mEnv.getParamDefault();
 
-    // Fill in provided parameters
+    // Fill in provided parameters (overriding defaults)
     for (size_t i = 0; i < param_names.size(); ++i) {
         auto it = params.find(param_names[i]);
         if (it != params.end()) {
