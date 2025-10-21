@@ -384,7 +384,8 @@ void Environment::initialize(std::string metadata)
                         p.name = group_name;
                         p.param_idxs.push_back(mParamName.size() - 1);
                         p.param_names.push_back(mParamName.back());
-                        p.v = (defaultV.back() - minV.back()) / (maxV.back() - minV.back());
+                        double range = maxV.back() - minV.back();
+                        p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
                         p.is_uniform = mSamplingStrategy.back();
                         mParamGroups.push_back(p);
                     }
@@ -395,7 +396,8 @@ void Environment::initialize(std::string metadata)
                     p.name = mParamName.back();
                     p.param_idxs.push_back(mParamName.size() - 1);
                     p.param_names.push_back(mParamName.back());
-                    p.v = (defaultV.back() - minV.back()) / (maxV.back() - minV.back());
+                    double range = maxV.back() - minV.back();
+                    p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
                     p.is_uniform = mSamplingStrategy.back();
                     mParamGroups.push_back(p);
                 }

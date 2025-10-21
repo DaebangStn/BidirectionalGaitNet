@@ -198,7 +198,10 @@ public:
     {
         Eigen::VectorXd norm_p = getParamState(isMirror);
         for (int i = 0; i < norm_p.rows(); i++)
-            norm_p[i] = (norm_p[i] - minV[i]) / (maxV[i] - minV[i]);
+        {
+            double range = maxV[i] - minV[i];
+            norm_p[i] = (std::abs(range) < 1e-9) ? 0.0 : (norm_p[i] - minV[i]) / range;
+        }
         return norm_p;
     }
     const std::vector<std::string> &getParamName() { return mParamName; };

@@ -828,6 +828,32 @@ void ExtractorUI::extractCycle(const std::string& input_path, int param_idx, int
             }
         }
 
+        // Copy parameter_names dataset if it exists
+        {
+            std::string param_names_path = "/parameter_names";
+            if (H5Lexists(input_file.getId(), param_names_path.c_str(), H5P_DEFAULT)) {
+                H5::DataSet src_dataset = input_file.openDataSet(param_names_path);
+                H5::DataSpace src_dataspace = src_dataset.getSpace();
+                H5::DataType src_datatype = src_dataset.getDataType();
+
+                // Get dimensions
+                hsize_t dims[1];
+                src_dataspace.getSimpleExtentDims(dims, nullptr);
+
+                // Read variable-length string data
+                std::vector<char*> param_names(dims[0]);
+                src_dataset.read(param_names.data(), src_datatype);
+
+                // Create output dataset
+                H5::DataSpace dst_dataspace(1, dims);
+                H5::DataSet dst_dataset = output_file.createDataSet("/parameter_names", src_datatype, dst_dataspace);
+                dst_dataset.write(param_names.data(), src_datatype);
+
+                // Free variable-length string memory using C API
+                H5Dvlen_reclaim(src_datatype.getId(), src_dataspace.getId(), H5P_DEFAULT, param_names.data());
+            }
+        }
+
         // Create metadata
         {
             std::stringstream metadata;
