@@ -216,6 +216,13 @@ int RolloutEnvironment::GetWorldPhaseCount() {
     return mEnv.getWorldPhaseCount();
 }
 
+Eigen::VectorXd RolloutEnvironment::InterpolatePose(const Eigen::VectorXd& pose1,
+                                                     const Eigen::VectorXd& pose2,
+                                                     double t,
+                                                     bool extrapolate_root) {
+    return mEnv.getCharacter()->interpolatePose(pose1, pose2, t, extrapolate_root);
+}
+
 void RolloutEnvironment::SetParameters(const std::map<std::string, double>& params) {
     if (params.empty()) {
         // Empty parameters - sample from default distribution (matches updateParamState)

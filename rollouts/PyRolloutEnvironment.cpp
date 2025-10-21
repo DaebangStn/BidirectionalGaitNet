@@ -34,7 +34,13 @@ void bind_RolloutEnvironment(py::module& m) {
              py::arg("is_mirror") = false,
              "Get current parameter state as vector")
         .def("get_param_default", &RolloutEnvironment::GetParamDefault,
-             "Get default parameter values as vector");
+             "Get default parameter values as vector")
+        .def("interpolate_pose", &RolloutEnvironment::InterpolatePose,
+             py::arg("pose1"),
+             py::arg("pose2"),
+             py::arg("t"),
+             py::arg("extrapolate_root") = false,
+             "Skeleton-aware pose interpolation using Character::interpolatePose");
 }
 
 PYBIND11_MODULE(pyrollout, m) {

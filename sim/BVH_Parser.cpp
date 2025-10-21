@@ -78,34 +78,6 @@ Eigen::Isometry3d BVH::getTransform(Eigen::VectorXd _pos, std::vector<std::strin
 	return result;
 }
 
-Eigen::VectorXd BVH::getInterpolation(Eigen::VectorXd p1, Eigen::VectorXd p2, double t)
-{
-	Eigen::VectorXd pos = Eigen::VectorXd::Zero(p1.rows());
-	for (const auto jn : mCharacter->getSkeleton()->getJoints())
-	{
-		int dof = jn->getNumDofs();
-		if (dof == 0) continue;
-		int idx = jn->getIndexInSkeleton(0);
-		if (dof == 1) pos[idx] = p1[idx] * (1 - t) + p2[idx] * t;
-		else if (dof == 3)
-		{
-			Eigen::Quaterniond q1 = Eigen::Quaterniond(BallJoint::convertToRotation(p1.segment(idx, dof)));
-			Eigen::Quaterniond q2 = Eigen::Quaterniond(BallJoint::convertToRotation(p2.segment(idx, dof)));
-			Eigen::Quaterniond q = q1.slerp(t, q2);
-			pos.segment(idx, dof) = BallJoint::convertToPositions(q.toRotationMatrix());
-		}
-		else if (dof == 6)
-		{
-			Eigen::Quaterniond q1 = Eigen::Quaterniond(BallJoint::convertToRotation(p1.segment(idx, 3)));
-			Eigen::Quaterniond q2 = Eigen::Quaterniond(BallJoint::convertToRotation(p2.segment(idx, 3)));
-			Eigen::Quaterniond q = q1.slerp(t, q2);
-			pos.segment(idx, 3) = BallJoint::convertToPositions(q.toRotationMatrix());
-			pos.segment(idx + 3, 3) = p1.segment(idx + 3, 3) * (1 - t) + p2.segment(idx + 3, 3) * t;
-		}
-	}
-	return pos;
-}
-
 Eigen::VectorXd BVH::getPose(int frameIdx)
 {
 	// Frame-based access: direct indexing into motion array
@@ -131,7 +103,7 @@ Eigen::VectorXd BVH::getPose(double phase)
 		p2.head(6) = FreeJoint::convertToPositions(mRootTransform * FreeJoint::convertToTransform(p2.head(6)));
 
 	// Strict Interpolation
-	Eigen::VectorXd pos = getInterpolation(p1, p2, idx_f);
+	Eigen::VectorXd pos = mCharacter->interpolatePose(p1, p2, idx_f, false);
 
 	// Height Calibration
 	if (mHeightCalibration) pos[4] += mHeightOffset;
@@ -148,7 +120,7 @@ Eigen::VectorXd BVH::getTargetPose(double phase)
 	// std::cout << "[getTargetPose] pos_mirror: " << pos_mirror.head(3).transpose() * 180.0 / M_PI << std::endl;
 	// std::cout << "[getTargetPose] mirror(pos_mirror): " << mCharacter->getMirrorPosition(pos_mirror).head(3).transpose() * 180.0 / M_PI << std::endl;
 
-	if (mSymmetryMode) pos = getInterpolation(pos, mCharacter->getMirrorPosition(pos_mirror), 0.5);
+	if (mSymmetryMode) pos = mCharacter->interpolatePose(pos, mCharacter->getMirrorPosition(pos_mirror), 0.5, false);
 	// pos = (pos + mCharacter->getMirrorPosition(getPose(phase + 0.5))) * 0.5;
 	// std::cout << "[getTargetPose] mean pos: " << pos.head(3).transpose() * 180.0 / M_PI << std::endl;
 	return pos;

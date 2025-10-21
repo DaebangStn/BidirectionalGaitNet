@@ -18,6 +18,9 @@ struct CycleInfo {
     double duration;
     double phase_min;
     double phase_max;
+    bool is_param_averaged;  // True if this represents param-level averaged data
+
+    CycleInfo() : index(-1), frames(0), duration(0.0), phase_min(0.0), phase_max(0.0), is_param_averaged(false) {}
 };
 
 struct ParamInfo {
@@ -37,7 +40,7 @@ struct FileInfo {
 };
 
 // Constants
-const int MAX_TIMESTEPS_COUNT = 5000;
+const int MAX_TIMESTEPS_COUNT = 10000;
 const int MAX_PARAM_COUNT = 100;
 const int MAX_CYCLE_COUNT = 100;
 
@@ -132,9 +135,9 @@ void ExtractorUI::loadFileInfo(FileInfo& file_info) {
 
             param_count++;
 
-            // Count cycles and timesteps (limit applies per param, not across all params)
+            // Count all cycles and timesteps (no limit on discovery)
             int param_timesteps = 0;
-            for (int c = 0; c < MAX_CYCLE_COUNT && param_timesteps < MAX_TIMESTEPS_COUNT; c++) {
+            for (int c = 0; c < MAX_CYCLE_COUNT; c++) {
                 std::stringstream ss_cycle;
                 ss_cycle << param_name << "/cycle_" << c;
                 std::string cycle_path = ss_cycle.str();
@@ -154,10 +157,6 @@ void ExtractorUI::loadFileInfo(FileInfo& file_info) {
 
                 param_timesteps += static_cast<int>(dims[0]);
                 total_timesteps += static_cast<int>(dims[0]);
-
-                if (param_timesteps >= MAX_TIMESTEPS_COUNT) {
-                    break;
-                }
             }
 
             if (param_count >= MAX_PARAM_COUNT) {
@@ -184,7 +183,8 @@ void ExtractorUI::loadParamInfo(const std::string& filepath, ParamInfo& param_in
         int total_timesteps = 0;
         int cycle_count = 0;
 
-        for (int c = 0; c < MAX_CYCLE_COUNT && total_timesteps < MAX_TIMESTEPS_COUNT; c++) {
+        // Load all cycles without timestep limit (limit only applies to extraction)
+        for (int c = 0; c < MAX_CYCLE_COUNT; c++) {
             std::stringstream ss;
             ss << "param_" << param_info.index << "/cycle_" << c;
             std::string cycle_path = ss.str();
@@ -202,10 +202,6 @@ void ExtractorUI::loadParamInfo(const std::string& filepath, ParamInfo& param_in
             dataspace.getSimpleExtentDims(dims, nullptr);
 
             total_timesteps += static_cast<int>(dims[0]);
-
-            if (total_timesteps >= MAX_TIMESTEPS_COUNT) {
-                break;
-            }
         }
 
         param_info.timesteps = total_timesteps;
@@ -385,14 +381,28 @@ void ExtractorUI::stage3_cycleSelect() {
     mvprintw(LINES - 2, 0, "[↑/↓: Navigate] [Enter: Select] [b: Back] [q: Quit]");
     refresh();
 
+    // Check if param-level data exists
+    bool has_param_data = false;
+    try {
+        H5::H5File h5file(files[selected_file_idx].path, H5F_ACC_RDONLY);
+        std::stringstream ss;
+        ss << "param_" << files[selected_file_idx].params[selected_param_idx].index << "/motions";
+        has_param_data = H5Lexists(h5file.getId(), ss.str().c_str(), H5P_DEFAULT);
+        h5file.close();
+    } catch (...) {}
+
     int ch = getch();
     if (ch == 'q' || ch == 'Q') {
         endwin();
         exit(0);
     } else if (ch == 'b' || ch == 'B') {
         current_stage = PARAM_SELECT;
-    } else if (ch == KEY_UP && selected_cycle_idx > 0) {
-        selected_cycle_idx--;
+    } else if (ch == KEY_UP) {
+        // Allow going up to -1 (param_averaged) if param data exists
+        int min_idx = has_param_data ? -1 : 0;
+        if (selected_cycle_idx > min_idx) {
+            selected_cycle_idx--;
+        }
     } else if (ch == KEY_DOWN) {
         ParamInfo& param = files[selected_file_idx].params[selected_param_idx];
         if (selected_cycle_idx < static_cast<int>(param.cycles.size()) - 1) {
@@ -422,22 +432,26 @@ void ExtractorUI::stageConfirm() {
         // Generate output filename
         FileInfo& file = files[selected_file_idx];
         ParamInfo& param = file.params[selected_param_idx];
-        CycleInfo& cycle = param.cycles[selected_cycle_idx];
+        bool is_param_averaged = (selected_cycle_idx == -1);
 
         // Ensure data/motion directory exists
         fs::create_directories("data/motion");
 
         std::string base_name = file.name.substr(0, file.name.find_last_of('.'));
         std::stringstream ss;
-        ss << "data/motion/"
-           << base_name << "_param" << param.index << "_cycle" << cycle.index << ".h5";
+        ss << "data/motion/" << base_name << "_param" << param.index;
+        if (is_param_averaged) {
+            ss << "_averaged.h5";
+        } else {
+            ss << "_cycle" << param.cycles[selected_cycle_idx].index << ".h5";
+        }
         std::string output_path = ss.str();
 
         fs::path rel_output = fs::relative(output_path);
         mvprintw(LINES - 4, 0, "Extracting to: %s", rel_output.string().c_str());
         refresh();
 
-        extractCycle(file.path, param.index, cycle.index, output_path);
+        extractCycle(file.path, param.index, selected_cycle_idx, output_path);
 
         mvprintw(LINES - 3, 0, "Extraction complete! Press any key to exit...");
         refresh();
@@ -488,9 +502,93 @@ void ExtractorUI::drawCycleList() {
     fs::path rel_path = fs::relative(file.path);
     printw("File: %s\n", rel_path.string().c_str());
     printw("Param: %d\n\n", param.index);
+
+    // Check for param-level averaged data and get info
+    bool has_param_data = false;
+    int param_samples = 0;
+    double param_duration = 0.0;
+    double param_phase_min = 0.0;
+    double param_phase_max = 1.0;
+
+    try {
+        H5::H5File h5file(file.path, H5F_ACC_RDONLY);
+        std::stringstream ss_base;
+        ss_base << "param_" << param.index;
+        std::string param_path = ss_base.str();
+
+        // Check motions
+        std::string motions_path = param_path + "/motions";
+        if (H5Lexists(h5file.getId(), motions_path.c_str(), H5P_DEFAULT)) {
+            has_param_data = true;
+            H5::DataSet dataset = h5file.openDataSet(motions_path);
+            H5::DataSpace dataspace = dataset.getSpace();
+            hsize_t dims[2];
+            dataspace.getSimpleExtentDims(dims, nullptr);
+            param_samples = static_cast<int>(dims[0]);
+        }
+
+        // Get time range if available
+        std::string time_path = param_path + "/time";
+        if (H5Lexists(h5file.getId(), time_path.c_str(), H5P_DEFAULT)) {
+            H5::DataSet time_dataset = h5file.openDataSet(time_path);
+            std::vector<float> time_data(param_samples);
+            time_dataset.read(time_data.data(), H5::PredType::NATIVE_FLOAT);
+            param_duration = time_data.back() - time_data.front();
+        }
+
+        // Get phase range if available
+        std::string phase_path = param_path + "/phase";
+        if (H5Lexists(h5file.getId(), phase_path.c_str(), H5P_DEFAULT)) {
+            H5::DataSet phase_dataset = h5file.openDataSet(phase_path);
+            std::vector<float> phase_data(param_samples);
+            phase_dataset.read(phase_data.data(), H5::PredType::NATIVE_FLOAT);
+            param_phase_min = *std::min_element(phase_data.begin(), phase_data.end());
+            param_phase_max = *std::max_element(phase_data.begin(), phase_data.end());
+        }
+
+        h5file.close();
+    } catch (...) {}
+
     printw("Cycles:\n\n");
 
-    for (size_t i = 0; i < param.cycles.size(); i++) {
+    // Calculate available space for cycle list
+    int available_lines = LINES - 8;  // Header takes 5 lines, footer needs 3 lines
+    int total_items = param.cycles.size() + (has_param_data ? 1 : 0);
+
+    // Calculate scroll window
+    int scroll_offset = 0;
+    if (total_items > available_lines) {
+        // Center selected item in visible window
+        scroll_offset = selected_cycle_idx - (available_lines / 2);
+        if (scroll_offset < 0) scroll_offset = 0;
+        if (scroll_offset + available_lines > total_items) {
+            scroll_offset = total_items - available_lines;
+        }
+    }
+
+    int visible_end = std::min(scroll_offset + available_lines, total_items);
+
+    // Show scroll indicator if needed
+    if (scroll_offset > 0) {
+        printw("    ... (%d more items above) ...\n", scroll_offset);
+    }
+
+    // Show param-level averaged data first (if exists and in visible range)
+    if (has_param_data && scroll_offset == 0) {
+        if (selected_cycle_idx == -1) printw("  > ");
+        else printw("    ");
+        printw("param_averaged:  Frames: %d  Duration: %.2f s  Phase: [%.3f, %.3f]\n",
+               param_samples, param_duration, param_phase_min, param_phase_max);
+    }
+
+    // Show visible cycles (adjust indices based on param_data offset)
+    int cycle_start = has_param_data ? std::max(0, scroll_offset - 1) : scroll_offset;
+    int cycle_end = has_param_data ? std::min((int)param.cycles.size(), visible_end - 1) : visible_end;
+
+    for (int i = cycle_start; i < cycle_end; i++) {
+        int display_idx = i + (has_param_data ? 1 : 0);
+        if (display_idx < scroll_offset || display_idx >= visible_end) continue;
+
         if (i == selected_cycle_idx) printw("  > ");
         else printw("    ");
 
@@ -499,34 +597,101 @@ void ExtractorUI::drawCycleList() {
                cycle.index, cycle.frames, cycle.duration,
                cycle.phase_min, cycle.phase_max);
     }
+
+    // Show scroll indicator if needed
+    if (visible_end < total_items) {
+        printw("    ... (%d more items below) ...\n", total_items - visible_end);
+    }
 }
 
 void ExtractorUI::drawConfirmation() {
     FileInfo& file = files[selected_file_idx];
     ParamInfo& param = file.params[selected_param_idx];
-    CycleInfo& cycle = param.cycles[selected_cycle_idx];
+    bool is_param_averaged = (selected_cycle_idx == -1);
 
     // Get relative paths
     fs::path rel_input = fs::relative(file.path);
 
     std::string base_name = file.name.substr(0, file.name.find_last_of('.'));
     std::stringstream ss_output;
-    ss_output << "data/motion/"
-              << base_name << "_param" << param.index << "_cycle" << cycle.index << ".h5";
+    ss_output << "data/motion/" << base_name << "_param" << param.index;
+    if (is_param_averaged) {
+        ss_output << "_averaged.h5";
+    } else {
+        ss_output << "_cycle" << param.cycles[selected_cycle_idx].index << ".h5";
+    }
     fs::path rel_output = fs::relative(ss_output.str());
 
     printw("Selected:\n");
     printw("---------\n");
     printw("File:  %s\n", rel_input.string().c_str());
     printw("Param: %d\n", param.index);
-    printw("Cycle: %d\n\n", cycle.index);
+    if (is_param_averaged) {
+        printw("Type:  param_averaged\n\n");
+    } else {
+        printw("Cycle: %d\n\n", param.cycles[selected_cycle_idx].index);
+    }
 
-    printw("Cycle Details:\n");
-    printw("--------------\n");
-    printw("Frames:    %d\n", cycle.frames);
-    printw("Duration:  %.2f s\n", cycle.duration);
-    printw("Phase:     [%.3f, %.3f]\n", cycle.phase_min, cycle.phase_max);
-    printw("Frame Rate: 60 Hz\n\n");
+    if (is_param_averaged) {
+        // Get param-level data info
+        int param_samples = 0;
+        double param_duration = 0.0;
+        double param_phase_min = 0.0;
+        double param_phase_max = 1.0;
+
+        try {
+            H5::H5File h5file(file.path, H5F_ACC_RDONLY);
+            std::stringstream ss_base;
+            ss_base << "param_" << param.index;
+
+            // Get motions dimensions
+            std::string motions_path = ss_base.str() + "/motions";
+            if (H5Lexists(h5file.getId(), motions_path.c_str(), H5P_DEFAULT)) {
+                H5::DataSet dataset = h5file.openDataSet(motions_path);
+                H5::DataSpace dataspace = dataset.getSpace();
+                hsize_t dims[2];
+                dataspace.getSimpleExtentDims(dims, nullptr);
+                param_samples = static_cast<int>(dims[0]);
+            }
+
+            // Get time range
+            std::string time_path = ss_base.str() + "/time";
+            if (H5Lexists(h5file.getId(), time_path.c_str(), H5P_DEFAULT)) {
+                H5::DataSet time_dataset = h5file.openDataSet(time_path);
+                std::vector<float> time_data(param_samples);
+                time_dataset.read(time_data.data(), H5::PredType::NATIVE_FLOAT);
+                param_duration = time_data.back() - time_data.front();
+            }
+
+            // Get phase range
+            std::string phase_path = ss_base.str() + "/phase";
+            if (H5Lexists(h5file.getId(), phase_path.c_str(), H5P_DEFAULT)) {
+                H5::DataSet phase_dataset = h5file.openDataSet(phase_path);
+                std::vector<float> phase_data(param_samples);
+                phase_dataset.read(phase_data.data(), H5::PredType::NATIVE_FLOAT);
+                param_phase_min = *std::min_element(phase_data.begin(), phase_data.end());
+                param_phase_max = *std::max_element(phase_data.begin(), phase_data.end());
+            }
+
+            h5file.close();
+        } catch (...) {}
+
+        printw("Data Details:\n");
+        printw("-------------\n");
+        printw("Frames:    %d\n", param_samples);
+        printw("Duration:  %.2f s\n", param_duration);
+        printw("Phase:     [%.3f, %.3f]\n", param_phase_min, param_phase_max);
+        printw("Frame Rate: 60 Hz\n\n");
+    } else {
+        CycleInfo& cycle = param.cycles[selected_cycle_idx];
+
+        printw("Cycle Details:\n");
+        printw("--------------\n");
+        printw("Frames:    %d\n", cycle.frames);
+        printw("Duration:  %.2f s\n", cycle.duration);
+        printw("Phase:     [%.3f, %.3f]\n", cycle.phase_min, cycle.phase_max);
+        printw("Frame Rate: 60 Hz\n\n");
+    }
 
     printw("Output: %s\n", rel_output.string().c_str());
 }
@@ -557,9 +722,20 @@ void ExtractorUI::extractCycle(const std::string& input_path, int param_idx, int
         H5::H5File input_file(input_path, H5F_ACC_RDONLY);
         H5::H5File output_file(output_path, H5F_ACC_TRUNC);
 
-        std::stringstream ss;
-        ss << "param_" << param_idx << "/cycle_" << cycle_idx;
-        std::string base_path = ss.str();
+        bool is_param_averaged = (cycle_idx == -1);
+        std::string base_path;
+
+        if (is_param_averaged) {
+            // Extract from param level: /param_X/
+            std::stringstream ss;
+            ss << "param_" << param_idx;
+            base_path = ss.str();
+        } else {
+            // Extract from cycle level: /param_X/cycle_Y/
+            std::stringstream ss;
+            ss << "param_" << param_idx << "/cycle_" << cycle_idx;
+            base_path = ss.str();
+        }
 
         // Copy motions dataset
         {
@@ -625,6 +801,28 @@ void ExtractorUI::extractCycle(const std::string& input_path, int param_idx, int
                 H5::DataSet dst_dataset = output_file.createDataSet("/param_state", H5::PredType::NATIVE_FLOAT, dst_dataspace);
 
                 std::vector<float> data(dims[0]);
+                src_dataset.read(data.data(), H5::PredType::NATIVE_FLOAT);
+                dst_dataset.write(data.data(), H5::PredType::NATIVE_FLOAT);
+            }
+        }
+
+        // Copy param_motions dataset (averaged motion data from param level)
+        // Only when extracting a cycle (not when extracting param_averaged itself)
+        if (!is_param_averaged) {
+            std::stringstream ss_param;
+            ss_param << "param_" << param_idx << "/motions";
+            std::string src_path = ss_param.str();
+
+            if (H5Lexists(input_file.getId(), src_path.c_str(), H5P_DEFAULT)) {
+                H5::DataSet src_dataset = input_file.openDataSet(src_path);
+                H5::DataSpace src_dataspace = src_dataset.getSpace();
+                hsize_t dims[2];
+                src_dataspace.getSimpleExtentDims(dims, nullptr);
+
+                H5::DataSpace dst_dataspace(2, dims);
+                H5::DataSet dst_dataset = output_file.createDataSet("/param_motions", H5::PredType::NATIVE_FLOAT, dst_dataspace);
+
+                std::vector<float> data(dims[0] * dims[1]);
                 src_dataset.read(data.data(), H5::PredType::NATIVE_FLOAT);
                 dst_dataset.write(data.data(), H5::PredType::NATIVE_FLOAT);
             }

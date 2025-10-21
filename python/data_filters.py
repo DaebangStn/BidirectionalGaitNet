@@ -38,11 +38,29 @@ class DataFilter(ABC):
         pass
 
 
-class DropShortCyclesFilter(DataFilter):
-    """Remove cycles with fewer than min_steps"""
+class DropOutlierCyclesFilter(DataFilter):
+    """Remove cycles with outlier step counts based on mean ± ratio
 
-    def __init__(self, min_steps: int):
-        self.min_steps = min_steps
+    Filters cycles whose step count falls outside the range:
+        [(1 - outlier_ratio) * mean_steps, (1 + outlier_ratio) * mean_steps]
+
+    Example:
+        outlier_ratio=0.3, mean_steps=100 → keep cycles with 70-130 steps
+    """
+
+    def __init__(self, outlier_ratio: float):
+        """Initialize outlier filter
+
+        Args:
+            outlier_ratio: Valid range ratio (must be in (0, 1))
+                          e.g., 0.3 means keep cycles within ±30% of mean
+
+        Raises:
+            ValueError: If outlier_ratio is not in range (0, 1)
+        """
+        if outlier_ratio <= 0 or outlier_ratio >= 1:
+            raise ValueError(f"outlier_ratio must be in range (0, 1), got {outlier_ratio}")
+        self.outlier_ratio = outlier_ratio
 
     def filter_cycles(
         self,
@@ -50,16 +68,37 @@ class DropShortCyclesFilter(DataFilter):
         matrix_cycles_dict: Dict[str, Dict[int, np.ndarray]],
         fields: List[str]
     ) -> Tuple[Dict[int, np.ndarray], Dict[str, Dict[int, np.ndarray]], List[str]]:
-        """Keep only cycles with >= min_steps"""
+        """Filter out cycles with outlier step counts"""
 
-        filtered_cycles = {}
-        filtered_matrix_cycles = {field: {} for field in matrix_cycles_dict}
+        if not cycles_dict:
+            return cycles_dict, matrix_cycles_dict, fields
 
-        for cycle_idx, cycle_data in cycles_dict.items():
-            if cycle_data.shape[0] >= self.min_steps:
-                filtered_cycles[cycle_idx] = cycle_data
-                for field_name, matrix_dict in matrix_cycles_dict.items():
-                    filtered_matrix_cycles[field_name][cycle_idx] = matrix_dict[cycle_idx]
+        # 1. Compute step count for each cycle
+        step_counts = {idx: data.shape[0] for idx, data in cycles_dict.items()}
+
+        # 2. Calculate mean step count
+        mean_steps = np.mean(list(step_counts.values()))
+
+        # 3. Define valid range based on outlier ratio
+        lower_bound = (1 - self.outlier_ratio) * mean_steps
+        upper_bound = (1 + self.outlier_ratio) * mean_steps
+
+        # 4. Identify outlier cycles
+        outliers = [idx for idx, count in step_counts.items()
+                   if count < lower_bound or count > upper_bound]
+
+        # 5. Print statistics
+        if outliers:
+            print(f"DropOutlierCyclesFilter: mean_steps={mean_steps:.1f}, "
+                  f"valid_range=[{lower_bound:.1f}, {upper_bound:.1f}], "
+                  f"dropped {len(outliers)}/{len(cycles_dict)} cycles (indices: {outliers[:5]}{'...' if len(outliers) > 5 else ''})")
+
+        # 6. Filter out outliers
+        filtered_cycles = {k: v for k, v in cycles_dict.items() if k not in outliers}
+        filtered_matrix_cycles = {
+            field: {k: v for k, v in matrix_dict.items() if k not in outliers}
+            for field, matrix_dict in matrix_cycles_dict.items()
+        }
 
         return filtered_cycles, filtered_matrix_cycles, fields
 
@@ -129,14 +168,18 @@ class MetabolicCumulativeFilter(DataFilter):
     Requires 'metabolic/step_energy' in fields.
     """
 
-    def __init__(self, metabolic_type: str, record_config: Optional[Dict] = None):
+    def __init__(self, record_config: Optional[Dict] = None, env=None):
         """Initialize and validate config
 
         Args:
-            metabolic_type: Energy type (A, A2, MA, MA2, LEGACY)
             record_config: Optional full record config dict for validation
+            env: Optional RolloutEnvironment to get metabolic_type from
         """
-        self.metabolic_type = metabolic_type
+        # Get metabolic type from environment if available
+        if env is not None and hasattr(env, 'get_metabolic_type'):
+            self.metabolic_type = env.get_metabolic_type()
+        else:
+            self.metabolic_type = 'LEGACY'  # Default fallback
 
         # Check config if provided
         if record_config:
@@ -192,21 +235,28 @@ class ComputeCoTFilter(DataFilter):
     Requires both '_metabolic_cumulative_{TYPE}' and '_travel_distance' in matrix_cycles_dict.
     """
 
-    def __init__(self, metabolic_type: str, character_mass: float, record_config: Optional[Dict] = None,
-                 filter_config: Optional[Dict] = None):
+    def __init__(self, record_config: Optional[Dict] = None, filter_config: Optional[Dict] = None, env=None):
         """Initialize and validate config
 
         Args:
-            metabolic_type: Energy type (A, A2, MA, MA2, LEGACY)
-            character_mass: Character mass in kg
             record_config: Optional full record config dict for validation
             filter_config: Optional filter config dict for dependency validation
+            env: Optional RolloutEnvironment to get metabolic_type and mass from
         """
-        self.metabolic_type = metabolic_type
-        self.character_mass = character_mass
+        # Get metabolic type from environment if available
+        if env is not None and hasattr(env, 'get_metabolic_type'):
+            self.metabolic_type = env.get_metabolic_type()
+        else:
+            self.metabolic_type = 'LEGACY'  # Default fallback
 
-        if character_mass <= 0:
-            raise ValueError(f"character_mass must be positive, got {character_mass}")
+        # Get character mass from environment if available
+        if env is not None and hasattr(env, 'get_mass'):
+            self.character_mass = env.get_mass()
+            if self.character_mass <= 0:
+                raise ValueError(f"character_mass must be positive, got {self.character_mass}")
+        else:
+            # No environment available - will be set later or filter won't actually run
+            self.character_mass = 0.0
 
         # Check record config if provided
         if record_config:
@@ -436,6 +486,235 @@ class StatisticsFilter(DataFilter):
         return cycles_dict, matrix_cycles_dict, fields
 
 
+class AverageFilter(DataFilter):
+    """Interpolate and average cycle-level array data to create param-level averaged arrays
+
+    For each specified key (e.g., 'angle/AnkleR'), this filter:
+    1. Collects data from all cycles (each with potentially different lengths)
+    2. Interpolates each cycle's data to fixed length (num_samples)
+    3. Computes mean across all interpolated cycles
+    4. Stores result in special '_averaged_arrays' dict for param-level HDF5 storage
+
+    Example:
+        Given cycles with varying lengths:
+        - cycle_0: angle/AnkleR [490 samples]
+        - cycle_1: angle/AnkleR [520 samples]
+        - cycle_2: angle/AnkleR [480 samples]
+
+        Output:
+        - /param_0/angle/AnkleR [200 samples] (averaged)
+        - /param_0/cycle_0/angle/AnkleR [490 samples] (original)
+        - /param_0/cycle_1/angle/AnkleR [520 samples] (original)
+        - /param_0/cycle_2/angle/AnkleR [480 samples] (original)
+
+    Config:
+        average_filter:
+          enabled: true
+          num_samples: 200
+          interpolation: linear  # or 'motion' for skeleton-aware
+          keys:
+            - angle/AnkleR
+            - angle/HipR
+            - grf/left
+    """
+
+    def __init__(self, key_methods: Dict[str, str], num_samples: int, env=None):
+        """Initialize averaging filter
+
+        Args:
+            key_methods: Dictionary mapping keys to interpolation methods
+                        e.g., {'motions': 'motion', 'angle/AnkleR': 'linear'}
+            num_samples: Target length for interpolation (e.g., 200)
+            env: Optional RolloutEnvironment instance for skeleton-aware interpolation
+
+        Interpolation methods:
+            'linear': Simple linear interpolation for scalar/simple arrays
+            'motion': Skeleton-aware interpolation using Character::interpolatePose
+                     (requires RolloutEnvironment)
+
+        Note:
+            For skeleton-aware interpolation of joint angles, the C++ method
+            Character::interpolatePose is available via RolloutEnvironment.interpolate_pose.
+            Use method='motion' for keys that contain full pose data.
+        """
+        self.key_methods = key_methods
+        self.keys = list(key_methods.keys())  # For compatibility
+        self.num_samples = num_samples
+        self.env = env
+
+        if not key_methods:
+            print("⚠️  WARNING: AverageFilter initialized with empty key_methods dict")
+        if num_samples <= 0:
+            raise ValueError(f"num_samples must be positive, got {num_samples}")
+
+    def filter_cycles(
+        self,
+        cycles_dict: Dict[int, np.ndarray],
+        matrix_cycles_dict: Dict[str, Dict[int, np.ndarray]],
+        fields: List[str]
+    ) -> Tuple[Dict[int, np.ndarray], Dict[str, Dict[int, np.ndarray]], List[str]]:
+        """Interpolate and average specified array data across cycles"""
+
+        if not self.keys:
+            return cycles_dict, matrix_cycles_dict, fields
+
+        # Initialize averaged arrays dictionary
+        averaged_arrays = {}
+
+        # Process each key
+        for key in self.keys:
+            # Try to get data from matrix_cycles_dict first (hierarchical fields like angle/AnkleR)
+            if key in matrix_cycles_dict:
+                cycle_data_dict = matrix_cycles_dict[key]
+            # If not in matrix_cycles_dict, check if it's a scalar field (like time, phase)
+            elif key in fields:
+                # Extract this field from cycles_dict
+                field_idx = fields.index(key)
+                cycle_data_dict = {}
+                for cycle_idx, cycle_data in cycles_dict.items():
+                    # Extract column for this field
+                    cycle_data_dict[cycle_idx] = cycle_data[:, field_idx]
+            else:
+                print(f"⚠️  WARNING: AverageFilter key '{key}' not found in matrix_cycles_dict or scalar fields")
+                print(f"   Available scalar fields: {[f for f in fields if f != 'cycle']}")
+                print(f"   Available matrix fields: {list(matrix_cycles_dict.keys())[:5]} ...")
+                continue
+
+            # Get cycle-indexed data for this key
+            # (cycle_data_dict now set from either matrix_cycles_dict or extracted from cycles_dict)
+
+            if not cycle_data_dict:
+                print(f"⚠️  WARNING: AverageFilter key '{key}' has no cycle data")
+                continue
+
+            # Get interpolation method for this key
+            method = self.key_methods.get(key, 'linear')  # Default to linear if not specified
+
+            # Collect and interpolate all cycles
+            interpolated_cycles = []
+            for cycle_idx in sorted(cycle_data_dict.keys()):
+                cycle_array = cycle_data_dict[cycle_idx]
+
+                # Skip empty or single-sample cycles
+                if cycle_array.shape[0] < 2:
+                    continue
+
+                # Interpolate to target length using key-specific method
+                interpolated = self._interpolate_array(cycle_array, self.num_samples, method)
+                interpolated_cycles.append(interpolated)
+
+            # Compute mean across interpolated cycles
+            if interpolated_cycles:
+                mean_array = np.mean(interpolated_cycles, axis=0)
+                averaged_arrays[key] = mean_array
+            else:
+                print(f"⚠️  WARNING: AverageFilter key '{key}' has no valid cycles for averaging")
+
+        # Store averaged arrays in special key for HDF5 writer
+        if averaged_arrays:
+            matrix_cycles_dict['_averaged_arrays'] = averaged_arrays
+
+        return cycles_dict, matrix_cycles_dict, fields
+
+    def _interpolate_array(self, array: np.ndarray, target_length: int, method: str) -> np.ndarray:
+        """Interpolate 1D or 2D array to target length
+
+        Args:
+            array: Input array with shape [n] or [n, d]
+            target_length: Target number of samples
+            method: Interpolation method ('linear' or 'motion')
+
+        Returns:
+            Interpolated array with shape [target_length] or [target_length, d]
+        """
+        original_length = array.shape[0]
+
+        # Handle 1D arrays
+        if array.ndim == 1:
+            return self._interpolate_1d(array, target_length, method)
+
+        # Handle 2D arrays
+        if array.ndim == 2:
+            # For motion interpolation with full pose vectors, use skeleton-aware method
+            if method == 'motion' and self.env is not None:
+                num_features = array.shape[1]
+                interpolated = np.zeros((target_length, num_features))
+
+                for i in range(target_length):
+                    # Map target index to source indices
+                    t = i / (target_length - 1) if target_length > 1 else 0.0
+                    src_idx = t * (original_length - 1)
+                    idx1 = int(np.floor(src_idx))
+                    idx2 = min(idx1 + 1, original_length - 1)
+                    local_t = src_idx - idx1
+
+                    if idx1 == idx2:
+                        interpolated[i] = array[idx1]
+                    else:
+                        # Use skeleton-aware pose interpolation
+                        pose1 = array[idx1]
+                        pose2 = array[idx2]
+                        interpolated[i] = self.env.interpolate_pose(pose1, pose2, local_t, False)
+
+                return interpolated
+            else:
+                # Linear interpolation (column-wise)
+                num_features = array.shape[1]
+                interpolated = np.zeros((target_length, num_features))
+                for col_idx in range(num_features):
+                    interpolated[:, col_idx] = self._interpolate_1d(array[:, col_idx], target_length, method)
+                return interpolated
+
+        # Unsupported dimensions
+        raise ValueError(f"AverageFilter: unsupported array shape {array.shape}")
+
+    def _interpolate_1d(self, array: np.ndarray, target_length: int, method: str) -> np.ndarray:
+        """Interpolate 1D array using specified method
+
+        Args:
+            array: Input 1D array with shape [n]
+            target_length: Target number of samples
+            method: Interpolation method ('linear' or 'motion')
+
+        Returns:
+            Interpolated 1D array with shape [target_length]
+        """
+        if method == 'linear':
+            # Simple linear interpolation
+            original_indices = np.linspace(0, len(array) - 1, len(array))
+            target_indices = np.linspace(0, len(array) - 1, target_length)
+            return np.interp(target_indices, original_indices, array)
+        elif method == 'motion':
+            # Skeleton-aware motion interpolation using Character::interpolatePose
+            if self.env is None:
+                raise ValueError("'motion' interpolation requires environment but env=None")
+
+            if not hasattr(self.env, 'interpolate_pose'):
+                raise ValueError("'motion' interpolation requires RolloutEnvironment.interpolate_pose method")
+
+            # Interpolate using skeleton-aware method
+            result = np.zeros(target_length, dtype=array.dtype)
+            for i in range(target_length):
+                # Map target index to source indices
+                t = i / (target_length - 1) if target_length > 1 else 0.0
+                src_idx = t * (len(array) - 1)
+                idx1 = int(np.floor(src_idx))
+                idx2 = min(idx1 + 1, len(array) - 1)
+                local_t = src_idx - idx1
+
+                if idx1 == idx2:
+                    result[i] = array[idx1]
+                else:
+                    # Use skeleton-aware interpolation for full pose vectors
+                    # Note: This is for 1D arrays (single DOF), so we just use linear
+                    # The skeleton-aware interpolation is used in _interpolate_array for 2D poses
+                    result[i] = array[idx1] * (1.0 - local_t) + array[idx2] * local_t
+
+            return result
+        else:
+            raise ValueError(f"Unknown interpolation method: {method}")
+
+
 class FilterPipeline:
     """Composable pipeline of data filters
 
@@ -460,8 +739,8 @@ class FilterPipeline:
 
         filter_names = []
         for f in self.filters:
-            if isinstance(f, DropShortCyclesFilter):
-                filter_names.append(f"drop_short_cycles(min={f.min_steps})")
+            if isinstance(f, DropOutlierCyclesFilter):
+                filter_names.append(f"drop_outlier_cycles(ratio={f.outlier_ratio})")
             elif isinstance(f, DropFirstNCyclesFilter):
                 filter_names.append(f"drop_first_n_cycles(n={f.n})")
             elif isinstance(f, DropLastMCyclesFilter):
@@ -472,6 +751,21 @@ class FilterPipeline:
                 filter_names.append("compute_travel_distance")
             elif isinstance(f, ComputeCoTFilter):
                 filter_names.append(f"compute_cot(type={f.metabolic_type})")
+            elif isinstance(f, AverageFilter):
+                # Group keys by method
+                method_groups = {}
+                for key, method in f.key_methods.items():
+                    method_groups.setdefault(method, []).append(key)
+
+                # Build display string
+                parts = []
+                for method, keys in sorted(method_groups.items()):
+                    keys_display = ", ".join(keys[:2])
+                    if len(keys) > 2:
+                        keys_display += f" (+{len(keys)-2})"
+                    parts.append(f"{method}:[{keys_display}]")
+
+                filter_names.append(f"average({', '.join(parts)}, n={f.num_samples})")
             elif isinstance(f, StatisticsFilter):
                 keys_str = ", ".join(f.keys[:3])  # Show first 3 keys
                 if len(f.keys) > 3:
@@ -605,9 +899,9 @@ class FilterPipeline:
         matrix_data = {}
         for field_name, matrix_dict in matrix_cycles_dict.items():
             if field_name.startswith('_'):
-                # Special case: _averaged_attributes is NOT cycle-indexed
-                if field_name == '_averaged_attributes':
-                    # Pass through unchanged - it's a simple {attr_name: value} dict
+                # Special cases: _averaged_attributes and _averaged_arrays are NOT cycle-indexed
+                if field_name == '_averaged_attributes' or field_name == '_averaged_arrays':
+                    # Pass through unchanged - simple {name: value/array} dicts
                     matrix_data[field_name] = matrix_dict
                 else:
                     # Renumber metadata dict keys to match renumbered cycle indices
@@ -625,27 +919,31 @@ class FilterPipeline:
         return data, matrix_data
 
     @staticmethod
-    def from_config(filter_config: Dict, record_config: Optional[Dict] = None,
-                   metabolic_type: str = 'LEGACY', character_mass: float = 0.0) -> 'FilterPipeline':
+    def from_config(filter_config: Dict, record_config: Optional[Dict] = None, env=None) -> 'FilterPipeline':
         """Create FilterPipeline from configuration dict
 
         Args:
             filter_config: Filter configuration dictionary
             record_config: Optional full record config for validation
-            metabolic_type: Metabolic energy type (A, A2, MA, MA2, LEGACY)
-            character_mass: Character mass in kg (required for CoT filter)
+            env: Optional RolloutEnvironment (provides metabolic_type, mass, and interpolation)
 
         Returns:
             Configured FilterPipeline
 
         Example filter_config:
             {
-                'drop_short_cycles': {'enabled': True, 'min_steps': 10},
+                'drop_outlier_cycles': {'enabled': True, 'outlier_ratio': 0.2},
                 'drop_first_n_cycles': {'enabled': True, 'n': 1},
                 'drop_last_m_cycles': {'enabled': True, 'm': 1},
                 'metabolic_cumulative': {'enabled': True},
                 'compute_travel_distance': {'enabled': True},
-                'metabolic_cot': {'enabled': True}  # Auto-enables dependencies
+                'metabolic_cot': {'enabled': True},  # Auto-enables dependencies
+                'average_filter': {
+                    'enabled': True,
+                    'num_samples': 200,
+                    'motion': ['motions'],           # Skeleton-aware interpolation
+                    'linear': ['angle/AnkleR', 'grf/left']  # Linear interpolation
+                }
             }
         """
         pipeline = FilterPipeline()
@@ -664,10 +962,10 @@ class FilterPipeline:
             m = filter_config['drop_last_m_cycles'].get('m', 1)
             pipeline.add_filter(DropLastMCyclesFilter(m))
 
-        # Drop short cycles
-        if filter_config.get('drop_short_cycles', {}).get('enabled', False):
-            min_steps = filter_config['drop_short_cycles'].get('min_steps', 10)
-            pipeline.add_filter(DropShortCyclesFilter(min_steps))
+        # Drop outlier cycles
+        if filter_config.get('drop_outlier_cycles', {}).get('enabled', False):
+            outlier_ratio = filter_config['drop_outlier_cycles'].get('outlier_ratio', 0.2)
+            pipeline.add_filter(DropOutlierCyclesFilter(outlier_ratio))
 
         # Metabolic cumulative energy (auto-enabled by CoT if needed)
         metabolic_enabled = filter_config.get('metabolic_cumulative', {}).get('enabled', False)
@@ -675,7 +973,7 @@ class FilterPipeline:
             metabolic_enabled = True  # Auto-enable for CoT
 
         if metabolic_enabled:
-            pipeline.add_filter(MetabolicCumulativeFilter(metabolic_type, record_config))
+            pipeline.add_filter(MetabolicCumulativeFilter(record_config, env))
 
         # Compute travel distance (auto-enabled by CoT if needed)
         travel_distance_enabled = filter_config.get('compute_travel_distance', {}).get('enabled', False)
@@ -687,10 +985,36 @@ class FilterPipeline:
 
         # Compute Cost of Transport (requires cumulative and travel_distance)
         if cot_enabled:
-            if character_mass > 0:
-                pipeline.add_filter(ComputeCoTFilter(metabolic_type, character_mass, record_config, filter_config))
+            pipeline.add_filter(ComputeCoTFilter(record_config, filter_config, env))
+
+        # Average arrays across cycles (interpolation + mean)
+        if filter_config.get('average_filter', {}).get('enabled', False):
+            avg_config = filter_config['average_filter']
+            num_samples = avg_config.get('num_samples', 200)
+
+            # Build key_methods dictionary from configuration
+            key_methods = {}
+
+            # New format: method-grouped keys (motion: [...], linear: [...])
+            if 'motion' in avg_config or 'linear' in avg_config:
+                for method in ['motion', 'linear']:
+                    if method in avg_config and isinstance(avg_config[method], list):
+                        for key in avg_config[method]:
+                            key_methods[key] = method
+            # Old format: keys: [...], interpolation: method (backward compatibility)
+            elif 'keys' in avg_config and 'interpolation' in avg_config:
+                method = avg_config['interpolation']
+                for key in avg_config['keys']:
+                    key_methods[key] = method
             else:
-                print(f"⚠️  WARNING: metabolic_cot enabled but character_mass not provided or invalid")
+                print(f"⚠️  WARNING: average_filter enabled but configuration format is invalid")
+                print(f"   Use either: motion: [keys], linear: [keys]")
+                print(f"   Or legacy: keys: [keys], interpolation: method")
+
+            if key_methods and num_samples > 0:
+                pipeline.add_filter(AverageFilter(key_methods, num_samples, env))
+            elif not key_methods:
+                print(f"⚠️  WARNING: average_filter enabled but no keys specified")
 
         # Compute statistics across cycles (must be last - operates on all cycle data)
         if filter_config.get('stat_filter', {}).get('enabled', False):

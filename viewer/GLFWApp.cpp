@@ -3362,10 +3362,14 @@ double GLFWApp::computeFrameFloat(const ViewerMotion& motion, double phase)
 
 void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
 {
-    if (mMotions.empty()) return;
-
-    Character* character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
-    if (!character) return;
+    if (mMotions.empty()) {
+        std::cerr << "[motionPoseEval] Warning: No motions loaded" << std::endl;
+        return;
+    }
+    if (!mMotionCharacter) {
+        std::cerr << "[motionPoseEval] Warning: No motion character loaded" << std::endl;
+        return;
+    }
 
     int frames_per_cycle = motion.values_per_frame;
     int total_frames = (motion.source_type == "hdfRollout" || motion.source_type == "hdfSingle" || motion.source_type == "bvh") ?
@@ -3385,7 +3389,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
     // Safety check: ensure motion data is large enough
     int required_size = total_frames * frames_per_cycle;
     if (motion.motion.size() < required_size) {
-        std::cerr << "Warning: Motion data too small! Expected " << required_size
+        std::cerr << "[motionPoseEval] Warning: Motion data too small! Expected " << required_size
                   << " but got " << motion.motion.size() << std::endl;
         motion.currentPose = Eigen::VectorXd::Zero(frames_per_cycle);
         return;
@@ -3393,52 +3397,16 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
 
     if (weight_1 > 1e-6) {
         int next_frame_idx = (current_frame_idx + 1) % total_frames;
-        bool phase_overflow = (next_frame_idx < current_frame_idx);  // Detect cycle wraparound
         Eigen::VectorXd p1 = motion.motion.segment(current_frame_idx * frames_per_cycle, frames_per_cycle);
         Eigen::VectorXd p2 = motion.motion.segment(next_frame_idx * frames_per_cycle, frames_per_cycle);
-
+        
         if (motion.source_type == "npz") {
             // NPZ motion: simple linear interpolation (no DOF-wise slerp)
             interpolated_frame = p1 * (1.0 - weight_1) + p2 * weight_1;
         } else {
-            // HDF5/BVH motion: proper interpolation respecting joint types (FreeJoint, BallJoint, RevoluteJoint)
-            interpolated_frame = Eigen::VectorXd::Zero(frames_per_cycle);
-
-            // Iterate through skeleton joints and interpolate based on DOF
-            for (const auto jn : character->getSkeleton()->getJoints()) {
-                int dof = jn->getNumDofs();
-                if (dof == 0) continue;
-
-                int idx = jn->getIndexInSkeleton(0);
-
-                if (dof == 1) {
-                    // RevoluteJoint: linear interpolation
-                    interpolated_frame[idx] = p1[idx] * (1.0 - weight_1) + p2[idx] * weight_1;
-                } else if (dof == 3) {
-                    // BallJoint: quaternion SLERP
-                    Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, dof)));
-                    Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, dof)));
-                    Eigen::Quaterniond q = q1.slerp(weight_1, q2);
-                    interpolated_frame.segment(idx, dof) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
-                } else if (dof == 6) {
-                    // FreeJoint: quaternion SLERP for rotation, linear/extrapolated for translation
-                    Eigen::Quaterniond q1 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p1.segment(idx, 3)));
-                    Eigen::Quaterniond q2 = Eigen::Quaterniond(dart::dynamics::BallJoint::convertToRotation(p2.segment(idx, 3)));
-                    Eigen::Quaterniond q = q1.slerp(weight_1, q2);
-                    interpolated_frame.segment(idx, 3) = dart::dynamics::BallJoint::convertToPositions(q.toRotationMatrix());
-
-                    // Root position (indices 3, 4, 5): extrapolate on phase overflow to avoid jumping back
-                    if (phase_overflow && idx == 0) {  // idx == 0 means root joint
-                        int prev_frame_idx = current_frame_idx - 1;  // Safe: overflow only occurs at cycle end
-                        Eigen::VectorXd p0 = motion.motion.segment(prev_frame_idx * frames_per_cycle, frames_per_cycle);
-                        Eigen::Vector3d velocity = p1.segment(idx + 3, 3) - p0.segment(idx + 3, 3);
-                        interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) + velocity * weight_1;
-                    } else {
-                        // Normal linear interpolation for translation
-                        interpolated_frame.segment(idx + 3, 3) = p1.segment(idx + 3, 3) * (1.0 - weight_1) + p2.segment(idx + 3, 3) * weight_1;
-                    }
-                }
-            }
+            // HDF5/BVH motion: use Character's skeleton-aware interpolation
+            bool phase_overflow = (next_frame_idx < current_frame_idx);  // Detect cycle wraparound
+            interpolated_frame = mMotionCharacter->interpolatePose(p1, p2, weight_1, phase_overflow);
         }
     } else {
         // No interpolation needed, use exact frame
@@ -3451,7 +3419,7 @@ void GLFWApp::motionPoseEval(ViewerMotion& motion, double frame_float)
         motion_pos = interpolated_frame;
     } else {
         // NPZ: convert from 6D rotation format to angles
-        motion_pos = character->sixDofToPos(interpolated_frame);
+        motion_pos = mMotionCharacter->sixDofToPos(interpolated_frame);
     }
 
     // 3. Apply position offset (different handling for NPZ vs HDF/BVH)

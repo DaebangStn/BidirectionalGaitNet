@@ -198,7 +198,7 @@ def save_to_hdf5(rollout_data: List[Tuple],
                 param_grp.create_dataset('param_state', data=param_state.astype(np.float32),
                                         compression='gzip', compression_opts=4)
 
-            # Write averaged attributes (from AverageAttributesFilter)
+            # Write averaged attributes (from StatisticsFilter)
             if '_averaged_attributes' in matrix_data:
                 averaged_attrs = matrix_data['_averaged_attributes']
                 for attr_name, attr_value in averaged_attrs.items():
@@ -206,6 +206,14 @@ def save_to_hdf5(rollout_data: List[Tuple],
                         param_grp.attrs[attr_name] = attr_value
                     elif isinstance(attr_value, np.ndarray) and attr_value.size == 1:
                         param_grp.attrs[attr_name] = float(attr_value)
+
+            # Write averaged arrays (from AverageFilter)
+            if '_averaged_arrays' in matrix_data:
+                averaged_arrays = matrix_data['_averaged_arrays']
+                for array_path, array_data in averaged_arrays.items():
+                    # array_path like 'angle/AnkleR' - h5py creates nested groups automatically
+                    param_grp.create_dataset(array_path, data=array_data.astype(np.float32),
+                                             compression='gzip', compression_opts=4)
 
             # Group by cycle
             if 'cycle' in fields:
@@ -382,17 +390,13 @@ class EnvWorker:
         self.fields = self.rollout_env.get_record_fields()
         self.record = RolloutRecord(self.fields)
 
-        # Get metabolic type and character mass from environment
-        metabolic_type = self.rollout_env.get_metabolic_type()
-        character_mass = self.rollout_env.get_mass()
-
         # Collect param-level attributes based on config
         self.param_attributes = {}
 
         # Add environment attributes if configured
         env_config = (record_config or {}).get('environment', {})
         if env_config.get('character_mass', False):
-            self.param_attributes['character_mass'] = character_mass
+            self.param_attributes['character_mass'] = self.rollout_env.get_mass()
 
         # Add new attributes here - easy to extend based on config!
         # if env_config.get('skeleton_dof', False):
@@ -401,10 +405,10 @@ class EnvWorker:
         #     self.param_attributes['simulation_hz'] = self.rollout_env.get_simulation_hz()
 
         # Initialize filter pipeline for parallel filtering
+        # Filters get metabolic_type and mass directly from env when needed
         from data_filters import FilterPipeline
         self.filter_pipeline = FilterPipeline.from_config(
-            filter_config or {}, record_config,
-            metabolic_type=metabolic_type, character_mass=character_mass
+            filter_config or {}, record_config, env=self.rollout_env
         )
 
     def reset(self, param_dict: Optional[Dict[str, float]] = None) -> np.ndarray:

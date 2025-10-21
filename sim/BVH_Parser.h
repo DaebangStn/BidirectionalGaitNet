@@ -71,7 +71,6 @@ public:
 	BVHJoint *getRoot() { return mRoot; }
 	void addMotion(Eigen::VectorXd p) { mMotion.push_back(p); }
 
-	Eigen::VectorXd getInterpolation(Eigen::VectorXd q1, Eigen::VectorXd q2, double t);
 	void setMode(bool _symmetry);
 
 private:

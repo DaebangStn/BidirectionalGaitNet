@@ -162,10 +162,8 @@ Eigen::VectorXd HDF::interpolatePose(int frame1, int frame2, double t) const
     Eigen::VectorXd pose1 = mMotionData.row(frame1);
     Eigen::VectorXd pose2 = mMotionData.row(frame2);
 
-    // Linear interpolation in angle space
-    Eigen::VectorXd interpolated = (1.0 - t) * pose1 + t * pose2;
-
-    return interpolated;
+    // Use Character's skeleton-aware interpolation
+    return mCharacter->interpolatePose(pose1, pose2, t, false);
 }
 
 Eigen::VectorXd HDF::getTargetPose(double phase)

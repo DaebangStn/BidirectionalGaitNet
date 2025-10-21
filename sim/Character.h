@@ -124,6 +124,12 @@ public:
 
     Eigen::VectorXd addPositions(Eigen::VectorXd pos1, Eigen::VectorXd pos2, bool includeRoot = true);
 
+    // Motion Interpolation
+    Eigen::VectorXd interpolatePose(const Eigen::VectorXd& pose1,
+                                    const Eigen::VectorXd& pose2,
+                                    double t,
+                                    bool extrapolate_root = false);
+
     // Body Parameter
     double getSkelParamValue(std::string name);
     double getTorsionValue(std::string name);

@@ -49,7 +49,13 @@ public:
     double GetWorldTime();
     double GetNormalizedPhase();
     int GetWorldPhaseCount();
-    
+
+    // Motion interpolation
+    Eigen::VectorXd InterpolatePose(const Eigen::VectorXd& pose1,
+                                    const Eigen::VectorXd& pose2,
+                                    double t,
+                                    bool extrapolate_root = false);
+
 private:
     void RecordStep(RolloutRecord* record);
 

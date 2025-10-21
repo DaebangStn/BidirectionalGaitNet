@@ -372,10 +372,9 @@ def run_rollout(checkpoint_path: str,
 
     # Print filter pipeline configuration
     from data_filters import FilterPipeline
-    # Note: Pipeline display uses default metabolic_type and character_mass since we don't have
-    # access to the actual environment yet. The real workers will use correct values.
-    metabolic_type = config.get('record', {}).get('metabolic', {}).get('type', 'LEGACY')
-    temp_pipeline = FilterPipeline.from_config(filter_config, config, metabolic_type=metabolic_type, character_mass=1.0)
+    # Note: Pipeline display without environment - filters will use defaults for display
+    # The real workers will have access to environment for correct values
+    temp_pipeline = FilterPipeline.from_config(filter_config, config, env=None)
     temp_pipeline.print_pipeline()
 
     # Run appropriate rollout method

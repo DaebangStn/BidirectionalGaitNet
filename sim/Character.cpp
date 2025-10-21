@@ -783,6 +783,65 @@ Character::addPositions(Eigen::VectorXd pos1, Eigen::VectorXd pos2, bool include
     return pos1;
 }
 
+Eigen::VectorXd
+Character::interpolatePose(const Eigen::VectorXd& pose1,
+                          const Eigen::VectorXd& pose2,
+                          double t,
+                          bool extrapolate_root)
+{
+    if (t <= 0.000001) return pose1;
+    if (t >= 0.999999) return pose2;
+    if (t < 0 || t > 1) {
+        std::cerr << "[interpolatePose] Warning: t is out of range: " << t << std::endl;
+        exit(-1);
+    }
+    Eigen::VectorXd interpolated = Eigen::VectorXd::Zero(pose1.rows());
+
+    for (const auto jn : mSkeleton->getJoints())
+    {
+        int dof = jn->getNumDofs();
+        if (dof == 0) continue;
+        int idx = jn->getIndexInSkeleton(0);
+
+        if (dof == 1)
+        {
+            // RevoluteJoint: linear interpolation
+            interpolated[idx] = pose1[idx] * (1.0 - t) + pose2[idx] * t;
+        }
+        else if (dof == 3)
+        {
+            // BallJoint: quaternion SLERP
+            Eigen::Quaterniond q1 = Eigen::Quaterniond(BallJoint::convertToRotation(pose1.segment(idx, dof)));
+            Eigen::Quaterniond q2 = Eigen::Quaterniond(BallJoint::convertToRotation(pose2.segment(idx, dof)));
+            Eigen::Quaterniond q = q1.slerp(t, q2);
+            interpolated.segment(idx, dof) = BallJoint::convertToPositions(q.toRotationMatrix());
+        }
+        else if (dof == 6)
+        {
+            // FreeJoint: SLERP for rotation + linear/extrapolated translation
+            Eigen::Quaterniond q1 = Eigen::Quaterniond(BallJoint::convertToRotation(pose1.segment(idx, 3)));
+            Eigen::Quaterniond q2 = Eigen::Quaterniond(BallJoint::convertToRotation(pose2.segment(idx, 3)));
+            Eigen::Quaterniond q = q1.slerp(t, q2);
+            interpolated.segment(idx, 3) = BallJoint::convertToPositions(q.toRotationMatrix());
+
+            // Root position with optional extrapolation
+            if (extrapolate_root && idx == 0)
+            {
+                // Extrapolate with velocity from pose1 to pose2
+                Eigen::Vector3d velocity = pose2.segment(idx + 3, 3) - pose1.segment(idx + 3, 3);
+                interpolated.segment(idx + 3, 3) = pose1.segment(idx + 3, 3) + velocity * t;
+            }
+            else
+            {
+                // Standard linear interpolation
+                interpolated.segment(idx + 3, 3) = pose1.segment(idx + 3, 3) * (1.0 - t) + pose2.segment(idx + 3, 3) * t;
+            }
+        }
+    }
+
+    return interpolated;
+}
+
 void Character::setSkelParam(std::vector<std::pair<std::string, double>> _skel_info, bool doOptimization)
 {
 
