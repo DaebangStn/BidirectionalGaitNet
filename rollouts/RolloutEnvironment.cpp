@@ -71,7 +71,7 @@ void RolloutEnvironment::SetMuscleNetworkWeight(py::object weights) {
 }
 
 void RolloutEnvironment::RecordStep(RolloutRecord* record) {
-    std::unordered_map<std::string, double> data;
+    std::unordered_map<std::string, float> data;
 
     // Basic fields (always recorded)
     data["step"] = mEnv.getSimulationCount();
@@ -87,10 +87,10 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
         Eigen::Vector2d grf = mEnv.getFootGRF();
 
         if (mRecordConfig.foot.contact_left) {
-            data["contact/left"] = static_cast<double>(contact[0]);
+            data["contact/left"] = static_cast<float>(contact[0]);
         }
         if (mRecordConfig.foot.contact_right) {
-            data["contact/right"] = static_cast<double>(contact[1]);
+            data["contact/right"] = static_cast<float>(contact[1]);
         }
         if (mRecordConfig.foot.grf_left) {
             data["grf/left"] = grf[0];
@@ -104,7 +104,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     if (mRecordConfig.kinematics.enabled) {
         // All joint positions as a single vector
         if (mRecordConfig.kinematics.all) {
-            record->addVector("motions", mEnv.getSimulationCount() - 1, skel->getPositions());
+            record->addVector("motions", mEnv.getSimulationCount() - 1, skel->getPositions().cast<float>());
         }
 
         // Root position
@@ -119,35 +119,35 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
         // Angle fields
         if (mRecordConfig.kinematics.angle.enabled) {
             if (mRecordConfig.kinematics.angle.hip) {
-                double angle = skel->getJoint("FemurR")->getPosition(0) * 180.0 / M_PI;
+                float angle = skel->getJoint("FemurR")->getPosition(0) * 180.0 / M_PI;
                 data["angle/HipR"] = -angle;  // Negate as per Environment.cpp:1035
             }
             if (mRecordConfig.kinematics.angle.hip_ir) {
-                double angle = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
+                float angle = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
                 data["angle/HipIRR"] = -angle;
             }
             if (mRecordConfig.kinematics.angle.hip_ab) {
-                double angle = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
+                float angle = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
                 data["angle/HipAbR"] = -angle;
             }
             if (mRecordConfig.kinematics.angle.knee) {
-                double angle = skel->getJoint("TibiaR")->getPosition(0) * 180.0 / M_PI;
+                float angle = skel->getJoint("TibiaR")->getPosition(0) * 180.0 / M_PI;
                 data["angle/KneeR"] = angle;  // No negation
             }
             if (mRecordConfig.kinematics.angle.ankle) {
-                double angle = skel->getJoint("TalusR")->getPosition(0) * 180.0 / M_PI;
+                float angle = skel->getJoint("TalusR")->getPosition(0) * 180.0 / M_PI;
                 data["angle/AnkleR"] = -angle;
             }
             if (mRecordConfig.kinematics.angle.pelvic_tilt) {
-                double angle = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
+                float angle = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
                 data["angle/Tilt"] = angle;
             }
             if (mRecordConfig.kinematics.angle.pelvic_rotation) {
-                double angle = skel->getJoint("Pelvis")->getPosition(1) * 180.0 / M_PI;
+                float angle = skel->getJoint("Pelvis")->getPosition(1) * 180.0 / M_PI;
                 data["angle/Rotation"] = angle;
             }
             if (mRecordConfig.kinematics.angle.pelvic_obliquity) {
-                double angle = skel->getJoint("Pelvis")->getPosition(2) * 180.0 / M_PI;
+                float angle = skel->getJoint("Pelvis")->getPosition(2) * 180.0 / M_PI;
                 data["angle/Obliquity"] = angle;
             }
         }
@@ -168,7 +168,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
 
     // Metabolic energy recording
     if (mRecordConfig.metabolic.enabled) {
-        double stepEnergy = mEnv.getCharacter()->getMetabolicStepEnergy();
+        float stepEnergy = mEnv.getCharacter()->getMetabolicStepEnergy();
         data["metabolic/step_energy"] = stepEnergy;
     }
 

@@ -3,7 +3,7 @@ import numpy as np
 import gym
 import ray
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
-from uri_resolver import resolve_path, ensure_directory_exists
+from python.uri_resolver import resolve_path, ensure_directory_exists
 
 
 class MyEnv(gym.Env):

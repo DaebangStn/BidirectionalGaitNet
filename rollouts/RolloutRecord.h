@@ -73,15 +73,15 @@ public:
     virtual ~RolloutRecord() = default;
 
     // Add data for a simulation step
-    virtual void add(unsigned int sim_step, const std::unordered_map<std::string, double>& data) = 0;
+    virtual void add(unsigned int sim_step, const std::unordered_map<std::string, float>& data) = 0;
 
     // Add vector data for a specific step (for matrix datasets)
-    virtual void addVector(const std::string& key, int step, const Eigen::VectorXd& data) = 0;
+    virtual void addVector(const std::string& key, int step, const Eigen::VectorXf& data) = 0;
 
     // Getters
     unsigned int get_nrow() const { return mNrow; }
     unsigned int get_ncol() const { return mNcol; }
-    const Eigen::MatrixXd& get_data() const { return mData; }
+    const Eigen::MatrixXf& get_data() const { return mData; }
     const std::vector<std::string>& get_fields() const { return mFieldNames; }
     const std::unordered_map<std::string, int>& get_field_to_idx() const { return mFieldToIdx; }
     
@@ -94,8 +94,8 @@ public:
 
 private:
     void resize_if_needed(unsigned int requested_size);
-    
-    Eigen::MatrixXd mData;
+
+    Eigen::MatrixXf mData;
     std::unordered_map<std::string, int> mFieldToIdx;
     std::vector<std::string> mFieldNames;
     unsigned int mNcol;

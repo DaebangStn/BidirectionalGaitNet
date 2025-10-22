@@ -1,0 +1,30 @@
+# Rollout Presets Configuration
+# Usage: uv run rollout <preset-name> --checkpoint <path>
+#
+# Each preset defines default values for:
+#   - config: Path to YAML config file
+#   - workers: Number of Ray workers
+#   - param-file: CSV file with parameter sweep
+#   - sample-dir: Output directory for results
+
+presets:
+  # Preset 1: Metabolic analysis with gait parameters
+  gait-metabolic:
+    config: data/rollout/config/metabolic.yaml
+    workers: 28
+    param-file: data/rollout/param/gait_U225.csv
+    sample-dir: ./sampled
+    description: "Metabolic analysis with U225 gait parameters (225 variations)"
+
+  # Preset 2: Metabolic analysis with default parameters
+  default-metabolic:
+    config: data/rollout/config/metabolic.yaml
+    workers: 1
+    param-file: data/rollout/param/default_params.csv
+    sample-dir: ./sampled
+    description: "Metabolic analysis with default parameter set"
+
+# Alias mappings for convenience
+aliases:
+  preset1: gait-metabolic
+  preset2: default-metabolic

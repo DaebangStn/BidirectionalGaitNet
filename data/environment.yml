@@ -9,11 +9,11 @@ dependencies:
   - boost-cpp=1.84.0
   - bullet=3.25
   - bullet-cpp=3.25
-  - cuda-cudart=12.4.127
-  - cuda-cudart_linux-64=12.4.127
-  - cuda-nvrtc=12.4.127
-  - cuda-nvtx=12.4.127
-  - cuda-version=12.4
+  - cuda-cudart=12.9
+  - cuda-cudart_linux-64=12.9
+  - cuda-nvrtc=12.9
+  - cuda-nvtx=12.9
+  - cuda-version=12.9
   - eigen=3.4.0
   - fcl=0.7.0
   - fmt=11.0.2
@@ -54,7 +54,7 @@ dependencies:
   - pybind11-global
   - pybullet=3.25
   - pytest=8.3.4
-  - pytorch=2.3.0
+  - pytorch=2.8.0
   - pyyaml
   - scipy
   - setuptools

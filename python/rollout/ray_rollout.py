@@ -10,11 +10,11 @@ import pickle
 import tempfile
 from datetime import datetime
 from tqdm import tqdm
-from pyrollout import RolloutEnvironment, RolloutRecord, RecordConfig
-from ray_model import SelectiveUnpickler
-from uri_resolver import resolve_path
-from log_config import log_verbose
-from rollout_worker import (
+from python.rollout.pyrollout import RolloutEnvironment, RolloutRecord, RecordConfig
+from python.ray_model import SelectiveUnpickler
+from python.uri_resolver import resolve_path
+from python.log_config import log_verbose
+from python.rollout.rollout_worker import (
     PolicyWorker, EnvWorker, FileWorker,
     load_metadata_from_checkpoint, load_config_yaml, load_parameters_from_csv,
     get_git_info
@@ -381,7 +381,7 @@ def run_rollout(checkpoint_path: str,
     )
 
     # Print filter pipeline configuration
-    from data_filters import FilterPipeline
+    from python.data_filters import FilterPipeline
     # Note: Pipeline display without environment - filters will use defaults for display
     # The real workers will have access to environment for correct values
     temp_pipeline = FilterPipeline.from_config(filter_config, config, env=None)

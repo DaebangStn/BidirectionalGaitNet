@@ -1,0 +1,13 @@
+#!/bin/bash
+# Extract cycle data
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
+cd "$PROJECT_ROOT"
+
+exec /opt/miniconda3/bin/micromamba run -n bidir python -c "
+from python.scripts import extract_cycle
+extract_cycle()
+"

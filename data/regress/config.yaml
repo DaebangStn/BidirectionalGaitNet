@@ -1,0 +1,47 @@
+data:
+  # HDF5 data file path (can be overridden via --data argument)
+  hdf5_path: "sampled/base_anchor_all-026000-1014_092619+metabolic+on_20251022_230858/rollout_data.h5"
+
+  # Input and output labels
+  # Inputs: parameter names from parameter_names dataset
+  in_lbl:
+    - "gait_cadence"
+    - "gait_stride"
+
+  # Outputs: attribute paths in param_N groups
+  out_lbl:
+    - "metabolic/cot/MA/mean"
+
+  # Data loading configuration
+  batch_size: 65536
+  train_split: 0.8  # 80% train, 20% validation
+  random_seed: 42
+
+model:
+  # Network architecture
+  residual: true
+  layers: [64, 32]
+  activation: 'gelu'  # 'gelu', 'silu', 'relu', 'tanh'
+
+trainer:
+  # Training duration
+  max_epochs: 10002
+
+  # Optimization
+  lr: 0.1
+  min_lr: 0.0005
+
+  # Loss components
+  recon_type: 'huber'  # 'mse', 'huber', 'cauchy', 'welsch', 'geman', 'tukey'
+  recon_delta: 1.0
+  recon_weight: 10
+  recon_start_epoch: 0  # For robust losses that transition from Huber
+
+  # Regularization
+  l1_weight: 0.001
+  l2_weight: 0.001
+  grad_weight: 0.01  # Gradient penalty weight
+
+  # Logging and checkpointing
+  log_period: 1000     # Log metrics every N epochs
+  save_period: 5000  # Save checkpoint every N epochs

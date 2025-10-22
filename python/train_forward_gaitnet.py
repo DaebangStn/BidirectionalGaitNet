@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import os
 import math
-from forward_gaitnet import RefNN
+from python.forward_gaitnet import RefNN
 
 import random
 from torch.utils.tensorboard import SummaryWriter

@@ -6,6 +6,9 @@ find_package(yaml-cpp REQUIRED)
 file(GLOB srcs "*.h" "*.cpp")
 
 add_library(sim ${srcs})
+target_include_directories(sim PUBLIC
+        ${CMAKE_SOURCE_DIR}/viewer
+)
 target_link_libraries(sim PUBLIC
         tinyxml2::tinyxml2
         dart

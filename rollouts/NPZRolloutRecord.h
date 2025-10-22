@@ -14,15 +14,15 @@ public:
     explicit NPZRolloutRecord(const RecordConfig& config);
     ~NPZRolloutRecord() override = default;
 
-    void add(unsigned int sim_step, const std::unordered_map<std::string, double>& data) override;
-    void addVector(const std::string& key, int step, const Eigen::VectorXd& data) override;
+    void add(unsigned int sim_step, const std::unordered_map<std::string, float>& data) override;
+    void addVector(const std::string& key, int step, const Eigen::VectorXf& data) override;
 
     // Save the data to an NPZ file
     void saveToFile(const std::string& filename) const;
 
 private:
     // Store matrix data separately from scalar data
-    std::unordered_map<std::string, Eigen::MatrixXd> mMatrixData;
+    std::unordered_map<std::string, Eigen::MatrixXf> mMatrixData;
     std::unordered_map<std::string, unsigned int> mMatrixRows;
 };
 

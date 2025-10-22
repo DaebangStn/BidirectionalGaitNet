@@ -298,7 +298,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     try {
         loading_network = py::module::import("python.ray_model").attr("loading_network");
     } catch (const py::error_already_set& e) {
-        std::cerr << "Warning: Failed to import python.ray_model: " << e.what() << std::endl;
+        LOG_WARN("Warning: Failed to import python.ray_model: " << e.what());
         loading_network = py::none();
     }
 
@@ -315,7 +315,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
                     mCachedMetadata = py_metadata.cast<std::string>();
                 }
             } catch (const py::error_already_set& e) {
-                std::cerr << "Warning: Failed to load metadata from network path: " << e.what() << std::endl;
+                LOG_WARN("Warning: Failed to load metadata from network path: " << e.what());
             }
         }
     }
@@ -2365,6 +2365,12 @@ void GLFWApp::initializeCameraPresets() {
     }
 }
 
+void GLFWApp::runRollout() {
+    mRolloutStatus.cycle = mRolloutCycles;
+    mRolloutStatus.pause = false;
+}
+
+
 void GLFWApp::loadCameraPreset(int index) {
     if (index < 0 || index >= 3 || !mCameraPresets[index].isSet)
     {
@@ -2462,23 +2468,15 @@ void GLFWApp::drawSimControlPanel()
     // Rollout Control
     if (ImGui::CollapsingHeader("Rollout", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        static int rolloutInput = -1; // Will be initialized from config
-        if (rolloutInput == -1) {
-            rolloutInput = mDefaultRolloutCount; // Initialize from config on first use
-        }
-
+        if (mRolloutCycles == -1) mRolloutCycles = mDefaultRolloutCount;
         ImGui::SetNextItemWidth(70);
-        ImGui::InputInt("Cycles", &rolloutInput);
-        if (rolloutInput < 1) rolloutInput = 1;
+        ImGui::InputInt("Cycles", &mRolloutCycles);
+        if (mRolloutCycles < 1) mRolloutCycles = 1;
 
         ImGui::SameLine();
 
         // Run button
-        if (ImGui::Button("Run"))
-        {
-            mRolloutStatus.cycle = rolloutInput;
-            mRolloutStatus.pause = false;
-        }
+        if (ImGui::Button("Run")) runRollout();
     }
 
     // Muscle Control
@@ -3680,7 +3678,8 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             }
             break;
         case GLFW_KEY_R:
-            reset();
+            if (mods == GLFW_MOD_CONTROL) runRollout();
+            else reset();
             break;
         // case GLFW_KEY_O:
             // mDrawOBJ = !mDrawOBJ;

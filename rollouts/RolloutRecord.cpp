@@ -145,7 +145,7 @@ RolloutRecord::RolloutRecord(const RecordConfig& config)
 
 void RolloutRecord::resize_if_needed(unsigned int requested_size) {
     if (requested_size >= mData.rows()) {
-        Eigen::MatrixXd new_data(mData.rows() + DATA_CHUNK_SIZE, mNcol);
+        Eigen::MatrixXf new_data(mData.rows() + DATA_CHUNK_SIZE, mNcol);
         if (mNrow > 0) {
             new_data.topRows(mNrow) = mData.topRows(mNrow);
         }
@@ -153,7 +153,7 @@ void RolloutRecord::resize_if_needed(unsigned int requested_size) {
     }
 }
 
-void RolloutRecord::add(unsigned int sim_step, const std::unordered_map<std::string, double>& data) {
+void RolloutRecord::add(unsigned int sim_step, const std::unordered_map<std::string, float>& data) {
     resize_if_needed(mNrow + 1);
 
     for (const auto& [key, value] : data) {
@@ -165,7 +165,7 @@ void RolloutRecord::add(unsigned int sim_step, const std::unordered_map<std::str
     mNrow++;
 }
 
-void RolloutRecord::addVector(const std::string& key, int step, const Eigen::VectorXd& data) {
+void RolloutRecord::addVector(const std::string& key, int step, const Eigen::VectorXf& data) {
     resize_if_needed(step + 1);
     auto it = mFieldToIdx.find(key);
     if (it != mFieldToIdx.end()) {

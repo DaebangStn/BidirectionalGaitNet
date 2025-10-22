@@ -4,8 +4,9 @@ import numpy as np
 import dill
 from dill import Unpickler
 from io import BytesIO
-from dummy import Dummy
-from log_config import log_verbose
+from python.dummy import Dummy
+from python.log_config import log_verbose
+from python.uri_resolver import resolve_path
 
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
@@ -418,7 +419,6 @@ def generating_muscle_nn(num_total_muscle_related_dofs, num_dof, num_muscles, is
 
 def loading_metadata(path):
     # Resolve URI before loading
-    from uri_resolver import resolve_path
     resolved_path = resolve_path(path)
 
     # Load with global CPU mapping for Ray workers without GPU
@@ -455,7 +455,6 @@ class SelectiveUnpickler(Unpickler):
 def loading_network(path, num_states, num_actions, use_mcn, device="cpu"):
 
     # Resolve URI before loading
-    from uri_resolver import resolve_path
     resolved_path = resolve_path(path)
 
     log_verbose("[Python] Loading network from {}".format(resolved_path))

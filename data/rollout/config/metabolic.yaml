@@ -1,19 +1,19 @@
 record:
-  foot: true
+  foot: false
 
   kinematics:
     enabled: true
-    all: true
+    all: false
     root: true
 
     angle:
-      enabled: true
+      enabled: false
       hip: true
       knee: true
       ankle: true
 
     anvel:
-      enabled: true
+      enabled: false
       hip: true
       knee: true
       ankle: true
@@ -44,7 +44,7 @@ filters:
   # Remove last M cycles (unstable final cycles)
   drop_last_m_cycles:
     enabled: true
-    m: 5
+    m: 2
 
   # Compute travel distance from root position
   compute_travel_distance:
@@ -64,3 +64,10 @@ filters:
     enabled: true
     keys:
       - 'metabolic/cot/MA'
+
+  # Remove all cycle-level data (MUST BE LAST)
+  # Keeps only param-level aggregated data (statistics, averages)
+  # Reduces HDF5 file size by 90%+ when you only need summary data
+  # WARNING: Individual cycle timeseries will NOT be saved!
+  remove_cycle_data:
+    enabled: true

@@ -715,6 +715,105 @@ class AverageFilter(DataFilter):
             raise ValueError(f"Unknown interpolation method: {method}")
 
 
+class CycleStatisticsFilter(DataFilter):
+    """Compute cycle-level statistics and store as param-level metadata
+
+    This filter should be applied BEFORE RemoveCycleDataFilter to capture
+    statistics about the data before cycle-level data is removed.
+
+    Computed statistics (stored in _cycle_statistics dict):
+        - total_steps: Total number of simulation steps across all cycles
+        - num_cycles: Number of cycles in the data
+        - success: Whether the rollout was successful (passed through)
+
+    These statistics are preserved even when cycle data is later removed,
+    allowing HDF5 metadata to reflect pre-filter rollout state.
+    """
+
+    def filter_cycles(
+        self,
+        cycles_dict: Dict[int, np.ndarray],
+        matrix_cycles_dict: Dict[str, Dict[int, np.ndarray]],
+        fields: List[str]
+    ) -> Tuple[Dict[int, np.ndarray], Dict[str, Dict[int, np.ndarray]], List[str]]:
+        """Compute and store cycle statistics"""
+
+        # Compute total steps across all cycles
+        total_steps = sum(cycle_data.shape[0] for cycle_data in cycles_dict.values())
+        num_cycles = len(cycles_dict)
+
+        # Store statistics in matrix_data as param-level metadata
+        # Use special key that starts with '_' to mark as metadata
+        matrix_cycles_dict['_cycle_statistics'] = {
+            'total_steps': total_steps,
+            'num_cycles': num_cycles
+        }
+
+        # Return unchanged data (this is a non-destructive filter)
+        return cycles_dict, matrix_cycles_dict, fields
+
+
+class RemoveCycleDataFilter(DataFilter):
+    """Remove all cycle-level data, keeping only param-level aggregated data
+
+    This filter should be applied LAST in the pipeline, after all statistics,
+    averaging, and aggregation filters have run. It removes all individual
+    cycle data while preserving param-level aggregated results.
+
+    Use this filter when you only need summary statistics and averaged data,
+    not the raw per-cycle timeseries. This can reduce HDF5 file size by 90%+.
+
+    Preserved data (param-level):
+        - _averaged_attributes: Statistics like metabolic/cot/MA/mean, metabolic/cot/MA/std
+        - _averaged_arrays: Averaged timeseries like angle/AnkleR, motions
+        - Other metadata dictionaries: _metabolic_cumulative_*, _metabolic_cot_*, _travel_distance
+
+    Removed data (cycle-level):
+        - All individual cycle scalar data (time, phase, angles, forces, etc.)
+        - All individual cycle matrix data (motions, GRF arrays, etc.)
+
+    Example output structure:
+        /param_0/
+            ├─ metabolic/cot/MA/mean (attribute)
+            ├─ metabolic/cot/MA/std (attribute)
+            ├─ angle/AnkleR (averaged dataset)
+            └─ motions (averaged dataset)
+        # No cycle_0/, cycle_1/, ... subdirectories!
+    """
+
+    def filter_cycles(
+        self,
+        cycles_dict: Dict[int, np.ndarray],
+        matrix_cycles_dict: Dict[str, Dict[int, np.ndarray]],
+        fields: List[str]
+    ) -> Tuple[Dict[int, np.ndarray], Dict[str, Dict[int, np.ndarray]], List[str]]:
+        """Remove all cycle data, keeping only aggregated param-level data"""
+
+        # Count original cycles for logging
+        num_cycles = len(cycles_dict)
+
+        # Clear all cycle data
+        cycles_dict.clear()
+
+        # Keep only special metadata keys (those starting with '_')
+        # These contain param-level aggregated data including:
+        #   - _cycle_statistics: Pre-filter cycle stats (from CycleStatisticsFilter)
+        #   - _averaged_attributes: Statistics like metabolic/cot/MA/mean
+        #   - _averaged_arrays: Averaged timeseries
+        #   - _metabolic_cumulative_*, _metabolic_cot_*, _travel_distance
+        preserved_keys = [key for key in matrix_cycles_dict.keys() if key.startswith('_')]
+        removed_keys = [key for key in matrix_cycles_dict.keys() if not key.startswith('_')]
+
+        # Create new dict with only preserved keys
+        filtered_matrix_cycles_dict = {key: matrix_cycles_dict[key] for key in preserved_keys}
+
+        # Only warn if no param-level data was preserved
+        if not preserved_keys:
+            print(f"⚠️  WARNING: RemoveCycleDataFilter removed all data - no param-level aggregations found")
+
+        return cycles_dict, filtered_matrix_cycles_dict, fields
+
+
 class FilterPipeline:
     """Composable pipeline of data filters
 
@@ -771,6 +870,10 @@ class FilterPipeline:
                 if len(f.keys) > 3:
                     keys_str += f" (+{len(f.keys)-3} more)"
                 filter_names.append(f"statistics({keys_str})")
+            elif isinstance(f, CycleStatisticsFilter):
+                filter_names.append("cycle_statistics [COMPUTE METADATA]")
+            elif isinstance(f, RemoveCycleDataFilter):
+                filter_names.append("remove_cycle_data [KEEP PARAM-LEVEL ONLY]")
             else:
                 filter_names.append(f.__class__.__name__)
 
@@ -807,11 +910,13 @@ class FilterPipeline:
             data: Scalar data [num_steps, num_fields]
             matrix_data: Matrix data {field_name: [num_steps, dim]}
             fields: Field names
-            success: Whether rollout succeeded
+            success: Whether rollout succeeded (before filtering)
             param_state: Parameter state array
 
         Returns:
             Filtered (param_idx, data, matrix_data, fields, success, param_state)
+            Note: success status is preserved from pre-filter state, even if data becomes empty
+                  Pre-filter num_steps stored in matrix_data['_original_num_steps']
         """
 
         # Early exit if no filters or empty data
@@ -874,8 +979,16 @@ class FilterPipeline:
         """Flatten cycle-grouped data back to arrays with renumbered cycle indices"""
 
         if not cycles_dict:
-            # Return empty arrays
-            return np.empty((0, 0)), {field: np.empty((0, 0)) for field in matrix_cycles_dict}
+            # Return empty data array, but preserve param-level metadata (not cycle-indexed)
+            matrix_data = {}
+            for field_name, field_value in matrix_cycles_dict.items():
+                if field_name in ('_averaged_attributes', '_averaged_arrays', '_cycle_statistics'):
+                    # Preserve param-level metadata as-is (these are dicts, not cycle-indexed)
+                    matrix_data[field_name] = field_value
+                else:
+                    # Other fields become empty arrays
+                    matrix_data[field_name] = np.empty((0, 0))
+            return np.empty((0, 0)), matrix_data
 
         # Sort cycles by original index for consistent ordering
         sorted_cycle_indices = sorted(cycles_dict.keys())
@@ -899,8 +1012,8 @@ class FilterPipeline:
         matrix_data = {}
         for field_name, matrix_dict in matrix_cycles_dict.items():
             if field_name.startswith('_'):
-                # Special cases: _averaged_attributes and _averaged_arrays are NOT cycle-indexed
-                if field_name == '_averaged_attributes' or field_name == '_averaged_arrays':
+                # Special cases: _averaged_attributes, _averaged_arrays, _cycle_statistics are NOT cycle-indexed
+                if field_name in ('_averaged_attributes', '_averaged_arrays', '_cycle_statistics'):
                     # Pass through unchanged - simple {name: value/array} dicts
                     matrix_data[field_name] = matrix_dict
                 else:
@@ -1016,12 +1129,21 @@ class FilterPipeline:
             elif not key_methods:
                 print(f"⚠️  WARNING: average_filter enabled but no keys specified")
 
-        # Compute statistics across cycles (must be last - operates on all cycle data)
+        # Compute statistics across cycles (must be second-to-last - operates on all cycle data)
         if filter_config.get('stat_filter', {}).get('enabled', False):
             keys = filter_config['stat_filter'].get('keys', [])
             if keys:
                 pipeline.add_filter(StatisticsFilter(keys))
             else:
                 print(f"⚠️  WARNING: stat_filter enabled but no keys specified")
+
+        # ALWAYS compute cycle statistics (captures total_steps and num_cycles metadata)
+        # This ensures HDF5 always has accurate pre-filter metadata, even when cycles are removed
+        pipeline.add_filter(CycleStatisticsFilter())
+
+        # Remove cycle data (MUST BE LAST - removes all cycle-level data, keeps only param-level aggregates)
+        # This filter should be enabled when you only need summary statistics and averaged data
+        if filter_config.get('remove_cycle_data', {}).get('enabled', False):
+            pipeline.add_filter(RemoveCycleDataFilter())
 
         return pipeline

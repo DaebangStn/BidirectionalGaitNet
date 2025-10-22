@@ -24,5 +24,5 @@ target_link_libraries(pyrollout PRIVATE rollout sim)
 target_include_directories(pyrollout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ../sim)
 set_target_properties(pyrollout PROPERTIES
     PREFIX ""
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../python
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../python/rollout
 )

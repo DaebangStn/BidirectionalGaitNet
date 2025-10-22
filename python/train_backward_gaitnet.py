@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 import torch.optim as optim
 from symbol import parameters
-from forward_gaitnet import RefNN
+from python.forward_gaitnet import RefNN
 import argparse
 
 import torch.nn.utils as torch_utils
@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import math
 import random
-from advanced_vae import AdvancedVAE
+from python.advanced_vae import AdvancedVAE
 from torch.utils.tensorboard import SummaryWriter
 import os
 import pickle

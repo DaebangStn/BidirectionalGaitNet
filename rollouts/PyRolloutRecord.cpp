@@ -5,7 +5,7 @@
 void PyRolloutRecord::resize_matrix_if_needed(const std::string& key, unsigned int requested_size, unsigned int cols) {
     if (mMatrixData.find(key) == mMatrixData.end() || requested_size >= mMatrixData.at(key).rows()) {
         unsigned int new_rows = (requested_size / MATRIX_DATA_CHUNK_SIZE + 1) * MATRIX_DATA_CHUNK_SIZE;
-        Eigen::MatrixXd new_data(new_rows, cols);
+        Eigen::MatrixXf new_data(new_rows, cols);
         if (mMatrixData.find(key) != mMatrixData.end() && mMatrixRows.at(key) > 0) {
             new_data.topRows(mMatrixRows.at(key)) = mMatrixData.at(key).topRows(mMatrixRows.at(key));
         }
@@ -13,7 +13,7 @@ void PyRolloutRecord::resize_matrix_if_needed(const std::string& key, unsigned i
     }
 }
 
-void PyRolloutRecord::addVector(const std::string& key, int step, const Eigen::VectorXd& data) {
+void PyRolloutRecord::addVector(const std::string& key, int step, const Eigen::VectorXf& data) {
     if (mMatrixData.find(key) == mMatrixData.end()) {
         mMatrixRows[key] = 0;
     }
@@ -31,15 +31,15 @@ void PyRolloutRecord::reset() {
     mCycleAttributes.clear();
 }
 
-void PyRolloutRecord::addCycleAttribute(int cycle_idx, const std::string& key, double value) {
+void PyRolloutRecord::addCycleAttribute(int cycle_idx, const std::string& key, float value) {
     mCycleAttributes[cycle_idx][key] = value;
 }
 
-py::array_t<double> PyRolloutRecord::get_data_array() const {
+py::array_t<float> PyRolloutRecord::get_data_array() const {
     const auto& data = get_data();
-    
+
     // Return numpy array with shape (nrow, ncol)
-    py::array_t<double> arr({get_nrow(), get_ncol()});
+    py::array_t<float> arr({get_nrow(), get_ncol()});
     auto buf = arr.mutable_unchecked<2>();
     
     for (size_t i = 0; i < get_nrow(); ++i) {
@@ -55,7 +55,19 @@ py::dict PyRolloutRecord::get_matrix_data() const {
     py::dict dict;
     for (const auto& [key, matrix] : mMatrixData) {
         unsigned int num_rows = mMatrixRows.at(key);
-        dict[py::str(key)] = Eigen::MatrixXd(matrix.topRows(num_rows));
+        unsigned int num_cols = matrix.cols();
+
+        // Create numpy float32 array explicitly to avoid pybind11 auto-conversion to float64
+        py::array_t<float> arr({num_rows, num_cols});
+        auto buf = arr.mutable_unchecked<2>();
+
+        for (size_t i = 0; i < num_rows; ++i) {
+            for (size_t j = 0; j < num_cols; ++j) {
+                buf(i, j) = matrix(i, j);
+            }
+        }
+
+        dict[py::str(key)] = arr;
     }
     return dict;
 }

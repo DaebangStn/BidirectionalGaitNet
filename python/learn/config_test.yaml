@@ -1,0 +1,47 @@
+data:
+  # Data file path (can be overridden via --data argument)
+  data_path: "sampled/base_anchor_all-026000-1014_092619+metabolic+on_20251023_060352/rollout_data.h5"
+
+  # Input and output labels
+  # Inputs: parameter names from parameter_names dataset
+  in_lbl:
+    - "gait_cadence"
+    - "gait_stride"
+
+  # Outputs: attribute paths in param_N groups
+  out_lbl:
+    - "metabolic/cot/MA/mean"
+
+  # Data loading configuration
+  batch_size: 64
+  train_split: 1.0
+  random_seed: 42
+
+model:
+  # Network architecture
+  residual: true
+  layers: [64, 32]
+  activation: 'gelu'
+
+trainer:
+  # Training duration - SHORT TEST
+  max_epochs: 50
+
+  # Optimization
+  lr: 0.1
+  min_lr: 0.0005
+
+  # Loss components
+  recon_type: 'huber'
+  recon_delta: 1.0
+  recon_weight: 10
+  recon_start_epoch: 0
+
+  # Regularization
+  l1_weight: 0.001
+  l2_weight: 0.001
+  grad_weight: 0.01
+
+  # Logging and checkpointing
+  log_period: 10     # Log every 10 epochs
+  save_period: 50    # Save at end

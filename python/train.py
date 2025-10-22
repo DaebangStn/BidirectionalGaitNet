@@ -18,6 +18,41 @@ sys.path.append(str(Path(__file__).parent.parent))
 from python.config import load_config
 from python.config.schema import TrainingConfig, PipelineConfig
 
+def resolve_data_path(path: str) -> str:
+    """
+    Resolve data path to rollout_data.h5 file.
+
+    If path is a directory (sample directory), append '/rollout_data.h5'.
+    If path is already a .h5 file, use it directly.
+
+    Args:
+        path: Either a sample directory or direct path to .h5 file
+
+    Returns:
+        Full path to rollout_data.h5 file
+
+    Raises:
+        SystemExit: If the resolved .h5 file doesn't exist
+    """
+    from pathlib import Path
+
+    path_obj = Path(path)
+
+    # If it's already a .h5 file, use it directly
+    if path.endswith('.h5'):
+        resolved_path = path
+    else:
+        # Otherwise, assume it's a sample directory and append rollout_data.h5
+        resolved_path = str(path_obj / 'rollout_data.h5')
+
+    # Verify the file exists
+    if not Path(resolved_path).exists():
+        print(f"❌ Error: HDF5 file not found at {resolved_path}")
+        print(f"   Expected rollout_data.h5 in directory: {path}")
+        sys.exit(1)
+
+    return resolved_path
+
 def main():
     parser = argparse.ArgumentParser(
         description="Unified training interface for BidirectionalGaitNet",
@@ -142,7 +177,7 @@ def run_forward_training(config: TrainingConfig, train_fgn):
     import json
     
     # Add original training imports
-    from forward_gaitnet import RefNN
+    from python.forward_gaitnet import RefNN
     from pysim import RayEnvManager
     from ray.rllib.utils.torch_utils import convert_to_torch_tensor
     

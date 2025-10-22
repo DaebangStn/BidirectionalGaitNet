@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from ftplib import FTP
 import yaml
-from log_config import log_verbose
+from python.log_config import log_verbose
 
 
 class URIResolver:

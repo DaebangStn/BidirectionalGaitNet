@@ -434,7 +434,7 @@ private:
     int mWindowYPos;
 
     // Rollout configuration
-    int mDefaultRolloutCount;
+    int mDefaultRolloutCount, mRolloutCycles = -1;
 
     // Reset phase configuration
     double mResetPhase;  // -1.0 for randomized, 0.0-1.0 for specific phase
@@ -452,6 +452,7 @@ private:
     void loadHDFSingleMotion();
     void updateUnifiedKeys();
     void updateResizablePlotsFromKeys();
+    void runRollout();
 
     // Motion navigation helper - NEW: using Motion* interface
     double computeFrameFloat(Motion* motion, double phase);

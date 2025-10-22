@@ -18,8 +18,8 @@ while [[ $# -gt 0 ]]; do
             echo "  -h, --help            Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                    Launch all checkpoints"
-            echo "  $0 -f b20            Launch only checkpoints containing 'b20'"
+            echo "  $0                     Launch all checkpoints"
+            echo "  $0 -f b20             Launch only checkpoints containing 'b20'"
             echo "  $0 --filter df_dn1    Launch only checkpoints containing 'df_dn1'"
             exit 0
             ;;
@@ -32,9 +32,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -n "$FILTER" ]; then
-    echo "Starting 'uv run viewer' processes for checkpoints containing '$FILTER' in '${CHECKPOINT_DIR}/'..."
+    echo "Starting viewer processes for checkpoints containing '$FILTER' in '${CHECKPOINT_DIR}/'..."
 else
-    echo "Starting 'uv run viewer' processes for all checkpoints in '${CHECKPOINT_DIR}/'..."
+    echo "Starting viewer processes for all checkpoints in '${CHECKPOINT_DIR}/'..."
 fi
 echo "Each process will run in the background. "
 echo "---------------------------------------------------------"
@@ -57,16 +57,16 @@ for CKPT_PATH in "${CHECKPOINT_DIR}"/*; do
             fi
         fi
         
-        echo "Launching: uv run viewer \"${CKPT_PATH}\""
-        # Execute the 'uv run viewer' command with the checkpoint relative path.
+        echo "Launching: scripts/viewer \"${CKPT_PATH}\""
+        # Execute the 'scripts/viewer' command with the checkpoint relative path.
         # The '&' symbol at the end sends the command to the background,
-        # allowing the script to continue without waiting for 'uv run viewer' to finish.
-        uv run viewer "${CKPT_PATH}" &
+        # allowing the script to continue without waiting for the viewer to finish.
+        scripts/viewer "${CKPT_PATH}" &
     fi
 done
 
 echo "---------------------------------------------------------"
 echo "All detected checkpoint viewer jobs have been launched in the background."
 echo "You can use the 'jobs' command to list background jobs in your current shell session."
-echo "For a more comprehensive view of running processes, use 'ps aux | grep \"uv run viewer\"'."
-echo "Output from 'uv run viewer' might appear in your terminal or be redirected to log files, depending on 'uv' configuration."
+echo "For a more comprehensive view of running processes, use 'ps aux | grep viewer'."
+echo "Output from viewer might appear in your terminal or be redirected to log files."

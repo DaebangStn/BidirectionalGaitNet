@@ -1,4 +1,5 @@
 #include "UriResolver.h"
+#include "Log.h"
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -23,7 +24,7 @@ void URIResolver::initialize() {
     registerScheme("data", dataRoot);
     
     mInitialized = true;
-    std::printf("[URIResolver] Initialized with data root: %s\n", dataRoot.c_str());
+    LOG_VERBOSE("[URIResolver] Initialized with data root: " << dataRoot);
 }
 
 std::string URIResolver::resolve(const std::string& uri) const {
@@ -44,7 +45,7 @@ std::string URIResolver::resolve(const std::string& uri) const {
             auto it = mSchemeRoots.find("data");
             if (it != mSchemeRoots.end()) {
                 std::filesystem::path fullPath = std::filesystem::path(it->second) / filename;
-                std::printf("URIResolver: Backwards compatibility - resolving %s to %s\n", uri.c_str(), fullPath.string().c_str());
+                LOG_VERBOSE("URIResolver: Backwards compatibility - resolving " << uri << " to " << fullPath.string());
                 return fullPath.string();
             }
         }

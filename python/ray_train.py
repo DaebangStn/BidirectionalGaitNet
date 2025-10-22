@@ -7,9 +7,9 @@ from typing import Dict
 import torch
 import pickle
 import xml.etree.ElementTree as ET
-from ray_model import SimulationNN_Ray, MuscleNN, RolloutNNRay
-from ray_env import MyEnv
-from util import timestamp
+from python.ray_model import SimulationNN_Ray, MuscleNN, RolloutNNRay
+from python.ray_env import MyEnv
+from python.util import timestamp
 
 import ray
 from ray import tune
