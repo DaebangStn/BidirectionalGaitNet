@@ -13,11 +13,6 @@ fi
 # Get Python version (e.g., Python 3.8.10)
 python_version=$(python3 --version 2>&1)
 
-# The version must be 3.8
-if [[ $python_version != "Python 3.8"* ]]; then
-    error_exit "Unsupported Python version: $python_version. Supported version is 3.8."
-fi
-
 ENVDIR=${ENVDIR:-~/pkgenv}
 SRCDIR=${SRCDIR:-~/pkgsrc}
 
