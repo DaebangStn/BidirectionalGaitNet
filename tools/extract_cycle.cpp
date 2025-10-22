@@ -37,6 +37,8 @@ struct FileInfo {
     int param_count;     // Limited to 100+
     int cycle_count;     // Limited to 100+
     std::vector<ParamInfo> params;
+    std::vector<std::string> param_names;  // Parameter names from /parameter_names
+    std::vector<float> param_state;        // param_0 state values
 };
 
 // Constants
@@ -50,7 +52,7 @@ enum Stage { FILE_SELECT, PARAM_SELECT, CYCLE_SELECT, CONFIRM };
 class ExtractorUI {
 public:
     ExtractorUI() : current_stage(FILE_SELECT), selected_file_idx(0),
-                    selected_param_idx(0), selected_cycle_idx(0) {}
+                    selected_param_idx(0), selected_cycle_idx(0), show_param_detail(false) {}
 
     void run();
     bool extractDirect(const std::string& filepath, int param_idx, int cycle_idx,
@@ -61,6 +63,7 @@ private:
     int selected_file_idx;
     int selected_param_idx;
     int selected_cycle_idx;
+    bool show_param_detail;
 
     std::vector<FileInfo> files;
 
@@ -168,6 +171,46 @@ void ExtractorUI::loadFileInfo(FileInfo& file_info) {
         file_info.param_count = param_count;
         file_info.cycle_count = total_cycles;
 
+        // Load parameter names from /parameter_names
+        file_info.param_names.clear();
+        try {
+            std::string param_names_path = "/parameter_names";
+            if (H5Lexists(file.getId(), param_names_path.c_str(), H5P_DEFAULT)) {
+                H5::DataSet param_names_dataset = file.openDataSet(param_names_path);
+                H5::DataSpace param_names_dataspace = param_names_dataset.getSpace();
+                H5::DataType param_names_datatype = param_names_dataset.getDataType();
+
+                hsize_t name_dims[1];
+                param_names_dataspace.getSimpleExtentDims(name_dims, nullptr);
+
+                std::vector<char*> names(name_dims[0]);
+                param_names_dataset.read(names.data(), param_names_datatype);
+
+                for (size_t i = 0; i < name_dims[0]; i++) {
+                    file_info.param_names.push_back(std::string(names[i]));
+                }
+
+                H5Dvlen_reclaim(param_names_datatype.getId(), param_names_dataspace.getId(),
+                               H5P_DEFAULT, names.data());
+            }
+        } catch (...) {}
+
+        // Load param_0 state from /param_0/param_state
+        file_info.param_state.clear();
+        try {
+            std::string param_state_path = "/param_0/param_state";
+            if (H5Lexists(file.getId(), param_state_path.c_str(), H5P_DEFAULT)) {
+                H5::DataSet param_state_dataset = file.openDataSet(param_state_path);
+                H5::DataSpace param_state_dataspace = param_state_dataset.getSpace();
+
+                hsize_t state_dims[1];
+                param_state_dataspace.getSimpleExtentDims(state_dims, nullptr);
+
+                file_info.param_state.resize(state_dims[0]);
+                param_state_dataset.read(file_info.param_state.data(), H5::PredType::NATIVE_FLOAT);
+            }
+        } catch (...) {}
+
         file.close();
     } catch (const H5::Exception& e) {
         file_info.timesteps = -1;
@@ -270,13 +313,15 @@ void ExtractorUI::stage1_fileSelect() {
 
     drawFileList();
 
-    mvprintw(LINES - 2, 0, "[↑/↓: Navigate] [Enter: Select] [q: Quit]");
+    mvprintw(LINES - 2, 0, "[↑/↓: Navigate] [Enter: Select] [p: Toggle Param Detail] [q: Quit]");
     refresh();
 
     int ch = getch();
     if (ch == 'q' || ch == 'Q') {
         endwin();
         exit(0);
+    } else if (ch == 'p' || ch == 'P') {
+        show_param_detail = !show_param_detail;
     } else if (ch == KEY_UP && selected_file_idx > 0) {
         selected_file_idx--;
     } else if (ch == KEY_DOWN && selected_file_idx < static_cast<int>(files.size()) - 1) {
@@ -474,6 +519,34 @@ void ExtractorUI::drawFileList() {
                files[i].timesteps >= MAX_TIMESTEPS_COUNT ? "5000+" : std::to_string(files[i].timesteps).c_str(),
                files[i].param_count >= MAX_PARAM_COUNT ? "100+" : std::to_string(files[i].param_count).c_str(),
                files[i].cycle_count >= MAX_CYCLE_COUNT ? "100+" : std::to_string(files[i].cycle_count).c_str());
+
+        // Display param_0 state if available
+        if (!files[i].param_state.empty()) {
+            printw("      Param 0: ");
+
+            int display_count = show_param_detail ? files[i].param_state.size() : std::min((size_t)5, files[i].param_state.size());
+
+            for (int j = 0; j < display_count; j++) {
+                if (j > 0) printw(", ");
+
+                // Check if we need to wrap to next line (after 3-4 params per line)
+                if (show_param_detail && j > 0 && j % 4 == 0) {
+                    printw("\n               ");
+                }
+
+                if (j < files[i].param_names.size()) {
+                    printw("%s=%.2f", files[i].param_names[j].c_str(), files[i].param_state[j]);
+                } else {
+                    printw("[%d]=%.2f", j, files[i].param_state[j]);
+                }
+            }
+
+            if (!show_param_detail && files[i].param_state.size() > 5) {
+                printw(" (%zu more)", files[i].param_state.size() - 5);
+            }
+            printw("\n");
+        }
+
         printw("\n");
     }
 }
