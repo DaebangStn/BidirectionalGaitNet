@@ -359,10 +359,8 @@ void Environment::initialize(std::string metadata)
 
                 mParamName.push_back(std::string(group->Name()) + "_" + std::string(elem->Name()));
 
-                if ((elem->Attribute("sampling") != NULL) && std::string(elem->Attribute("sampling")) == "uniform")
-                    mSamplingStrategy.push_back(true);
-                else
-                    mSamplingStrategy.push_back(false);
+                // Determine sampling strategy for this parameter
+                bool is_uniform = (elem->Attribute("sampling") != NULL) && (std::string(elem->Attribute("sampling")) == "uniform");
 
                 bool isExist = false;
 
@@ -386,7 +384,7 @@ void Environment::initialize(std::string metadata)
                         p.param_names.push_back(mParamName.back());
                         double range = maxV.back() - minV.back();
                         p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
-                        p.is_uniform = mSamplingStrategy.back();
+                        p.is_uniform = is_uniform;
                         mParamGroups.push_back(p);
                     }
                 }
@@ -398,7 +396,7 @@ void Environment::initialize(std::string metadata)
                     p.param_names.push_back(mParamName.back());
                     double range = maxV.back() - minV.back();
                     p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
-                    p.is_uniform = mSamplingStrategy.back();
+                    p.is_uniform = is_uniform;
                     mParamGroups.push_back(p);
                 }
             }

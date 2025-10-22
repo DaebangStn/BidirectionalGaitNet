@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict
 import torch
 import pickle
+import xml.etree.ElementTree as ET
 from ray_model import SimulationNN_Ray, MuscleNN, RolloutNNRay
 from ray_env import MyEnv
 from util import timestamp
@@ -370,6 +371,7 @@ parser.add_argument("--config", type=str, default="ppo_mini")
 parser.add_argument("--config-file", type=str, default="python/ray_config.py")
 parser.add_argument("--env", type=str, default="data/base_lonly.xml")
 parser.add_argument("--checkpoint", type=str, default=None)
+parser.add_argument("--epoch", type=int, default=None, help="Maximum training epochs (overrides XML config)")
 parser.add_argument("--rollout", action='store_true')
 
 if __name__ == "__main__":
@@ -384,6 +386,28 @@ if __name__ == "__main__":
     with open(args.env) as f:
         env_xml = f.read()
     print("loading environment done...... ")
+
+    # Parse training configuration from XML
+    training_config = {}
+    try:
+        # Wrap XML fragment in root element for parsing
+        wrapped_xml = f"<root>{env_xml}</root>"
+        root = ET.fromstring(wrapped_xml)
+        training_elem = root.find('training')
+        if training_elem is not None:
+            max_epoch_elem = training_elem.find('max_epoch')
+            checkpoint_freq_elem = training_elem.find('checkpoint_freq')
+            if max_epoch_elem is not None:
+                training_config['max_epoch'] = int(max_epoch_elem.text)
+            if checkpoint_freq_elem is not None:
+                training_config['checkpoint_freq'] = int(checkpoint_freq_elem.text)
+    except Exception as e:
+        print(f"Warning: Failed to parse training config from XML: {e}")
+
+    # Use command line argument if provided, otherwise use XML config, otherwise default
+    max_epoch = args.epoch if args.epoch is not None else training_config.get('max_epoch', 100002)
+    checkpoint_freq = training_config.get('checkpoint_freq', 1000)
+    print(f"Training configuration: max_epoch={max_epoch}, checkpoint_freq={checkpoint_freq}")
 
     ray.init(address="auto")
 
@@ -427,6 +451,7 @@ if __name__ == "__main__":
              trial_dirname_creator=(lambda trial: timestamp()),
              local_dir="ray_results",
              restore=checkpoint_path,
+             stop={"training_iteration": max_epoch},
              progress_reporter=CLIReporter(max_report_frequency=500),
-             checkpoint_freq=1000)
+             checkpoint_freq=checkpoint_freq)
     ray.shutdown()

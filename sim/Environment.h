@@ -358,7 +358,6 @@ private:
     std::vector<param_group> mParamGroups;
     Eigen::VectorXd mParamMin, mParamMax, mParamDefault;
     std::vector<std::string> mParamName;
-    std::vector<bool> mSamplingStrategy;
     int mNumParamState;
 
     // Reward Weight
