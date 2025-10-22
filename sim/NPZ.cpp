@@ -1,5 +1,6 @@
 #include "NPZ.h"
 #include "Character.h"
+#include "Environment.h"
 #include "dart/dynamics/FreeJoint.hpp"
 #include "../viewer/Log.h"
 #include <iostream>
@@ -208,4 +209,29 @@ Eigen::VectorXd NPZ::getRawMotionData() const
         flattened.segment(i * mMotionData.cols(), mMotionData.cols()) = mMotionData.row(i);
     }
     return flattened;
+}
+
+bool NPZ::applyParametersToEnvironment(Environment* env) const
+{
+    if (!hasParameters() || !env) {
+        return false;
+    }
+
+    // Get environment parameter count
+    Eigen::VectorXd env_params = env->getParamState();
+    int env_param_count = env_params.size();
+    int npz_param_count = mParams.size();
+
+    // Check for count mismatch
+    if (npz_param_count != env_param_count) {
+        LOG_WARN("[NPZ] Warning: Parameter count mismatch (NPZ: "
+                  << npz_param_count << ", Environment: " << env_param_count
+                  << "). Using default parameters.");
+        return false;  // Caller will use defaults
+    }
+
+    // Apply parameters (positional matching)
+    env->setParamState(mParams, false, true);
+    LOG_VERBOSE("[NPZ] Applied " << mParams.size() << " parameters");
+    return true;
 }

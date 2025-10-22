@@ -106,13 +106,27 @@ void RenderEnvironment::RecordGraphData() {
 
     const auto character = mEnv->getCharacter();
     // Log metabolic energy
-    if (mGraphData->key_exists("metabolic_energy_step")) {
+    if (mGraphData->key_exists("energy_metabolic_step")) {
         const double metabolicStepEnergy = character->getMetabolicStepEnergy();
-        mGraphData->push("metabolic_energy_step", metabolicStepEnergy);
+        mGraphData->push("energy_metabolic_step", metabolicStepEnergy);
     }
-    if (mGraphData->key_exists("metabolic_energy_reward")) {
+    if (mGraphData->key_exists("energy_metabolic")) {
         const double metabolicEnergy = character->getMetabolicEnergy();
-        mGraphData->push("metabolic_energy_reward", metabolicEnergy);
+        mGraphData->push("energy_metabolic", metabolicEnergy);
+    }
+    // Log torque energy
+    if (mGraphData->key_exists("energy_torque_step")) {
+        const double torqueStepEnergy = character->getTorqueStepEnergy();
+        mGraphData->push("energy_torque_step", torqueStepEnergy);
+    }
+    if (mGraphData->key_exists("energy_torque")) {
+        const double torqueEnergy = character->getTorqueEnergy();
+        mGraphData->push("energy_torque", torqueEnergy);
+    }
+    // Log combined energy
+    if (mGraphData->key_exists("energy_combined")) {
+        const double combinedEnergy = character->getEnergy();
+        mGraphData->push("energy_combined", combinedEnergy);
     }
 
     for (const auto& muscle : character->getMuscles()) {

@@ -342,6 +342,13 @@ void Environment::initialize(std::string metadata)
         else if (metabolicTypeStr == "MA2") mCharacter->setMetabolicType(MA2);
     }
 
+    // Parse TorqueEnergyCoeff configuration
+    if (doc.FirstChildElement("TorqueEnergyCoeff") != NULL)
+    {
+        double torqueEnergyCoeff = doc.FirstChildElement("TorqueEnergyCoeff")->DoubleText();
+        mCharacter->setTorqueEnergyCoeff(torqueEnergyCoeff);
+    }
+
     // ============= For parameterization ==============
     // =================================================
 
@@ -1002,7 +1009,7 @@ void Environment::step()
 
 void Environment::postStep()
 {
-    mCharacter->evalMetabolicEnergy();
+    mCharacter->evalEnergy();
     if (mRewardType == gaitnet) updateFootStep();
     mReward = calcReward();
 }
@@ -1218,7 +1225,7 @@ void Environment::reset(double phase)
     mCharacter->setTorque(mCharacter->getTorque().setZero());
     if (mUseMuscle) {
         mCharacter->setActivations(mCharacter->getActivations().setZero());
-        mCharacter->resetMetabolicEnergy();
+        mCharacter->resetEnergy();
     }
 
     mCharacter->clearLogs();

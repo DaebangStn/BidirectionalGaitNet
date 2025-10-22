@@ -143,8 +143,12 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("angle_Rotation", 1000);
     mGraphData->register_key("angle_Obliquity", 1000);
     mGraphData->register_key("angle_Tilt", 1000);
-    mGraphData->register_key("metabolic_energy_step", 1000);
-    mGraphData->register_key("metabolic_energy_reward", 1000);
+    
+    mGraphData->register_key("energy_metabolic_step", 1000);
+    mGraphData->register_key("energy_metabolic", 1000);
+    mGraphData->register_key("energy_torque_step", 1000);
+    mGraphData->register_key("energy_torque", 1000);
+    mGraphData->register_key("energy_combined", 1000);
 
     // Forward GaitNEt
     selected_fgn = 0;
@@ -1227,7 +1231,7 @@ void GLFWApp::drawKinematicsControlPanel()
                         if (mRenderEnv) {
                             // Apply parameters from motion file (supports HDF, NPZ, HDFRollout)
                             if (mMotionsNew[i]->hasParameters()) {
-                                bool success = mMotionsNew[i]->applyParametersToEnvironment(mRenderEnv);
+                                bool success = mMotionsNew[i]->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
                                 if (!success) {
                                     // Count mismatch or error - use defaults
                                     Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
@@ -1307,7 +1311,7 @@ void GLFWApp::drawKinematicsControlPanel()
                         }
 
                         if (rollout_motion && rollout_motion->hasParameters()) {
-                            bool success = rollout_motion->applyParametersToEnvironment(mRenderEnv);
+                            bool success = rollout_motion->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
                             if (!success) {
                                 Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
                                 mRenderEnv->setParamState(default_params, false, true);
@@ -1422,7 +1426,7 @@ void GLFWApp::drawKinematicsControlPanel()
                     }
 
                     if (rollout_motion && rollout_motion->hasParameters()) {
-                        bool success = rollout_motion->applyParametersToEnvironment(mRenderEnv);
+                        bool success = rollout_motion->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
                         if (!success) {
                             Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
                             mRenderEnv->setParamState(default_params, false, true);
@@ -1532,7 +1536,7 @@ void GLFWApp::drawKinematicsControlPanel()
         if (mRenderEnv && !mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size() && ImGui::Button("Set to Param of motion")) {
             // Apply motion parameters using Motion* interface
             if (mMotionsNew[mMotionIdx]->hasParameters()) {
-                bool success = mMotionsNew[mMotionIdx]->applyParametersToEnvironment(mRenderEnv);
+                bool success = mMotionsNew[mMotionIdx]->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
                 if (!success) {
                     Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
                     mRenderEnv->setParamState(default_params, false, true);
@@ -1699,7 +1703,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Metabolic Energy
-    if (ImGui::CollapsingHeader("Metabolic Energy", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Energy", ImGuiTreeNodeFlags_DefaultOpen))
     {
         // Display current metabolic type
         MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
@@ -1708,20 +1712,48 @@ void GLFWApp::drawSimVisualizationPanel()
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Mode: %s", typeNames[currentType]);
         } else {
             ImGui::Text("Mode: %s", typeNames[currentType]);
-            ImGui::SameLine();
 
             // Display current metabolic energy value
             ImGui::Text("Current: %.2f", mRenderEnv->getCharacter()->getMetabolicStepEnergy());
 
+            // Display torque energy if coefficient is non-zero
+            double torqueCoeff = mRenderEnv->getCharacter()->getTorqueEnergyCoeff();
+            if (torqueCoeff > 0.0) {
+                ImGui::Text("Torque Step: %.2f, Total: %.2f",
+                    mRenderEnv->getCharacter()->getTorqueStepEnergy(),
+                    mRenderEnv->getCharacter()->getTorqueEnergy()
+                );
+            }
+
+            // Display combined energy
+            ImGui::Text("Combined: %.2f", mRenderEnv->getCharacter()->getEnergy());
+
             ImGui::Separator();
 
-            std::string title_metabolic = mPlotTitle ? mCheckpointName : "Metabolic Energy";
-            if (ImPlot::BeginPlot((title_metabolic + "##MetabolicEnergy").c_str()))
+            // Checkboxes for energy plotting
+            static bool plot_mean_energy = false;
+            ImGui::Checkbox("Plot Mean Energy", &plot_mean_energy);
+
+            std::string title_energy = mPlotTitle ? mCheckpointName : "Energy";
+            if (ImPlot::BeginPlot((title_energy + "##Energy").c_str()))
             {
                 ImPlot::SetupAxes("Time (s)", "Energy");
 
-                // Plot metabolic energy data
-                std::vector<std::string> metabolicKeys = {"metabolic_energy_step", "metabolic_energy_reward"};
+                // Plot energy data based on checkboxes
+                std::vector<std::string> metabolicKeys;
+                metabolicKeys.push_back("energy_combined");
+                if (plot_mean_energy) {
+                    metabolicKeys.push_back("energy_metabolic");
+                } else {
+                    metabolicKeys.push_back("energy_metabolic_step");
+                }
+                if (torqueCoeff > 0.0) {
+                    if (plot_mean_energy) {
+                        metabolicKeys.push_back("energy_torque");
+                    } else {
+                        metabolicKeys.push_back("energy_torque_step");
+                    }
+                }
                 plotGraphData(metabolicKeys, ImAxis_Y1, true, false, "");
 
                 ImPlot::EndPlot();
@@ -2389,10 +2421,10 @@ void GLFWApp::drawSimControlPanel()
             mRenderEnv->getCharacter()->setMetabolicType(static_cast<MetabolicType>(currentTypeInt));
         }
         ImGui::SameLine();
-        // Button to reset metabolic energy accumulation
+        // Button to reset energy accumulation (both metabolic and torque)
         if (ImGui::Button("Reset"))
         {
-            mRenderEnv->getCharacter()->resetMetabolicEnergy();
+            mRenderEnv->getCharacter()->resetEnergy();
         }
 
         ImGui::SameLine();
@@ -2416,6 +2448,14 @@ void GLFWApp::drawSimControlPanel()
         if (ImGui::InputFloat("Weight", &metabolicWeight, 0.0f, 0.0f, "%.3f"))
         {
             mRenderEnv->setMetabolicWeight(static_cast<double>(metabolicWeight));
+        }
+
+        // Torque energy coefficient input
+        float torqueCoeff = static_cast<float>(mRenderEnv->getCharacter()->getTorqueEnergyCoeff());
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Torque Coeff", &torqueCoeff, 0.0f, 0.0f, "%.3f"))
+        {
+            mRenderEnv->getCharacter()->setTorqueEnergyCoeff(static_cast<double>(torqueCoeff));
         }
     }
 
@@ -4656,102 +4696,4 @@ void GLFWApp::unloadMotion()
         mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
         std::cout << "[Motion] All motions unloaded, parameters reset to defaults" << std::endl;
     }
-}
-
-// ==================== Motion::applyParametersToEnvironment() implementations ====================
-// Implemented here in viewer/ since they depend on RenderEnvironment
-
-#include "../sim/NPZ.h"
-#include "../sim/HDF.h"
-#include "../sim/HDFRollout.h"
-
-bool NPZ::applyParametersToEnvironment(RenderEnvironment* env) const
-{
-    if (!hasParameters() || !env) {
-        return false;
-    }
-
-    // Get environment parameter count
-    Eigen::VectorXd env_params = env->getParamState();
-    int env_param_count = env_params.size();
-    int npz_param_count = mParams.size();
-
-    // Check for count mismatch
-    if (npz_param_count != env_param_count) {
-        LOG_WARN("[NPZ] Warning: Parameter count mismatch (NPZ: "
-                  << npz_param_count << ", Environment: " << env_param_count
-                  << "). Using default parameters.");
-        return false;  // Caller will use defaults
-    }
-
-    // Apply parameters (positional matching)
-    env->setParamState(mParams, false, true);
-    LOG_VERBOSE("[NPZ] Applied " << mParams.size() << " parameters");
-    return true;
-}
-
-bool HDF::applyParametersToEnvironment(RenderEnvironment* env) const
-{
-    if (!hasParameters() || !env) {
-        return false;
-    }
-
-    // Get simulation parameter names and current state
-    const std::vector<std::string>& sim_param_names = env->getParamName();
-    Eigen::VectorXd current_params = env->getParamState();
-
-    // Name-based matching: build new parameter vector with matched values
-    Eigen::VectorXd new_params = current_params;  // Start with defaults
-    int matched_count = 0;
-
-    // Match HDF parameter names with simulation parameter names
-    for (size_t i = 0; i < mParameterNames.size(); i++) {
-        for (size_t j = 0; j < sim_param_names.size(); j++) {
-            if (mParameterNames[i] == sim_param_names[j]) {
-                new_params[j] = static_cast<double>(mParameterValues[i]);
-                matched_count++;
-                break;
-            }
-        }
-    }
-
-    LOG_VERBOSE("[HDF] Matched " << matched_count << " / " << mParameterNames.size()
-              << " parameters (Environment has " << sim_param_names.size() << " parameters)");
-
-    // Apply matched parameters
-    env->setParamState(new_params, false, true);
-    return true;
-}
-
-bool HDFRollout::applyParametersToEnvironment(RenderEnvironment* env) const
-{
-    if (!hasParameters() || !env) {
-        return false;
-    }
-
-    // Get simulation parameter names and current state
-    const std::vector<std::string>& sim_param_names = env->getParamName();
-    Eigen::VectorXd current_params = env->getParamState();
-
-    // Name-based matching: build new parameter vector with matched values
-    Eigen::VectorXd new_params = current_params;  // Start with defaults
-    int matched_count = 0;
-
-    // Match HDFRollout parameter names with simulation parameter names
-    for (size_t i = 0; i < mParameterNames.size(); i++) {
-        for (size_t j = 0; j < sim_param_names.size(); j++) {
-            if (mParameterNames[i] == sim_param_names[j]) {
-                new_params[j] = static_cast<double>(mParameterValues[i]);
-                matched_count++;
-                break;
-            }
-        }
-    }
-
-    std::cout << "[HDFRollout] Matched " << matched_count << " / " << mParameterNames.size()
-              << " parameters (Environment has " << sim_param_names.size() << " parameters)" << std::endl;
-
-    // Apply matched parameters
-    env->setParamState(new_params, false, true);
-    return true;
 }

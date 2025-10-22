@@ -97,7 +97,6 @@ public:
 
     void clearLogs();
 
-    const std::vector<Eigen::VectorXd> &getTorqueLogs() { return mTorqueLogs; }
     const std::vector<Eigen::Vector3d> &getCOMLogs() { return mCOMLogs; }
     const std::vector<Eigen::Vector3d> &getHeadVelLogs() { return mHeadVelLogs; }
     const std::vector<Eigen::VectorXd> &getMuscleTorqueLogs() { return mMuscleTorqueLogs; }
@@ -110,8 +109,17 @@ public:
     MetabolicType getMetabolicType() const { return mMetabolicType; }
     double getMetabolicEnergy() const { return mMetabolicEnergy; }
     double getMetabolicStepEnergy() const { return mMetabolicStepEnergy; }
-    double evalMetabolicEnergy();
-    void resetMetabolicEnergy();
+
+    // Torque Energy Methods (separate from metabolic)
+    void setTorqueEnergyCoeff(double coeff) { mTorqueEnergyCoeff = coeff; }
+    double getTorqueEnergyCoeff() const { return mTorqueEnergyCoeff; }
+    double getTorqueEnergy() const { return mTorqueEnergy; }
+    double getTorqueStepEnergy() const { return mTorqueStepEnergy; }
+
+    // Combined Energy Methods (evaluates both metabolic and torque)
+    void evalEnergy();      // Evaluates both metabolic and torque energy
+    void resetEnergy();     // Resets both metabolic and torque energy
+    double getEnergy() const { return mMetabolicEnergy + mTorqueEnergy; }
 
     // Muscle Parameter Modification
     void setMuscleParam(const std::string& muscleName, const std::string& paramType, double value);
@@ -199,8 +207,14 @@ private:
     Eigen::VectorXd mMuscleMassCache;
     double mMetabolicEnergyAccum, mMetabolicAccumDivisor, mMetabolicEnergy, mMetabolicStepEnergy;
 
+    // Torque Energy Tracking (completely separate from metabolic)
+    double mTorqueEnergyCoeff;      // Coefficient for torque-based energy calculation
+    double mTorqueEnergyAccum;      // Accumulated torque energy
+    double mTorqueAccumDivisor;     // Divisor for averaging torque energy
+    double mTorqueEnergy;           // Final torque energy value
+    double mTorqueStepEnergy;       // Torque energy per step
+
     // Log
-    std::vector<Eigen::VectorXd> mTorqueLogs;
     std::vector<Eigen::Vector3d> mCOMLogs;
     std::vector<Eigen::Vector3d> mHeadVelLogs;
     std::vector<Eigen::VectorXd> mMuscleTorqueLogs;

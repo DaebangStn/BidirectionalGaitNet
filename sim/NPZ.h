@@ -48,7 +48,7 @@ public:
         }
         return values;
     }
-    bool applyParametersToEnvironment(RenderEnvironment* env) const override;
+    bool applyParametersToEnvironment(Environment* env) const override;
 
     // Extended interface for legacy ViewerMotion compatibility
     Eigen::VectorXd getRawMotionData() const override;

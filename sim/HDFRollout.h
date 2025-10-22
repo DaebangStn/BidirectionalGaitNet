@@ -49,7 +49,7 @@ public:
     bool hasParameters() const override { return !mParameterNames.empty(); }
     std::vector<std::string> getParameterNames() const override { return mParameterNames; }
     std::vector<float> getParameterValues() const override { return mParameterValues; }
-    bool applyParametersToEnvironment(RenderEnvironment* env) const override;
+    bool applyParametersToEnvironment(Environment* env) const override;
 
     // Extended interface for legacy ViewerMotion compatibility
     Eigen::VectorXd getRawMotionData() const override;

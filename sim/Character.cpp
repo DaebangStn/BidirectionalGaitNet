@@ -246,6 +246,12 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     mMetabolicEnergyAccum = 0.0;
     mMetabolicAccumDivisor = 0.0;
 
+    mTorqueEnergyCoeff = 0.0;
+    mTorqueEnergyAccum = 0.0;
+    mTorqueAccumDivisor = 0.0;
+    mTorqueEnergy = 0.0;
+    mTorqueStepEnergy = 0.0;
+
     mRefSkeleton = BuildFromFile(path, defaultDamping);
     for (auto bn : mSkeleton->getBodyNodes())
     {
@@ -354,33 +360,21 @@ void Character::step()
         mMetabolicEnergyAccum += mMetabolicStepEnergy;
         mMetabolicAccumDivisor += 1.0;
     }
-    else if (mActuatorType == tor || mActuatorType == pd)
-    {
-        if (!mTorqueLogs.empty())
-        {
-            Eigen::VectorXd torque_sum = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
-            int log_size = mTorqueLogs.size();
-            for (const auto& torque : mTorqueLogs)
-            {
-                torque_sum += torque.cwiseAbs();
-            }
-            torque_sum /= log_size;
-            mMetabolicStepEnergy = 1E-4 * torque_sum.squaredNorm() / torque_sum.rows();
-            mMetabolicEnergyAccum += mMetabolicStepEnergy;
-            mMetabolicAccumDivisor += 1.0;
-        }
-    }
 
     switch (mActuatorType)
     {
     case tor:
-        mTorqueLogs.push_back(mTorque);
         mSkeleton->setForces(mTorque);
+        mTorqueStepEnergy = mTorque.cwiseAbs().sum();
+        mTorqueEnergyAccum += mTorqueStepEnergy;
+        mTorqueAccumDivisor += 1.0;
         break;
     case pd:
         mTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
-        mTorqueLogs.push_back(mTorqueWeight.cwiseProduct(mTorque));
         mSkeleton->setForces(mTorque);
+        mTorqueStepEnergy = mTorque.cwiseAbs().sum();
+        mTorqueEnergyAccum += mTorqueStepEnergy;
+        mTorqueAccumDivisor += 1.0;
         break;
     case mus:
     case mass:
@@ -398,8 +392,7 @@ void Character::step()
         // For mass_lower: Add PD control for upper body
         if (mActuatorType == mass_lower)
         {
-            // Compute full PD torque
-            Eigen::VectorXd pdTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
+            mTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
 
             // Apply PD torque only to upper body DOFs
             int rootDof = mSkeleton->getRootJoint()->getNumDofs();
@@ -411,10 +404,14 @@ void Character::step()
             // Zero out root and lower body DOFs, keep upper body
             upperBodyTorque.head(upperBodyStart).setZero();
             upperBodyTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart) =
-                pdTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart);
+                mTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart);
 
             // Apply upper body PD torque
             mSkeleton->setForces(mSkeleton->getForces() + upperBodyTorque);
+
+            mTorqueStepEnergy = upperBodyTorque.cwiseAbs().sum();
+            mTorqueEnergyAccum += mTorqueStepEnergy;
+            mTorqueAccumDivisor += 1.0;    
         }
         break;
     }
@@ -600,22 +597,34 @@ void Character::cacheMuscleMass()
     }
 }
 
-double Character::evalMetabolicEnergy()
+void Character::evalEnergy()
 {
+    // Evaluate metabolic energy
     if (mMetabolicAccumDivisor < 1e-6) mMetabolicEnergy = 0.0;
     else mMetabolicEnergy = mMetabolicEnergyAccum / mMetabolicAccumDivisor;
     mMetabolicEnergyAccum = 0.0;
     mMetabolicAccumDivisor = 0.0;
-    
-    return mMetabolicEnergy;
+
+    // Evaluate torque energy
+    if (mTorqueAccumDivisor < 1e-6) mTorqueEnergy = 0.0;
+    else mTorqueEnergy = mTorqueEnergyCoeff * mTorqueEnergyAccum / mTorqueAccumDivisor;
+    mTorqueEnergyAccum = 0.0;
+    mTorqueAccumDivisor = 0.0;
 }
 
-void Character::resetMetabolicEnergy()
+void Character::resetEnergy()
 {
+    // Reset metabolic energy
     mMetabolicEnergyAccum = 0.0;
     mMetabolicAccumDivisor = 0.0;
     mMetabolicEnergy = 0.0;
     mMetabolicStepEnergy = 0.0;
+
+    // Reset torque energy
+    mTorqueEnergyAccum = 0.0;
+    mTorqueAccumDivisor = 0.0;
+    mTorqueEnergy = 0.0;
+    mTorqueStepEnergy = 0.0;
 }
 
 void Character::setMuscleParam(const std::string& muscleName, const std::string& paramType, double value)
@@ -633,11 +642,10 @@ void Character::setMuscleParam(const std::string& muscleName, const std::string&
 
 void Character::clearLogs()
 {
-    mTorqueLogs.clear();
     mCOMLogs.clear();
     mHeadVelLogs.clear();
     mMuscleTorqueLogs.clear();
-    resetMetabolicEnergy();
+    resetEnergy();
 }
 
 Eigen::VectorXd Character::getMirrorActivation(Eigen::VectorXd _activation)

@@ -1,5 +1,6 @@
 #include "HDFRollout.h"
 #include "Character.h"
+#include "Environment.h"
 #include "dart/dynamics/FreeJoint.hpp"
 #include "../viewer/Log.h"
 #include <iostream>
@@ -408,4 +409,37 @@ std::vector<double> HDFRollout::getTimestamps() const
         timestamps[i] = mTimeData[i];
     }
     return timestamps;
+}
+
+bool HDFRollout::applyParametersToEnvironment(Environment* env) const
+{
+    if (!hasParameters() || !env) {
+        return false;
+    }
+
+    // Get simulation parameter names and current state
+    const std::vector<std::string>& sim_param_names = env->getParamName();
+    Eigen::VectorXd current_params = env->getParamState();
+
+    // Name-based matching: build new parameter vector with matched values
+    Eigen::VectorXd new_params = current_params;  // Start with defaults
+    int matched_count = 0;
+
+    // Match HDFRollout parameter names with simulation parameter names
+    for (size_t i = 0; i < mParameterNames.size(); i++) {
+        for (size_t j = 0; j < sim_param_names.size(); j++) {
+            if (mParameterNames[i] == sim_param_names[j]) {
+                new_params[j] = static_cast<double>(mParameterValues[i]);
+                matched_count++;
+                break;
+            }
+        }
+    }
+
+    std::cout << "[HDFRollout] Matched " << matched_count << " / " << mParameterNames.size()
+              << " parameters (Environment has " << sim_param_names.size() << " parameters)" << std::endl;
+
+    // Apply matched parameters
+    env->setParamState(new_params, false, true);
+    return true;
 }

@@ -7,7 +7,7 @@
 
 // Forward declarations
 class Character;
-class RenderEnvironment;
+class Environment;
 
 /**
  * @brief Abstract base class for motion data (BVH, NPZ, etc.)
@@ -148,11 +148,11 @@ public:
     virtual int getTimestepsPerCycle() const { return getNumFrames(); }
 
     /**
-     * @brief Apply motion parameters to render environment
-     * @param env Render environment to apply parameters to
+     * @brief Apply motion parameters to environment
+     * @param env Environment to apply parameters to
      * @return True if parameters were applied successfully, false if count mismatch (caller should use defaults)
      */
-    virtual bool applyParametersToEnvironment(RenderEnvironment* env) const { return false; }
+    virtual bool applyParametersToEnvironment(Environment* env) const { return false; }
 
 protected:
     bool mHeightCalibration = false;
