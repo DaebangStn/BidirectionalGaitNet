@@ -1,6 +1,7 @@
 #include "HDF.h"
 #include "Character.h"
 #include "dart/dynamics/FreeJoint.hpp"
+#include "../viewer/Log.h"
 #include <iostream>
 #include <algorithm>
 #include <sstream>
@@ -50,8 +51,8 @@ void HDF::loadFromFile(const std::string& filepath)
         int values_per_frame = static_cast<int>(dims_motions[1]);
 
         if (values_per_frame != mDofPerFrame) {
-            std::cerr << "[HDF] Warning: Expected " << mDofPerFrame << " DOF per frame, got "
-                      << values_per_frame << std::endl;
+            LOG_WARN("[HDF] Warning: Expected " << mDofPerFrame << " DOF per frame, got "
+                      << values_per_frame);
             mDofPerFrame = values_per_frame;
         }
 
@@ -142,24 +143,24 @@ void HDF::loadFromFile(const std::string& filepath)
                     param_state_space.close();
                     param_state_ds.close();
 
-                    std::cout << "[HDF] Loaded " << mParameterNames.size() << " parameters" << std::endl;
+                    LOG_VERBOSE("[HDF] Loaded " << mParameterNames.size() << " parameters");
                 } else {
-                    std::cerr << "[HDF] Warning: Found parameter_names but no param_state" << std::endl;
+                    LOG_WARN("[HDF] Warning: Found parameter_names but no param_state");
                     mParameterNames.clear();
                 }
             }
         } catch (const H5::Exception& e) {
             // Parameters are optional, so just log warning
-            std::cerr << "[HDF] Note: No parameters in file (this is normal for older HDF single files)" << std::endl;
+            LOG_VERBOSE("[HDF] Note: No parameters in file (this is normal for older HDF single files)");
             mParameterNames.clear();
             mParameterValues.clear();
         }
 
         file.close();
 
-        std::cout << "[HDF] Loaded " << filepath
-                  << " with " << mNumFrames << " frames (" << mDofPerFrame << " DOF/frame, "
-                  << mFrameTime << " s/frame)" << std::endl;
+        LOG_VERBOSE("[HDF] Loaded " << filepath
+                     << " with " << mNumFrames << " frames (" << mDofPerFrame << " DOF/frame, "
+                     << mFrameTime << " s/frame)");
 
     } catch (const H5::Exception& e) {
         std::cerr << "[HDF] HDF5 error loading " << filepath << ": " << e.getDetailMsg() << std::endl;
@@ -233,7 +234,7 @@ void HDF::setRefMotion(Character* character, dart::simulation::WorldPtr world)
     mCharacter = character;
 
     if (mNumFrames == 0) {
-        std::cerr << "[HDF] Warning: No frames loaded" << std::endl;
+        LOG_WARN("[HDF] Warning: No frames loaded");
         return;
     }
 
@@ -256,8 +257,8 @@ void HDF::setRefMotion(Character* character, dart::simulation::WorldPtr world)
         mHeightOffset = mRootTransform.translation()[1] - initial_transform.translation()[1];
         mXOffset = mRootTransform.translation()[0] - initial_transform.translation()[0];
 
-        std::cout << "[HDF] Height calibration applied: Y offset = " << mHeightOffset
-                  << ", X offset = " << mXOffset << std::endl;
+        LOG_VERBOSE("[HDF] Height calibration applied: Y offset = " << mHeightOffset
+                  << ", X offset = " << mXOffset);
     }
 }
 

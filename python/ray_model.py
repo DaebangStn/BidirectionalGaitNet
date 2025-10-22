@@ -5,6 +5,7 @@ import dill
 from dill import Unpickler
 from io import BytesIO
 from dummy import Dummy
+from log_config import log_verbose
 
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
@@ -457,7 +458,7 @@ def loading_network(path, num_states, num_actions, use_mcn, device="cpu"):
     from uri_resolver import resolve_path
     resolved_path = resolve_path(path)
 
-    print("[Python] Loading network from {}".format(resolved_path))
+    log_verbose("[Python] Loading network from {}".format(resolved_path))
     # Load with global CPU mapping for Ray workers without GPU
     state = dill.load(open(resolved_path, "rb"))
     worker_state = SelectiveUnpickler(BytesIO(state['worker'])).load()

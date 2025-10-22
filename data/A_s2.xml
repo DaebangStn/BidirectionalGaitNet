@@ -26,6 +26,12 @@
 <!-- rot : "one_foot" or "mid_feet" (default : "one_foot") -->
 <musclePoseOptimization rot="one_foot">true</musclePoseOptimization>
 
+<!-- Training Configuration -->
+<training>
+    <max_epoch>10002</max_epoch>
+    <checkpoint_freq>1000</checkpoint_freq>
+</training>
+
 <enforceSymmetry>true</enforceSymmetry>
 <actionScale>0.04</actionScale>
 
@@ -59,6 +65,7 @@
 <StepWeight>2.0</StepWeight>
 <MetabolicWeight>0.05</MetabolicWeight>
 <AvgVelWeight>6.0</AvgVelWeight>
+<ScaleMetabolic>0.2</ScaleMetabolic>
 
 <parameter>
     <gait>

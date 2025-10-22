@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from ftplib import FTP
 import yaml
+from log_config import log_verbose
 
 
 class URIResolver:
@@ -44,7 +45,7 @@ class URIResolver:
         
         self.register_scheme("data", data_root)
         self._initialized = True
-        print(f"[Python] URIResolver initialized with data root: {data_root}")
+        log_verbose(f"[Python] URIResolver initialized with data root: {data_root}")
     
     def resolve(self, uri):
         """

@@ -1,5 +1,6 @@
 #include "DARTHelper.h"
 #include <tinyxml2.h>
+#include "../viewer/Log.h"
 
 std::vector<std::string>
 split_string(const std::string &input)
@@ -257,12 +258,12 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaul
 {
 	TiXmlDocument doc;
 	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
-	std::cout << "[DARTHelper] Building skeleton from file : " << resolvedPath << std::endl;
+	LOG_VERBOSE("[DARTHelper] Building skeleton from file : " << resolvedPath);
 	if (doc.LoadFile(resolvedPath.c_str()))
 	{
-		std::cout << "[DARTHelper] Failed to load file" << std::endl;
-		std::cout << "[DARTHelper] Error : " << doc.ErrorName() << std::endl;
-		std::cout << "[DARTHelper] Error Str : " << doc.ErrorStr() << std::endl;
+		std::cerr << "[DARTHelper] Failed to load file" << std::endl;
+		std::cerr << "[DARTHelper] Error : " << doc.ErrorName() << std::endl;
+		std::cerr << "[DARTHelper] Error Str : " << doc.ErrorStr() << std::endl;
 		return nullptr;
 	}
 

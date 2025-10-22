@@ -13,6 +13,7 @@ from tqdm import tqdm
 from pyrollout import RolloutEnvironment, RolloutRecord, RecordConfig
 from ray_model import SelectiveUnpickler
 from uri_resolver import resolve_path
+from log_config import log_verbose
 from rollout_worker import (
     PolicyWorker, EnvWorker, FileWorker,
     load_metadata_from_checkpoint, load_config_yaml, load_parameters_from_csv
@@ -256,7 +257,7 @@ def run_rollout(checkpoint_path: str,
     # Resolve checkpoint path using URIResolver and convert to absolute path for Ray workers
     checkpoint_path = resolve_path(checkpoint_path)
     checkpoint_path = str(Path(checkpoint_path).resolve())
-    print(f"[Python] Loading network from {checkpoint_path}")
+    log_verbose(f"[Python] Loading network from {checkpoint_path}")
 
     # Resolve record config path using URIResolver and convert to absolute path for Ray workers
     record_config_path = resolve_path(record_config_path)

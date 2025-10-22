@@ -1,4 +1,5 @@
 #include "BVH_Parser.h"
+#include "../viewer/Log.h"
 #include <iostream>
 #include <Eigen/Geometry>
 #include "dart/dart.hpp"

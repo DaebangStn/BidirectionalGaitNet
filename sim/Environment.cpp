@@ -3,6 +3,7 @@
 #include "CBufferData.h"
 #include "NPZ.h"
 #include "HDF.h"
+#include "../viewer/Log.h"
 
 
 Environment::Environment()
@@ -55,6 +56,7 @@ Environment::Environment()
     // 0 : one foot , 1 : mid feet
     mPoseOptimizationMode = 0;
     mHorizon = 300;
+    mScaleMetabolic = 1.0; // Default scale for metabolic reward
 }
 
 Environment::~Environment()
@@ -248,7 +250,7 @@ void Environment::initialize(std::string metadata)
     {
         std::string bvh_path = Trim(std::string(doc.FirstChildElement("bvh")->GetText()));
         std::string resolvedBvhPath = PMuscle::URIResolver::getInstance().resolve(bvh_path);
-        std::cout << "[Environment] BVH Path resolved: " << bvh_path << " -> " << resolvedBvhPath << std::endl;
+        LOG_VERBOSE("[Environment] BVH Path resolved: " << bvh_path << " -> " << resolvedBvhPath);
         BVH *new_bvh = new BVH(resolvedBvhPath);
         new_bvh->setMode(std::string(doc.FirstChildElement("bvh")->Attribute("symmetry")) == "true");
         new_bvh->setHeightCalibration(std::string(doc.FirstChildElement("bvh")->Attribute("heightCalibration")) == "true");
@@ -260,7 +262,7 @@ void Environment::initialize(std::string metadata)
     {
         std::string npz_path = Trim(std::string(doc.FirstChildElement("npz")->GetText()));
         std::string resolvedNpzPath = PMuscle::URIResolver::getInstance().resolve(npz_path);
-        std::cout << "[Environment] NPZ Path resolved: " << npz_path << " -> " << resolvedNpzPath << std::endl;
+        LOG_VERBOSE("[Environment] NPZ Path resolved: " << npz_path << " -> " << resolvedNpzPath);
         NPZ *new_npz = new NPZ(resolvedNpzPath);
         new_npz->setHeightCalibration(std::string(doc.FirstChildElement("npz")->Attribute("heightCalibration")) == "true");
 
@@ -275,7 +277,7 @@ void Environment::initialize(std::string metadata)
 
         std::string hdf_path = Trim(std::string(hdfElement->GetText()));
         std::string resolvedHdfPath = PMuscle::URIResolver::getInstance().resolve(hdf_path);
-        std::cout << "[Environment] HDF Path resolved: " << hdf_path << " -> " << resolvedHdfPath << std::endl;
+        LOG_VERBOSE("[Environment] HDF Path resolved: " << hdf_path << " -> " << resolvedHdfPath);
 
         HDF *new_hdf = new HDF(resolvedHdfPath);
         new_hdf->setRefMotion(mCharacter, mWorld);
@@ -325,6 +327,9 @@ void Environment::initialize(std::string metadata)
 
     if (doc.FirstChildElement("AvgVelWeight") != NULL)
         mAvgVelWeight = doc.FirstChildElement("AvgVelWeight")->DoubleText();
+
+    if (doc.FirstChildElement("ScaleMetabolic") != NULL)
+        mScaleMetabolic = doc.FirstChildElement("ScaleMetabolic")->DoubleText();
 
     // Parse MetabolicType configuration
     if (doc.FirstChildElement("MetabolicType") != NULL)
@@ -688,7 +693,7 @@ double Environment::calcReward()
         double r_step = getStepReward();
         double r_metabolic = getMetabolicReward();
 
-        r = w_gait * r_loco * r_avg * r_step + r_metabolic;
+        r = w_gait * r_loco * r_avg * r_step + mScaleMetabolic * r_metabolic;
 
         // Populate reward map for gaitnet
         mRewardMap.insert(std::make_pair("r_loco", r_loco));

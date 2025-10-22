@@ -247,6 +247,8 @@ public:
     std::vector<double> getBetas() { return mBetas; }
     double getMetabolicWeight() { return mMetabolicWeight; }
     void setMetabolicWeight(double weight) { mMetabolicWeight = weight; }
+    double getScaleMetabolic() { return mScaleMetabolic; }
+    void setScaleMetabolic(double scale) { mScaleMetabolic = scale; }
 
     void setUseWeights(std::vector<bool> _useWeights)
     {
@@ -361,7 +363,7 @@ private:
     int mNumParamState;
 
     // Reward Weight
-    double mHeadLinearAccWeight, mHeadRotWeight, mStepWeight, mMetabolicWeight, mAvgVelWeight;
+    double mHeadLinearAccWeight, mHeadRotWeight, mStepWeight, mMetabolicWeight, mAvgVelWeight, mScaleMetabolic;
 
     // Simulation Setting
     bool mSoftPhaseClipping, mHardPhaseClipping;

@@ -1,6 +1,7 @@
 #include "HDFRollout.h"
 #include "Character.h"
 #include "dart/dynamics/FreeJoint.hpp"
+#include "../viewer/Log.h"
 #include <iostream>
 #include <algorithm>
 #include <sstream>
@@ -21,8 +22,8 @@ HDFRollout::HDFRollout(const std::string& filepath)
     // Scan file structure
     scanStructure();
 
-    std::cout << "[HDFRollout] Loaded " << mFilePath << std::endl;
-    std::cout << "[HDFRollout] Found " << mParamGroups.size() << " parameter groups" << std::endl;
+    LOG_INFO("[HDFRollout] Loaded " << mFilePath);
+    LOG_VERBOSE("[HDFRollout] Found " << mParamGroups.size() << " parameter groups");
 }
 
 void HDFRollout::loadParameterNames()
@@ -32,7 +33,7 @@ void HDFRollout::loadParameterNames()
 
         // Read parameter_names from root level (shared across all params)
         if (!H5Lexists(file.getId(), "/parameter_names", H5P_DEFAULT)) {
-            std::cerr << "[HDFRollout] Warning: No parameter_names in file" << std::endl;
+            LOG_WARN("[HDFRollout] Warning: No parameter_names in file");
             file.close();
             return;
         }
@@ -59,7 +60,7 @@ void HDFRollout::loadParameterNames()
         param_names_ds.close();
         file.close();
 
-        std::cout << "[HDFRollout] Loaded " << mParameterNames.size() << " parameter names" << std::endl;
+        LOG_VERBOSE("[HDFRollout] Loaded " << mParameterNames.size() << " parameter names");
 
     } catch (const H5::Exception& e) {
         std::cerr << "[HDFRollout] Error loading parameter names: " << e.getDetailMsg() << std::endl;
@@ -100,7 +101,7 @@ void HDFRollout::scanStructure()
 void HDFRollout::scanCycles(int paramIdx)
 {
     if (paramIdx < 0 || paramIdx >= mParamGroups.size()) {
-        std::cerr << "[HDFRollout] Invalid param index: " << paramIdx << std::endl;
+        LOG_WARN("[HDFRollout] Invalid param index: " << paramIdx);
         return;
     }
 
@@ -138,7 +139,7 @@ void HDFRollout::scanCycles(int paramIdx)
 void HDFRollout::loadParamCycle(int paramIdx, int cycleIdx)
 {
     if (paramIdx < 0 || paramIdx >= mParamGroups.size()) {
-        std::cerr << "[HDFRollout] Invalid param index: " << paramIdx << std::endl;
+        LOG_WARN("[HDFRollout] Invalid param index: " << paramIdx);
         return;
     }
 
@@ -148,7 +149,7 @@ void HDFRollout::loadParamCycle(int paramIdx, int cycleIdx)
     }
 
     if (cycleIdx < 0 || cycleIdx >= mCycleGroups.size()) {
-        std::cerr << "[HDFRollout] Invalid cycle index: " << cycleIdx << std::endl;
+        LOG_WARN("[HDFRollout] Invalid cycle index: " << cycleIdx);
         return;
     }
 
@@ -159,7 +160,7 @@ void HDFRollout::loadParamCycle(int paramIdx, int cycleIdx)
         std::string param_path = mParamGroups[paramIdx];
         std::string cycle_path = param_path + "/" + mCycleGroups[cycleIdx];
 
-        std::cout << "[HDFRollout] Loading " << cycle_path << std::endl;
+        LOG_VERBOSE("[HDFRollout] Loading " << cycle_path);
 
         // Load parameter values from param_N/param_state
         std::string param_state_path = param_path + "/param_state";
@@ -192,8 +193,8 @@ void HDFRollout::loadParamCycle(int paramIdx, int cycleIdx)
         int values_per_frame = static_cast<int>(dims_motions[1]);
 
         if (values_per_frame != mDofPerFrame) {
-            std::cerr << "[HDFRollout] Warning: Expected " << mDofPerFrame
-                      << " DOF per frame, got " << values_per_frame << std::endl;
+            LOG_WARN("[HDFRollout] Warning: Expected " << mDofPerFrame
+                      << " DOF per frame, got " << values_per_frame);
             mDofPerFrame = values_per_frame;
         }
 
@@ -264,8 +265,8 @@ void HDFRollout::loadParamCycle(int paramIdx, int cycleIdx)
         mSelectedParamIdx = paramIdx;
         mSelectedCycleIdx = cycleIdx;
 
-        std::cout << "[HDFRollout] Loaded " << mNumFrames << " frames from "
-                  << param_path << "/" << mCycleGroups[cycleIdx] << std::endl;
+        LOG_VERBOSE("[HDFRollout] Loaded " << mNumFrames << " frames from "
+                  << param_path << "/" << mCycleGroups[cycleIdx]);
 
     } catch (const H5::Exception& e) {
         std::cerr << "[HDFRollout] Error loading param/cycle: " << e.getDetailMsg() << std::endl;
@@ -276,7 +277,7 @@ void HDFRollout::loadParamCycle(int paramIdx, int cycleIdx)
 Eigen::VectorXd HDFRollout::getPose(int frameIdx)
 {
     if (mSelectedParamIdx < 0 || mSelectedCycleIdx < 0) {
-        std::cerr << "[HDFRollout] No param/cycle loaded" << std::endl;
+        LOG_WARN("[HDFRollout] No param/cycle loaded");
         return Eigen::VectorXd::Zero(mDofPerFrame);
     }
 
@@ -297,7 +298,7 @@ Eigen::VectorXd HDFRollout::getPose(int frameIdx)
 Eigen::VectorXd HDFRollout::getPose(double phase)
 {
     if (mSelectedParamIdx < 0 || mSelectedCycleIdx < 0) {
-        std::cerr << "[HDFRollout] No param/cycle loaded" << std::endl;
+        LOG_WARN("[HDFRollout] No param/cycle loaded");
         return Eigen::VectorXd::Zero(mDofPerFrame);
     }
 
@@ -359,7 +360,7 @@ void HDFRollout::setRefMotion(Character* character, dart::simulation::WorldPtr w
     mCharacter = character;
 
     if (mNumFrames == 0 || mSelectedParamIdx < 0 || mSelectedCycleIdx < 0) {
-        std::cerr << "[HDFRollout] Warning: No motion loaded for calibration" << std::endl;
+        LOG_WARN("[HDFRollout] Warning: No motion loaded for calibration");
         return;
     }
 
@@ -382,8 +383,8 @@ void HDFRollout::setRefMotion(Character* character, dart::simulation::WorldPtr w
         mHeightOffset = mRootTransform.translation()[1] - initial_transform.translation()[1];
         mXOffset = mRootTransform.translation()[0] - initial_transform.translation()[0];
 
-        std::cout << "[HDFRollout] Height calibration applied: Y offset = " << mHeightOffset
-                  << ", X offset = " << mXOffset << std::endl;
+        LOG_VERBOSE("[HDFRollout] Height calibration applied: Y offset = " << mHeightOffset
+                  << ", X offset = " << mXOffset);
     }
 }
 

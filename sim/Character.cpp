@@ -1,5 +1,6 @@
 #include "Character.h"
 #include "UriResolver.h"
+#include "../viewer/Log.h"
 
 static std::map<std::string, int> skeletonAxis = {
     {"Pelvis", 1},
@@ -489,8 +490,8 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
         path = "@data/muscle_gaitnet.xml";
         path = PMuscle::URIResolver::getInstance().resolve(path);
     }
-    
-    std::cout << "[Character] Using Muscle Path: " << path << std::endl;
+
+    LOG_VERBOSE("[Character] Using Muscle Path: " << path);
     
     if (doc.LoadFile(path.c_str())) {
         std::cerr << "Failed to load muscle file: " << path << std::endl;

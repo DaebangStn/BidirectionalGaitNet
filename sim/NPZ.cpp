@@ -1,6 +1,7 @@
 #include "NPZ.h"
 #include "Character.h"
 #include "dart/dynamics/FreeJoint.hpp"
+#include "../viewer/Log.h"
 #include <iostream>
 #include <algorithm>
 
@@ -46,8 +47,8 @@ void NPZ::loadFromFile(const std::string& filepath)
         mNumFrames = total_elements / mDofPerFrame;
 
         if (total_elements % mDofPerFrame != 0) {
-            std::cerr << "[NPZ] Warning: Total elements (" << total_elements
-                      << ") not evenly divisible by DOF per frame (" << mDofPerFrame << ")" << std::endl;
+            LOG_WARN("[NPZ] Warning: Total elements (" << total_elements
+                      << ") not evenly divisible by DOF per frame (" << mDofPerFrame << ")");
         }
 
         // Reshape flattened data to (numFrames, dofPerFrame)
@@ -171,7 +172,7 @@ void NPZ::setRefMotion(Character* character, dart::simulation::WorldPtr world)
     mCharacter = character;
 
     if (mNumFrames == 0) {
-        std::cerr << "[NPZ] Warning: No frames loaded" << std::endl;
+        LOG_WARN("[NPZ] Warning: No frames loaded");
         return;
     }
 

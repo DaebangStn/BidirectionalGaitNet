@@ -12,6 +12,7 @@
 #include "Motion.h"
 #include "NPZ.h"
 #include "HDF.h"
+#include "Log.h"
 
 namespace fs = std::filesystem;
 
@@ -325,7 +326,7 @@ void GLFWApp::loadRenderConfig()
         resolver.initialize();
         std::string resolved_path = resolver.resolve("render.yaml");
 
-        std::cout << "[Config] Loading render config from: " << resolved_path << std::endl;
+        LOG_VERBOSE("[Config] Loading render config from: " << resolved_path);
 
         YAML::Node config = YAML::LoadFile(resolved_path);
 
@@ -369,8 +370,8 @@ void GLFWApp::loadRenderConfig()
 
             if (config["glfwapp"]["resetPhase"]) {
                 mResetPhase = config["glfwapp"]["resetPhase"].as<double>();
-                std::cout << "[Config] Reset phase set to: " << mResetPhase
-                          << (mResetPhase < 0.0 ? " (randomized)" : "") << std::endl;
+                LOG_VERBOSE("[Config] Reset phase set to: " << mResetPhase
+                          << (mResetPhase < 0.0 ? " (randomized)" : ""));
             }
 
             if (config["glfwapp"]["motion_load_mode"]) {
@@ -394,12 +395,12 @@ void GLFWApp::loadRenderConfig()
             }
         }
 
-        std::cout << "[Config] Loaded - Window: " << mWidth << "x" << mHeight
-                  << ", Control: " << mControlPanelWidth
-                  << ", Plot: " << mPlotPanelWidth
-                  << ", Rollout: " << mDefaultRolloutCount
-                  << ", Playback Speed: " << mViewerPlaybackSpeed
-                  << ", Motion Load Mode: " << mMotionLoadMode << std::endl; 
+        LOG_VERBOSE("[Config] Loaded - Window: " << mWidth << "x" << mHeight
+                     << ", Control: " << mControlPanelWidth
+                     << ", Plot: " << mPlotPanelWidth
+                     << ", Rollout: " << mDefaultRolloutCount
+                     << ", Playback Speed: " << mViewerPlaybackSpeed
+                     << ", Motion Load Mode: " << mMotionLoadMode); 
 
     } catch (const std::exception& e) {
         std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
@@ -2335,10 +2336,10 @@ void GLFWApp::initializeCameraPresets() {
 void GLFWApp::loadCameraPreset(int index) {
     if (index < 0 || index >= 3 || !mCameraPresets[index].isSet)
     {
-        std::cout << "[Camera] Preset " << index << " is not valid" << std::endl;
+        LOG_WARN("[Camera] Preset " << index << " is not valid");
         return;
     }
-    std::cout << "[Camera] Loading camera preset " << index << ": " << mCameraPresets[index].description << std::endl;
+    LOG_VERBOSE("[Camera] Loading camera preset " << index << ": " << mCameraPresets[index].description);
 
     mEye = mCameraPresets[index].eye;
     mUp = mCameraPresets[index].up;
@@ -2508,14 +2509,14 @@ void GLFWApp::drawSimControlPanel()
                         BVH* bvh = new BVH(filePathName);
                         bvh->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
                         newMotion = bvh;
-                        std::cout << "[RefMotion] Loaded BVH file with " << bvh->getNumFrames() << " frames" << std::endl;
+                        LOG_INFO("[RefMotion] Loaded BVH file with " << bvh->getNumFrames() << " frames");
                     }
                     else if (filePathName.find(".npz") != std::string::npos) {
                         // Load NPZ file
                         NPZ* npz = new NPZ(filePathName);
                         npz->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
                         newMotion = npz;
-                        std::cout << "[RefMotion] Loaded NPZ file with " << npz->getNumFrames() << " frames" << std::endl;
+                        LOG_INFO("[RefMotion] Loaded NPZ file with " << npz->getNumFrames() << " frames");
                     }
                     else if (filePathName.find(".h5") != std::string::npos ||
                              filePathName.find(".hdf5") != std::string::npos) {
@@ -2523,7 +2524,7 @@ void GLFWApp::drawSimControlPanel()
                         HDF* hdf = new HDF(filePathName);
                         hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
                         newMotion = hdf;
-                        std::cout << "[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames" << std::endl;
+                        LOG_INFO("[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames");
                     }
                     else {
                         std::cerr << "[RefMotion] Unsupported file format: " << filePathName << std::endl;
@@ -4071,13 +4072,13 @@ void GLFWApp::loadNPZMotion()
 			state.initialRootPosition = Eigen::Vector3d::Zero();  // NPZ doesn't use this
 			mMotionStates.push_back(state);
 
-			std::cout << npz->getLogHeader() << " Loaded " << npz->getName() << " with " << npz->getNumFrames() << " frames";
 			if (npz->hasParameters()) {
-				std::cout << " (" << npz->getParameterValues().size() << " parameters)";
+				LOG_VERBOSE(npz->getLogHeader() << " Loaded " << npz->getName() << " with " << npz->getNumFrames() << " frames (" << npz->getParameterValues().size() << " parameters)");
+			} else {
+				LOG_VERBOSE(npz->getLogHeader() << " Loaded " << npz->getName() << " with " << npz->getNumFrames() << " frames");
 			}
-			std::cout << std::endl;
 			if (!npz->hasParameters()) {
-				std::cerr << "[" << npz->getName() << "] Warning: No parameters in motion file" << std::endl;
+				LOG_WARN("[" << npz->getName() << "] Warning: No parameters in motion file");
 			}
 
 
@@ -4136,13 +4137,15 @@ void GLFWApp::loadHDFRolloutMotion()
 					}
 					mMotionStates.push_back(state);
 
-					std::cout << rollout->getLogHeader() << " Loaded " << rollout->getName()
-							  << " with " << rollout->getNumParams() << " params, "
-							  << rollout->getNumCycles() << " cycles";
 					if (rollout->hasParameters()) {
-						std::cout << " (" << rollout->getParameterNames().size() << " parameter names)";
+						LOG_VERBOSE(rollout->getLogHeader() << " Loaded " << rollout->getName()
+							  << " with " << rollout->getNumParams() << " params, "
+							  << rollout->getNumCycles() << " cycles (" << rollout->getParameterNames().size() << " parameter names)");
+					} else {
+						LOG_VERBOSE(rollout->getLogHeader() << " Loaded " << rollout->getName()
+							  << " with " << rollout->getNumParams() << " params, "
+							  << rollout->getNumCycles() << " cycles");
 					}
-					std::cout << std::endl;
 				} else {
 					std::cerr << rollout->getLogHeader() << " Warning: " << rollout_path << " has no param groups" << std::endl;
 					delete rollout;  // No params, don't keep
@@ -4173,7 +4176,7 @@ void GLFWApp::loadBVHMotion()
 	}
 
 	if (!bvh_files.empty() && mRenderEnv) {
-		std::cout << "[BVH] Loading " << bvh_files.size() << " BVH files into mMotions..." << std::endl;
+		LOG_INFO("[BVH] Loading " << bvh_files.size() << " BVH files into mMotions...");
 
 		for (const auto& bvh_path : bvh_files) {
 			try {
@@ -4193,10 +4196,8 @@ void GLFWApp::loadBVHMotion()
 				}
 				mMotionStates.push_back(state);
 
-				std::cout << bvh->getLogHeader() << " Loaded " << bvh->getName() << " with " << bvh->getNumFrames() << " frames" << std::endl;
-			if (!bvh->hasParameters()) {
-				std::cerr << "[" << bvh->getName() << "] Warning: No parameters in motion file" << std::endl;
-			}
+				LOG_VERBOSE(bvh->getLogHeader() << " Loaded " << bvh->getName() << " with " << bvh->getNumFrames() << " frames");
+			// Note: BVH files don't have parameters by design, so no warning needed
 
 			} catch (const std::exception& e) {
 				std::cerr << "[BVH] Error loading " << bvh_path << ": " << e.what() << std::endl;
@@ -4222,7 +4223,7 @@ void GLFWApp::loadHDFSingleMotion()
 	}
 
 	if (!hdf_single_files.empty() && mRenderEnv) {
-		std::cout << "[HDF Single] Loading " << hdf_single_files.size() << " extracted HDF5 files..." << std::endl;
+		LOG_INFO("[HDF Single] Loading " << hdf_single_files.size() << " extracted HDF5 files...");
 
 		for (const auto& hdf_path : hdf_single_files) {
 			try {
@@ -4242,13 +4243,13 @@ void GLFWApp::loadHDFSingleMotion()
 				}
 				mMotionStates.push_back(state);
 
-				std::cout << hdf->getLogHeader() << " Loaded " << hdf->getName() << " with " << hdf->getNumFrames() << " frames";
 				if (hdf->hasParameters()) {
-					std::cout << " (" << hdf->getParameterNames().size() << " parameters)";
+					LOG_VERBOSE(hdf->getLogHeader() << " Loaded " << hdf->getName() << " with " << hdf->getNumFrames() << " frames (" << hdf->getParameterNames().size() << " parameters)");
+				} else {
+					LOG_VERBOSE(hdf->getLogHeader() << " Loaded " << hdf->getName() << " with " << hdf->getNumFrames() << " frames");
 				}
-				std::cout << std::endl;
 				if (!hdf->hasParameters()) {
-					std::cerr << "[" << hdf->getName() << "] Warning: No parameters in motion file" << std::endl;
+					LOG_WARN("[" << hdf->getName() << "] Warning: No parameters in motion file");
 				}
 
 
@@ -4268,7 +4269,7 @@ void GLFWApp::loadMotionFiles()
 
 	// Check motion load mode from config
 	if (mMotionLoadMode == "no") {
-		std::cout << "[Motion] Motion loading disabled" << std::endl;
+		LOG_INFO("[Motion] Motion loading disabled");
 		return;
 	}
 
@@ -4522,9 +4523,10 @@ void GLFWApp::loadSelectedHDF5Motion()
         mMaxFrameIndex = motion_elem.hdf5_total_timesteps - 1;
         mManualFrameIndex = 0;  // Reset to first frame
 
-        std::cout << "  Loaded: " << num_steps << " timesteps, " << motion_dim << " DOF" << std::endl;
         if (!cycle_timestamps.empty()) {
-            std::cout << "  Time range: [" << cycle_timestamps.front() << ", " << cycle_timestamps.back() << "] seconds" << std::endl;
+            LOG_VERBOSE("  Loaded: " << num_steps << " timesteps, " << motion_dim << " DOF, time range: [" << cycle_timestamps.front() << ", " << cycle_timestamps.back() << "] seconds");
+        } else {
+            LOG_VERBOSE("  Loaded: " << num_steps << " timesteps, " << motion_dim << " DOF");
         }
 
         dataspace.close();
@@ -4676,15 +4678,15 @@ bool NPZ::applyParametersToEnvironment(RenderEnvironment* env) const
 
     // Check for count mismatch
     if (npz_param_count != env_param_count) {
-        std::cerr << "[NPZ] Warning: Parameter count mismatch (NPZ: "
+        LOG_WARN("[NPZ] Warning: Parameter count mismatch (NPZ: "
                   << npz_param_count << ", Environment: " << env_param_count
-                  << "). Using default parameters." << std::endl;
+                  << "). Using default parameters.");
         return false;  // Caller will use defaults
     }
 
     // Apply parameters (positional matching)
     env->setParamState(mParams, false, true);
-    std::cout << "[NPZ] Applied " << mParams.size() << " parameters" << std::endl;
+    LOG_VERBOSE("[NPZ] Applied " << mParams.size() << " parameters");
     return true;
 }
 
@@ -4713,8 +4715,8 @@ bool HDF::applyParametersToEnvironment(RenderEnvironment* env) const
         }
     }
 
-    std::cout << "[HDF] Matched " << matched_count << " / " << mParameterNames.size()
-              << " parameters (Environment has " << sim_param_names.size() << " parameters)" << std::endl;
+    LOG_VERBOSE("[HDF] Matched " << matched_count << " / " << mParameterNames.size()
+              << " parameters (Environment has " << sim_param_names.size() << " parameters)");
 
     // Apply matched parameters
     env->setParamState(new_params, false, true);
