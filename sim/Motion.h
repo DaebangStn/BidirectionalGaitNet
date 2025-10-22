@@ -5,8 +5,9 @@
 #include <string>
 #include "dart/dart.hpp"
 
-// Forward declaration
+// Forward declarations
 class Character;
+class RenderEnvironment;
 
 /**
  * @brief Abstract base class for motion data (BVH, NPZ, etc.)
@@ -85,6 +86,73 @@ public:
      * @return True if height calibration is enabled
      */
     virtual bool getHeightCalibration() const { return mHeightCalibration; }
+
+    /**
+     * @brief Get source type identifier
+     * @return Source format string ("npz", "hdfSingle", "bvh", "hdfRollout")
+     */
+    virtual std::string getSourceType() const = 0;
+
+    /**
+     * @brief Get log header for debug output
+     * @return Log header string (e.g., "[NPZ]", "[BVH]", "[HDF Single]")
+     */
+    virtual std::string getLogHeader() const = 0;
+
+    /**
+     * @brief Check if motion has associated parameters
+     * @return True if motion file contains parameter data
+     */
+    virtual bool hasParameters() const { return false; }
+
+    /**
+     * @brief Get parameter names from motion file
+     * @return Vector of parameter name strings (empty if no parameters)
+     */
+    virtual std::vector<std::string> getParameterNames() const { return {}; }
+
+    /**
+     * @brief Get parameter values from motion file
+     * @return Vector of parameter values (empty if no parameters)
+     */
+    virtual std::vector<float> getParameterValues() const { return {}; }
+
+    /**
+     * @brief Get flattened raw motion data array
+     * @return Flattened motion data (all frames concatenated)
+     */
+    virtual Eigen::VectorXd getRawMotionData() const { return Eigen::VectorXd(); }
+
+    /**
+     * @brief Get number of values per frame (DOF count)
+     * @return Values per frame (e.g., 56 for HDF/BVH, 101 for NPZ)
+     */
+    virtual int getValuesPerFrame() const { return 56; }
+
+    /**
+     * @brief Get timestamps for each frame
+     * @return Vector of timestamps in seconds (empty if not available)
+     */
+    virtual std::vector<double> getTimestamps() const { return {}; }
+
+    /**
+     * @brief Get total timesteps (for HDF rollout files)
+     * @return Total timesteps across all cycles
+     */
+    virtual int getTotalTimesteps() const { return getNumFrames(); }
+
+    /**
+     * @brief Get timesteps per cycle (for HDF files)
+     * @return Average timesteps per gait cycle
+     */
+    virtual int getTimestepsPerCycle() const { return getNumFrames(); }
+
+    /**
+     * @brief Apply motion parameters to render environment
+     * @param env Render environment to apply parameters to
+     * @return True if parameters were applied successfully, false if count mismatch (caller should use defaults)
+     */
+    virtual bool applyParametersToEnvironment(RenderEnvironment* env) const { return false; }
 
 protected:
     bool mHeightCalibration = false;

@@ -470,16 +470,26 @@ def loading_network(path, num_states, num_actions, use_mcn, device="cpu"):
 
     muscle = None
     if use_mcn:
-        env_config = worker_state['policy_config']['env_config']
-        if 'num_actuactor_action' in env_config.keys():
-            num_actuator_action = env_config['num_actuactor_action']
-        else:
-            num_actuator_action = env_config['num_actuator_action']
-        num_muscles = env_config['num_muscles']
-        num_total_muscle_related_dofs = env_config['num_muscle_dofs']
+        # Try to get env_config from policy_config (newer format) or fallback to state (older format)
+        env_config = None
+        if 'policy_config' in worker_state and 'env_config' in worker_state['policy_config']:
+            env_config = worker_state['policy_config']['env_config']
+        elif 'config' in worker_state and 'env_config' in worker_state['config']:
+            env_config = worker_state['config']['env_config']
 
-        muscle = MuscleNN(num_total_muscle_related_dofs, num_actuator_action, num_muscles, is_cpu=True, is_cascaded=(
-            state["cascading"] if "cascading" in state.keys() else False))
-        muscle.load_state_dict(convert_to_torch_tensor(state['muscle']))
+        if env_config is None:
+            print("[Warning] No env_config found in checkpoint, muscle network disabled")
+            use_mcn = False
+        else:
+            if 'num_actuactor_action' in env_config.keys():
+                num_actuator_action = env_config['num_actuactor_action']
+            else:
+                num_actuator_action = env_config['num_actuator_action']
+            num_muscles = env_config['num_muscles']
+            num_total_muscle_related_dofs = env_config['num_muscle_dofs']
+
+            muscle = MuscleNN(num_total_muscle_related_dofs, num_actuator_action, num_muscles, is_cpu=True, is_cascaded=(
+                state["cascading"] if "cascading" in state.keys() else False))
+            muscle.load_state_dict(convert_to_torch_tensor(state['muscle']))
 
     return policy, muscle

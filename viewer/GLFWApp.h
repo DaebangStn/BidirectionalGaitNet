@@ -6,7 +6,10 @@
 #include "RenderEnvironment.h"
 #include "Character.h"
 #include "BVH_Parser.h"
-#include "BVH_Parser.h"
+#include "Motion.h"
+#include "HDF.h"
+#include "NPZ.h"
+#include "HDFRollout.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -70,31 +73,45 @@ struct RolloutStatus
     }
 };
 
-struct ViewerMotion
+// Legacy ViewerMotion struct - replaced by Motion* polymorphic interface
+// struct ViewerMotion
+// {
+//     std::string name;
+//     Eigen::VectorXd param;
+//     Eigen::VectorXd motion;  // Flattened motion data: NPZ: 3030 (30 frames × 101 values), HDF: variable
+//     int values_per_frame = 101;  // Values per frame: NPZ=101 (6D rotation), HDF/BVH=56 (skeleton DOF), C3D=101
+//     int num_frames = 30;         // Number of frames loaded: NPZ=30 (first cycle only), HDF=total frames
+//     std::string source_type = "npz";  // Source format: "npz", "hdfRollout", "hdfSingle", "bvh", or "c3d"
+//
+//     // NPZ-specific: track total frames in file vs frames loaded
+//     int npz_total_frames = 60;   // Total frames in NPZ file (60 = 2 cycles × 30 frames/cycle)
+//     int npz_frames_per_cycle = 30;  // Frames per gait cycle (30)
+//
+//     // HDF-specific timing (for correct playback speed)
+//     int hdf5_total_timesteps = 0;      // Total simulation timesteps across all cycles
+//     int hdf5_timesteps_per_cycle = 0;  // Average timesteps per gait cycle (for phase mapping)
+//
+//     // Per-motion root positioning (clear semantics for HDF coordinate alignment)
+//     Eigen::Vector3d initialRootPosition = Eigen::Vector3d::Zero();  // First frame root joint position [3,4,5]
+//     Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        // World offset: (simulated_char - motion_frame0) + overlap_prevention
+//     std::vector<Eigen::Vector3d> rootBodyCOM;                       // Root body COM trajectory from root/x,y,z (HDF5 only, optional)
+//     std::vector<double> timestamps;                                 // HDF5: actual simulation time for each frame (for accurate interpolation)
+//
+//     // Current evaluated pose (computed in updateViewerTime, used in drawPlayableMotion)
+//     Eigen::VectorXd currentPose;
+// };
+
+/**
+ * @brief Viewer-specific state for motion display
+ *
+ * Separates viewer concerns (positioning, caching) from motion data.
+ * Each Motion* instance has a corresponding MotionViewerState.
+ */
+struct MotionViewerState
 {
-    std::string name;
-    Eigen::VectorXd param;
-    Eigen::VectorXd motion;  // Flattened motion data: NPZ: 3030 (30 frames × 101 values), HDF: variable
-    int values_per_frame = 101;  // Values per frame: NPZ=101 (6D rotation), HDF/BVH=56 (skeleton DOF), C3D=101
-    int num_frames = 30;         // Number of frames loaded: NPZ=30 (first cycle only), HDF=total frames
-    std::string source_type = "npz";  // Source format: "npz", "hdfRollout", "hdfSingle", "bvh", or "c3d"
-
-    // NPZ-specific: track total frames in file vs frames loaded
-    int npz_total_frames = 60;   // Total frames in NPZ file (60 = 2 cycles × 30 frames/cycle)
-    int npz_frames_per_cycle = 30;  // Frames per gait cycle (30)
-
-    // HDF-specific timing (for correct playback speed)
-    int hdf5_total_timesteps = 0;      // Total simulation timesteps across all cycles
-    int hdf5_timesteps_per_cycle = 0;  // Average timesteps per gait cycle (for phase mapping)
-
-    // Per-motion root positioning (clear semantics for HDF coordinate alignment)
-    Eigen::Vector3d initialRootPosition = Eigen::Vector3d::Zero();  // First frame root joint position [3,4,5]
-    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        // World offset: (simulated_char - motion_frame0) + overlap_prevention
-    std::vector<Eigen::Vector3d> rootBodyCOM;                       // Root body COM trajectory from root/x,y,z (HDF5 only, optional)
-    std::vector<double> timestamps;                                 // HDF5: actual simulation time for each frame (for accurate interpolation)
-
-    // Current evaluated pose (computed in updateViewerTime, used in drawPlayableMotion)
-    Eigen::VectorXd currentPose;
+    Eigen::Vector3d displayOffset;        ///< World offset for motion display
+    Eigen::VectorXd currentPose;          ///< Last evaluated pose (cached from Motion::getPose())
+    Eigen::Vector3d initialRootPosition;  ///< Initial root position for delta calculations (HDF/BVH)
 };
 
 enum MotionNavigationMode
@@ -277,8 +294,11 @@ private:
     py::object mGVAE;
     bool mGVAELoaded;
     std::vector<BoneInfo> mSkelInfosForMotions;
-    std::vector<ViewerMotion> mMotions;
-    std::vector<ViewerMotion> mAddedMotions;
+
+    // Polymorphic motion architecture
+    std::vector<Motion*> mMotionsNew;              ///< Polymorphic motion instances
+    std::vector<MotionViewerState> mMotionStates;  ///< Viewer state per motion
+
     MotionData mPredictedMotion;
 
     int mMotionIdx;
@@ -302,9 +322,11 @@ private:
     std::string mParamFailureMessage;                 // Error message for parameter failures
     std::string mLastLoadedHDF5ParamsFile;            // Track which HDF5 file's parameters are loaded
     void scanHDF5Structure();                         // Scan HDF5 file to populate params/cycles
-    void loadHDF5Parameters();                        // Load parameters from selected HDF5 file
     void loadSelectedHDF5Motion();                    // Load specific param/cycle combination
     void unloadMotion();                              // Unload all motions and reset parameters
+
+    // NEW: Load parameters from currently selected motion (works with new Motion* architecture)
+    void loadParametersFromCurrentMotion();           // Load parameters from mMotionsNew[mMotionIdx] to environment
 
     std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads all types (npz, hdfRollout, hdfSingle, bvh)
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
@@ -431,8 +453,8 @@ private:
     void updateUnifiedKeys();
     void updateResizablePlotsFromKeys();
 
-    // Motion navigation helper
-    double computeFrameFloat(const ViewerMotion& motion, double phase);
-    void motionPoseEval(ViewerMotion& motion, double frame_float);
+    // Motion navigation helper - NEW: using Motion* interface
+    double computeFrameFloat(Motion* motion, double phase);
+    void motionPoseEval(Motion* motion, int motionIdx, double frame_float);
     void alignMotionToSimulation();
 };

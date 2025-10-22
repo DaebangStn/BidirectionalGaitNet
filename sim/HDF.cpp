@@ -103,6 +103,58 @@ void HDF::loadFromFile(const std::string& filepath)
             }
         }
 
+        // Load parameters if available (optional for HDF single files)
+        try {
+            // Read parameter_names dataset (variable-length strings)
+            if (H5Lexists(file.getId(), "/parameter_names", H5P_DEFAULT)) {
+                H5::DataSet param_names_ds = file.openDataSet("/parameter_names");
+                H5::DataSpace param_names_space = param_names_ds.getSpace();
+
+                hsize_t num_param_names;
+                param_names_space.getSimpleExtentDims(&num_param_names);
+
+                // Read variable-length strings
+                H5::DataType dtype = param_names_ds.getDataType();
+                std::vector<char*> c_strs(num_param_names);
+                param_names_ds.read(c_strs.data(), dtype);
+
+                mParameterNames.resize(num_param_names);
+                for (size_t i = 0; i < num_param_names; i++) {
+                    mParameterNames[i] = std::string(c_strs[i]);
+                    free(c_strs[i]);  // Free HDF5-allocated strings
+                }
+
+                dtype.close();
+                param_names_space.close();
+                param_names_ds.close();
+
+                // Read param_state dataset (float array)
+                if (H5Lexists(file.getId(), "/param_state", H5P_DEFAULT)) {
+                    H5::DataSet param_state_ds = file.openDataSet("/param_state");
+                    H5::DataSpace param_state_space = param_state_ds.getSpace();
+
+                    hsize_t num_param_values;
+                    param_state_space.getSimpleExtentDims(&num_param_values);
+
+                    mParameterValues.resize(num_param_values);
+                    param_state_ds.read(mParameterValues.data(), H5::PredType::NATIVE_FLOAT);
+
+                    param_state_space.close();
+                    param_state_ds.close();
+
+                    std::cout << "[HDF] Loaded " << mParameterNames.size() << " parameters" << std::endl;
+                } else {
+                    std::cerr << "[HDF] Warning: Found parameter_names but no param_state" << std::endl;
+                    mParameterNames.clear();
+                }
+            }
+        } catch (const H5::Exception& e) {
+            // Parameters are optional, so just log warning
+            std::cerr << "[HDF] Note: No parameters in file (this is normal for older HDF single files)" << std::endl;
+            mParameterNames.clear();
+            mParameterValues.clear();
+        }
+
         file.close();
 
         std::cout << "[HDF] Loaded " << filepath
@@ -207,4 +259,26 @@ void HDF::setRefMotion(Character* character, dart::simulation::WorldPtr world)
         std::cout << "[HDF] Height calibration applied: Y offset = " << mHeightOffset
                   << ", X offset = " << mXOffset << std::endl;
     }
+}
+
+// Extended interface implementations for legacy ViewerMotion compatibility
+
+Eigen::VectorXd HDF::getRawMotionData() const
+{
+    // Flatten mMotionData (numFrames x 56) into 1D vector
+    Eigen::VectorXd flattened(mMotionData.rows() * mMotionData.cols());
+    for (int i = 0; i < mMotionData.rows(); ++i) {
+        flattened.segment(i * mMotionData.cols(), mMotionData.cols()) = mMotionData.row(i);
+    }
+    return flattened;
+}
+
+std::vector<double> HDF::getTimestamps() const
+{
+    // Convert Eigen::VectorXd to std::vector<double>
+    std::vector<double> timestamps(mTimeData.size());
+    for (int i = 0; i < mTimeData.size(); ++i) {
+        timestamps[i] = mTimeData[i];
+    }
+    return timestamps;
 }

@@ -49,6 +49,7 @@ dependencies:
   - ncurses=6.5
   - numpy=1.23.4
   - pip
+  - polars
   - pybind11
   - pybind11-global
   - pybullet=3.25

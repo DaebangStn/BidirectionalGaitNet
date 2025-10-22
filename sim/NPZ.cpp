@@ -196,3 +196,15 @@ void NPZ::setRefMotion(Character* character, dart::simulation::WorldPtr world)
         mXOffset = mRootTransform.translation()[0] - initial_transform.translation()[0];
     }
 }
+
+// Extended interface implementations for legacy ViewerMotion compatibility
+
+Eigen::VectorXd NPZ::getRawMotionData() const
+{
+    // Flatten mMotionData (numFrames x 101) into 1D vector
+    Eigen::VectorXd flattened(mMotionData.rows() * mMotionData.cols());
+    for (int i = 0; i < mMotionData.rows(); ++i) {
+        flattened.segment(i * mMotionData.cols(), mMotionData.cols()) = mMotionData.row(i);
+    }
+    return flattened;
+}

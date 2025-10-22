@@ -61,8 +61,16 @@ public:
 
 	void setRefMotion(Character* character, dart::simulation::WorldPtr world) override;
 
+	std::string getSourceType() const override { return "bvh"; }
+	std::string getLogHeader() const override { return "[BVH]"; }
+
 	void setHeightCalibration(bool enable) override { mHeightCalibration = enable; }
 	bool getHeightCalibration() const override { return mHeightCalibration; }
+
+	// Extended interface for legacy ViewerMotion compatibility
+	Eigen::VectorXd getRawMotionData() const override;
+	int getValuesPerFrame() const override { return 56; }  // BVH uses skeleton DOF
+	std::vector<double> getTimestamps() const override;
 
 	// BVH-specific methods
 	int setSkeleton(BVHJoint *joint, int idx);

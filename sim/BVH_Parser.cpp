@@ -358,3 +358,33 @@ bool BVHJoint::
 	}
 	return true;
 }
+
+// Extended interface implementations for legacy ViewerMotion compatibility
+
+Eigen::VectorXd BVH::getRawMotionData() const
+{
+	// Flatten mMotion vector of VectorXd into 1D vector
+	// mMotion is std::vector<Eigen::VectorXd>, each with mDof elements
+	if (mMotion.empty()) {
+		return Eigen::VectorXd();
+	}
+
+	int dof_per_frame = mMotion[0].size();
+	Eigen::VectorXd flattened(mMotion.size() * dof_per_frame);
+
+	for (size_t i = 0; i < mMotion.size(); ++i) {
+		flattened.segment(i * dof_per_frame, dof_per_frame) = mMotion[i];
+	}
+
+	return flattened;
+}
+
+std::vector<double> BVH::getTimestamps() const
+{
+	// Build timestamps from frame time: timestamps[i] = i * mFrameTime
+	std::vector<double> timestamps(mNumFrame);
+	for (int i = 0; i < mNumFrame; ++i) {
+		timestamps[i] = i * mFrameTime;
+	}
+	return timestamps;
+}

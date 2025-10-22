@@ -37,6 +37,23 @@ public:
 
     void setRefMotion(Character* character, dart::simulation::WorldPtr world) override;
 
+    std::string getSourceType() const override { return "npz"; }
+    std::string getLogHeader() const override { return "[NPZ]"; }
+
+    bool hasParameters() const override { return mParams.size() > 0; }
+    std::vector<float> getParameterValues() const override {
+        std::vector<float> values(mParams.size());
+        for (int i = 0; i < mParams.size(); i++) {
+            values[i] = static_cast<float>(mParams[i]);
+        }
+        return values;
+    }
+    bool applyParametersToEnvironment(RenderEnvironment* env) const override;
+
+    // Extended interface for legacy ViewerMotion compatibility
+    Eigen::VectorXd getRawMotionData() const override;
+    int getValuesPerFrame() const override { return 101; }  // NPZ uses 6D rotation format
+
     // ==================== NPZ-Specific Methods ====================
 
     /**
