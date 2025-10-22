@@ -16,7 +16,8 @@ from uri_resolver import resolve_path
 from log_config import log_verbose
 from rollout_worker import (
     PolicyWorker, EnvWorker, FileWorker,
-    load_metadata_from_checkpoint, load_config_yaml, load_parameters_from_csv
+    load_metadata_from_checkpoint, load_config_yaml, load_parameters_from_csv,
+    get_git_info
 )
 
 def create_sample_directory(sample_top_dir: str,
@@ -361,14 +362,22 @@ def run_rollout(checkpoint_path: str,
     # Set muscle network weights on all workers
     ray.get([w.set_mcn_weights.remote(mcn_weights_ref) for w in env_workers])
 
-    # Create FileWorker for thread-safe I/O with global metadata (filters now in EnvWorkers)
+    # Create FileWorker for thread-safe I/O with config dictionary
+    git_info = get_git_info()
+    file_worker_config = {
+        'parameter_names': parameter_names,
+        'checkpoint_path': checkpoint_path,
+        'metadata_xml': metadata_xml,
+        'config_content': config_content,
+        'rollout_time': datetime.now().isoformat(),
+        'param_file': param_file if param_file else "random",
+        'commit_hash': git_info.get('commit_hash', ''),
+        'commit_message': git_info.get('commit_message', '')
+    }
     file_worker = FileWorker.remote(
         output_path,
         sample_dir,
-        parameter_names=parameter_names,
-        checkpoint_name=checkpoint_name,
-        metadata_xml=metadata_xml,
-        config_content=config_content
+        config=file_worker_config
     )
 
     # Print filter pipeline configuration

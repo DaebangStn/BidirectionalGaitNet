@@ -4,6 +4,7 @@ import numpy as np
 import yaml
 import pickle
 import tempfile
+import subprocess
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, NamedTuple
 from pyrollout import RolloutEnvironment, RolloutRecord
@@ -71,6 +72,54 @@ def load_config_yaml(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def get_git_info(repo_path: Optional[str] = None) -> Dict[str, str]:
+    """Capture current git commit information
+
+    Args:
+        repo_path: Path to git repository (default: current directory)
+
+    Returns:
+        Dictionary with 'commit_hash' and 'commit_message' keys
+        Returns empty strings if not in a git repository or git command fails
+    """
+    git_info = {
+        'commit_hash': '',
+        'commit_message': ''
+    }
+
+    try:
+        # Set working directory for git commands
+        cwd = repo_path if repo_path else None
+
+        # Get commit hash
+        result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            git_info['commit_hash'] = result.stdout.strip()
+
+        # Get commit message
+        result = subprocess.run(
+            ['git', 'log', '-1', '--pretty=%B'],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            git_info['commit_message'] = result.stdout.strip()
+
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+        # Silently handle errors - git info is optional metadata
+        pass
+
+    return git_info
+
+
 def load_parameters_from_csv(csv_path: str) -> List[Tuple[int, Dict[str, float]]]:
     """Load parameter sweep from CSV file
 
@@ -113,11 +162,19 @@ def save_to_hdf5(rollout_data: List[Tuple],
                  output_path: str,
                  sample_dir: Path,
                  mode: str = 'w',
-                 global_metadata: Optional[Dict] = None):
+                 config: Optional[Dict] = None):
     """Save collected rollout data to HDF5 with hierarchical structure
 
     Structure:
         / (root) - global attributes and datasets
+        /metadata/ - rollout metadata group
+            ├─ record_config (recording configuration YAML)
+            ├─ simulation_xml (simulation metadata XML)
+            ├─ rollout_time (timestamp when rollout started)
+            ├─ checkpoint_path (path to neural network checkpoint)
+            ├─ param_file (path to parameter CSV or "random")
+            ├─ commit_hash (git commit hash)
+            └─ commit_message (git commit message)
         /param_{idx}/cycle_{idx}/field_name datasets
 
     Args:
@@ -125,7 +182,16 @@ def save_to_hdf5(rollout_data: List[Tuple],
         output_path: Output HDF5 file path
         sample_dir: Sample directory for error log
         mode: File mode - 'w' for create/overwrite, 'a' for append
-        global_metadata: Optional dict with global metadata (parameter_names, checkpoint_name, etc.)
+        config: Optional dict with configuration:
+            - parameter_names: List of parameter names
+            - checkpoint_name: Checkpoint name (deprecated, use checkpoint_path)
+            - checkpoint_path: Path to checkpoint
+            - metadata_xml: Simulation metadata XML string
+            - config_content: Record configuration YAML string
+            - rollout_time: Timestamp when rollout started
+            - param_file: Path to parameter CSV file or "random"
+            - commit_hash: Git commit hash
+            - commit_message: Git commit message
     """
     import h5py  # Import here to avoid Ray worker import issues
 
@@ -135,25 +201,45 @@ def save_to_hdf5(rollout_data: List[Tuple],
 
     with h5py.File(output_path, mode) as f:
         # Write global metadata on first write
-        if global_metadata is not None and mode == 'w':
-            # Store parameter names as dataset
-            if global_metadata.get('parameter_names'):
-                param_names_str = [name.encode('utf-8') for name in global_metadata['parameter_names']]
+        if config is not None and mode == 'w':
+            # Create metadata group
+            metadata_grp = f.create_group('metadata')
+
+            # Store simulation XML
+            if config.get('metadata_xml'):
+                metadata_grp.create_dataset('simulation_xml',
+                                           data=config['metadata_xml'].encode('utf-8'),
+                                           dtype=h5py.string_dtype())
+
+            # Store record config
+            if config.get('config_content'):
+                metadata_grp.create_dataset('record_config',
+                                           data=config['config_content'].encode('utf-8'),
+                                           dtype=h5py.string_dtype())
+
+            # Store rollout time
+            if config.get('rollout_time'):
+                metadata_grp.attrs['rollout_time'] = config['rollout_time']
+
+            # Store checkpoint path
+            checkpoint_path = config.get('checkpoint_path') or config.get('checkpoint_name', '')
+            if checkpoint_path:
+                metadata_grp.attrs['checkpoint_path'] = checkpoint_path
+
+            # Store param file path
+            if config.get('param_file'):
+                metadata_grp.attrs['param_file'] = config['param_file']
+
+            # Store git information
+            if config.get('commit_hash'):
+                metadata_grp.attrs['commit_hash'] = config['commit_hash']
+            if config.get('commit_message'):
+                metadata_grp.attrs['commit_message'] = config['commit_message']
+
+            # Store parameter names as dataset at root level
+            if config.get('parameter_names'):
+                param_names_str = [name.encode('utf-8') for name in config['parameter_names']]
                 f.create_dataset('parameter_names', data=param_names_str, dtype=h5py.string_dtype())
-
-            # Store checkpoint name as attribute
-            if global_metadata.get('checkpoint_name'):
-                f.attrs['checkpoint_name'] = global_metadata['checkpoint_name']
-
-            # Store metadata XML as dataset (can be large)
-            if global_metadata.get('metadata_xml'):
-                f.create_dataset('metadata_xml', data=global_metadata['metadata_xml'].encode('utf-8'),
-                                dtype=h5py.string_dtype())
-
-            # Store config content as dataset
-            if global_metadata.get('config_content'):
-                f.create_dataset('config_content', data=global_metadata['config_content'].encode('utf-8'),
-                                dtype=h5py.string_dtype())
 
             # Initialize statistics (will be updated in finalize)
             f.attrs['total_samples'] = 0
@@ -497,20 +583,29 @@ class EnvWorker:
 class FileWorker:
     """Dedicated HDF5 writer to prevent race conditions"""
 
-    def __init__(self, output_path: str, sample_dir: Path, buffer_size: int = 10,
-                 parameter_names: List[str] = None, checkpoint_name: str = None,
-                 metadata_xml: str = None, config_content: str = None):
+    def __init__(self, output_path: str, sample_dir: Path, config: Dict = None, buffer_size: int = 10):
+        """Initialize FileWorker with config dictionary
+
+        Args:
+            output_path: Path to output HDF5 file
+            sample_dir: Directory for error logs
+            config: Configuration dictionary containing:
+                - parameter_names: List of parameter names
+                - checkpoint_path: Path to checkpoint (or checkpoint_name for legacy)
+                - metadata_xml: Simulation metadata XML string
+                - config_content: Record configuration YAML string
+                - rollout_time: Timestamp when rollout started
+                - param_file: Path to parameter CSV or "random"
+            buffer_size: Number of rollouts to buffer before flushing to disk
+        """
         self.output_path = output_path
         self.sample_dir = sample_dir
         self.buffer = []
         self.buffer_size = buffer_size
         self.first_write = True
 
-        # Store global metadata
-        self.parameter_names = parameter_names or []
-        self.checkpoint_name = checkpoint_name or ""
-        self.metadata_xml = metadata_xml or ""
-        self.config_content = config_content or ""
+        # Store config dictionary
+        self.config = config or {}
 
         # Track statistics
         self.total_samples = 0
@@ -547,18 +642,11 @@ class FileWorker:
         # First write creates file, subsequent writes append
         mode = 'w' if self.first_write else 'a'
 
-        # Pass global metadata on first write
-        global_metadata = None
-        if self.first_write:
-            global_metadata = {
-                'parameter_names': self.parameter_names,
-                'checkpoint_name': self.checkpoint_name,
-                'metadata_xml': self.metadata_xml,
-                'config_content': self.config_content
-            }
+        # Pass config on first write
+        config = self.config if self.first_write else None
 
         save_to_hdf5(self.buffer, self.output_path, self.sample_dir, mode=mode,
-                     global_metadata=global_metadata)
+                     config=config)
         self.first_write = False
         self.buffer.clear()
 
