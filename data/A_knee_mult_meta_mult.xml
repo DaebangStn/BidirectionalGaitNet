@@ -3,7 +3,8 @@
 <ground>@data/ground.xml</ground>
 
 <!-- symmetry : making BVH symmetry , heightCalibration : calibration of the motion's height based on height of the character in the first frame  -->
-<bvh symmetry="true" heightCalibration="true">@data/motion/walk.bvh</bvh>
+<!-- <bvh symmetry="true" heightCalibration="true">@data/motion/walk.h5</bvh> -->
+<h5>@data/motion/walk.h5</h5>
 
 <!-- Making BVH Cyclic -->
 <cyclicbvh>true</cyclicbvh>
@@ -28,11 +29,6 @@
 <enforceSymmetry>true</enforceSymmetry>
 <actionScale>0.04</actionScale>
 
-<training>
-    <max_epoch>10002</max_epoch>
-    <checkpoint_freq>1000</checkpoint_freq>
-</training>
-
 <!-- -1 means not using -->
 <timeWarping>0.001</timeWarping> 
 <stanceLearning>false</stanceLearning>
@@ -56,13 +52,20 @@
 <rewardType>gaitnet</rewardType>
 
 <MetabolicType>A</MetabolicType>
+<TorqueEnergyCoeff>0.2</TorqueEnergyCoeff>
+
 
 <!-- For GaitNet Reward  -->
 <HeadLinearAccWeight>4.0</HeadLinearAccWeight>
 <HeadRotWeight>4.0</HeadRotWeight>
 <StepWeight>2.0</StepWeight>
-<MetabolicWeight>0.05</MetabolicWeight>
+<MetabolicWeight>0.03</MetabolicWeight>
 <AvgVelWeight>6.0</AvgVelWeight>
+<ScaleMetabolic>1.0</ScaleMetabolic>
+<KneePainWeight>1.0</KneePainWeight>
+<ScaleKneePain>1.0</ScaleKneePain>
+<UseMultiplicativeKneePain>true</UseMultiplicativeKneePain>
+<UseMultiplicativeMetabolic>true</UseMultiplicativeMetabolic>
 
 <parameter>
     <gait>

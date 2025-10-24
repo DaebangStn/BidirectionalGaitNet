@@ -2566,6 +2566,17 @@ void GLFWApp::drawSimControlPanel()
         {
             mRenderEnv->setScaleKneePain(static_cast<double>(scaleKneePain));
         }
+
+        // Multiplicative knee pain checkbox
+        bool useMultiplicative = mRenderEnv->getUseMultiplicativeKneePain();
+        if (ImGui::Checkbox("Multiplicative Mode", &useMultiplicative))
+        {
+            mRenderEnv->setUseMultiplicativeKneePain(useMultiplicative);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("When enabled, knee pain multiplies with main gait term (scale not used)");
+        }
     }
 
     // Rollout Control

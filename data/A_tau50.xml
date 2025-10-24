@@ -2,8 +2,7 @@
 <skeleton defaultKp="200" defaultKv="40" actuator="mass_lower" damping="0.1">@data/skeleton_gaitnet_narrow_model.xml</skeleton>
 <ground>@data/ground.xml</ground>
 
-<!-- symmetry : making BVH symmetry , heightCalibration : calibration of the motion's height based on height of the character in the first frame  -->
-<bvh symmetry="true" heightCalibration="true">@data/motion/walk.bvh</bvh>
+<h5>@data/motion/walk.h5</h5>
 
 <!-- Making BVH Cyclic -->
 <cyclicbvh>true</cyclicbvh>
@@ -28,15 +27,15 @@
 <enforceSymmetry>true</enforceSymmetry>
 <actionScale>0.04</actionScale>
 
-<training>
-    <max_epoch>10002</max_epoch>
-    <checkpoint_freq>1000</checkpoint_freq>
-</training>
-
 <!-- -1 means not using -->
 <timeWarping>0.001</timeWarping> 
 <stanceLearning>false</stanceLearning>
 <metabolicReward>true</metabolicReward>
+
+<training>
+    <max_epoch>10002</max_epoch>
+    <checkpoint_freq>1000</checkpoint_freq>
+</training>
 
 <!-- Advanced Option (Muscle) -->
 <meshLbsWeight>false</meshLbsWeight>
@@ -57,12 +56,17 @@
 
 <MetabolicType>A</MetabolicType>
 
+<!-- Torque Energy Coefficient (set > 0 to enable torque energy tracking) -->
+<!-- Combined energy = metabolic + coeff * torque -->
+<TorqueEnergyCoeff>0.5</TorqueEnergyCoeff>
+
 <!-- For GaitNet Reward  -->
 <HeadLinearAccWeight>4.0</HeadLinearAccWeight>
 <HeadRotWeight>4.0</HeadRotWeight>
 <StepWeight>2.0</StepWeight>
-<MetabolicWeight>0.05</MetabolicWeight>
+<MetabolicWeight>0.01</MetabolicWeight>
 <AvgVelWeight>6.0</AvgVelWeight>
+<ScaleMetabolic>1.0</ScaleMetabolic>
 
 <parameter>
     <gait>

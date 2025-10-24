@@ -337,6 +337,18 @@ void Environment::initialize(std::string metadata)
     if (doc.FirstChildElement("ScaleKneePain") != NULL)
         mScaleKneePain = doc.FirstChildElement("ScaleKneePain")->DoubleText();
 
+    if (doc.FirstChildElement("UseMultiplicativeKneePain") != NULL)
+    {
+        std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeKneePain")->GetText()));
+        mUseMultiplicativeKneePain = (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE");
+    }
+
+    if (doc.FirstChildElement("UseMultiplicativeMetabolic") != NULL)
+    {
+        std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeMetabolic")->GetText()));
+        mUseMultiplicativeMetabolic = (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE");
+    }
+
     // Parse MetabolicType configuration
     if (doc.FirstChildElement("MetabolicType") != NULL)
     {
@@ -707,7 +719,29 @@ double Environment::calcReward()
         double r_metabolic = getMetabolicReward();
         double r_knee_pain = getKneePainReward();
 
-        r = w_gait * r_loco * r_avg * r_step + mScaleMetabolic * r_metabolic + mScaleKneePain * r_knee_pain;
+        // Build multiplicative and additive components separately
+        double multiplicative_part = w_gait * r_loco * r_avg * r_step;
+        double additive_part = 0.0;
+
+        if (mUseMultiplicativeKneePain)
+        {
+            multiplicative_part *= r_knee_pain;
+        }
+        else
+        {
+            additive_part += mScaleKneePain * r_knee_pain;
+        }
+
+        if (mUseMultiplicativeMetabolic)
+        {
+            multiplicative_part *= r_metabolic;
+        }
+        else
+        {
+            additive_part += mScaleMetabolic * r_metabolic;
+        }
+
+        r = multiplicative_part + additive_part;
 
         // Populate reward map for gaitnet
         mRewardMap.insert(std::make_pair("r_loco", r_loco));
@@ -1282,35 +1316,34 @@ double Environment::getMetabolicReward()
 
 double Environment::getKneePainReward()
 {
-    // Get knee joint wrench magnitude (force in kN)
+    // Get knee joint wrench magnitude for both legs (force in kN)
     auto skel = mCharacter->getSkeleton();
-    auto kneeJoint = skel->getJoint("TibiaR");
+    auto kneeJointR = skel->getJoint("TibiaR");
+    auto kneeJointL = skel->getJoint("TibiaL");
 
-    if (!kneeJoint) {
-        return 1.0; // No penalty if joint not found
+    // Right knee
+    double r_knee_right = 1.0;
+    if (kneeJointR) {
+        Eigen::Vector6d wrenchR = kneeJointR->getWrenchToChildBodyNode();
+        double knee_force_mag_R = std::sqrt(wrenchR[3]*wrenchR[3] + wrenchR[4]*wrenchR[4] + wrenchR[5]*wrenchR[5]) / 1000.0;
+        r_knee_right = exp(-mKneePainWeight * knee_force_mag_R);
     }
 
-    Eigen::Vector6d wrench = kneeJoint->getWrenchToChildBodyNode();
+    // Left knee
+    double r_knee_left = 1.0;
+    if (kneeJointL) {
+        Eigen::Vector6d wrenchL = kneeJointL->getWrenchToChildBodyNode();
+        double knee_force_mag_L = std::sqrt(wrenchL[3]*wrenchL[3] + wrenchL[4]*wrenchL[4] + wrenchL[5]*wrenchL[5]) / 1000.0;
+        r_knee_left = exp(-mKneePainWeight * knee_force_mag_L);
+    }
 
-    // Extract force components (indices 3, 4, 5) and convert to kN
-    double fx = wrench[3] / 1000.0;
-    double fy = wrench[4] / 1000.0;
-    double fz = wrench[5] / 1000.0;
-
-    // Calculate magnitude of force
-    double knee_force_magnitude = std::sqrt(fx*fx + fy*fy + fz*fz);
-
-    // Exponential penalty similar to metabolic reward
-    double r_knee_pain = exp(-mKneePainWeight * knee_force_magnitude);
-
-    return r_knee_pain;
+    return r_knee_right * r_knee_left;
 }
 
 double Environment::getLocoReward()
 {
     const std::vector<Eigen::Vector3d> &headVels = mCharacter->getHeadVelLogs();
-    if (headVels.size() == 0)
-        return 1.0;
+    if (headVels.size() == 0) return 1.0;
 
     Eigen::Vector3d headLinearAcc = headVels.back() - headVels[headVels.size() - mNumSubSteps];
 

@@ -101,6 +101,8 @@ public:
     void setKneePainWeight(double weight) { mEnv->setKneePainWeight(weight); }
     double getScaleKneePain() { return mEnv->getScaleKneePain(); }
     void setScaleKneePain(double scale) { mEnv->setScaleKneePain(scale); }
+    bool getUseMultiplicativeKneePain() { return mEnv->getUseMultiplicativeKneePain(); }
+    void setUseMultiplicativeKneePain(bool use) { mEnv->setUseMultiplicativeKneePain(use); }
 
     // Logging and debugging
     const std::vector<Eigen::VectorXd>& getDesiredTorqueLogs() { return mEnv->getDesiredTorqueLogs(); }

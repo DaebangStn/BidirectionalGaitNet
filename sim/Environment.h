@@ -254,6 +254,8 @@ public:
     void setKneePainWeight(double weight) { mKneePainWeight = weight; }
     double getScaleKneePain() { return mScaleKneePain; }
     void setScaleKneePain(double scale) { mScaleKneePain = scale; }
+    bool getUseMultiplicativeKneePain() { return mUseMultiplicativeKneePain; }
+    void setUseMultiplicativeKneePain(bool use) { mUseMultiplicativeKneePain = use; }
 
     void setUseWeights(std::vector<bool> _useWeights)
     {
@@ -370,6 +372,8 @@ private:
     // Reward Weight
     double mHeadLinearAccWeight, mHeadRotWeight, mStepWeight, mMetabolicWeight, mAvgVelWeight, mScaleMetabolic;
     double mKneePainWeight, mScaleKneePain;
+    bool mUseMultiplicativeKneePain;
+    bool mUseMultiplicativeMetabolic;
 
     // Simulation Setting
     bool mSoftPhaseClipping, mHardPhaseClipping;

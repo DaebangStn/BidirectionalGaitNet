@@ -17,7 +17,7 @@
 <controlHz>30</controlHz>
 
 <!-- Muscle Control  -->
-<muscle>@data/muscle_anchor_all.xml</muscle>
+<muscle>@data/muscle_distribute_lower_only.xml</muscle>
 <inferencepersim>1</inferencepersim>
 
 <!-- Advanced Option -->
@@ -60,8 +60,9 @@
 <MetabolicWeight>0.05</MetabolicWeight>
 <AvgVelWeight>6.0</AvgVelWeight>
 <ScaleMetabolic>1.0</ScaleMetabolic>
-<KneePainWeight>0.1</KneePainWeight>
+<KneePainWeight>1.0</KneePainWeight>
 <ScaleKneePain>1.0</ScaleKneePain>
+<UseMultiplicativeKneePain>false</UseMultiplicativeKneePain>
 
 <parameter>
     <gait>
