@@ -32,6 +32,11 @@
 <stanceLearning>false</stanceLearning>
 <metabolicReward>true</metabolicReward>
 
+<training>
+    <max_epoch>10002</max_epoch>
+    <checkpoint_freq>1000</checkpoint_freq>
+</training>
+
 <!-- Advanced Option (Muscle) -->
 <meshLbsWeight>false</meshLbsWeight>
 <useVelocityForce>false</useVelocityForce>
@@ -59,7 +64,7 @@
 <HeadLinearAccWeight>4.0</HeadLinearAccWeight>
 <HeadRotWeight>4.0</HeadRotWeight>
 <StepWeight>2.0</StepWeight>
-<MetabolicWeight>0.05</MetabolicWeight>
+<MetabolicWeight>0.03</MetabolicWeight>
 <AvgVelWeight>6.0</AvgVelWeight>
 <ScaleMetabolic>1.0</ScaleMetabolic>
 

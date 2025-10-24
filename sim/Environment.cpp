@@ -331,6 +331,12 @@ void Environment::initialize(std::string metadata)
     if (doc.FirstChildElement("ScaleMetabolic") != NULL)
         mScaleMetabolic = doc.FirstChildElement("ScaleMetabolic")->DoubleText();
 
+    if (doc.FirstChildElement("KneePainWeight") != NULL)
+        mKneePainWeight = doc.FirstChildElement("KneePainWeight")->DoubleText();
+
+    if (doc.FirstChildElement("ScaleKneePain") != NULL)
+        mScaleKneePain = doc.FirstChildElement("ScaleKneePain")->DoubleText();
+
     // Parse MetabolicType configuration
     if (doc.FirstChildElement("MetabolicType") != NULL)
     {
@@ -699,14 +705,16 @@ double Environment::calcReward()
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
         double r_metabolic = getMetabolicReward();
+        double r_knee_pain = getKneePainReward();
 
-        r = w_gait * r_loco * r_avg * r_step + mScaleMetabolic * r_metabolic;
+        r = w_gait * r_loco * r_avg * r_step + mScaleMetabolic * r_metabolic + mScaleKneePain * r_knee_pain;
 
         // Populate reward map for gaitnet
         mRewardMap.insert(std::make_pair("r_loco", r_loco));
         mRewardMap.insert(std::make_pair("r_avg", r_avg));
         mRewardMap.insert(std::make_pair("r_step", r_step));
         mRewardMap.insert(std::make_pair("r_metabolic", r_metabolic));
+        mRewardMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
     }
 
     if (mCharacter->getActuatorType() == mus) r = 1.0;
@@ -1267,9 +1275,35 @@ bool Environment::isFall()
 
 double Environment::getMetabolicReward()
 {
-    double metabolic_energy = mCharacter->getMetabolicEnergy();
+    double metabolic_energy = mCharacter->getEnergy();
     double r_metabolic = exp(-mMetabolicWeight * metabolic_energy);
     return r_metabolic;
+}
+
+double Environment::getKneePainReward()
+{
+    // Get knee joint wrench magnitude (force in kN)
+    auto skel = mCharacter->getSkeleton();
+    auto kneeJoint = skel->getJoint("TibiaR");
+
+    if (!kneeJoint) {
+        return 1.0; // No penalty if joint not found
+    }
+
+    Eigen::Vector6d wrench = kneeJoint->getWrenchToChildBodyNode();
+
+    // Extract force components (indices 3, 4, 5) and convert to kN
+    double fx = wrench[3] / 1000.0;
+    double fy = wrench[4] / 1000.0;
+    double fz = wrench[5] / 1000.0;
+
+    // Calculate magnitude of force
+    double knee_force_magnitude = std::sqrt(fx*fx + fy*fy + fz*fz);
+
+    // Exponential penalty similar to metabolic reward
+    double r_knee_pain = exp(-mKneePainWeight * knee_force_magnitude);
+
+    return r_knee_pain;
 }
 
 double Environment::getLocoReward()

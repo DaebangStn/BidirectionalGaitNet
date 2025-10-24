@@ -122,6 +122,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("r_com", 500);
     mGraphData->register_key("r_ee", 500);
     mGraphData->register_key("r_metabolic", 500);
+    mGraphData->register_key("r_knee_pain", 500);
     mGraphData->register_key("r_loco", 500);
     mGraphData->register_key("r_avg", 500);
     mGraphData->register_key("r_step", 500);
@@ -149,6 +150,19 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("energy_torque_step", 1000);
     mGraphData->register_key("energy_torque", 1000);
     mGraphData->register_key("energy_combined", 1000);
+
+    // Register joint loading keys (hip, knee, ankle)
+    std::vector<std::string> joints = {"hip", "knee", "ankle"};
+    for (const auto& joint : joints) {
+        mGraphData->register_key(joint + "_force_x", 1000);
+        mGraphData->register_key(joint + "_force_y", 1000);
+        mGraphData->register_key(joint + "_force_z", 1000);
+        mGraphData->register_key(joint + "_force_mag", 1000);
+        mGraphData->register_key(joint + "_torque_x", 1000);
+        mGraphData->register_key(joint + "_torque_y", 1000);
+        mGraphData->register_key(joint + "_torque_z", 1000);
+        mGraphData->register_key(joint + "_torque_mag", 1000);
+    }
 
     // Forward GaitNEt
     selected_fgn = 0;
@@ -1688,7 +1702,7 @@ void GLFWApp::drawSimVisualizationPanel()
     ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
     // Rewards
-    if (ImGui::CollapsingHeader("Rewards", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Rewards"))
     {
         std::string title_str = mPlotTitle ? mCheckpointName : "Reward";
         if (ImPlot::BeginPlot((title_str + "##Reward").c_str()))
@@ -1696,14 +1710,14 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetupAxes("Time (s)", "Reward");
 
             // Plot reward data using common plotting function
-            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_metabolic", "r_loco", "r_avg", "r_step"};
+            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_metabolic", "r_knee_pain", "r_loco", "r_avg", "r_step"};
             plotGraphData(rewardKeys, ImAxis_Y1, true, false, "");
             ImPlot::EndPlot();
         }
     }
 
     // Metabolic Energy
-    if (ImGui::CollapsingHeader("Energy", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Energy"))
     {
         // Display current metabolic type
         MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
@@ -1758,6 +1772,76 @@ void GLFWApp::drawSimVisualizationPanel()
 
                 ImPlot::EndPlot();
             }
+        }
+    }
+
+    // Joint Loading
+    if (ImGui::CollapsingHeader("Joint Loading", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        // Joint selection dropdown
+        static int selected_joint = 1; // Default to knee (0=hip, 1=knee, 2=ankle)
+        const char* joint_names[] = {"Hip", "Knee", "Ankle"};
+        const char* joint_prefixes[] = {"hip", "knee", "ankle"};
+
+        ImGui::Text("Select Joint:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        ImGui::Combo("##JointSelector", &selected_joint, joint_names, IM_ARRAYSIZE(joint_names));
+
+        static bool plot_component = false;
+        ImGui::Checkbox("Component", &plot_component);
+
+        std::string selected_prefix = joint_prefixes[selected_joint];
+        std::string selected_name = joint_names[selected_joint];
+
+        // Force plot
+        std::string title_force = mPlotTitle ? mCheckpointName : (selected_name + " Forces (N)");
+        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+        ImPlot::SetNextAxisLimits(3, -1, 6);
+        if (ImPlot::BeginPlot((title_force + "##JointForces").c_str()))
+        {
+            ImPlot::SetupAxes("Time (s)", "Force (N)");
+            std::vector<std::string> forceKeys;
+            if (plot_component) {
+                forceKeys = {
+                    selected_prefix + "_force_x",
+                    selected_prefix + "_force_y",
+                    selected_prefix + "_force_z",
+                };
+            } else {
+                forceKeys = {
+                    selected_prefix + "_force_mag"
+                };
+            }
+            plotGraphData(forceKeys, ImAxis_Y1, true, false, "");
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+            ImPlot::EndPlot();
+        }
+
+        // Torque plot
+        std::string title_torque = mPlotTitle ? mCheckpointName : (selected_name + " Torques (Nm)");
+        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+        ImPlot::SetNextAxisLimits(3, -150, 150);
+        if (ImPlot::BeginPlot((title_torque + "##JointTorques").c_str()))
+        {
+            ImPlot::SetupAxes("Time (s)", "Torque (Nm)");
+            std::vector<std::string> torqueKeys;
+            if (plot_component) {
+                torqueKeys = {
+                    selected_prefix + "_torque_x",
+                    selected_prefix + "_torque_y",
+                    selected_prefix + "_torque_z",
+                };
+            } else {
+                torqueKeys = {
+                    selected_prefix + "_torque_mag"
+                };
+            }
+            plotGraphData(torqueKeys, ImAxis_Y1, true, false, "");
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+            ImPlot::EndPlot();
         }
     }
 
@@ -2462,6 +2546,25 @@ void GLFWApp::drawSimControlPanel()
         if (ImGui::InputFloat("Torque Coeff", &torqueCoeff, 0.0f, 0.0f, "%.3f"))
         {
             mRenderEnv->getCharacter()->setTorqueEnergyCoeff(static_cast<double>(torqueCoeff));
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Knee Pain Penalty");
+
+        // Knee pain weight slider
+        float kneePainWeight = static_cast<float>(mRenderEnv->getKneePainWeight());
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Knee Weight", &kneePainWeight, 0.0f, 0.0f, "%.3f"))
+        {
+            mRenderEnv->setKneePainWeight(static_cast<double>(kneePainWeight));
+        }
+
+        // Scale knee pain slider
+        float scaleKneePain = static_cast<float>(mRenderEnv->getScaleKneePain());
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Knee Scale", &scaleKneePain, 0.0f, 0.0f, "%.3f"))
+        {
+            mRenderEnv->setScaleKneePain(static_cast<double>(scaleKneePain));
         }
     }
 

@@ -172,6 +172,7 @@ public:
     RewardType getRewardType() { return mRewardType; }
 
     double getMetabolicReward();
+    double getKneePainReward();
     double getStepReward();
     double getAvgVelReward();
     double getLocoReward();
@@ -249,6 +250,10 @@ public:
     void setMetabolicWeight(double weight) { mMetabolicWeight = weight; }
     double getScaleMetabolic() { return mScaleMetabolic; }
     void setScaleMetabolic(double scale) { mScaleMetabolic = scale; }
+    double getKneePainWeight() { return mKneePainWeight; }
+    void setKneePainWeight(double weight) { mKneePainWeight = weight; }
+    double getScaleKneePain() { return mScaleKneePain; }
+    void setScaleKneePain(double scale) { mScaleKneePain = scale; }
 
     void setUseWeights(std::vector<bool> _useWeights)
     {
@@ -364,6 +369,7 @@ private:
 
     // Reward Weight
     double mHeadLinearAccWeight, mHeadRotWeight, mStepWeight, mMetabolicWeight, mAvgVelWeight, mScaleMetabolic;
+    double mKneePainWeight, mScaleKneePain;
 
     // Simulation Setting
     bool mSoftPhaseClipping, mHardPhaseClipping;

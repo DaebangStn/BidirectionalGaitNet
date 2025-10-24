@@ -27,6 +27,11 @@
 <enforceSymmetry>true</enforceSymmetry>
 <actionScale>0.04</actionScale>
 
+<training>
+    <max_epoch>10002</max_epoch>
+    <checkpoint_freq>1000</checkpoint_freq>
+</training>
+
 <!-- -1 means not using -->
 <timeWarping>0.001</timeWarping> 
 <stanceLearning>false</stanceLearning>

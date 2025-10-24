@@ -97,6 +97,10 @@ public:
     double getLimitY() { return mEnv->getLimitY(); }
     double getMetabolicWeight() { return mEnv->getMetabolicWeight(); }
     void setMetabolicWeight(double weight) { mEnv->setMetabolicWeight(weight); }
+    double getKneePainWeight() { return mEnv->getKneePainWeight(); }
+    void setKneePainWeight(double weight) { mEnv->setKneePainWeight(weight); }
+    double getScaleKneePain() { return mEnv->getScaleKneePain(); }
+    void setScaleKneePain(double scale) { mEnv->setScaleKneePain(scale); }
 
     // Logging and debugging
     const std::vector<Eigen::VectorXd>& getDesiredTorqueLogs() { return mEnv->getDesiredTorqueLogs(); }

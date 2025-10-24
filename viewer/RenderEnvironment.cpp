@@ -129,6 +129,41 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("energy_combined", combinedEnergy);
     }
 
+    // Log joint loading (joint constraint forces) for hip, knee, and ankle
+    std::vector<std::pair<std::string, std::string>> joints = {
+        {"hip", "FemurR"},
+        {"knee", "TibiaR"},
+        {"ankle", "TalusR"}
+    };
+
+    for (const auto& joint_pair : joints) {
+        const std::string& prefix = joint_pair.first;
+        const std::string& joint_name = joint_pair.second;
+
+        auto joint = skel->getJoint(joint_name);
+        if (joint) {
+            Eigen::Vector6d wrench = joint->getWrenchToChildBodyNode();
+
+            // Extract components: [torque_x, torque_y, torque_z, force_x, force_y, force_z]
+            double tx = wrench[0], ty = wrench[1], tz = wrench[2];
+            double fx = wrench[3] / 1000.0, fy = wrench[4] / 1000.0, fz = wrench[5] / 1000.0;
+
+            // Calculate magnitudes
+            double force_mag = std::sqrt(fx*fx + fy*fy + fz*fz);
+            double torque_mag = std::sqrt(tx*tx + ty*ty + tz*tz);
+
+            // Log individual components
+            if (mGraphData->key_exists(prefix + "_force_x")) mGraphData->push(prefix + "_force_x", fx);
+            if (mGraphData->key_exists(prefix + "_force_y")) mGraphData->push(prefix + "_force_y", fy);
+            if (mGraphData->key_exists(prefix + "_force_z")) mGraphData->push(prefix + "_force_z", fz);
+            if (mGraphData->key_exists(prefix + "_torque_x")) mGraphData->push(prefix + "_torque_x", tx);
+            if (mGraphData->key_exists(prefix + "_torque_y")) mGraphData->push(prefix + "_torque_y", ty);
+            if (mGraphData->key_exists(prefix + "_torque_z")) mGraphData->push(prefix + "_torque_z", tz);
+            if (mGraphData->key_exists(prefix + "_force_mag")) mGraphData->push(prefix + "_force_mag", force_mag);
+            if (mGraphData->key_exists(prefix + "_torque_mag")) mGraphData->push(prefix + "_torque_mag", torque_mag);
+        }
+    }
+
     for (const auto& muscle : character->getMuscles()) {
         const auto& muscle_name = muscle->GetName();
         if(muscle_name.find("R_") != std::string::npos) {
