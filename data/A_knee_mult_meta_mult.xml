@@ -12,6 +12,11 @@
 <!-- Controller Parameter -->
 <residual>true</residual>
 
+<training>
+    <max_epoch>100002</max_epoch>
+    <checkpoint_freq>1000</checkpoint_freq>
+</training>
+
 <!-- Simulation Setting  -->
 <simHz>480</simHz>
 <controlHz>30</controlHz>

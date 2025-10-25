@@ -3,7 +3,7 @@ channels:
   - conda-forge
   - pytorch
 dependencies:
-  - python=3.12
+  - python=3.10
   - assimp=5.4.2
   - boost=1.84.0
   - boost-cpp=1.84.0
@@ -47,7 +47,7 @@ dependencies:
   - libopengl
   - matplotlib
   - ncurses=6.5
-  - numpy
+  - numpy=1.23.4
   - pip
   - polars
   - pybind11
@@ -66,6 +66,10 @@ dependencies:
   - yaml-cpp
   - pip:
     - bvh
+    - click==8.0.4
     - c3d
     - dm-tree
-    - ray[rllib]==2.50.1
+    - scikit-image==0.23.0
+    - pyarrow==14.0.2
+    - ray[rllib]==2.12.0
+    - ray[client]==2.12.0

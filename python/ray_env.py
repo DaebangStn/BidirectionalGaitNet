@@ -6,6 +6,13 @@ from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 from python.uri_resolver import resolve_path, ensure_directory_exists
 
 
+class EnvSpec:
+    """Minimal spec class to satisfy Gymnasium's max_episode_steps check"""
+    def __init__(self, id="MyEnv", max_episode_steps=None):
+        self.id = id
+        self.max_episode_steps = max_episode_steps
+
+
 class MyEnv(gymnasium.Env):
     # Gymnasium requires metadata to be a class-level dict
     metadata = {}
@@ -29,6 +36,10 @@ class MyEnv(gymnasium.Env):
             low=np.float32(-np.inf), high=np.float32(np.inf), shape=(self.num_state,))
         self.action_space = gymnasium.spaces.Box(
             low=np.float32(-np.inf), high=np.float32(np.inf), shape=(self.num_action,))
+
+        # Add spec to prevent Gymnasium warning about max_episode_steps
+        # The actual horizon is controlled by RLlib config, this just silences the warning
+        self.spec = EnvSpec(max_episode_steps=10000)
 
         self.use_cascading = self.env.getUseCascading()
 
