@@ -452,7 +452,8 @@ if __name__ == "__main__":
 
     print(f'Loading config {args.config} from config file {args.config_file}.')
 
-    config["rollout_fragment_length"] = int(config["train_batch_size"] / (config["num_workers"] * config["num_envs_per_worker"]))
+    # Always use auto for rollout_fragment_length to avoid batch size division errors
+    config["rollout_fragment_length"] = "auto"
 
     if args.rollout:
         config["batch_mode"] = "complete_episodes"
