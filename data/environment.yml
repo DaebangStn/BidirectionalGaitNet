@@ -1,9 +1,9 @@
-name: bdir
+name: bidir
 channels:
   - conda-forge
   - pytorch
 dependencies:
-  - python=3.10
+  - python=3.12
   - assimp=5.4.2
   - boost=1.84.0
   - boost-cpp=1.84.0
@@ -47,18 +47,17 @@ dependencies:
   - libopengl
   - matplotlib
   - ncurses=6.5
-  - numpy=1.23.4
+  - numpy
   - pip
   - polars
   - pybind11
   - pybind11-global
   - pybullet=3.25
-  - pytest=8.3.4
+  - pytest
   - pytorch=2.8.0
   - pyyaml
   - scipy
   - setuptools
-  - toml
   - tqdm
   - umap-learn=0.5.6
   - xarray
@@ -68,6 +67,5 @@ dependencies:
   - pip:
     - bvh
     - c3d
-    - gym
     - dm-tree
-    - ray[rllib]==2.0.1
+    - ray[rllib]==2.50.1

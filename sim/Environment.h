@@ -107,7 +107,8 @@ public:
     double getReward() { return mReward; }
     const std::map<std::string, double>& getRewardMap() const { return mRewardMap; }
 
-    int isEOE();
+    bool isTerminated();  // Episode ended due to failure (fall, out of bounds)
+    bool isTruncated();   // Episode ended due to time/step limit
     // void setRefMotion(BVH *_bvh, Character *_character);
 
     void updateTargetPosAndVel(bool isInit = false);

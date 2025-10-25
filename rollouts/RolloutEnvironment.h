@@ -28,7 +28,7 @@ public:
 
     // Rollout status
     int GetCycleCount();
-    int IsEndOfEpisode();
+    bool isTerminated() { return mEnv.isTerminated(); }
     
     // Record configuration
     std::vector<std::string> GetRecordFields() const;

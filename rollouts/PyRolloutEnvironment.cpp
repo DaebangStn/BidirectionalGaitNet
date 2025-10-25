@@ -18,7 +18,7 @@ void bind_RolloutEnvironment(py::module& m) {
             env.Step(static_cast<RolloutRecord*>(record));
         }, py::arg("record") = nullptr)
         .def("get_cycle_count", &RolloutEnvironment::GetCycleCount)
-        .def("is_eoe", &RolloutEnvironment::IsEndOfEpisode)
+        .def("is_terminated", &RolloutEnvironment::isTerminated)
         .def("get_record_fields", &RolloutEnvironment::GetRecordFields)
         .def("get_metabolic_type", &RolloutEnvironment::GetMetabolicType)
         .def("get_mass", &RolloutEnvironment::GetMass)

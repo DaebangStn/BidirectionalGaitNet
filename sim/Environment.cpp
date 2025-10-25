@@ -1070,16 +1070,21 @@ void Environment::updateTargetPosAndVel(bool isInit)
     mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mTargetPositions) / dTime;
 }
 
-int Environment::isEOE()
+bool Environment::isTerminated()
 {
-    int isEOE = 0;
+    // Episode ends due to failure: fall or character below height limit
     double root_y = mCharacter->getSkeleton()->getCOM()[1];
-    if (isFall() || root_y < mLimitY * mCharacter->getGlobalRatio())
-        isEOE = 1;
-    // else if (mWorld->getTime() > 10.0)
-    else if (((mEOEType == EOEType::tuple) && (mSimulationStep >= mHorizon)) || ((mEOEType == EOEType::abstime) && (mWorld->getTime() > 10.0)))
-        isEOE = 3;
-    return isEOE;
+    return isFall() || root_y < mLimitY * mCharacter->getGlobalRatio();
+}
+
+bool Environment::isTruncated()
+{
+    // Episode ends due to external limits: time or step count
+    if (mEOEType == EOEType::tuple)
+        return mSimulationStep >= mHorizon;
+    else if (mEOEType == EOEType::abstime)
+        return mWorld->getTime() > 10.0;
+    return false;
 }
 
 double Environment::calcReward()

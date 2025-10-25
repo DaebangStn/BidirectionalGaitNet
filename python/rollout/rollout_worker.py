@@ -554,10 +554,9 @@ class EnvWorker:
         state = self.rollout_env.get_state()
         cycle_count = self.rollout_env.get_cycle_count()
 
-        # Only treat fall (isEOE == 1) as early termination
-        # Ignore horizon limit (isEOE == 3) to allow rollout beyond mHorizon
-        eoe_value = self.rollout_env.is_eoe()
-        is_fall = (eoe_value == 1)
+        # Check for termination (fall/failure)
+        # Rollout ignores truncation to allow continuing beyond mHorizon
+        is_fall = self.rollout_env.is_terminated()
         reached_target = (cycle_count >= self.target_cycles)
 
         is_done = is_fall or reached_target

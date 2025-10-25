@@ -30,7 +30,8 @@ public:
 
     // Reset and episode control
     void reset(double phase = -1.0) { mEnv->reset(phase); }
-    bool isEOE() { return mEnv->isEOE(); }
+    bool isTerminated() { return mEnv->isTerminated(); }
+    bool isTruncated() { return mEnv->isTruncated(); }
     bool isGaitCycleComplete() { return mEnv->isGaitCycleComplete(); }
 
     // Phase and timing
