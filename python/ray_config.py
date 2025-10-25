@@ -138,9 +138,11 @@ CONFIG["ppo_small_node"]["num_workers"] = 128
 
 CONFIG["ppo_96_a6000"] = copy.deepcopy(CONFIG["ppo_small"])
 CONFIG["ppo_96_a6000"]["num_workers"] = 96
+CONFIG["ppo_96_a6000"]["rollout_fragment_length"] = "auto"
 
 CONFIG["ppo_64_a6000"] = copy.deepcopy(CONFIG["ppo_small"])
 CONFIG["ppo_64_a6000"]["num_workers"] = 64
+CONFIG["ppo_64_a6000"]["rollout_fragment_length"] = "auto"
 
 CONFIG["ppo_small_pc"] = copy.deepcopy(CONFIG["ppo_mini"])
 CONFIG["ppo_small_pc"]["num_workers"] = 4

@@ -66,8 +66,10 @@ dependencies:
   - yaml-cpp
   - pip:
     - bvh
+    - click==8.0.4
     - c3d
     - dm-tree
     - scikit-image==0.23.0
     - pyarrow==14.0.2
     - ray[rllib]==2.12.0
+    - ray[client]==2.12.0
