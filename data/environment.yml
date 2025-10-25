@@ -68,5 +68,6 @@ dependencies:
     - bvh
     - c3d
     - dm-tree
+    - scikit-image==0.23.0
     - pyarrow==14.0.2
     - ray[rllib]==2.12.0
