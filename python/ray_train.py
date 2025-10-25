@@ -19,7 +19,7 @@ from ray.rllib.algorithms.ppo import PPO
 from ray.rllib.models import ModelCatalog
 from ray.tune.registry import register_env
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
-from ray_config import CONFIG
+from python.ray_config import CONFIG
 
 
 def mean_dict_list(dict_list):
@@ -348,9 +348,9 @@ class MyTrainer(PPO):
         return checkpoint_path.as_posix()
 
     def save_max_checkpoint(self, checkpoint_path) -> str:
-        with open(Path(checkpoint_path) / "max_checkpoint", 'wb') as f:
-            pickle.dump(self.__getstate__(), f)
-        return checkpoint_path
+        max_checkpoint_dir = Path(checkpoint_path) / "max_checkpoint"
+        max_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        return PPO.save_checkpoint(self, str(max_checkpoint_dir))
 
     def load_checkpoint(self, checkpoint_path):
         print(f'Loading checkpoint at path {checkpoint_path}')
@@ -473,7 +473,7 @@ if __name__ == "__main__":
              name=Path(args.env).stem,
              config=config,
              trial_dirname_creator=(lambda trial: timestamp()),
-             local_dir="ray_results",
+             storage_path=str(Path.cwd() / "ray_results"),
              restore=checkpoint_path,
              stop={"training_iteration": max_epoch},
              progress_reporter=CLIReporter(max_report_frequency=500),

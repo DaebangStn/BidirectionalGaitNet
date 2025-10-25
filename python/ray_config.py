@@ -21,6 +21,9 @@ common_config = {
         "max_seq_len": 0    # Placeholder value needed for ray to register model
     },
     "evaluation_config": {},
+    # Disable new RLModule API for compatibility with ModelV2
+    "_enable_rl_module_api": False,
+    "_enable_learner_api": False,
 }
 
 CONFIG["ppo"] = copy.deepcopy(common_config)
@@ -139,8 +142,8 @@ CONFIG["ppo_96_a6000"]["num_workers"] = 96
 CONFIG["ppo_64_a6000"] = copy.deepcopy(CONFIG["ppo_small"])
 CONFIG["ppo_64_a6000"]["num_workers"] = 64
 
-CONFIG["ppo_small_pc"] = copy.deepcopy(CONFIG["ppo_small"])
-CONFIG["ppo_small_pc"]["num_workers"] = 32
+CONFIG["ppo_small_pc"] = copy.deepcopy(CONFIG["ppo_mini"])
+CONFIG["ppo_small_pc"]["num_workers"] = 4
 
 # Small Set
 CONFIG["ppo_mini"]["num_workers"] = 1

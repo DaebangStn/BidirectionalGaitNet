@@ -68,4 +68,4 @@ dependencies:
     - bvh
     - c3d
     - dm-tree
-    - ray[rllib]==2.50.1
+    - ray[rllib]==2.12.0
