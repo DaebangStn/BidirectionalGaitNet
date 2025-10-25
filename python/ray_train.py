@@ -376,33 +376,51 @@ parser.add_argument("--rollout", action='store_true')
 
 if __name__ == "__main__":
 
-    env_xml = None
+    env_content = None
+    is_xml = False
     checkpoint_path = None
     args = parser.parse_args()
     print('Argument : ', args)
     checkpoint_path = args.checkpoint
 
-    # metadata setting
-    with open(args.env) as f:
-        env_xml = f.read()
-    print("loading environment done...... ")
+    # Detect file type and read metadata content
+    env_path = args.env
+    is_xml = env_path.endswith(".xml")
+    with open(env_path) as f:
+        env_content = f.read()
+    print(f"Loading {'XML' if is_xml else 'YAML'} environment done......")
 
-    # Parse training configuration from XML
+    # Parse training configuration from file
     training_config = {}
-    try:
-        # Wrap XML fragment in root element for parsing
-        wrapped_xml = f"<root>{env_xml}</root>"
-        root = ET.fromstring(wrapped_xml)
-        training_elem = root.find('training')
-        if training_elem is not None:
-            max_epoch_elem = training_elem.find('max_epoch')
-            checkpoint_freq_elem = training_elem.find('checkpoint_freq')
-            if max_epoch_elem is not None:
-                training_config['max_epoch'] = int(max_epoch_elem.text)
-            if checkpoint_freq_elem is not None:
-                training_config['checkpoint_freq'] = int(checkpoint_freq_elem.text)
-    except Exception as e:
-        print(f"Warning: Failed to parse training config from XML: {e}")
+    if is_xml:
+        # Parse training config from XML
+        try:
+            # Wrap XML fragment in root element for parsing
+            wrapped_xml = f"<root>{env_content}</root>"
+            root = ET.fromstring(wrapped_xml)
+            training_elem = root.find('training')
+            if training_elem is not None:
+                max_epoch_elem = training_elem.find('max_epoch')
+                checkpoint_freq_elem = training_elem.find('checkpoint_freq')
+                if max_epoch_elem is not None:
+                    training_config['max_epoch'] = int(max_epoch_elem.text)
+                if checkpoint_freq_elem is not None:
+                    training_config['checkpoint_freq'] = int(checkpoint_freq_elem.text)
+        except Exception as e:
+            print(f"Warning: Failed to parse training config from XML: {e}")
+    else:
+        # Parse training config from YAML
+        try:
+            import yaml
+            config_data = yaml.safe_load(env_content)
+            if 'training' in config_data:
+                training = config_data['training']
+                if 'max_epoch' in training:
+                    training_config['max_epoch'] = training['max_epoch']
+                if 'checkpoint_freq' in training:
+                    training_config['checkpoint_freq'] = training['checkpoint_freq']
+        except Exception as e:
+            print(f"Warning: Failed to parse training config from YAML: {e}")
 
     # Use command line argument if provided, otherwise use XML config, otherwise default
     max_epoch = args.epoch if args.epoch is not None else training_config.get('max_epoch', 100002)
@@ -421,12 +439,17 @@ if __name__ == "__main__":
         config["kl_coeff"] = 0
         ModelCatalog.register_custom_model("MyModel", RolloutNNRay)
         with open('rollout/env.xml', 'w') as f:
-            f.write(env_xml)
+            f.write(env_content)
     else:
         config["rollout"] = False
         ModelCatalog.register_custom_model("MyModel", SimulationNN_Ray)
 
-    register_env("MyEnv", lambda config: MyEnv(env_xml))
+    # Register environment with appropriate file type
+    if is_xml:
+        register_env("MyEnv", lambda config: MyEnv(env_content, is_xml=True))
+    else:
+        register_env("MyEnv", lambda config: MyEnv(env_content))
+
     print(f'Loading config {args.config} from config file {args.config_file}.')
 
     config["rollout_fragment_length"] = int(config["train_batch_size"] / (config["num_workers"] * config["num_envs_per_worker"]))
@@ -434,7 +457,8 @@ if __name__ == "__main__":
     if args.rollout:
         config["batch_mode"] = "complete_episodes"
 
-    with MyEnv(env_xml) as env:
+    # Initialize environment with appropriate file type
+    with MyEnv(env_content, is_xml=is_xml) if is_xml else MyEnv(env_content) as env:
         config["metadata"] = env.metadata
         config["isTwoLevelActuator"] = env.isTwoLevelActuator
         config["model"]["custom_model_config"]["learningStd"] = env.env.getLearningStd()

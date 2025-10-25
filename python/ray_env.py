@@ -7,8 +7,11 @@ from python.uri_resolver import resolve_path, ensure_directory_exists
 
 
 class MyEnv(gym.Env):
-    def __init__(self, metadata):
-        self.env = RayEnvManager(metadata)
+    def __init__(self, metadata, is_xml=False):
+        if is_xml:
+            self.env = RayEnvManager(metadata, True)
+        else:
+            self.env = RayEnvManager(metadata)
 
         self.env.updateParamState()
         self.env.reset()

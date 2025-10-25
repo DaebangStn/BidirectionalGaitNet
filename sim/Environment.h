@@ -46,6 +46,35 @@ enum RewardType
     scadiver
 };
 
+// Bitflags for reward components
+enum RewardFlags
+{
+    REWARD_NONE = 0,
+    REWARD_METABOLIC = 1 << 0,  // 0x01 (only for multiplicative flag)
+    REWARD_KNEE_PAIN = 1 << 1,  // 0x02
+};
+
+// Centralized reward configuration
+struct RewardConfig
+{
+    int active = REWARD_NONE;
+    int multiplicative = REWARD_NONE;
+
+    // Metabolic reward parameters
+    double metabolic_weight = 0.05;
+    double metabolic_scale = 1.0;
+
+    // Knee pain reward parameters
+    double knee_pain_weight = 1.0;
+    double knee_pain_scale = 1.0;
+
+    // Locomotion reward weights (always active for gaitnet)
+    double head_linear_acc_weight = 4.0;
+    double head_rot_weight = 4.0;
+    double step_weight = 2.0;
+    double avg_vel_weight = 6.0;
+};
+
 enum EOEType
 {
     abstime,
@@ -60,9 +89,10 @@ public:
 
     double getRefStride() { return mRefStride; }
     double getRefCadence() { return mMotion->getMaxTime(); }
-    void initialize(std::string metadata);
+    void initialize(std::string yaml_content);  // Default: YAML content
+    void initialize_xml(std::string xml_content);  // Backward compatibility: XML content
 
-    // 시뮬레이션 환경 구성
+    // Simulation environment configuration
     void addCharacter(std::string path, double kp, double kv, double damping);
     void addObject(std::string path = nullptr);
 
@@ -246,16 +276,24 @@ public:
     std::vector<double> getWeights() { return mWeights; }
     std::vector<double> getDmins() { return mDmins; }
     std::vector<double> getBetas() { return mBetas; }
-    double getMetabolicWeight() { return mMetabolicWeight; }
-    void setMetabolicWeight(double weight) { mMetabolicWeight = weight; }
-    double getScaleMetabolic() { return mScaleMetabolic; }
-    void setScaleMetabolic(double scale) { mScaleMetabolic = scale; }
-    double getKneePainWeight() { return mKneePainWeight; }
-    void setKneePainWeight(double weight) { mKneePainWeight = weight; }
-    double getScaleKneePain() { return mScaleKneePain; }
-    void setScaleKneePain(double scale) { mScaleKneePain = scale; }
-    bool getUseMultiplicativeKneePain() { return mUseMultiplicativeKneePain; }
-    void setUseMultiplicativeKneePain(bool use) { mUseMultiplicativeKneePain = use; }
+    // Reward configuration accessors
+    RewardConfig& getRewardConfig() { return mRewardConfig; }
+    const RewardConfig& getRewardConfig() const { return mRewardConfig; }
+
+    // Legacy accessors for compatibility
+    double getMetabolicWeight() { return mRewardConfig.metabolic_weight; }
+    void setMetabolicWeight(double weight) { mRewardConfig.metabolic_weight = weight; }
+    double getScaleMetabolic() { return mRewardConfig.metabolic_scale; }
+    void setScaleMetabolic(double scale) { mRewardConfig.metabolic_scale = scale; }
+    double getKneePainWeight() { return mRewardConfig.knee_pain_weight; }
+    void setKneePainWeight(double weight) { mRewardConfig.knee_pain_weight = weight; }
+    double getScaleKneePain() { return mRewardConfig.knee_pain_scale; }
+    void setScaleKneePain(double scale) { mRewardConfig.knee_pain_scale = scale; }
+    bool getUseMultiplicativeKneePain() { return mRewardConfig.multiplicative & REWARD_KNEE_PAIN; }
+    void setUseMultiplicativeKneePain(bool use) {
+        if (use) mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
+        else mRewardConfig.multiplicative &= ~REWARD_KNEE_PAIN;
+    }
 
     void setUseWeights(std::vector<bool> _useWeights)
     {
@@ -293,6 +331,10 @@ public:
     int getNumSubSteps() { return mNumSubSteps; }
     void postStep();
 private:
+    // Config parsing methods
+    void parseEnvConfigXml(const std::string& metadata);
+    void parseEnvConfigYaml(const std::string& filepath);
+
     // Step method components
     void calcActivation();
     void postMuscleStep();
@@ -369,11 +411,7 @@ private:
     std::vector<std::string> mParamName;
     int mNumParamState;
 
-    // Reward Weight
-    double mHeadLinearAccWeight, mHeadRotWeight, mStepWeight, mMetabolicWeight, mAvgVelWeight, mScaleMetabolic;
-    double mKneePainWeight, mScaleKneePain;
-    bool mUseMultiplicativeKneePain;
-    bool mUseMultiplicativeMetabolic;
+    RewardConfig mRewardConfig;
 
     // Simulation Setting
     bool mSoftPhaseClipping, mHardPhaseClipping;

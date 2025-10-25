@@ -8,9 +8,10 @@
 // ============================================================================
 // Define log levels (higher number = more verbose)
 #define LOG_LEVEL_SILENT  0  // No logs
-#define LOG_LEVEL_WARN    1  // Warnings only
-#define LOG_LEVEL_INFO    2  // Info + warnings (default)
-#define LOG_LEVEL_VERBOSE 3  // All details including frame counts and parameters
+#define LOG_LEVEL_ERROR   1  // Errors only
+#define LOG_LEVEL_WARN    2  // Warnings + errors
+#define LOG_LEVEL_INFO    3  // Info + warnings + errors (default)
+#define LOG_LEVEL_VERBOSE 4  // All details including frame counts and parameters
 
 // Set current log level (change this line to control verbosity)
 #ifndef LOG_LEVEL
@@ -21,11 +22,14 @@
 #define LOG_VERBOSE(msg) do { if(LOG_LEVEL >= LOG_LEVEL_VERBOSE) { std::cout << msg << std::endl; } } while(0)
 #define LOG_INFO(msg)    do { if(LOG_LEVEL >= LOG_LEVEL_INFO)    { std::cout << msg << std::endl; } } while(0)
 #define LOG_WARN(msg)    do { if(LOG_LEVEL >= LOG_LEVEL_WARN)    { std::cerr << msg << std::endl; } } while(0)
+#define LOG_ERROR(msg)   do { if(LOG_LEVEL >= LOG_LEVEL_ERROR)   { std::cerr << "[ERROR] " << msg << std::endl; } } while(0)
 
 // Helper function to get current log level as string
 inline const char* getLogLevelName() {
     #if LOG_LEVEL == LOG_LEVEL_SILENT
         return "SILENT";
+    #elif LOG_LEVEL == LOG_LEVEL_ERROR
+        return "ERROR";
     #elif LOG_LEVEL == LOG_LEVEL_WARN
         return "WARN";
     #elif LOG_LEVEL == LOG_LEVEL_INFO
@@ -42,7 +46,8 @@ inline const char* getLogLevelName() {
 
 // Usage:
 // - Set LOG_LEVEL to LOG_LEVEL_SILENT to suppress all output
-// - Set LOG_LEVEL to LOG_LEVEL_WARN to only see warnings
+// - Set LOG_LEVEL to LOG_LEVEL_ERROR to only see errors
+// - Set LOG_LEVEL to LOG_LEVEL_WARN to see warnings and errors
 // - Set LOG_LEVEL to LOG_LEVEL_INFO for normal operation (default)
 // - Set LOG_LEVEL to LOG_LEVEL_VERBOSE for detailed debugging
 //

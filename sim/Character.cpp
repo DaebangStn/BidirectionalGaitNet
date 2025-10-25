@@ -1195,7 +1195,10 @@ double Character::getSkelParamValue(std::string skel_name)
                     return std::get<1>(s_i).value[1] / mGlobalRatio;
             }
     }
-    std::cout << "[DEBUG] Error" << std::endl;
+    LOG_ERROR("Skeleton parameter '" << skel_name << "' not found in skeleton definition.");
+    LOG_ERROR("Available skeleton bones:");
+    for (auto s_i : mSkelInfos)
+        LOG_ERROR("  - " << std::get<0>(s_i));
     exit(-1);
     return -1;
 }

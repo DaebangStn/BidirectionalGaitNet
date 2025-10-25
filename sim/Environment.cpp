@@ -4,6 +4,7 @@
 #include "NPZ.h"
 #include "HDF.h"
 #include "../viewer/Log.h"
+#include <yaml-cpp/yaml.h>
 
 
 Environment::Environment()
@@ -56,29 +57,32 @@ Environment::Environment()
     // 0 : one foot , 1 : mid feet
     mPoseOptimizationMode = 0;
     mHorizon = 300;
-    mScaleMetabolic = 1.0; // Default scale for metabolic reward
+
+    // Initialize reward config with defaults (already set in struct definition)
 }
 
 Environment::~Environment()
 {
 }
 
-void Environment::initialize(std::string metadata)
+void Environment::initialize(std::string yaml_content)
 {
-    if (metadata.substr(metadata.length() - 4) == ".xml") // Path 를 입력했을 경우 변환 시켜줌.
-    {
-        std::ifstream file(metadata);
-        if (!file.is_open())
-            exit(-1);
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        metadata = buffer.str();
-    }
+    // Default: YAML content
+    mMetadata = yaml_content;
+    parseEnvConfigYaml(yaml_content);
+}
 
-    mMetadata = metadata;
+void Environment::initialize_xml(std::string xml_content)
+{
+    // Backward compatibility: XML content
+    mMetadata = xml_content;
+    parseEnvConfigXml(xml_content);
+}
 
+void Environment::parseEnvConfigXml(const std::string& metadata)
+{
     TiXmlDocument doc;
-    doc.Parse(mMetadata.c_str());
+    doc.Parse(metadata.c_str());
 
     // Cascading Setting
     if (doc.FirstChildElement("cascading") != NULL)
@@ -226,10 +230,8 @@ void Environment::initialize(std::string metadata)
     if (doc.FirstChildElement("eoeType") != NULL)
     {
         std::string str_eoeType = doc.FirstChildElement("eoeType")->GetText();
-        if (str_eoeType == "time")
-            mEOEType = EOEType::abstime;
-        else if (str_eoeType == "tuple")
-            mEOEType = EOEType::tuple;
+        if (str_eoeType == "time") mEOEType = EOEType::abstime;
+        else if (str_eoeType == "tuple") mEOEType = EOEType::tuple;
     }
 
     // Simulation World Wetting
@@ -314,39 +316,43 @@ void Environment::initialize(std::string metadata)
         mUseNormalizedParamState = doc.FirstChildElement("useNormalizedParamState")->BoolText();
 
     if (doc.FirstChildElement("HeadLinearAccWeight") != NULL)
-        mHeadLinearAccWeight = doc.FirstChildElement("HeadLinearAccWeight")->DoubleText();
+        mRewardConfig.head_linear_acc_weight = doc.FirstChildElement("HeadLinearAccWeight")->DoubleText();
 
     if (doc.FirstChildElement("HeadRotWeight") != NULL)
-        mHeadRotWeight = doc.FirstChildElement("HeadRotWeight")->DoubleText();
+        mRewardConfig.head_rot_weight = doc.FirstChildElement("HeadRotWeight")->DoubleText();
 
     if (doc.FirstChildElement("StepWeight") != NULL)
-        mStepWeight = doc.FirstChildElement("StepWeight")->DoubleText();
+        mRewardConfig.step_weight = doc.FirstChildElement("StepWeight")->DoubleText();
 
     if (doc.FirstChildElement("MetabolicWeight") != NULL)
-        mMetabolicWeight = doc.FirstChildElement("MetabolicWeight")->DoubleText();
+        mRewardConfig.metabolic_weight = doc.FirstChildElement("MetabolicWeight")->DoubleText();
 
     if (doc.FirstChildElement("AvgVelWeight") != NULL)
-        mAvgVelWeight = doc.FirstChildElement("AvgVelWeight")->DoubleText();
+        mRewardConfig.avg_vel_weight = doc.FirstChildElement("AvgVelWeight")->DoubleText();
 
     if (doc.FirstChildElement("ScaleMetabolic") != NULL)
-        mScaleMetabolic = doc.FirstChildElement("ScaleMetabolic")->DoubleText();
+        mRewardConfig.metabolic_scale = doc.FirstChildElement("ScaleMetabolic")->DoubleText();
 
-    if (doc.FirstChildElement("KneePainWeight") != NULL)
-        mKneePainWeight = doc.FirstChildElement("KneePainWeight")->DoubleText();
+    if (doc.FirstChildElement("KneePainWeight") != NULL) {
+        mRewardConfig.active |= REWARD_KNEE_PAIN;
+        mRewardConfig.knee_pain_weight = doc.FirstChildElement("KneePainWeight")->DoubleText();
+    }
 
     if (doc.FirstChildElement("ScaleKneePain") != NULL)
-        mScaleKneePain = doc.FirstChildElement("ScaleKneePain")->DoubleText();
+        mRewardConfig.knee_pain_scale = doc.FirstChildElement("ScaleKneePain")->DoubleText();
 
     if (doc.FirstChildElement("UseMultiplicativeKneePain") != NULL)
     {
         std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeKneePain")->GetText()));
-        mUseMultiplicativeKneePain = (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE");
+        if (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE")
+            mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
     }
 
     if (doc.FirstChildElement("UseMultiplicativeMetabolic") != NULL)
     {
         std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeMetabolic")->GetText()));
-        mUseMultiplicativeMetabolic = (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE");
+        if (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE")
+            mRewardConfig.multiplicative |= REWARD_METABOLIC;
     }
 
     // Parse MetabolicType configuration
@@ -500,6 +506,423 @@ void Environment::initialize(std::string metadata)
             mNumKnownParam++;
     }
     // std::cout << "Num Known Param : " << mNumKnownParam << std::endl;
+}
+
+void Environment::parseEnvConfigYaml(const std::string& yaml_content)
+{
+    YAML::Node config = YAML::Load(yaml_content);
+    YAML::Node env = config["environment"];
+
+    // === Cascading ===
+    if (config["cascading"])
+        mUseCascading = true;
+
+    // === Skeleton ===
+    if (env["skeleton"]) {
+        auto skel = env["skeleton"];
+        std::string skelPath = skel["file"].as<std::string>();
+        std::string resolved = PMuscle::URIResolver::getInstance().resolve(skelPath);
+        addCharacter(
+            resolved,
+            skel["kp"].as<double>(),
+            skel["kv"].as<double>(),
+            skel["damping"].as<double>(0.4)
+        );
+
+        std::string actType = skel["actuator"].as<std::string>();
+        mCharacter->setActuatorType(getActuatorType(actType));
+
+        mTargetPositions = mCharacter->getSkeleton()->getPositions();
+        mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
+    }
+
+    // === Muscle ===
+    if (env["muscle"]) {
+        auto muscle = env["muscle"];
+
+        bool meshLbs = muscle["mesh_lbs_weight"].as<bool>(false);
+        bool useVelForce = muscle["use_velocity_force"].as<bool>(false);
+        mUseJointState = muscle["use_joint_state"].as<bool>(false);
+
+        std::string musclePath = muscle["file"].as<std::string>();
+        std::string resolved = PMuscle::URIResolver::getInstance().resolve(musclePath);
+        mCharacter->setMuscles(resolved, useVelForce, meshLbs);
+        mUseMuscle = true;
+
+        if (muscle["pose_optimization"]) {
+            auto poseOpt = muscle["pose_optimization"];
+            mMusclePoseOptimization = poseOpt["enabled"].as<bool>(false);
+            std::string rot = poseOpt["rot"].as<std::string>("one_foot");
+            mPoseOptimizationMode = (rot == "one_foot") ? 0 : 1;
+        }
+    }
+
+    // === Learning Std ===
+    if (env["advanced"] && env["advanced"]["learning_std"])
+        mLearningStd = env["advanced"]["learning_std"].as<bool>(false);
+
+    // === Action ===
+    if (env["action"]) {
+        auto action = env["action"];
+        if (action["time_warping"])
+            mPhaseDisplacementScale = action["time_warping"].as<double>(-1.0);
+    }
+
+    // === mAction sizing ===
+    ActuatorType _actType = mCharacter->getActuatorType();
+    if (_actType == tor || _actType == pd || _actType == mass || _actType == mass_lower) {
+        mAction = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
+        mNumActuatorAction = mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
+    }
+    else if (_actType == mus) {
+        mAction = Eigen::VectorXd::Zero(mCharacter->getMuscles().size() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
+        mNumActuatorAction = mCharacter->getMuscles().size();
+    }
+
+    // === Ground ===
+    if (env["ground"]) {
+        std::string groundPath = env["ground"]["file"].as<std::string>();
+        std::string resolved = PMuscle::URIResolver::getInstance().resolve(groundPath);
+        addObject(resolved);
+    }
+
+    // === Motion ===
+    if (env["motion"]) {
+        auto motion = env["motion"];
+        mCyclic = motion["cyclic"].as<bool>(true);
+
+        if (motion["height_calibration"]) {
+            auto hcal = motion["height_calibration"];
+            if (hcal["enabled"].as<bool>()) {
+                mHeightCalibration++;
+                if (hcal["strict"].as<bool>(false))
+                    mHeightCalibration++;
+            }
+        }
+    }
+
+    // === Action (residual) ===
+    if (env["action"] && env["action"]["residual"])
+        mIsResidual = env["action"]["residual"].as<bool>(true);
+
+    // === Simulation ===
+    if (env["simulation"]) {
+        auto sim = env["simulation"];
+        mSimulationHz = sim["sim_hz"].as<int>(600);
+        mControlHz = sim["control_hz"].as<int>(30);
+
+        if (mSimulationHz % mControlHz != 0) {
+            std::cout << "[ERROR] sim_hz must be divisible by control_hz. Got " << mSimulationHz << " / " << mControlHz << " != 0" << std::endl;
+            exit(-1);
+        }
+        mNumSubSteps = mSimulationHz / mControlHz;
+    }
+
+    // === Action scale ===
+    if (env["action"] && env["action"]["scale"])
+        mActionScale = env["action"]["scale"].as<double>(0.04);
+
+    // === Inference per sim ===
+    if (env["simulation"] && env["simulation"]["inference_per_sim"])
+        mInferencePerSim = env["simulation"]["inference_per_sim"].as<int>(1);
+
+    // === Advanced ===
+    if (env["advanced"]) {
+        auto adv = env["advanced"];
+
+        if (adv["soft_phase_clipping"])
+            mSoftPhaseClipping = adv["soft_phase_clipping"].as<bool>(false);
+
+        if (adv["hard_phase_clipping"])
+            mHardPhaseClipping = adv["hard_phase_clipping"].as<bool>(false);
+
+        if (adv["torque_clipping"])
+            mCharacter->setTorqueClipping(adv["torque_clipping"].as<bool>());
+
+        if (adv["include_jtp_in_spd"])
+            mCharacter->setIncludeJtPinSPD(adv["include_jtp_in_spd"].as<bool>());
+    }
+
+    // === Reward Type ===
+    if (env["reward"] && env["reward"]["type"]) {
+        std::string rewardType = env["reward"]["type"].as<std::string>("deepmimic");
+        if (rewardType == "gaitnet") mRewardType = gaitnet;
+        else if (rewardType == "deepmimic") mRewardType = deepmimic;
+        else if (rewardType == "scadiver") mRewardType = scadiver;
+    }
+
+    // === EOE Type ===
+    if (env["reward"] && env["reward"]["eoe_type"]) {
+        std::string eoeType = env["reward"]["eoe_type"].as<std::string>("time");
+        mEOEType = (eoeType == "tuple") ? EOEType::tuple : EOEType::abstime;
+    }
+
+    // === World Setup ===
+    mWorld->setTimeStep(1.0 / mSimulationHz);
+    mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
+    mWorld->setGravity(Eigen::Vector3d(0, -9.8, 0.0));
+    mWorld->addSkeleton(mCharacter->getSkeleton());
+    for (auto o : mObjects)
+        mWorld->addSkeleton(o);
+
+    // === Motion Loading ===
+    if (env["motion"]) {
+        auto motion = env["motion"];
+        std::string motionPath = motion["file"].as<std::string>();
+        std::string resolved = PMuscle::URIResolver::getInstance().resolve(motionPath);
+
+        std::string motionType = motion["type"].as<std::string>();
+        if (motionType == "h5" || motionType == "hdf") {
+            HDF *new_hdf = new HDF(resolved);
+            new_hdf->setRefMotion(mCharacter, mWorld);
+            mMotion = new_hdf;
+        }
+        else if (motionType == "bvh") {
+            BVH *new_bvh = new BVH(resolved);
+            // Handle BVH attributes from YAML if needed
+            new_bvh->setRefMotion(mCharacter, mWorld);
+            mMotion = new_bvh;
+        }
+        else if (motionType == "npz") {
+            NPZ *new_npz = new NPZ(resolved);
+            new_npz->setRefMotion(mCharacter, mWorld);
+            mMotion = new_npz;
+        }
+    }
+
+    // === Advanced: height calibration already handled above ===
+
+    // === Advanced: enforce symmetry ===
+    if (env["advanced"] && env["advanced"]["enforce_symmetry"])
+        mEnforceSymmetry = env["advanced"]["enforce_symmetry"].as<bool>(false);
+
+    // === Two-level controller ===
+    if (isTwoLevelController()) {
+        Character *character = mCharacter;
+        mMuscleNN = py::module::import("python.ray_model").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
+    }
+
+    // === Horizon ===
+    if (config["Horizon"])
+        mHorizon = config["Horizon"].as<int>();
+
+    // === Reward parameters ===
+    if (env["advanced"] && env["advanced"]["use_normalized_param_state"])
+        mUseNormalizedParamState = env["advanced"]["use_normalized_param_state"].as<bool>(false);
+
+    // === Locomotion rewards ===
+    if (env["reward"] && env["reward"]["locomotion"]) {
+        auto loco = env["reward"]["locomotion"];
+        if (loco["head_linear_acc_weight"])
+            mRewardConfig.head_linear_acc_weight = loco["head_linear_acc_weight"].as<double>(4.0);
+        if (loco["head_rot_weight"])
+            mRewardConfig.head_rot_weight = loco["head_rot_weight"].as<double>(4.0);
+        if (loco["step_weight"])
+            mRewardConfig.step_weight = loco["step_weight"].as<double>(2.0);
+        if (loco["avg_vel_weight"])
+            mRewardConfig.avg_vel_weight = loco["avg_vel_weight"].as<double>(6.0);
+    }
+
+    // === Metabolic (always active) ===
+    if (env["reward"] && env["reward"]["metabolic"]) {
+        auto metabolic_config = env["reward"]["metabolic"];
+
+        if (metabolic_config["weight"])
+            mRewardConfig.metabolic_weight = metabolic_config["weight"].as<double>(0.05);
+        if (metabolic_config["scale"])
+            mRewardConfig.metabolic_scale = metabolic_config["scale"].as<double>(1.0);
+        if (metabolic_config["multiplicative"] && metabolic_config["multiplicative"].as<bool>(false))
+            mRewardConfig.multiplicative |= REWARD_METABOLIC;
+
+        if (metabolic_config["type"]) {
+            std::string metaType = metabolic_config["type"].as<std::string>("A");
+            if (metaType == "A") mCharacter->setMetabolicType(A);
+            else if (metaType == "A2") mCharacter->setMetabolicType(A2);
+            else if (metaType == "MA") mCharacter->setMetabolicType(MA);
+            else if (metaType == "MA2") mCharacter->setMetabolicType(MA2);
+        }
+
+        // Torque energy coefficient (nested under metabolic)
+        if (metabolic_config["torque_energy"] && metabolic_config["torque_energy"]["coeff"]) {
+            double coeff = metabolic_config["torque_energy"]["coeff"].as<double>(1.0);
+            mCharacter->setTorqueEnergyCoeff(coeff);
+        }
+    }
+
+    // === Knee pain ===
+    if (env["reward"] && env["reward"]["knee_pain"]) {
+        auto knee = env["reward"]["knee_pain"];
+        mRewardConfig.active |= REWARD_KNEE_PAIN;
+
+        if (knee["weight"])
+            mRewardConfig.knee_pain_weight = knee["weight"].as<double>(1.0);
+        if (knee["scale"])
+            mRewardConfig.knee_pain_scale = knee["scale"].as<double>(1.0);
+        if (knee["multiplicative"] && knee["multiplicative"].as<bool>(false))
+            mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
+    }
+
+    // === Parameters (gait, skeleton, torsion) ===
+    std::vector<double> minV;
+    std::vector<double> maxV;
+    std::vector<double> defaultV;
+
+    if (env["parameters"])
+    {
+        auto params = env["parameters"];
+
+        // === Parse gait parameters ===
+        if (params["gait"])
+        {
+            auto gait = params["gait"];
+            for (YAML::const_iterator it = gait.begin(); it != gait.end(); ++it)
+            {
+                std::string param_name = it->first.as<std::string>();
+                auto param = it->second;
+
+                if (!param["min"] || !param["max"])
+                    continue;
+
+                minV.push_back(param["min"].as<double>());
+                maxV.push_back(param["max"].as<double>());
+                defaultV.push_back(param["default"] ? param["default"].as<double>() : 1.0);
+
+                std::string full_name = "gait_" + param_name;
+                mParamName.push_back(full_name);
+
+                // Create param_group
+                param_group p;
+                p.name = full_name;
+                p.param_idxs.push_back(mParamName.size() - 1);
+                p.param_names.push_back(full_name);
+                double range = maxV.back() - minV.back();
+                p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
+                p.is_uniform = (param["sampling"] && param["sampling"].as<std::string>() == "uniform");
+                mParamGroups.push_back(p);
+            }
+        }
+
+        // === Parse skeleton parameters ===
+        if (params["skeleton"])
+        {
+            auto skeleton = params["skeleton"];
+            for (YAML::const_iterator it = skeleton.begin(); it != skeleton.end(); ++it)
+            {
+                std::string bone_type = it->first.as<std::string>();
+                auto bone = it->second;
+
+                // Handle 2-level parameters (e.g., global)
+                if (bone["min"] && bone["max"])
+                {
+                    minV.push_back(bone["min"].as<double>());
+                    maxV.push_back(bone["max"].as<double>());
+                    defaultV.push_back(bone["default"] ? bone["default"].as<double>() : 1.0);
+
+                    std::string full_name = "skeleton_" + bone_type;
+                    mParamName.push_back(full_name);
+
+                    param_group p;
+                    p.name = full_name;
+                    p.param_idxs.push_back(mParamName.size() - 1);
+                    p.param_names.push_back(full_name);
+                    double range = maxV.back() - minV.back();
+                    p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
+                    p.is_uniform = (bone["sampling"] && bone["sampling"].as<std::string>() == "uniform");
+                    mParamGroups.push_back(p);
+                }
+                // Handle 3-level parameters (e.g., femur.left, femur.right)
+                else
+                {
+                    for (YAML::const_iterator side_it = bone.begin(); side_it != bone.end(); ++side_it)
+                    {
+                        std::string side = side_it->first.as<std::string>();
+                        auto side_param = side_it->second;
+
+                        if (!side_param["min"] || !side_param["max"])
+                            continue;
+
+                        minV.push_back(side_param["min"].as<double>());
+                        maxV.push_back(side_param["max"].as<double>());
+                        defaultV.push_back(side_param["default"] ? side_param["default"].as<double>() : 1.0);
+
+                        std::string full_name = "skeleton_" + bone_type + "_" + side;
+                        mParamName.push_back(full_name);
+
+                        param_group p;
+                        p.name = full_name;
+                        p.param_idxs.push_back(mParamName.size() - 1);
+                        p.param_names.push_back(full_name);
+                        double range = maxV.back() - minV.back();
+                        p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
+                        p.is_uniform = (side_param["sampling"] && side_param["sampling"].as<std::string>() == "uniform");
+                        mParamGroups.push_back(p);
+                    }
+                }
+            }
+        }
+
+        // === Parse torsion parameters ===
+        if (params["torsion"])
+        {
+            auto torsion = params["torsion"];
+            for (YAML::const_iterator it = torsion.begin(); it != torsion.end(); ++it)
+            {
+                std::string param_name = it->first.as<std::string>();
+                auto param = it->second;
+
+                if (!param["min"] || !param["max"])
+                    continue;
+
+                minV.push_back(param["min"].as<double>());
+                maxV.push_back(param["max"].as<double>());
+                defaultV.push_back(param["default"] ? param["default"].as<double>() : 1.0);
+
+                std::string full_name = "torsion_" + param_name;
+                mParamName.push_back(full_name);
+
+                param_group p;
+                p.name = full_name;
+                p.param_idxs.push_back(mParamName.size() - 1);
+                p.param_names.push_back(full_name);
+                double range = maxV.back() - minV.back();
+                p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
+                p.is_uniform = (param["sampling"] && param["sampling"].as<std::string>() == "uniform");
+                mParamGroups.push_back(p);
+            }
+        }
+
+        // Convert vectors to Eigen
+        mParamMin = Eigen::VectorXd::Zero(minV.size());
+        mParamMax = Eigen::VectorXd::Zero(minV.size());
+        mParamDefault = Eigen::VectorXd::Zero(defaultV.size());
+
+        for (int i = 0; i < minV.size(); i++)
+        {
+            mParamMin[i] = minV[i];
+            mParamMax[i] = maxV[i];
+            mParamDefault[i] = defaultV[i];
+        }
+
+        mNumParamState = minV.size();
+    }
+
+    // === Initialize mUseWeights ===
+    mUseWeights.clear();
+    for (int i = 0; i < mPrevNetworks.size() + 1; i++) {
+        mUseWeights.push_back(true);
+        if (mUseMuscle)
+            mUseWeights.push_back(true);
+    }
+
+    // === Set num known param ===
+    mNumKnownParam = 0;
+    for(int i = 0; i < mParamName.size(); i++) {
+        if (mParamName[i].find("skeleton") != std::string::npos ||
+            mParamName[i].find("stride") != std::string::npos ||
+            mParamName[i].find("cadence") != std::string::npos ||
+            mParamName[i].find("torsion") != std::string::npos)
+            mNumKnownParam++;
+    }
 }
 
 void Environment::addCharacter(std::string path, double kp, double kv, double damping)
@@ -719,26 +1142,23 @@ double Environment::calcReward()
         double r_metabolic = getMetabolicReward();
         double r_knee_pain = getKneePainReward();
 
-        // Build multiplicative and additive components separately
+        // Build multiplicative and additive components separately using bitflags
         double multiplicative_part = w_gait * r_loco * r_avg * r_step;
         double additive_part = 0.0;
 
-        if (mUseMultiplicativeKneePain)
-        {
-            multiplicative_part *= r_knee_pain;
-        }
-        else
-        {
-            additive_part += mScaleKneePain * r_knee_pain;
-        }
-
-        if (mUseMultiplicativeMetabolic)
-        {
+        // Apply metabolic reward (always active, multiplicative or additive)
+        if (mRewardConfig.multiplicative & REWARD_METABOLIC)
             multiplicative_part *= r_metabolic;
-        }
         else
+            additive_part += mRewardConfig.metabolic_scale * r_metabolic;
+
+        // Apply knee pain reward (multiplicative or additive based on bitflag)
+        if (mRewardConfig.active & REWARD_KNEE_PAIN)
         {
-            additive_part += mScaleMetabolic * r_metabolic;
+            if (mRewardConfig.multiplicative & REWARD_KNEE_PAIN)
+                multiplicative_part *= r_knee_pain;
+            else
+                additive_part += mRewardConfig.knee_pain_scale * r_knee_pain;
         }
 
         r = multiplicative_part + additive_part;
@@ -1310,7 +1730,7 @@ bool Environment::isFall()
 double Environment::getMetabolicReward()
 {
     double metabolic_energy = mCharacter->getEnergy();
-    double r_metabolic = exp(-mMetabolicWeight * metabolic_energy);
+    double r_metabolic = exp(-mRewardConfig.metabolic_weight * metabolic_energy);
     return r_metabolic;
 }
 
@@ -1326,7 +1746,7 @@ double Environment::getKneePainReward()
     if (kneeJointR) {
         Eigen::Vector6d wrenchR = kneeJointR->getWrenchToChildBodyNode();
         double knee_force_mag_R = std::sqrt(wrenchR[3]*wrenchR[3] + wrenchR[4]*wrenchR[4] + wrenchR[5]*wrenchR[5]) / 1000.0;
-        r_knee_right = exp(-mKneePainWeight * knee_force_mag_R);
+        r_knee_right = exp(-mRewardConfig.knee_pain_weight * knee_force_mag_R);
     }
 
     // Left knee
@@ -1334,7 +1754,7 @@ double Environment::getKneePainReward()
     if (kneeJointL) {
         Eigen::Vector6d wrenchL = kneeJointL->getWrenchToChildBodyNode();
         double knee_force_mag_L = std::sqrt(wrenchL[3]*wrenchL[3] + wrenchL[4]*wrenchL[4] + wrenchL[5]*wrenchL[5]) / 1000.0;
-        r_knee_left = exp(-mKneePainWeight * knee_force_mag_L);
+        r_knee_left = exp(-mRewardConfig.knee_pain_weight * knee_force_mag_L);
     }
 
     return r_knee_right * r_knee_left;
@@ -1348,8 +1768,8 @@ double Environment::getLocoReward()
     Eigen::Vector3d headLinearAcc = headVels.back() - headVels[headVels.size() - mNumSubSteps];
 
     double headRotDiff = Eigen::AngleAxisd(mCharacter->getSkeleton()->getBodyNode("Head")->getTransform().linear()).angle();
-    double r_head_linear_acc = exp(-mHeadLinearAccWeight * headLinearAcc.squaredNorm() / headLinearAcc.rows());
-    double r_head_rot_diff = exp(-mHeadRotWeight * headRotDiff * headRotDiff);
+    double r_head_linear_acc = exp(-mRewardConfig.head_linear_acc_weight * headLinearAcc.squaredNorm() / headLinearAcc.rows());
+    double r_head_rot_diff = exp(-mRewardConfig.head_rot_weight * headRotDiff * headRotDiff);
     double r_loco = r_head_linear_acc * r_head_rot_diff;
 
     return r_loco;
@@ -1365,7 +1785,7 @@ double Environment::getStepReward()
     Eigen::Vector2i is_contact = getIsContact();
     if ((mIsLeftLegStance && is_contact[0] == 1) || (!mIsLeftLegStance && is_contact[1] == 1)) foot_diff[1] = 0;
     foot_diff *= 8;
-    double r = exp(-mStepWeight * foot_diff.squaredNorm() / foot_diff.rows());
+    double r = exp(-mRewardConfig.step_weight * foot_diff.squaredNorm() / foot_diff.rows());
     return r;
 }
 
@@ -1392,7 +1812,7 @@ double Environment::getAvgVelReward()
     double targetCOMVel = getTargetCOMVelocity();
 
     Eigen::Vector3d vel_diff = curAvgVel - Eigen::Vector3d(0, 0, targetCOMVel);
-    double vel_reward = exp(-mAvgVelWeight * vel_diff.squaredNorm());
+    double vel_reward = exp(-mRewardConfig.avg_vel_weight * vel_diff.squaredNorm());
     return vel_reward;
 }
 

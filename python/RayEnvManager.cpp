@@ -71,9 +71,20 @@ Eigen::VectorXd toEigenVector(const py::array_t<float> &array)
 class RayEnvManager : public Environment
 {
 public:
+    // Default: YAML content
     RayEnvManager(std::string metadata) : Environment()
     {
         Environment::initialize(metadata);
+    }
+
+    // Backward compatibility: XML content when is_xml=True
+    RayEnvManager(std::string metadata, bool is_xml) : Environment()
+    {
+        if (is_xml) {
+            Environment::initialize_xml(metadata);
+        } else {
+            Environment::initialize(metadata);
+        }
     }
     py::array_t<float> getState() { return toNumPyArray(Environment::getState()); }
     py::array_t<float> getAction() { return toNumPyArray(Environment::getAction()); }
@@ -147,7 +158,8 @@ public:
 PYBIND11_MODULE(pysim, m)
 {
     py::class_<RayEnvManager>(m, "RayEnvManager")
-        .def(py::init<std::string>())
+        .def(py::init<std::string>())  // Default: YAML content
+        .def(py::init<std::string, bool>())  // (content, is_xml) for XML backward compatibility
         // .def("initialize", &RayEnvManager::initialize)
         .def("setAction", &RayEnvManager::setAction)
         .def("step", &RayEnvManager::step)
