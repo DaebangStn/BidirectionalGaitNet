@@ -56,7 +56,7 @@ Environment::Environment()
     mUseNormalizedParamState = true;
     // 0 : one foot , 1 : mid feet
     mPoseOptimizationMode = 0;
-    mHorizon = 300;
+    mHorizon = 600;
 
     // Initialize reward config with defaults (already set in struct definition)
 }
@@ -65,11 +65,21 @@ Environment::~Environment()
 {
 }
 
-void Environment::initialize(std::string yaml_content)
+void Environment::initialize(std::string content)
 {
-    // Default: YAML content
-    mMetadata = yaml_content;
-    parseEnvConfigYaml(yaml_content);
+    mMetadata = content;
+
+    // Auto-detect format by examining first non-whitespace character
+    size_t start = content.find_first_not_of(" \t\n\r");
+    if (start == std::string::npos) {
+        // Empty content - use YAML as default
+        parseEnvConfigYaml(content);
+        return;
+    }
+
+    // Detect format: XML starts with '<', YAML doesn't
+    if (content[start] == '<') parseEnvConfigXml(content);
+    else parseEnvConfigYaml(content);
 }
 
 void Environment::initialize_xml(std::string xml_content)
@@ -346,6 +356,12 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeKneePain")->GetText()));
         if (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE")
             mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
+    }
+
+    if (doc.FirstChildElement("UseKneePainTermination") != NULL)
+    {
+        std::string useTermStr = Trim(std::string(doc.FirstChildElement("UseKneePainTermination")->GetText()));
+        mRewardConfig.use_knee_pain_termination = (useTermStr == "true" || useTermStr == "True" || useTermStr == "TRUE");
     }
 
     if (doc.FirstChildElement("UseMultiplicativeMetabolic") != NULL)
@@ -760,6 +776,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mRewardConfig.knee_pain_scale = knee["scale"].as<double>(1.0);
         if (knee["multiplicative"] && knee["multiplicative"].as<bool>(false))
             mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
+        if (knee["use_termination"])
+            mRewardConfig.use_knee_pain_termination = knee["use_termination"].as<bool>(false);
     }
 
     // === Parameters (gait, skeleton, torsion) ===
@@ -1070,28 +1088,42 @@ void Environment::updateTargetPosAndVel(bool isInit)
     mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mTargetPositions) / dTime;
 }
 
-bool Environment::isTerminated()
+void Environment::checkTerminated()
 {
     // Episode ends due to failure: fall or character below height limit
     double root_y = mCharacter->getSkeleton()->getCOM()[1];
-    return isFall() || root_y < mLimitY * mCharacter->getGlobalRatio();
+    bool is_fall = root_y < mLimitY * mCharacter->getGlobalRatio();
+    bool knee_pain = mRewardConfig.use_knee_pain_termination && (mCharacter->getKneeLoadingMax() > 5.0);
+    bool terminated = is_fall || knee_pain;
+
+    // Log to mInfoMap for TensorBoard
+    mInfoMap["terminated"] = terminated ? 1.0 : 0.0;
+    mInfoMap["termination_fall"] = is_fall ? 1.0 : 0.0;
+    mInfoMap["termination_knee_pain"] = knee_pain ? 1.0 : 0.0;
 }
 
-bool Environment::isTruncated()
+void Environment::checkTruncated()
 {
     // Episode ends due to external limits: time or step count
+    bool time_limit = false;
+    bool step_limit = false;
+
     if (mEOEType == EOEType::tuple)
-        return mSimulationStep >= mHorizon;
+        step_limit = mSimulationStep >= mHorizon;
     else if (mEOEType == EOEType::abstime)
-        return mWorld->getTime() > 10.0;
-    return false;
+        time_limit = mWorld->getTime() > 10.0;
+
+    bool truncated = time_limit || step_limit;
+
+    // Log to mInfoMap for TensorBoard
+    mInfoMap["truncated"] = truncated ? 1.0 : 0.0;
+    mInfoMap["truncation_time"] = time_limit ? 1.0 : 0.0;
+    mInfoMap["truncation_steps"] = step_limit ? 1.0 : 0.0;
 }
 
 double Environment::calcReward()
 {
     double r = 0.0;
-    mRewardMap.clear();
-
     if (mRewardType == deepmimic || mRewardType == scadiver)
     {
         // Deep Mimic Reward Setting
@@ -1169,17 +1201,17 @@ double Environment::calcReward()
         r = multiplicative_part + additive_part;
 
         // Populate reward map for gaitnet
-        mRewardMap.insert(std::make_pair("r_loco", r_loco));
-        mRewardMap.insert(std::make_pair("r_avg", r_avg));
-        mRewardMap.insert(std::make_pair("r_step", r_step));
-        mRewardMap.insert(std::make_pair("r_metabolic", r_metabolic));
-        mRewardMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
+        mInfoMap.insert(std::make_pair("r_loco", r_loco));
+        mInfoMap.insert(std::make_pair("r_avg", r_avg));
+        mInfoMap.insert(std::make_pair("r_step", r_step));
+        mInfoMap.insert(std::make_pair("r_metabolic", r_metabolic));
+        mInfoMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
     }
 
     if (mCharacter->getActuatorType() == mus) r = 1.0;
 
     // Always store total reward
-    mRewardMap.insert(std::make_pair("r", r));
+    mInfoMap.insert(std::make_pair("r", r));
 
     return r;
 }
@@ -1476,9 +1508,14 @@ void Environment::step()
 
 void Environment::postStep()
 {
-    mCharacter->evalEnergy();
+    mInfoMap.clear();
+    mCharacter->evalStep();
     if (mRewardType == gaitnet) updateFootStep();
     mReward = calcReward();
+
+    // Check and cache termination/truncation status
+    checkTerminated();
+    checkTruncated();
 }
 
 void Environment::poseOptimization(int iter)
@@ -1601,6 +1638,9 @@ void Environment::poseOptimization(int iter)
 
 void Environment::reset(double phase)
 {
+    // Clear info map (includes termination/truncation status)
+    mInfoMap.clear();
+
     mTupleFilled = false;
     mSimulationStep = 0;
     mPhaseCount = 0;
@@ -1692,7 +1732,7 @@ void Environment::reset(double phase)
     mCharacter->setTorque(mCharacter->getTorque().setZero());
     if (mUseMuscle) {
         mCharacter->setActivations(mCharacter->getActivations().setZero());
-        mCharacter->resetEnergy();
+        mCharacter->resetStep();
     }
 
     mCharacter->clearLogs();
@@ -1741,28 +1781,11 @@ double Environment::getMetabolicReward()
 
 double Environment::getKneePainReward()
 {
-    // Get knee joint wrench magnitude for both legs (force in kN)
-    auto skel = mCharacter->getSkeleton();
-    auto kneeJointR = skel->getJoint("TibiaR");
-    auto kneeJointL = skel->getJoint("TibiaL");
-
-    // Right knee
-    double r_knee_right = 1.0;
-    if (kneeJointR) {
-        Eigen::Vector6d wrenchR = kneeJointR->getWrenchToChildBodyNode();
-        double knee_force_mag_R = std::sqrt(wrenchR[3]*wrenchR[3] + wrenchR[4]*wrenchR[4] + wrenchR[5]*wrenchR[5]) / 1000.0;
-        r_knee_right = exp(-mRewardConfig.knee_pain_weight * knee_force_mag_R);
-    }
-
-    // Left knee
-    double r_knee_left = 1.0;
-    if (kneeJointL) {
-        Eigen::Vector6d wrenchL = kneeJointL->getWrenchToChildBodyNode();
-        double knee_force_mag_L = std::sqrt(wrenchL[3]*wrenchL[3] + wrenchL[4]*wrenchL[4] + wrenchL[5]*wrenchL[5]) / 1000.0;
-        r_knee_left = exp(-mRewardConfig.knee_pain_weight * knee_force_mag_L);
-    }
-
-    return r_knee_right * r_knee_left;
+    // Use accumulated averaged knee loading instead of instantaneous
+    double avg_knee_loading = mCharacter->getKneeLoading();
+    double r_knee = exp(-mRewardConfig.knee_pain_weight * avg_knee_loading);
+    // std::cout << "knee_loading: " << avg_knee_loading << " r_knee: " << r_knee << " weight: " << mRewardConfig.knee_pain_weight << std::endl;
+    return r_knee;
 }
 
 double Environment::getLocoReward()

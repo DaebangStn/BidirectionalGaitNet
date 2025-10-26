@@ -170,7 +170,7 @@ private:
     void printCameraInfo();
     void initializeCameraPresets();
     void loadCameraPreset(int index);
-    void drawGround(double height);
+    void drawGround();
     void drawCollision();
 
     void drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color, bool isLineSkeleton = false);

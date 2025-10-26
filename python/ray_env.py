@@ -53,8 +53,8 @@ class MyEnv(gymnasium.Env):
                 self.muscle_tuples = [[], [], [], [], []]
         self.param_count = 0
 
-        # For reward map logging
-        self.reward_map_buffer = []
+        # Buffer for averaging info maps across episode
+        self.info_map_buffer = []
 
     def reset(self, seed=None, options=None):
         # Gymnasium API: reset() returns (observation, info)
@@ -66,12 +66,7 @@ class MyEnv(gymnasium.Env):
         self.env.reset()
         self.obs = self.env.getState()
 
-        info = {
-            'param_state': self.env.getParamState(),
-            'normalized_phase': self.env.getNormalizedPhase(),
-            'world_phase': self.env.getWorldPhase()
-        }
-
+        info = {}
         return self.obs, info
 
     def step(self, action):
@@ -82,30 +77,20 @@ class MyEnv(gymnasium.Env):
 
         self.obs = self.env.getState()
         reward = self.env.getReward()
+        terminated = self.env.isTerminated()
+        truncated = self.env.isTruncated()
 
-        # Accumulate reward map for logging
-        reward_map = dict(self.env.getRewardMap())
-        self.reward_map_buffer.append(reward_map)
+        # Build info dictionary with reward components and termination/truncation status from mInfoMap
+        info_map = dict(self.env.getInfoMap())
+        self.info_map_buffer.append(info_map)
 
-        # Use direct Gymnasium-aligned methods for episode termination
-        terminated = self.env.isTerminated()  # Episode ended due to failure (fall, out of bounds)
-        truncated = self.env.isTruncated()    # Episode ended due to time/step limit
-
-        # Build info dictionary
-        info = {
-            'reward_map': reward_map,
-            'param_state': self.env.getParamState(),
-            'normalized_phase': self.env.getNormalizedPhase(),
-            'world_phase': self.env.getWorldPhase()
-        }
+        info = info_map.copy()
 
         # Collect muscle tuples if two-level actuator
         if self.isTwoLevelActuator:
             mt = self.env.getRandomMuscleTuple()
             for i in range(len(mt)):
                 self.muscle_tuples[i].append(mt[i])
-            # Store muscle tuples in info for access by trainer
-            info['muscle_tuples'] = [np.array(self.muscle_tuples[i], dtype=np.float32) for i in range(len(self.muscle_tuples))]
 
         return self.obs, reward, terminated, truncated, info
 
@@ -119,25 +104,25 @@ class MyEnv(gymnasium.Env):
     def load_muscle_model_weights(self, w):
         self.env.setMuscleNetworkWeight(convert_to_torch_tensor(ray.get(w)))
 
-    def get_reward_map_average(self):
-        """Return average of accumulated reward maps and clear buffer"""
-        if not self.reward_map_buffer:
+    def get_info_map_average(self):
+        """Return average of accumulated info maps and clear buffer"""
+        if not self.info_map_buffer:
             return {}
 
         # Collect all keys
         all_keys = set()
-        for reward_map in self.reward_map_buffer:
-            all_keys.update(reward_map.keys())
+        for info_map in self.info_map_buffer:
+            all_keys.update(info_map.keys())
 
         # Average each key across all accumulated maps
         result = {}
         for key in all_keys:
-            values = [rm[key] for rm in self.reward_map_buffer if key in rm]
+            values = [im[key] for im in self.info_map_buffer if key in im]
             if values:
                 result[key] = np.mean(values)
 
         # Clear buffer after averaging
-        self.reward_map_buffer = []
+        self.info_map_buffer = []
         return result
 
 

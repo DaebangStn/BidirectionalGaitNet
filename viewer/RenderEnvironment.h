@@ -107,7 +107,7 @@ public:
 
     // Logging and debugging
     const std::vector<Eigen::VectorXd>& getDesiredTorqueLogs() { return mEnv->getDesiredTorqueLogs(); }
-    const std::map<std::string, double>& getRewardMap() { return mEnv->getRewardMap(); }
+    const std::map<std::string, double>& getInfoMap() { return mEnv->getInfoMap(); }
     RewardType getRewardType() { return mEnv->getRewardType(); }
 
     // Metadata
@@ -115,7 +115,7 @@ public:
 
 private:
     void RecordGraphData();
-    void RecordRewardData();
+    void RecordInfoData();
 
     Environment* mEnv;
     CBufferData<double>* mGraphData;

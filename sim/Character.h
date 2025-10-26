@@ -116,9 +116,14 @@ public:
     double getTorqueEnergy() const { return mTorqueEnergy; }
     double getTorqueStepEnergy() const { return mTorqueStepEnergy; }
 
-    // Combined Energy Methods (evaluates both metabolic and torque)
-    void evalEnergy();      // Evaluates both metabolic and torque energy
-    void resetEnergy();     // Resets both metabolic and torque energy
+    // Knee Loading Methods
+    double getKneeLoading() const { return mKneeLoading; }
+    double getKneeLoadingStep() const { return mKneeLoadingStep; }
+    double getKneeLoadingMax() const { return mKneeLoadingMax; }
+
+    // Combined Step-Based Metrics Methods (evaluates metabolic, torque, and knee loading)
+    void evalStep();        // Evaluates all step-based metrics
+    void resetStep();       // Resets all step-based metrics
     double getEnergy() const { return mMetabolicEnergy + mTorqueEnergy; }
 
     // Muscle Parameter Modification
@@ -175,6 +180,7 @@ public:
     Eigen::VectorXd sixDofToPos(Eigen::VectorXd raw_pos);
 
 private:
+    double calculateKneeLoadingStep(bool isLeft = false);
     bool mTorqueClipping;
 
     dart::dynamics::SkeletonPtr mSkeleton;
@@ -202,17 +208,28 @@ private:
     int mNumMuscleRelatedDof;
     Eigen::VectorXd mActivations;
 
+    // Step-Based Metrics Tracking System
+    double mStepDivisor;            // Unified divisor for all step-based metrics
+
     // Metabolic Energy Tracking
     MetabolicType mMetabolicType;
     Eigen::VectorXd mMuscleMassCache;
-    double mMetabolicEnergyAccum, mMetabolicAccumDivisor, mMetabolicEnergy, mMetabolicStepEnergy;
+    double mMetabolicEnergyAccum;
+    double mMetabolicEnergy;
+    double mMetabolicStepEnergy;
 
-    // Torque Energy Tracking (completely separate from metabolic)
+    // Torque Energy Tracking
     double mTorqueEnergyCoeff;      // Coefficient for torque-based energy calculation
     double mTorqueEnergyAccum;      // Accumulated torque energy
-    double mTorqueAccumDivisor;     // Divisor for averaging torque energy
     double mTorqueEnergy;           // Final torque energy value
     double mTorqueStepEnergy;       // Torque energy per step
+
+    // Knee Loading Tracking
+    double mKneeLoadingAccum;       // Accumulated knee loading
+    double mKneeLoading;            // Final averaged knee loading value
+    double mKneeLoadingStep;        // Knee loading per step
+    double mKneeLoadingMax;         // Maximum knee loading within current step
+    bool mStepComplete;             // Flag indicating if step evaluation is complete
 
     // Log
     std::vector<Eigen::Vector3d> mCOMLogs;

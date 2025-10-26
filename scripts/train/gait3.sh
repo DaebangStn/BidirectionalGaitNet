@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=gaitnet
 #SBATCH --cpus-per-task=128
-#SBATCH --nodes=2
+#SBATCH --nodes=3
 #SBATCH --tasks-per-node=1
 #SBATCH --partition=exo
 
@@ -30,7 +30,7 @@ srun --nodes=${worker_num} --ntasks=${worker_num} --cpus-per-task=${SLURM_CPUS_P
   --export=ALL,NCCL_SOCKET_IFNAME=ib0 ray start --address $ip_head --block --num-cpus ${SLURM_CPUS_PER_TASK} &
 
 sleep 3
-python3 -u python/ray_train.py --config=ppo_small_server --env "data/${SLURM_JOB_NAME}.xml"
+python3 -u python/ray_train.py --config=ppo_small_n3 --env "data/${SLURM_JOB_NAME}.xml"
 
 srun --nodes=${SLURM_NNODES} --ntasks=${SLURM_NNODES} --cpus-per-task="${SLURM_CPUS_PER_TASK}" \
   --export=ALL ray stop

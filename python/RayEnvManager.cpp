@@ -105,11 +105,11 @@ public:
         return py_mt;
     }
 
-    py::dict getRewardMap()
+    py::dict getInfoMap()
     {
-        const auto& rewardMap = Environment::getRewardMap();
+        const auto& infoMap = Environment::getInfoMap();
         py::dict py_map;
-        for (const auto& pair : rewardMap)
+        for (const auto& pair : infoMap)
         {
             py_map[py::cast(pair.first)] = pair.second;
         }
@@ -167,7 +167,7 @@ PYBIND11_MODULE(pysim, m)
         .def("isTerminated", &RayEnvManager::isTerminated)
         .def("isTruncated", &RayEnvManager::isTruncated)
         .def("getReward", &RayEnvManager::getReward)
-        .def("getRewardMap", &RayEnvManager::getRewardMap)
+        .def("getInfoMap", &RayEnvManager::getInfoMap)
         .def("getState", &RayEnvManager::getState)
         .def("getAction", &RayEnvManager::getAction)
 

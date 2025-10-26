@@ -151,6 +151,9 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("energy_torque", 1000);
     mGraphData->register_key("energy_combined", 1000);
 
+    // Register knee loading key (max value only)
+    mGraphData->register_key("knee_loading_max", 1000);
+
     // Register joint loading keys (hip, knee, ankle)
     std::vector<std::string> joints = {"hip", "knee", "ankle"};
     for (const auto& joint : joints) {
@@ -909,15 +912,31 @@ void GLFWApp::initEnv(std::string metadata)
             }
         }
 
-        TiXmlDocument doc;
-        doc.Parse(metadata.c_str());
-        TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
-        if (skel_elem) {
-            std::string skeletonPath = Trim(std::string(skel_elem->GetText()));
-            mMotionCharacter = new Character(skeletonPath, 0, 0, 0);
+        // Detect format by examining first non-whitespace character
+        size_t start = metadata.find_first_not_of(" \t\n\r");
+        if (start != std::string::npos && metadata[start] == '<') {
+            // XML format - extract skeleton path
+            TiXmlDocument doc;
+            doc.Parse(metadata.c_str());
+            TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
+            if (skel_elem) {
+                std::string skeletonPath = Trim(std::string(skel_elem->GetText()));
+                mMotionCharacter = new Character(skeletonPath, 0, 0, 0);
+            } else {
+                std::cerr << "No skeleton path found in XML metadata" << std::endl;
+                exit(-1);
+            }
         } else {
-            std::cerr << "No skeleton path found in metadata" << std::endl;
-            exit(-1);
+            // YAML format - extract skeleton path
+            YAML::Node config = YAML::Load(metadata);
+            if (config["environment"] && config["environment"]["skeleton"]) {
+                std::string skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
+                std::string resolved = PMuscle::URIResolver::getInstance().resolve(skelPath);
+                mMotionCharacter = new Character(resolved, 0, 0, 0);
+            } else {
+                std::cerr << "No skeleton path found in YAML metadata" << std::endl;
+                exit(-1);
+            }
         }
     }
     
@@ -1775,6 +1794,27 @@ void GLFWApp::drawSimVisualizationPanel()
         }
     }
 
+    // Knee Loading
+    if (ImGui::CollapsingHeader("Knee Loading", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        // Display current knee loading max value
+        ImGui::Text("Max Knee Loading: %.2f kN", mRenderEnv->getCharacter()->getKneeLoadingMax());
+
+        ImGui::Separator();
+
+        std::string title_knee = mPlotTitle ? mCheckpointName : "Max Knee Loading";
+        if (ImPlot::BeginPlot((title_knee + "##KneeLoading").c_str()))
+        {
+            ImPlot::SetupAxes("Time (s)", "Knee Loading (kN)");
+
+            // Plot max knee loading
+            std::vector<std::string> kneeKeys = {"knee_loading_max"};
+            plotGraphData(kneeKeys, ImAxis_Y1, true, false, "");
+
+            ImPlot::EndPlot();
+        }
+    }
+
     // Joint Loading
     if (ImGui::CollapsingHeader("Joint Loading", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -2511,10 +2551,10 @@ void GLFWApp::drawSimControlPanel()
             mRenderEnv->getCharacter()->setMetabolicType(static_cast<MetabolicType>(currentTypeInt));
         }
         ImGui::SameLine();
-        // Button to reset energy accumulation (both metabolic and torque)
+        // Button to reset step-based metrics (metabolic, torque, knee loading)
         if (ImGui::Button("Reset"))
         {
-            mRenderEnv->getCharacter()->resetEnergy();
+            mRenderEnv->getCharacter()->resetStep();
         }
 
         ImGui::SameLine();
@@ -3107,6 +3147,7 @@ void GLFWApp::drawTimingPane()
     if (mRenderEnv) {
         ImGui::Text("Simulation Time: %.3f s", mRenderEnv->getWorld()->getTime());
     }
+    ImGui::Text("Sim Step Count : %d", mRenderEnv->GetEnvironment()->getSimulationStep());
     
     ImGui::Separator();
 
@@ -3262,7 +3303,7 @@ void GLFWApp::drawSimFrame()
     glTranslatef(totalTrans[0] * 0.001, totalTrans[1] * 0.001, totalTrans[2] * 0.001);
     glEnable(GL_DEPTH_TEST);
 
-    if (!mRenderConditions) drawGround(1E-3);
+    if (!mRenderConditions) drawGround();
 
     // Simulated Character
     if (mRenderEnv){
@@ -3402,29 +3443,67 @@ void GLFWApp::drawSimFrame()
 
 }
 
-void GLFWApp::drawGround(double height)
+// void GLFWApp::drawGround(double height)
+// {
+//     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+//     glDisable(GL_LIGHTING);
+//     double width = 0.005;
+//     int count = 0;
+//     glBegin(GL_QUADS);
+//     for (double x = -100.0; x < 100.01; x += 1.0)
+//     {
+//         for (double z = -100.0; z < 100.01; z += 1.0)
+//         {
+//             if (count % 2 == 0)
+//                 glColor3f(216.0 / 255.0, 211.0 / 255.0, 204.0 / 255.0);
+//             else
+//                 glColor3f(216.0 / 255.0 - 0.1, 211.0 / 255.0 - 0.1, 204.0 / 255.0 - 0.1);
+//             count++;
+//             glVertex3f(x, height, z);
+//             glVertex3f(x + 1.0, height, z);
+//             glVertex3f(x + 1.0, height, z + 1.0);
+//             glVertex3f(x, height, z + 1.0);
+//         }
+//     }
+//     glEnd();
+//     glEnable(GL_LIGHTING);
+// }
+
+void GLFWApp::drawGround()
 {
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    // Get ground dimensions from the world
+    // Ground is typically the last skeleton added to the world
+    Eigen::Vector3d size(100.0, 1.0, 250.0); // Default size
+    const double mWidth = size[0];
+    const double mHeight = size[1];
+    const double depth = size[2];
+
     glDisable(GL_LIGHTING);
-    double width = 0.005;
-    int count = 0;
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    // Draw checkerboard pattern
     glBegin(GL_QUADS);
-    for (double x = -100.0; x < 100.01; x += 1.0)
+
+    Eigen::Vector3d color1,color2;
+    color1 << 216.0/255.0, 211.0/255.0, 204.0/255.0;
+    color2 << 216.0/255.0-0.1, 211.0/255.0-0.1, 204.0/255.0-0.1;
+    const double grid_size = 1.0;
+
+    for(double x=-mWidth/2.0; x<mWidth/2.0 + 0.01; x+=grid_size)
     {
-        for (double z = -100.0; z < 100.01; z += 1.0)
+        for(double z=-5.0; z<depth + 0.01 - 5.0; z+=grid_size)
         {
-            if (count % 2 == 0)
-                glColor3f(216.0 / 255.0, 211.0 / 255.0, 204.0 / 255.0);
-            else
-                glColor3f(216.0 / 255.0 - 0.1, 211.0 / 255.0 - 0.1, 204.0 / 255.0 - 0.1);
-            count++;
-            glVertex3f(x, height, z);
-            glVertex3f(x + 1.0, height, z);
-            glVertex3f(x + 1.0, height, z + 1.0);
-            glVertex3f(x, height, z + 1.0);
+            bool isEven = (int(x/grid_size) + int(z/grid_size)) % 2 == 0;
+            if(isEven) glColor4f(color1[0], color1[1], color1[2] ,1.0);
+            else glColor4f(color2[0], color2[1], color2[2] ,1.0);
+            glVertex3f(x,           0.0, z);
+            glVertex3f(x+grid_size, 0.0, z);
+            glVertex3f(x+grid_size, 0.0, z+grid_size);
+            glVertex3f(x,           0.0, z+grid_size);
         }
     }
     glEnd();
+
     glEnable(GL_LIGHTING);
 }
 

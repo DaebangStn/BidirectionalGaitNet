@@ -1,0 +1,76 @@
+<!-- actuator : 'pd', 'torque', 'muscle', 'mass'  -->
+<skeleton defaultKp="200" defaultKv="40" actuator="mass_lower" damping="0.1">@data/skeleton/base.xml</skeleton>
+<ground>@data/ground.xml</ground>
+
+<h5>@data/motion/walk.h5</h5>
+
+<!-- Making BVH Cyclic -->
+<cyclicbvh>true</cyclicbvh>
+
+<!-- Controller Parameter -->
+<residual>true</residual>
+
+<!-- Simulation Setting  -->
+<simHz>480</simHz>
+<controlHz>30</controlHz>
+
+<!-- Muscle Control  -->
+<muscle>@data/muscle_distribute_lower_only.xml</muscle>
+<inferencepersim>1</inferencepersim>
+
+<training>
+    <max_epoch>10002</max_epoch>
+    <checkpoint_freq>1000</checkpoint_freq>
+</training>
+
+<!-- Advanced Option -->
+<heightCalibration strict="true">true</heightCalibration>
+
+<!-- rot : "one_foot" or "mid_feet" (default : "one_foot") -->
+<musclePoseOptimization rot="one_foot">true</musclePoseOptimization>
+
+<enforceSymmetry>true</enforceSymmetry>
+<actionScale>0.04</actionScale>
+
+<!-- -1 means not using -->
+<timeWarping>0.001</timeWarping>
+<stanceLearning>false</stanceLearning>
+<metabolicReward>true</metabolicReward>
+
+<!-- Advanced Option (Muscle) -->
+<meshLbsWeight>false</meshLbsWeight>
+<useVelocityForce>false</useVelocityForce>
+<useJointState>true</useJointState>
+<learningStd>false</learningStd>
+<hardPhaseClipping>true</hardPhaseClipping>
+<softPhaseClipping>false</softPhaseClipping>
+<torqueClipping>false</torqueClipping>
+<includeJtPinSPD>false</includeJtPinSPD>
+<useNormalizedParamState>false</useNormalizedParamState>
+<UseKneePainTermination>true</UseKneePainTermination>
+
+<!-- eoe : 'time', 'tuple' -->
+<eoeType>tuple</eoeType>
+
+<!-- reward : 'deepmimic', 'gaitnet'-->
+<rewardType>gaitnet</rewardType>
+
+<!-- Metabolic Configuration -->
+<!-- metabolicType : 'LEGACY', 'A', 'A2', 'MA', 'MA2' -->
+<MetabolicType>A2</MetabolicType>
+
+<!-- For GaitNet Reward  -->
+<HeadLinearAccWeight>4.0</HeadLinearAccWeight>
+<HeadRotWeight>4.0</HeadRotWeight>
+<StepWeight>2.0</StepWeight>
+<MetabolicWeight>0.2</MetabolicWeight>
+<AvgVelWeight>6.0</AvgVelWeight>
+
+<parameter>
+    <gait>
+        <stride min = "0.75" max = "1.25" default = "1.0" sampling="uniform"/>
+        <cadence min = "0.75" max = "1.25" default = "1.0" sampling="uniform"/>
+    </gait>
+</parameter>
+
+

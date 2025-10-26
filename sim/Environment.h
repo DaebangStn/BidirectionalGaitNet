@@ -67,6 +67,7 @@ struct RewardConfig
     // Knee pain reward parameters
     double knee_pain_weight = 1.0;
     double knee_pain_scale = 1.0;
+    bool use_knee_pain_termination = false;
 
     // Locomotion reward weights (always active for gaitnet)
     double head_linear_acc_weight = 4.0;
@@ -105,10 +106,16 @@ public:
     void step();
     void reset(double phase = -1.0);  // phase: 0.0-1.0 for specific phase, -1.0 for randomized
     double getReward() { return mReward; }
-    const std::map<std::string, double>& getRewardMap() const { return mRewardMap; }
+    const std::map<std::string, double>& getInfoMap() const { return mInfoMap; }
 
-    bool isTerminated();  // Episode ended due to failure (fall, out of bounds)
-    bool isTruncated();   // Episode ended due to time/step limit
+    bool isTerminated() const {
+        auto it = mInfoMap.find("terminated");
+        return it != mInfoMap.end() && it->second > 0.5;
+    }
+    bool isTruncated() const {
+        auto it = mInfoMap.find("truncated");
+        return it != mInfoMap.end() && it->second > 0.5;
+    }
     // void setRefMotion(BVH *_bvh, Character *_character);
 
     void updateTargetPosAndVel(bool isInit = false);
@@ -340,6 +347,10 @@ private:
     void calcActivation();
     void postMuscleStep();
 
+    // Termination/truncation check methods (called in postStep)
+    void checkTerminated();
+    void checkTruncated();
+
     Eigen::VectorXd mTargetPositions;
     Eigen::VectorXd mTargetVelocities;
     double mActionScale;
@@ -389,7 +400,7 @@ private:
     // Reward Type (Deep Mimic or GaitNet)
     RewardType mRewardType;
     double mReward;
-    std::map<std::string, double> mRewardMap;
+    std::map<std::string, double> mInfoMap;
 
     // GaitNet
     double mRefStride;
@@ -442,7 +453,7 @@ private:
 
     py::object loading_network;
 
-    std::vector<bool> mUseWeights; // Onle For Rendering
+    std::vector<bool> mUseWeights; // Only For Rendering
     int mHorizon;
 
     std::vector<Eigen::VectorXd> mDesiredTorqueLogs;

@@ -22,14 +22,14 @@ void RenderEnvironment::step() {
     }
     mEnv->postStep();
 
-    // Record reward data after step completion
-    RecordRewardData();
+    // Record info data after step completion
+    RecordInfoData();
 }
 
-void RenderEnvironment::RecordRewardData() {
-    // Get reward map from environment and log to graph data
-    const std::map<std::string, double>& rewardMap = mEnv->getRewardMap();
-    for (const auto& pair : rewardMap) {
+void RenderEnvironment::RecordInfoData() {
+    // Get info map from environment and log to graph data
+    const std::map<std::string, double>& infoMap = mEnv->getInfoMap();
+    for (const auto& pair : infoMap) {
         if (mGraphData->key_exists(pair.first)) {
             mGraphData->push(pair.first, pair.second);
         }
@@ -127,6 +127,12 @@ void RenderEnvironment::RecordGraphData() {
     if (mGraphData->key_exists("energy_combined")) {
         const double combinedEnergy = character->getEnergy();
         mGraphData->push("energy_combined", combinedEnergy);
+    }
+
+    // Log knee loading (max value)
+    if (mGraphData->key_exists("knee_loading_max")) {
+        const double kneeLoading = character->getKneeLoadingMax();
+        mGraphData->push("knee_loading_max", kneeLoading);
     }
 
     // Log joint loading (joint constraint forces) for hip, knee, and ankle

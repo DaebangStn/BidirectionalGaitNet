@@ -4,6 +4,10 @@
 #SBATCH --nodes=1
 #SBATCH --partition=exo
 
+
+ulimit -u 65535
+ulimit -n 65536
+
 let "num_pending_trials=(${SLURM_NNODES} * 64)"
 export TUNE_MAX_PENDING_TRIALS_PG=${num_pending_trials}
 

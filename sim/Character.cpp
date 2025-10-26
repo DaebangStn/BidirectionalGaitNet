@@ -41,7 +41,7 @@ static std::unordered_map<std::string, ActuatorType> ActuatorTypeMap = {
 ActuatorType getActuatorType(std::string type) { 
     auto it = ActuatorTypeMap.find(type);
     if (it == ActuatorTypeMap.end()) {
-        throw std::runtime_error("Invalid actuactor type: " + type);
+        throw std::runtime_error("Invalid actuator type: " + type);
     }
     return it->second;
 }
@@ -242,15 +242,24 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     mLongOpt = false;
     mTorqueClipping = false;
 
+    // Initialize step-based metrics system
+    mStepDivisor = 0.0;
+
     mMetabolicType = LEGACY;
     mMetabolicEnergyAccum = 0.0;
-    mMetabolicAccumDivisor = 0.0;
+    mMetabolicEnergy = 0.0;
+    mMetabolicStepEnergy = 0.0;
 
     mTorqueEnergyCoeff = 0.0;
     mTorqueEnergyAccum = 0.0;
-    mTorqueAccumDivisor = 0.0;
     mTorqueEnergy = 0.0;
     mTorqueStepEnergy = 0.0;
+
+    mKneeLoadingAccum = 0.0;
+    mKneeLoading = 0.0;
+    mKneeLoadingStep = 0.0;
+    mKneeLoadingMax = 0.0;
+    mStepComplete = true;
 
     mRefSkeleton = BuildFromFile(path, defaultDamping);
     for (auto bn : mSkeleton->getBodyNodes())
@@ -358,7 +367,6 @@ void Character::step()
             break;
         }
         mMetabolicEnergyAccum += mMetabolicStepEnergy;
-        mMetabolicAccumDivisor += 1.0;
     }
 
     switch (mActuatorType)
@@ -367,14 +375,12 @@ void Character::step()
         mSkeleton->setForces(mTorque);
         mTorqueStepEnergy = mTorque.cwiseAbs().sum();
         mTorqueEnergyAccum += mTorqueStepEnergy;
-        mTorqueAccumDivisor += 1.0;
         break;
     case pd:
         mTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
         mSkeleton->setForces(mTorque);
         mTorqueStepEnergy = mTorque.cwiseAbs().sum();
         mTorqueEnergyAccum += mTorqueStepEnergy;
-        mTorqueAccumDivisor += 1.0;
         break;
     case mus:
     case mass:
@@ -411,15 +417,44 @@ void Character::step()
 
             mTorqueStepEnergy = upperBodyTorque.cwiseAbs().sum();
             mTorqueEnergyAccum += mTorqueStepEnergy;
-            mTorqueAccumDivisor += 1.0;    
         }
         break;
     }
     default:
         break;
     }
+
+    // Handle step completion transition and max knee loading tracking
+    if (mStepComplete) {
+        // Transition from complete to incomplete - reset max to incoming value
+        double knee_force_left = calculateKneeLoadingStep(true);
+        double knee_force_right = calculateKneeLoadingStep(false);
+        mKneeLoadingStep = (knee_force_left + knee_force_right) / 2.0;
+        mKneeLoadingMax = std::max(knee_force_left, knee_force_right);
+        mStepComplete = false;
+    } else {
+        // Within a step - track maximum
+        double knee_force_left = calculateKneeLoadingStep(true);
+        double knee_force_right = calculateKneeLoadingStep(false);
+        mKneeLoadingStep = (knee_force_left + knee_force_right) / 2.0;
+        mKneeLoadingMax = std::max(mKneeLoadingMax, std::max(knee_force_left, knee_force_right));
+    }
+    mKneeLoadingAccum += mKneeLoadingStep;
+
+    // Increment unified step divisor
+    mStepDivisor += 1.0;
+
     mCOMLogs.push_back(mSkeleton->getCOM());
     mHeadVelLogs.push_back(mSkeleton->getBodyNode("Head")->getCOMLinearVelocity());
+}
+
+double Character::calculateKneeLoadingStep(bool isLeft)
+{
+    auto kneeJoint = isLeft ? mSkeleton->getJoint("TibiaL") : mSkeleton->getJoint("TibiaR");
+    double knee_force = 0.0;
+    Eigen::Vector6d wrench = kneeJoint->getWrenchToChildBodyNode();
+    knee_force = std::sqrt(wrench[3]*wrench[3] + wrench[4]*wrench[4] + wrench[5]*wrench[5]) / 1000.0;
+    return knee_force;
 }
 
 void Character::setActivations(Eigen::VectorXd _activation)
@@ -582,8 +617,7 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
             }
     }
 
-    for (auto m : mMuscles)
-        mNumMuscleRelatedDof += m->num_related_dofs;
+    for (auto m : mMuscles) mNumMuscleRelatedDof += m->num_related_dofs;
 
     mActivations = Eigen::VectorXd::Zero(mMuscles.size());
 }
@@ -591,40 +625,55 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
 void Character::cacheMuscleMass()
 {
     mMuscleMassCache = Eigen::VectorXd::Zero(mMuscles.size());
-    for (int i = 0; i < mMuscles.size(); i++)
-    {
-        mMuscleMassCache[i] = mMuscles[i]->GetMass();
+    for (int i = 0; i < mMuscles.size(); i++) mMuscleMassCache[i] = mMuscles[i]->GetMass();
+}
+
+void Character::evalStep()
+{
+    // Guard against division by zero
+    if (mStepDivisor < 1e-6) {
+        // No steps accumulated - set all to zero
+        mMetabolicEnergy = 0.0;
+        mTorqueEnergy = 0.0;
+        mKneeLoading = 0.0;
+    } else {
+        // Average all accumulated metrics
+        mMetabolicEnergy = mMetabolicEnergyAccum / mStepDivisor;
+        mTorqueEnergy = mTorqueEnergyCoeff * mTorqueEnergyAccum / mStepDivisor;
+        mKneeLoading = mKneeLoadingAccum / mStepDivisor;
     }
-}
 
-void Character::evalEnergy()
-{
-    // Evaluate metabolic energy
-    if (mMetabolicAccumDivisor < 1e-6) mMetabolicEnergy = 0.0;
-    else mMetabolicEnergy = mMetabolicEnergyAccum / mMetabolicAccumDivisor;
+    // Reset accumulators (not the final values - those persist for reward calculation)
     mMetabolicEnergyAccum = 0.0;
-    mMetabolicAccumDivisor = 0.0;
-
-    // Evaluate torque energy
-    if (mTorqueAccumDivisor < 1e-6) mTorqueEnergy = 0.0;
-    else mTorqueEnergy = mTorqueEnergyCoeff * mTorqueEnergyAccum / mTorqueAccumDivisor;
     mTorqueEnergyAccum = 0.0;
-    mTorqueAccumDivisor = 0.0;
+    mKneeLoadingAccum = 0.0;
+    mStepDivisor = 0.0;
+
+    // Mark step as complete
+    mStepComplete = true;
 }
 
-void Character::resetEnergy()
+void Character::resetStep()
 {
-    // Reset metabolic energy
+    // Reset accumulators
     mMetabolicEnergyAccum = 0.0;
-    mMetabolicAccumDivisor = 0.0;
+    mTorqueEnergyAccum = 0.0;
+    mKneeLoadingAccum = 0.0;
+    mStepDivisor = 0.0;
+
+    // Reset final averaged values
     mMetabolicEnergy = 0.0;
-    mMetabolicStepEnergy = 0.0;
-
-    // Reset torque energy
-    mTorqueEnergyAccum = 0.0;
-    mTorqueAccumDivisor = 0.0;
     mTorqueEnergy = 0.0;
+    mKneeLoading = 0.0;
+
+    // Reset per-step values
+    mMetabolicStepEnergy = 0.0;
     mTorqueStepEnergy = 0.0;
+    mKneeLoadingStep = 0.0;
+    mKneeLoadingMax = 0.0;
+
+    // Reset step completion flag
+    mStepComplete = true;
 }
 
 void Character::setMuscleParam(const std::string& muscleName, const std::string& paramType, double value)
@@ -645,7 +694,7 @@ void Character::clearLogs()
     mCOMLogs.clear();
     mHeadVelLogs.clear();
     mMuscleTorqueLogs.clear();
-    resetEnergy();
+    resetStep();
 }
 
 Eigen::VectorXd Character::getMirrorActivation(Eigen::VectorXd _activation)

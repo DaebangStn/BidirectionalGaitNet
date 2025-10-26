@@ -47,7 +47,13 @@
       "bitset": "cpp",
       "regex": "cpp",
       "valarray": "cpp",
-      "ratio": "cpp"
+      "ratio": "cpp",
+      "cstdarg": "cpp",
+      "cstring": "cpp",
+      "cwctype": "cpp",
+      "fstream": "cpp",
+      "sstream": "cpp",
+      "cinttypes": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",

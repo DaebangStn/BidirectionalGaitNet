@@ -30,19 +30,16 @@ MakeBoxShape(const Eigen::Vector3d &size)
 {
 	return std::shared_ptr<BoxShape>(new BoxShape(size));
 }
-ShapePtr
-MakeCapsuleShape(double radius, double height)
+ShapePtr MakeCapsuleShape(double radius, double height)
 {
 	return std::shared_ptr<CapsuleShape>(new CapsuleShape(radius, height));
 }
-ShapePtr
-MakeCylinderShape(double radius, double height)
+ShapePtr MakeCylinderShape(double radius, double height)
 {
 	return std::shared_ptr<CylinderShape>(new CylinderShape(radius, height));
 }
 
-dart::dynamics::Inertia
-MakeInertia(const dart::dynamics::ShapePtr &shape, double mass)
+dart::dynamics::Inertia MakeInertia(const dart::dynamics::ShapePtr &shape, double mass)
 {
 	dart::dynamics::Inertia inertia;
 
@@ -78,8 +75,14 @@ MakePlanarJointProperties(const std::string &name, const Eigen::Isometry3d &pare
 	return props;
 }
 
-BallJoint::Properties *
-MakeBallJointProperties(const std::string &name, const Eigen::Isometry3d &parent_to_joint, const Eigen::Isometry3d &child_to_joint, const Eigen::Vector3d &lower, const Eigen::Vector3d &upper, const double damping, const double friction, const Eigen::Vector3d stiffness = Eigen::Vector3d::Zero())
+BallJoint::Properties* MakeBallJointProperties(const std::string &name, 
+                                               const Eigen::Isometry3d &parent_to_joint, 
+                                               const Eigen::Isometry3d &child_to_joint, 
+                                               const Eigen::Vector3d &lower, 
+                                               const Eigen::Vector3d &upper, 
+                                               const double damping, 
+                                               const double friction, 
+                                               const Eigen::Vector3d &stiffness)
 {
 	BallJoint::Properties *props = new BallJoint::Properties();
 	props->mName = name;
@@ -94,7 +97,7 @@ MakeBallJointProperties(const std::string &name, const Eigen::Isometry3d &parent
 	props->mForceUpperLimits = Eigen::Vector3d::Constant(1000.0);
 	props->mDampingCoefficients = Eigen::Vector3d::Constant(damping);
 	props->mFrictions = Eigen::Vector3d::Constant(friction);
-	props->mSpringStiffnesses = stiffness; // Eigen::Vector3d::Constant(stiffness);
+	props->mSpringStiffnesses = stiffness;
 	return props;
 }
 

@@ -213,7 +213,6 @@ class MyTrainer(PPO):
         self.device = torch.device(
             "cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-        self.rollout = config.pop("rollout")
         self.metadata = config.pop("metadata")
         self.isTwoLevelActuator = config.pop("isTwoLevelActuator")
 
@@ -224,7 +223,7 @@ class MyTrainer(PPO):
 
         self.env_config = config.pop("env_config")
 
-        if self.isTwoLevelActuator and not self.rollout:
+        if self.isTwoLevelActuator:
             self.muscle_learner = MuscleLearner(self.device, self.env_config['num_actuator_action'], self.env_config['num_muscles'], self.env_config["num_muscle_dofs"], learning_rate=self.trainer_config[
                                                 "muscle_lr"], num_epochs=self.trainer_config["muscle_num_epochs"], batch_size=self.trainer_config["muscle_sgd_minibatch_size"], is_cascaded=self.env_config["cascading"])
 
@@ -234,50 +233,31 @@ class MyTrainer(PPO):
                 worker.foreach_env.remote(
                     lambda env: env.load_muscle_model_weights(model_weights))
 
-        if self.rollout:
-            for worker in self.remote_workers:
-                worker.foreach_env.remote(lambda env: env.set_is_rollout())
-
-            def apply_seed_to_worker(worker, callable, _n):
-                envs = worker.async_env.vector_env.get_unwrapped()
-                for env in envs:
-                    callable(env, _n)
-                    _n += 1
-
-            seed_idx = 0
-            for worker in self.remote_workers:
-                worker.apply.remote(lambda worker: apply_seed_to_worker(
-                    worker, lambda env, _n: env.set_idx(_n), seed_idx))
-                seed_idx += config['num_envs_per_worker']
-
     def step(self):
         # Simulation NN Learning
         result = PPO.step(self)
         result["num_tuples"] = {}
         result["loss"] = {}
 
-        # Collect reward component averages with optimized IPC
-        if not self.rollout:
-            # Each environment returns its own average (not list of maps)
-            buffer = [worker.foreach_env.remote(
-                lambda env: env.get_reward_map_average())
-                for worker in self.remote_workers]
+        # Collect info map averages from each environment
+        buffer = [worker.foreach_env.remote(
+            lambda env: env.get_info_map_average())
+            for worker in self.remote_workers]
 
-            # Collect all worker averages
-            worker_rewards = []
-            for worker_maps in ray.get(buffer):
-                # Each env already returned averaged dict
-                for avg_map in worker_maps:
-                    if avg_map:  # Skip empty dicts
-                        worker_rewards.append(avg_map)
+        # Collect all worker averages
+        worker_info_maps = []
+        for worker_maps in ray.get(buffer):
+            for avg_map in worker_maps:
+                if avg_map:  # Skip empty dicts
+                    worker_info_maps.append(avg_map)
 
-            # Average across all workers/envs and add to metrics
-            if worker_rewards:
-                avg_reward_components = mean_dict_list(worker_rewards)
-                result['sampler_results']['custom_metrics']['reward'] = avg_reward_components
+        # Average across all workers/envs and add to metrics
+        if worker_info_maps:
+            avg_info_map = mean_dict_list(worker_info_maps)
+            result['sampler_results']['custom_metrics']['info'] = avg_info_map
 
         # For Two Level Controller
-        if self.isTwoLevelActuator and not self.rollout:
+        if self.isTwoLevelActuator:
             start = time.perf_counter()
             mts = []
             muscle_transitions = []
@@ -325,7 +305,7 @@ class MyTrainer(PPO):
     def __getstate__(self):
         state = PPO.__getstate__(self)
         state["metadata"] = self.metadata
-        if self.isTwoLevelActuator and not self.rollout:
+        if self.isTwoLevelActuator:
             state["muscle"] = self.muscle_learner.get_weights()
             state["muscle_optimizer"] = self.muscle_learner.get_optimizer_weights()
         if self.env_config["cascading"]:
@@ -334,7 +314,7 @@ class MyTrainer(PPO):
 
     def __setstate__(self, state):
         PPO.__setstate__(self, state)
-        if self.isTwoLevelActuator and not self.rollout:
+        if self.isTwoLevelActuator:
             self.muscle_learner.set_weights(state["muscle"])
             self.muscle_learner.set_optimizer_weights(
                 state["muscle_optimizer"])
@@ -364,7 +344,6 @@ parser.add_argument("--config-file", type=str, default="python/ray_config.py")
 parser.add_argument("--env", type=str, default="data/base_lonly.xml")
 parser.add_argument("--checkpoint", type=str, default=None)
 parser.add_argument("--epoch", type=int, default=None, help="Maximum training epochs (overrides XML config)")
-parser.add_argument("--rollout", action='store_true')
 
 if __name__ == "__main__":
 
@@ -425,16 +404,7 @@ if __name__ == "__main__":
     print(ray.nodes())
 
     config = get_config_from_file(args.config_file, args.config)
-    if args.rollout:
-        config["rollout"] = args.rollout
-        config["num_sgd_iter"] = 0
-        config["kl_coeff"] = 0
-        ModelCatalog.register_custom_model("MyModel", RolloutNNRay)
-        with open('rollout/env.xml', 'w') as f:
-            f.write(env_content)
-    else:
-        config["rollout"] = False
-        ModelCatalog.register_custom_model("MyModel", SimulationNN_Ray)
+    ModelCatalog.register_custom_model("MyModel", SimulationNN_Ray)
 
     # Register environment with appropriate file type
     if is_xml:
@@ -446,9 +416,6 @@ if __name__ == "__main__":
 
     # Always use auto for rollout_fragment_length to avoid batch size division errors
     config["rollout_fragment_length"] = "auto"
-
-    if args.rollout:
-        config["batch_mode"] = "complete_episodes"
 
     # Initialize environment with appropriate file type
     with MyEnv(env_content, is_xml=is_xml) if is_xml else MyEnv(env_content) as env:

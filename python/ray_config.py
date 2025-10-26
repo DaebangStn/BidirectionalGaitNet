@@ -130,6 +130,9 @@ CONFIG["ppo_medium_pc"] = copy.deepcopy(CONFIG["ppo_medium"])
 CONFIG["ppo_medium_pc"]["num_workers"] = 32
 
 # Small Set
+CONFIG["ppo_small_n3"] = copy.deepcopy(CONFIG["ppo_small"])
+CONFIG["ppo_small_n3"]["num_workers"] = 128 * 3
+
 CONFIG["ppo_small_server"] = copy.deepcopy(CONFIG["ppo_small"])
 CONFIG["ppo_small_server"]["num_workers"] = 128 * 2
 
