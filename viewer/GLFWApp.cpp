@@ -329,7 +329,15 @@ GLFWApp::GLFWApp(int argc, char **argv)
             try {
                 py::object py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(path);
                 if (!py_metadata.is_none()) {
-                    mCachedMetadata = py_metadata.cast<std::string>();
+                    // Handle both Ray 2.0.1 (string) and Ray 2.12.0 (dict) metadata formats
+                    if (py::isinstance<py::str>(py_metadata)) {
+                        // Ray 2.0.1: metadata is XML string
+                        mCachedMetadata = py_metadata.cast<std::string>();
+                    } else if (py::isinstance<py::dict>(py_metadata)) {
+                        // Ray 2.12.0: metadata is dict (usually empty)
+                        // For now, skip dict metadata as it doesn't contain XML config
+                        LOG_INFO("Checkpoint uses Ray 2.12.0 format with dict metadata (skipping)");
+                    }
                 }
             } catch (const py::error_already_set& e) {
                 LOG_WARN("Warning: Failed to load metadata from network path: " << e.what());

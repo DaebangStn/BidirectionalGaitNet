@@ -2,12 +2,13 @@ import torch.optim as optim
 import argparse
 import numpy as np
 import time
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict
 import torch
-import pickle
 import xml.etree.ElementTree as ET
-from python.ray_model import SimulationNN_Ray, MuscleNN, RolloutNNRay
+from python.ray_model import SimulationNN_Ray, MuscleNN
 from python.ray_env import MyEnv
 from python.util import timestamp
 
@@ -43,7 +44,7 @@ def mean_dict_list(dict_list):
 
 
 class MuscleLearner:
-    def __init__(self, device, num_actuator_action, num_muscles, num_muscle_dofs,
+    def __init__(self, device, num_actuator_action, num_muscles, num_muscle_dof,
                  learning_rate=1e-4, num_epochs=3, batch_size=128, model=None, is_cascaded=False):
         self.device = device
         self.num_actuator_action = num_actuator_action
@@ -52,13 +53,12 @@ class MuscleLearner:
         self.muscle_batch_size = batch_size
         self.default_learning_rate = learning_rate
         self.learning_rate = self.default_learning_rate
-        # self.use_timewarp = use_timewarp
         self.is_cascaded = is_cascaded
 
         if model:
             self.model = model
         else:
-            self.model = MuscleNN(num_muscle_dofs, self.num_actuator_action,
+            self.model = MuscleNN(num_muscle_dof, self.num_actuator_action,
                                   self.num_muscles, is_cascaded=self.is_cascaded).to(self.device)
 
         parameters = self.model.parameters()
@@ -205,21 +205,42 @@ class MuscleLearner:
 
 
 class MyTrainer(PPO):
+    # Class variables to store metadata for checkpoint naming
+    _metadata_name = None
+    _training_start_timestamp = None
+
     def get_default_policy_class(self, config):
         return PPOTorchPolicy
 
     def setup(self, config):
 
-        self.device = torch.device(
-            "cuda") if torch.cuda.is_available() else torch.device("cpu")
-
+        self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.metadata = config.pop("metadata")
+        self.metadata_name = config.pop("metadata_name")
+        self.training_start_timestamp = config.pop("training_start_timestamp")
+
+        # Store in class variables for checkpoint naming
+        MyTrainer._metadata_name = self.metadata_name
+        MyTrainer._training_start_timestamp = self.training_start_timestamp
         self.isTwoLevelActuator = config.pop("isTwoLevelActuator")
 
         self.trainer_config = config.pop("trainer_config")
         PPO.setup(self, config=config)
         self.max_reward = 0
-        self.remote_workers = self.workers.remote_workers()
+
+        # Monkey-patch StorageContext to use custom checkpoint naming
+        from ray.train._internal.storage import StorageContext
+
+        def custom_checkpoint_dir_name(index: int):
+            """Custom checkpoint directory naming format using trainer iteration."""
+            # Use self.iteration from the trainer instance instead of storage index
+            iteration = self.iteration if hasattr(self, 'iteration') else index
+            if MyTrainer._metadata_name and MyTrainer._training_start_timestamp:
+                return f"{MyTrainer._metadata_name}-{iteration:06d}-{MyTrainer._training_start_timestamp}"
+            else:
+                return f"checkpoint_{index:06d}"
+
+        StorageContext._make_checkpoint_dir_name = staticmethod(custom_checkpoint_dir_name)
 
         self.env_config = config.pop("env_config")
 
@@ -229,9 +250,9 @@ class MyTrainer(PPO):
 
             model_weights = ray.put(
                 self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-            for worker in self.remote_workers:
-                worker.foreach_env.remote(
-                    lambda env: env.load_muscle_model_weights(model_weights))
+            self.workers.foreach_worker(
+                lambda worker: worker.foreach_env(
+                    lambda env: env.load_muscle_model_weights(model_weights)))
 
     def step(self):
         # Simulation NN Learning
@@ -240,13 +261,13 @@ class MyTrainer(PPO):
         result["loss"] = {}
 
         # Collect info map averages from each environment
-        buffer = [worker.foreach_env.remote(
-            lambda env: env.get_info_map_average())
-            for worker in self.remote_workers]
+        results = self.workers.foreach_worker(
+            lambda worker: worker.foreach_env(lambda env: env.get_info_map_average())
+        )
 
         # Collect all worker averages
         worker_info_maps = []
-        for worker_maps in ray.get(buffer):
+        for worker_maps in results:
             for avg_map in worker_maps:
                 if avg_map:  # Skip empty dicts
                     worker_info_maps.append(avg_map)
@@ -263,8 +284,10 @@ class MyTrainer(PPO):
             muscle_transitions = []
 
             for idx in range(5 if self.env_config["cascading"] else 3):
-                mts.append(ray.get([worker.foreach_env.remote(
-                    lambda env: env.get_muscle_tuple(idx)) for worker in self.remote_workers]))
+                worker_results = self.workers.foreach_worker(
+                    lambda worker: worker.foreach_env(lambda env: env.get_muscle_tuple(idx))
+                )
+                mts.append(worker_results)
                 muscle_transitions.append([])
 
             idx = 0
@@ -281,8 +304,9 @@ class MyTrainer(PPO):
 
             distribute_time = time.perf_counter()
             model_weights = ray.put(self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-            for worker in self.remote_workers:
-                worker.foreach_env.remote(lambda env: env.load_muscle_model_weights(model_weights))
+            self.workers.foreach_worker(
+                lambda worker: worker.foreach_env(lambda env: env.load_muscle_model_weights(model_weights))
+            )
 
             distribute_time = (time.perf_counter() - distribute_time) * 1000
             total_time = (time.perf_counter() - start) * 1000
@@ -294,12 +318,10 @@ class MyTrainer(PPO):
             result['timers']['muscle_learning']['total_ms'] = total_time
             result["loss"].update(stats)
 
-        current_reward = result['episode_reward_mean']
-
-        if self.max_reward < current_reward:
-            self.max_reward = current_reward
-            self.save_max_checkpoint(self._logdir)
-
+        # current_reward = result['episode_reward_mean']
+        # if self.max_reward < current_reward:
+            # self.max_reward = current_reward
+            # self.save_max_checkpoint(self._logdir)
         return result
 
     def __getstate__(self):
@@ -399,10 +421,6 @@ if __name__ == "__main__":
     print(f"Training configuration: max_epoch={max_epoch}, checkpoint_freq={checkpoint_freq}")
 
     ray.init(address="auto")
-
-    print("Nodes in the Ray cluster:")
-    print(ray.nodes())
-
     config = get_config_from_file(args.config_file, args.config)
     ModelCatalog.register_custom_model("MyModel", SimulationNN_Ray)
 
@@ -419,7 +437,9 @@ if __name__ == "__main__":
 
     # Initialize environment with appropriate file type
     with MyEnv(env_content, is_xml=is_xml) if is_xml else MyEnv(env_content) as env:
-        config["metadata"] = env.metadata
+        config["metadata"] = env.env_metadata
+        config["metadata_name"] = Path(args.env).stem
+        config["training_start_timestamp"] = timestamp()
         config["isTwoLevelActuator"] = env.isTwoLevelActuator
         config["model"]["custom_model_config"]["learningStd"] = env.env.getLearningStd()
         config["env_config"]["cascading"] = env.env.getUseCascading()
