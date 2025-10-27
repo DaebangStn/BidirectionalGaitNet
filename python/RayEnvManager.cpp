@@ -10,12 +10,13 @@ py::array_t<float> toNumPyArray(const Eigen::VectorXf &vec)
 {
     int n = vec.rows();
 
-    py::array_t<float> array(n);
-    py::buffer_info buf = array.request(true);
-    float *ptr = reinterpret_cast<float *>(buf.ptr);
+    // Create array with explicit ownership - pybind11 manages memory
+    auto array = py::array_t<float>(n);
+    auto buf = array.request(true);
+    auto ptr = static_cast<float *>(buf.ptr);
 
-    for (int i = 0; i < n; i++)
-        ptr[i] = (float)vec(i);
+    // Use memcpy for better performance and safety
+    std::memcpy(ptr, vec.data(), n * sizeof(float));
 
     return array;
 }
@@ -24,12 +25,14 @@ py::array_t<float> toNumPyArray(const Eigen::VectorXd &vec)
 {
     int n = vec.rows();
 
-    py::array_t<float> array(n);
-    py::buffer_info buf = array.request(true);
-    float *ptr = reinterpret_cast<float *>(buf.ptr);
+    // Create array with explicit ownership - pybind11 manages memory
+    auto array = py::array_t<float>(n);
+    auto buf = array.request(true);
+    auto ptr = static_cast<float *>(buf.ptr);
 
+    // Convert double to float element by element
     for (int i = 0; i < n; i++)
-        ptr[i] = (float)vec(i);
+        ptr[i] = static_cast<float>(vec(i));
 
     return array;
 }
@@ -39,16 +42,17 @@ py::array_t<float> toNumPyArray(const Eigen::MatrixXd &matrix)
     int n = matrix.rows();
     int m = matrix.cols();
 
-    py::array_t<float> array({n, m});
-    py::buffer_info buf = array.request(true);
-    float *ptr = reinterpret_cast<float *>(buf.ptr);
+    // Create array with explicit ownership - pybind11 manages memory
+    auto array = py::array_t<float>({n, m});
+    auto buf = array.request(true);
+    auto ptr = static_cast<float *>(buf.ptr);
 
-    int index = 0;
+    // Convert double to float element by element (row-major order)
     for (int i = 0; i < n; i++)
     {
         for (int j = 0; j < m; j++)
         {
-            ptr[i * m + j] = (float)matrix(i, j);
+            ptr[i * m + j] = static_cast<float>(matrix(i, j));
         }
     }
 

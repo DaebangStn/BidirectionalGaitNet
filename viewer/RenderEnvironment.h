@@ -98,6 +98,8 @@ public:
     double getLimitY() { return mEnv->getLimitY(); }
     double getMetabolicWeight() { return mEnv->getMetabolicWeight(); }
     void setMetabolicWeight(double weight) { mEnv->setMetabolicWeight(weight); }
+    bool getSeparateTorqueEnergy() { return mEnv->getSeparateTorqueEnergy(); }
+    void setSeparateTorqueEnergy(bool separate) { mEnv->setSeparateTorqueEnergy(separate); }
     double getKneePainWeight() { return mEnv->getKneePainWeight(); }
     void setKneePainWeight(double weight) { mEnv->setKneePainWeight(weight); }
     double getScaleKneePain() { return mEnv->getScaleKneePain(); }

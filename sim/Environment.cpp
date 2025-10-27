@@ -759,9 +759,20 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         }
 
         // Torque energy coefficient (nested under metabolic)
+        // Support both flat and nested structure for backward compatibility
         if (metabolic_config["torque_coeff"]) {
             double coeff = metabolic_config["torque_coeff"].as<double>(1.0);
             mCharacter->setTorqueEnergyCoeff(coeff);
+        }
+        if (metabolic_config["torque"]) {
+            auto torque_config = metabolic_config["torque"];
+            if (torque_config["coeff"]) {
+                double coeff = torque_config["coeff"].as<double>(1.0);
+                mCharacter->setTorqueEnergyCoeff(coeff);
+            }
+            if (torque_config["separate"]) {
+                mRewardConfig.separate_torque_energy = torque_config["separate"].as<bool>(false);
+            }
         }
     }
 
@@ -1165,7 +1176,7 @@ double Environment::calcReward()
         r_com = exp(-10 * com_diff.squaredNorm() / com_diff.rows());
         r_metabolic = 0.0;
 
-        r_metabolic = getMetabolicReward();
+        r_metabolic = getEnergyReward();
 
         if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic;
         else if (mRewardType == scadiver) r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee) * (0.1 + 0.9 * r_metabolic);
@@ -1176,18 +1187,28 @@ double Environment::calcReward()
         double r_loco = getLocoReward();
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
-        double r_metabolic = getMetabolicReward();
+        double r_energy = getEnergyReward();
         double r_knee_pain = getKneePainReward();
 
         // Build multiplicative and additive components separately using bitflags
         double multiplicative_part = w_gait * r_loco * r_avg * r_step;
         double additive_part = 0.0;
 
-        // Apply metabolic reward (always active, multiplicative or additive)
+        // Apply energy reward (always active, multiplicative or additive)
         if (mRewardConfig.multiplicative & REWARD_METABOLIC)
-            multiplicative_part *= r_metabolic;
+            multiplicative_part *= r_energy;
         else
-            additive_part += mRewardConfig.metabolic_scale * r_metabolic;
+            additive_part += mRewardConfig.metabolic_scale * r_energy;
+
+        // When torque energy is separated, calculate and apply separate torque reward
+        if (mRewardConfig.separate_torque_energy) {
+            double r_torque = exp(-mRewardConfig.metabolic_weight * mCharacter->getTorqueEnergy());
+            if (mRewardConfig.multiplicative & REWARD_METABOLIC)
+                multiplicative_part *= r_torque;
+            else
+                additive_part += mRewardConfig.metabolic_scale * r_torque;
+            mInfoMap.insert(std::make_pair("r_torque", r_torque));
+        }
 
         // Apply knee pain reward (multiplicative or additive based on bitflag)
         if (mRewardConfig.active & REWARD_KNEE_PAIN)
@@ -1204,7 +1225,14 @@ double Environment::calcReward()
         mInfoMap.insert(std::make_pair("r_loco", r_loco));
         mInfoMap.insert(std::make_pair("r_avg", r_avg));
         mInfoMap.insert(std::make_pair("r_step", r_step));
-        mInfoMap.insert(std::make_pair("r_metabolic", r_metabolic));
+        mInfoMap.insert(std::make_pair("r_energy", r_energy));
+
+        // Log separate metabolic when separation is enabled
+        if (mRewardConfig.separate_torque_energy) {
+            double r_metabolic = exp(-mRewardConfig.metabolic_weight * mCharacter->getMetabolicEnergy());
+            mInfoMap.insert(std::make_pair("r_metabolic", r_metabolic));
+        }
+
         mInfoMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
     }
 
@@ -1772,11 +1800,18 @@ bool Environment::isFall()
     return is_fall;
 }
 
-double Environment::getMetabolicReward()
+double Environment::getEnergyReward()
 {
-    double metabolic_energy = mCharacter->getEnergy();
-    double r_metabolic = exp(-mRewardConfig.metabolic_weight * metabolic_energy);
-    return r_metabolic;
+    double energy;
+    if (mRewardConfig.separate_torque_energy) {
+        // When separated, use only metabolic energy
+        energy = mCharacter->getMetabolicEnergy();
+    } else {
+        // Default behavior: combined metabolic + torque energy
+        energy = mCharacter->getEnergy();
+    }
+    double r_energy = exp(-mRewardConfig.metabolic_weight * energy);
+    return r_energy;
 }
 
 double Environment::getKneePainReward()

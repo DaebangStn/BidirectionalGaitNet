@@ -63,6 +63,7 @@ struct RewardConfig
     // Metabolic reward parameters
     double metabolic_weight = 0.05;
     double metabolic_scale = 1.0;
+    bool separate_torque_energy = false;
 
     // Knee pain reward parameters
     double knee_pain_weight = 1.0;
@@ -209,7 +210,7 @@ public:
 
     RewardType getRewardType() { return mRewardType; }
 
-    double getMetabolicReward();
+    double getEnergyReward();
     double getKneePainReward();
     double getStepReward();
     double getAvgVelReward();
@@ -293,6 +294,8 @@ public:
     void setMetabolicWeight(double weight) { mRewardConfig.metabolic_weight = weight; }
     double getScaleMetabolic() { return mRewardConfig.metabolic_scale; }
     void setScaleMetabolic(double scale) { mRewardConfig.metabolic_scale = scale; }
+    bool getSeparateTorqueEnergy() { return mRewardConfig.separate_torque_energy; }
+    void setSeparateTorqueEnergy(bool separate) { mRewardConfig.separate_torque_energy = separate; }
     double getKneePainWeight() { return mRewardConfig.knee_pain_weight; }
     void setKneePainWeight(double weight) { mRewardConfig.knee_pain_weight = weight; }
     double getScaleKneePain() { return mRewardConfig.knee_pain_scale; }

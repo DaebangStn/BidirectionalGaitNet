@@ -2596,6 +2596,26 @@ void GLFWApp::drawSimControlPanel()
             mRenderEnv->getCharacter()->setTorqueEnergyCoeff(static_cast<double>(torqueCoeff));
         }
 
+        // Separate torque energy checkbox
+        bool separateTorque = mRenderEnv->getSeparateTorqueEnergy();
+        if (ImGui::Checkbox("Separate Torque", &separateTorque))
+        {
+            mRenderEnv->setSeparateTorqueEnergy(separateTorque);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::Text("When enabled:");
+            ImGui::Text("- r_energy uses only metabolic energy");
+            ImGui::Text("- r_torque calculated separately");
+            ImGui::Text("- Logs: r_energy, r_metabolic, r_torque");
+            ImGui::Separator();
+            ImGui::Text("When disabled:");
+            ImGui::Text("- r_energy uses combined energy");
+            ImGui::Text("- Logs: r_energy only");
+            ImGui::EndTooltip();
+        }
+
         ImGui::Separator();
         ImGui::Text("Knee Pain Penalty");
 
