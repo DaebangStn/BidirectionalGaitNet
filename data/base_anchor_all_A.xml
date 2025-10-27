@@ -16,7 +16,7 @@
 <controlHz>30</controlHz>
 
 <!-- Muscle Control  -->
-<muscle>@data/muscle_anchor_all.xml</muscle>
+<muscle>@data/muscle/anchor_all.xml</muscle>
 <inferencepersim>1</inferencepersim>
 
 <!-- Advanced Option -->

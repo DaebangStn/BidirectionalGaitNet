@@ -382,11 +382,11 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         else if (metabolicTypeStr == "MA2") mCharacter->setMetabolicType(MA2);
     }
 
-    // Parse TorqueEnergyCoeff configuration
-    if (doc.FirstChildElement("TorqueEnergyCoeff") != NULL)
+    // Parse TorqueCoeff configuration
+    if (doc.FirstChildElement("TorqueCoeff") != NULL)
     {
-        double torqueEnergyCoeff = doc.FirstChildElement("TorqueEnergyCoeff")->DoubleText();
-        mCharacter->setTorqueEnergyCoeff(torqueEnergyCoeff);
+        double torqueCoeff = doc.FirstChildElement("TorqueCoeff")->DoubleText();
+        mCharacter->setTorqueEnergyCoeff(torqueCoeff);
     }
 
     // ============= For parameterization ==============
@@ -759,8 +759,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         }
 
         // Torque energy coefficient (nested under metabolic)
-        if (metabolic_config["torque_energy"] && metabolic_config["torque_energy"]["coeff"]) {
-            double coeff = metabolic_config["torque_energy"]["coeff"].as<double>(1.0);
+        if (metabolic_config["torque_coeff"]) {
+            double coeff = metabolic_config["torque_coeff"].as<double>(1.0);
             mCharacter->setTorqueEnergyCoeff(coeff);
         }
     }
@@ -1093,7 +1093,7 @@ void Environment::checkTerminated()
     // Episode ends due to failure: fall or character below height limit
     double root_y = mCharacter->getSkeleton()->getCOM()[1];
     bool is_fall = root_y < mLimitY * mCharacter->getGlobalRatio();
-    bool knee_pain = mRewardConfig.use_knee_pain_termination && (mCharacter->getKneeLoadingMax() > 5.0);
+    bool knee_pain = mRewardConfig.use_knee_pain_termination && (mSimulationStep > 100) && (mCharacter->getKneeLoadingMax() > 5.0);
     bool terminated = is_fall || knee_pain;
 
     // Log to mInfoMap for TensorBoard

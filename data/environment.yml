@@ -54,7 +54,7 @@ dependencies:
   - pybind11-global
   - pybullet=3.25
   - pytest
-  - pytorch=2.3.0
+  - pytorch=2.3.0=cuda120_py310h2c91c31_301
   - pyyaml
   - scipy
   - setuptools

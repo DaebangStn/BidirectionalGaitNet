@@ -66,10 +66,10 @@ environment:
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2
-      weight: 0.05
+      weight: 0.03
       scale: 1.0
-      multiplicative: false  # if true, multiplies with main reward term
-      torque_coeff: 1.0  # coefficient for torque energy calculation
+      multiplicative: true  # if true, multiplies with main reward term
+      torque_coeff: 0.2  # coefficient for torque energy calculation
 
     # Locomotion rewards (for gaitnet)
     locomotion:
@@ -82,7 +82,8 @@ environment:
     knee_pain:
       weight: 1.0
       scale: 1.0
-      multiplicative: false  # if true, multiplies with main reward term
+      multiplicative: true  # if true, multiplies with main reward term
+      termination: true
 
   # Parameterization for training
   parameters:
@@ -96,27 +97,4 @@ environment:
         min: 0.75
         max: 1.25
         default: 1.0
-        sampling: "uniform"
-
-    skeleton:
-      global: {min: 0.85, max: 1.0, sampling: "uniform"}
-      FemurL: {min: 0.9, max: 1.0}
-      FemurR: {min: 0.9, max: 1.0}
-      TibiaL: {min: 0.9, max: 1.0}
-      TibiaR: {min: 0.9, max: 1.0}
-      ArmL: {min: 0.9, max: 1.0}
-      ArmR: {min: 0.9, max: 1.0}
-      ForeArmL: {min: 0.9, max: 1.0}
-      ForeArmR: {min: 0.9, max: 1.0}
-
-    torsion:
-      femur_l:
-        min: -0.55
-        max: 0.55
-        default: 0.0
-        sampling: "uniform"
-      femur_r:
-        min: -0.55
-        max: 0.55
-        default: 0.0
         sampling: "uniform"

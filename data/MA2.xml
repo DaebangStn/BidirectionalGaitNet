@@ -15,7 +15,7 @@
 <controlHz>30</controlHz>
 
 <!-- Muscle Control  -->
-<muscle>@data/muscle_distribute_lower_only.xml</muscle>
+<muscle>@data/muscle/distribute_lower_only.xml</muscle>
 <inferencepersim>1</inferencepersim>
 
 <!-- Advanced Option -->

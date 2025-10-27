@@ -7,7 +7,7 @@ import yaml
 from dill import Unpickler
 from io import BytesIO
 from python.dummy import Dummy
-from python.log_config import log_verbose
+from python.log_config import log_verbose, log_warn, log_info
 from python.uri_resolver import resolve_path
 
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
@@ -456,7 +456,7 @@ def loading_metadata(path):
             state = dill.load(open(algo_state_path, "rb"))
             metadata = state.get("metadata", None)
         else:
-            log_verbose(f"[Warning] algorithm_state.pkl not found at {algo_state_path}")
+            log_warn(f"[Warning] algorithm_state.pkl not found at {algo_state_path}")
             metadata = None
 
     else:
@@ -468,12 +468,12 @@ def loading_metadata(path):
 
     # Check if metadata is empty, dict type, or should use fallback
     if not metadata or isinstance(metadata, dict):
-        log_verbose(f"[Warning] Metadata is empty or dict type in checkpoint at {resolved_path}, loading fallback from data/A_knee.yaml")
+        log_warn(f"[Warning] Metadata is empty or dict type in checkpoint at {resolved_path}, loading fallback from data/A_knee.yaml")
         fallback_path = resolve_path("@data/A_knee.yaml")
         # Return the YAML file content as string (not dict, not path)
         with open(fallback_path, 'r') as f:
             yaml_content = f.read()
-        log_verbose(f"[Python] Loaded fallback metadata content from {fallback_path}")
+        log_info(f"[Python] Loaded fallback metadata content from {fallback_path}")
         return yaml_content
 
     return metadata

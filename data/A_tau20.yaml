@@ -1,6 +1,6 @@
 # Training Configuration
 training:
-  max_epoch: 100002
+  max_epoch: 10002
   checkpoint_freq: 1000
 
 environment:
@@ -66,10 +66,10 @@ environment:
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2
-      weight: 0.05
+      weight: 0.03
       scale: 1.0
       multiplicative: false  # if true, multiplies with main reward term
-      torque_coeff: 1.0  # coefficient for torque energy calculation
+      torque_coeff: 0.2
 
     # Locomotion rewards (for gaitnet)
     locomotion:
@@ -77,12 +77,6 @@ environment:
       head_rot_weight: 4.0
       step_weight: 2.0
       avg_vel_weight: 6.0
-
-    # Penalty/auxiliary rewards
-    knee_pain:
-      weight: 1.0
-      scale: 1.0
-      multiplicative: false  # if true, multiplies with main reward term
 
   # Parameterization for training
   parameters:

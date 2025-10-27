@@ -1,5 +1,5 @@
 <!-- actuator : 'pd', 'torque', 'muscle', 'mass'  -->
-<skeleton defaultKp="200" defaultKv="40" actuator="mass_lower" damping="0.1">@data/skeleton_gaitnet_narrow_model.xml</skeleton>
+<skeleton defaultKp="200" defaultKv="40" actuator="mass_lower" damping="0.1">@data/skeleton/gaitnet_narrow_model.xml</skeleton>
 <ground>@data/ground.xml</ground>
 
 <!-- symmetry : making BVH symmetry , heightCalibration : calibration of the motion's height based on height of the character in the first frame  -->
@@ -17,7 +17,7 @@
 <controlHz>30</controlHz>
 
 <!-- Muscle Control  -->
-<muscle>@data/muscle_anchor_all.xml</muscle>
+<muscle>@data/muscle/anchor_all.xml</muscle>
 <inferencepersim>1</inferencepersim>
 
 <!-- Advanced Option -->

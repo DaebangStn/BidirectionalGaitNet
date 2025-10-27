@@ -3136,7 +3136,7 @@ void GLFWApp::drawTimingPane()
         return;
 
     // Create a compact floating window
-    ImGui::SetNextWindowSize(ImVec2(280, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
@@ -3163,6 +3163,8 @@ void GLFWApp::drawTimingPane()
     ImGui::InputDouble("Cycle Duration", &mViewerCycleDuration, 0.1, 0.5, "%.3f");
     if (mViewerCycleDuration < 0.1) mViewerCycleDuration = 0.1;
 
+    if(ImGui::Button("0.5x")) mViewerPlaybackSpeed = 0.5;
+    ImGui::SameLine();
     if(ImGui::Button("1x")) mViewerPlaybackSpeed = 1.0;
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100);
