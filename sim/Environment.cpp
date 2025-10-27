@@ -781,14 +781,10 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         auto knee = env["reward"]["knee_pain"];
         mRewardConfig.active |= REWARD_KNEE_PAIN;
 
-        if (knee["weight"])
-            mRewardConfig.knee_pain_weight = knee["weight"].as<double>(1.0);
-        if (knee["scale"])
-            mRewardConfig.knee_pain_scale = knee["scale"].as<double>(1.0);
-        if (knee["multiplicative"] && knee["multiplicative"].as<bool>(false))
-            mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
-        if (knee["use_termination"])
-            mRewardConfig.use_knee_pain_termination = knee["use_termination"].as<bool>(false);
+        if (knee["weight"]) mRewardConfig.knee_pain_weight = knee["weight"].as<double>(1.0);
+        if (knee["scale"]) mRewardConfig.knee_pain_scale = knee["scale"].as<double>(1.0);
+        if (knee["multiplicative"] && knee["multiplicative"].as<bool>(false)) mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
+        if (knee["termination"]) mRewardConfig.use_knee_pain_termination = knee["termination"].as<bool>(false);
     }
 
     // === Parameters (gait, skeleton, torsion) ===
@@ -1183,7 +1179,6 @@ double Environment::calcReward()
     }
     else if (mRewardType == gaitnet)
     {
-        double w_gait = 2.0;
         double r_loco = getLocoReward();
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
@@ -1191,7 +1186,7 @@ double Environment::calcReward()
         double r_knee_pain = getKneePainReward();
 
         // Build multiplicative and additive components separately using bitflags
-        double multiplicative_part = w_gait * r_loco * r_avg * r_step;
+        double multiplicative_part = r_loco * r_avg * r_step;
         double additive_part = 0.0;
 
         // Apply energy reward (always active, multiplicative or additive)
@@ -1200,13 +1195,15 @@ double Environment::calcReward()
         else
             additive_part += mRewardConfig.metabolic_scale * r_energy;
 
+        if (mRewardConfig.separate_torque_energy) {
+            mInfoMap.insert(std::make_pair("r_metabolic", r_energy));
+        }
+
         // When torque energy is separated, calculate and apply separate torque reward
         if (mRewardConfig.separate_torque_energy) {
             double r_torque = exp(-mRewardConfig.metabolic_weight * mCharacter->getTorqueEnergy());
-            if (mRewardConfig.multiplicative & REWARD_METABOLIC)
-                multiplicative_part *= r_torque;
-            else
-                additive_part += mRewardConfig.metabolic_scale * r_torque;
+            if (mRewardConfig.multiplicative & REWARD_METABOLIC) r_energy *= r_torque;
+            else r_energy += mRewardConfig.metabolic_scale * r_torque;
             mInfoMap.insert(std::make_pair("r_torque", r_torque));
         }
 
@@ -1226,13 +1223,6 @@ double Environment::calcReward()
         mInfoMap.insert(std::make_pair("r_avg", r_avg));
         mInfoMap.insert(std::make_pair("r_step", r_step));
         mInfoMap.insert(std::make_pair("r_energy", r_energy));
-
-        // Log separate metabolic when separation is enabled
-        if (mRewardConfig.separate_torque_energy) {
-            double r_metabolic = exp(-mRewardConfig.metabolic_weight * mCharacter->getMetabolicEnergy());
-            mInfoMap.insert(std::make_pair("r_metabolic", r_metabolic));
-        }
-
         mInfoMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
     }
 

@@ -122,6 +122,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("r_com", 500);
     mGraphData->register_key("r_ee", 500);
     mGraphData->register_key("r_metabolic", 500);
+    mGraphData->register_key("r_torque", 500);
+    mGraphData->register_key("r_energy", 500);
     mGraphData->register_key("r_knee_pain", 500);
     mGraphData->register_key("r_loco", 500);
     mGraphData->register_key("r_avg", 500);
@@ -1737,7 +1739,11 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetupAxes("Time (s)", "Reward");
 
             // Plot reward data using common plotting function
-            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_metabolic", "r_knee_pain", "r_loco", "r_avg", "r_step"};
+            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_energy", "r_knee_pain", "r_loco", "r_avg", "r_step"};
+            if (mRenderEnv->getSeparateTorqueEnergy()) {
+                rewardKeys.push_back("r_torque");
+                rewardKeys.push_back("r_metabolic");
+            }
             plotGraphData(rewardKeys, ImAxis_Y1, true, false, "");
             ImPlot::EndPlot();
         }

@@ -70,7 +70,7 @@ environment:
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
-        coeff: 0.2
+        coeff: 0.1
         separate: true
 
     # Locomotion rewards (for gaitnet)
