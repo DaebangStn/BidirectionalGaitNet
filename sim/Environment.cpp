@@ -47,6 +47,7 @@ Environment::Environment()
     mWorldPhaseCount = 0;
     mPrevWorldPhaseCount = 0;
     mPrevContact = Eigen::Vector2i(0, 0);
+    mKneeLoadingMaxCycle = 0.0;
     mGlobalTime = 0.0;
     mWorldTime = 0.0;
 
@@ -785,6 +786,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         if (knee["scale"]) mRewardConfig.knee_pain_scale = knee["scale"].as<double>(1.0);
         if (knee["multiplicative"] && knee["multiplicative"].as<bool>(false)) mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
         if (knee["termination"]) mRewardConfig.use_knee_pain_termination = knee["termination"].as<bool>(false);
+        if (knee["use_max"]) mRewardConfig.use_knee_pain_max = knee["use_max"].as<bool>(false);
+        if (knee["max_weight"]) mRewardConfig.knee_pain_max_weight = knee["max_weight"].as<double>(1.0);
     }
 
     // === Parameters (gait, skeleton, torsion) ===
@@ -1100,7 +1103,7 @@ void Environment::checkTerminated()
     // Episode ends due to failure: fall or character below height limit
     double root_y = mCharacter->getSkeleton()->getCOM()[1];
     bool is_fall = root_y < mLimitY * mCharacter->getGlobalRatio();
-    bool knee_pain = mRewardConfig.use_knee_pain_termination && (mSimulationStep > 100) && (mCharacter->getKneeLoadingMax() > 5.0);
+    bool knee_pain = mRewardConfig.use_knee_pain_termination && (mSimulationStep > 100) && (mCharacter->getKneeLoadingMax() > 8.0);
     bool terminated = is_fall || knee_pain;
 
     // Log to mInfoMap for TensorBoard
@@ -1183,7 +1186,6 @@ double Environment::calcReward()
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
         double r_energy = getEnergyReward();
-        double r_knee_pain = getKneePainReward();
 
         // Build multiplicative and additive components separately using bitflags
         double multiplicative_part = r_loco * r_avg * r_step;
@@ -1210,10 +1212,23 @@ double Environment::calcReward()
         // Apply knee pain reward (multiplicative or additive based on bitflag)
         if (mRewardConfig.active & REWARD_KNEE_PAIN)
         {
+            double r_knee_pain = getKneePainReward();
             if (mRewardConfig.multiplicative & REWARD_KNEE_PAIN)
                 multiplicative_part *= r_knee_pain;
             else
                 additive_part += mRewardConfig.knee_pain_scale * r_knee_pain;
+            mInfoMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
+
+            // Apply knee pain max reward (per gait cycle) if enabled
+            if (mRewardConfig.use_knee_pain_max)
+            {
+                double r_knee_pain_max = getKneePainMaxReward();
+                if (mRewardConfig.multiplicative & REWARD_KNEE_PAIN)
+                    multiplicative_part *= r_knee_pain_max;
+                else
+                    additive_part += mRewardConfig.knee_pain_scale * r_knee_pain_max;
+                mInfoMap.insert(std::make_pair("r_knee_pain_max", r_knee_pain_max));
+            }
         }
 
         r = multiplicative_part + additive_part;
@@ -1223,7 +1238,6 @@ double Environment::calcReward()
         mInfoMap.insert(std::make_pair("r_avg", r_avg));
         mInfoMap.insert(std::make_pair("r_step", r_step));
         mInfoMap.insert(std::make_pair("r_energy", r_energy));
-        mInfoMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
     }
 
     if (mCharacter->getActuatorType() == mus) r = 1.0;
@@ -1486,6 +1500,12 @@ void Environment::postMuscleStep()
     {
         mWorldPhaseCount++;
         mWorldTime = mCharacter->getLocalTime();
+
+        // Store the maximum knee loading from the completed gait cycle
+        mKneeLoadingMaxCycle = mCharacter->getKneeLoadingMax();
+
+        // Reset the character's knee loading max for the new cycle
+        mCharacter->resetKneeLoadingMax();
     }
     mPrevContact = contact;
 
@@ -1529,6 +1549,7 @@ void Environment::postStep()
     mInfoMap.clear();
     mCharacter->evalStep();
     if (mRewardType == gaitnet) updateFootStep();
+    mKneeLoadingMaxCycle = std::max(mKneeLoadingMaxCycle, mCharacter->getKneeLoadingMax());
     mReward = calcReward();
 
     // Check and cache termination/truncation status
@@ -1666,6 +1687,7 @@ void Environment::reset(double phase)
     mPrevWorldPhaseCount = 0;
     mSimulationCount = 0;
     mPrevContact = Eigen::Vector2i(0, 0); // Initialize contact state
+    mKneeLoadingMaxCycle = 0.0;
 
     // Reset Initial Time
     double time = 0.0;
@@ -1811,6 +1833,14 @@ double Environment::getKneePainReward()
     double r_knee = exp(-mRewardConfig.knee_pain_weight * avg_knee_loading);
     // std::cout << "knee_loading: " << avg_knee_loading << " r_knee: " << r_knee << " weight: " << mRewardConfig.knee_pain_weight << std::endl;
     return r_knee;
+}
+
+double Environment::getKneePainMaxReward()
+{
+    // Use maximum knee loading across the gait cycle
+    double max_knee_loading = mKneeLoadingMaxCycle;
+    double r_knee_max = exp(-mRewardConfig.knee_pain_max_weight * max_knee_loading);
+    return r_knee_max;
 }
 
 double Environment::getLocoReward()

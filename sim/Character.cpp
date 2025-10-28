@@ -650,6 +650,7 @@ void Character::evalStep()
     mStepDivisor = 0.0;
 
     // Mark step as complete
+    // Note: mKneeLoadingMax will be reset at the start of the next step() call
     mStepComplete = true;
 }
 

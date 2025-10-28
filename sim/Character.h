@@ -124,6 +124,7 @@ public:
     // Combined Step-Based Metrics Methods (evaluates metabolic, torque, and knee loading)
     void evalStep();        // Evaluates all step-based metrics
     void resetStep();       // Resets all step-based metrics
+    void resetKneeLoadingMax() { mKneeLoadingMax = 0.0; mStepComplete = true; }  // Reset max for new gait cycle
     double getEnergy() const { return mMetabolicEnergy + mTorqueEnergy; }
 
     // Muscle Parameter Modification

@@ -71,12 +71,12 @@ void RenderEnvironment::RecordGraphData() {
     
     if (mGraphData->key_exists("angle_HipIRR")) {
         const double angleHipIRR = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
-        mGraphData->push("angle_HipIRR", -angleHipIRR);
+        mGraphData->push("angle_HipIRR", angleHipIRR);
     }
     
     if (mGraphData->key_exists("angle_HipAbR")) {
         const double angleHipAbR = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
-        mGraphData->push("angle_HipAbR", -angleHipAbR);
+        mGraphData->push("angle_HipAbR", angleHipAbR);
     }
     
     if (mGraphData->key_exists("angle_KneeR")) {

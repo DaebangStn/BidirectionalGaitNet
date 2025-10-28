@@ -70,6 +70,10 @@ struct RewardConfig
     double knee_pain_scale = 1.0;
     bool use_knee_pain_termination = false;
 
+    // Knee pain max (per gait cycle) reward parameters
+    bool use_knee_pain_max = false;
+    double knee_pain_max_weight = 1.0;
+
     // Locomotion reward weights (always active for gaitnet)
     double head_linear_acc_weight = 4.0;
     double head_rot_weight = 4.0;
@@ -212,6 +216,8 @@ public:
 
     double getEnergyReward();
     double getKneePainReward();
+    double getKneePainMaxReward();
+    double getKneeLoadingMaxCycle() const { return mKneeLoadingMaxCycle; }
     double getStepReward();
     double getAvgVelReward();
     double getLocoReward();
@@ -440,6 +446,7 @@ private:
 
     // Gait Analysis
     Eigen::Vector2i mPrevContact; // Previous contact state for heel strike detection
+    double mKneeLoadingMaxCycle;  // Maximum knee loading for current gait cycle
 
     // nFor Cascading
     bool mUseCascading;

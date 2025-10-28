@@ -2664,7 +2664,7 @@ void GLFWApp::drawSimControlPanel()
         ImGui::SameLine();
 
         // Run button
-        if (ImGui::Button("Run")) runRollout();
+        if (ImGui::Button("Run##Rollout")) runRollout();
     }
 
     // Muscle Control
