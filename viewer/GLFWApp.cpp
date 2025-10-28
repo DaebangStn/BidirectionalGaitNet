@@ -4,6 +4,7 @@
 #include "stb_image_write.h"
 #include <filesystem>
 #include <algorithm>
+#include <numeric>
 #include "DARTHelper.h"
 #include <tinyxml2.h>
 #include <sstream>
@@ -607,11 +608,24 @@ void GLFWApp::update(bool _isSave)
 }
 
 void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
-                            bool show_phase, bool plot_avg_copy, std::string postfix)
+                            bool show_phase, bool plot_avg_copy, std::string postfix,
+                            bool show_stat)
 {
     if (keys.empty() || !mGraphData) return;
 
     ImPlot::SetAxis(y_axis);
+
+    // Compute statistics for current plot range if show_stat is enabled
+    std::map<std::string, std::map<std::string, double>> stats;
+    if (show_stat && mRenderEnv)
+    {
+        ImPlotRect limits = ImPlot::GetPlotLimits();
+        stats = statGraphData(keys, limits.X.Min, limits.X.Max);
+    }
+
+    // Get colormap size for stable color assignment
+    int colormapSize = ImPlot::GetColormapSize();
+    int keyIndex = 0;
 
     for (const auto &key : keys)
     {
@@ -653,9 +667,87 @@ void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
         }
         selected_key = selected_key + postfix;
 
+        // Build plot label with stable ID to prevent color flickering
+        // Format: "display_label##stable_id"
+        // ImPlot uses the part after ## as the stable identifier for color assignment
+        std::string plot_label = selected_key;
+
+        // Append statistics to legend if enabled
+        if (show_stat && stats.count(key) > 0)
+        {
+            char stat_str[128];
+            snprintf(stat_str, sizeof(stat_str), " (%.2f|%.2f|%.2f)",
+                     stats[key]["min"], stats[key]["mean"], stats[key]["max"]);
+            plot_label += stat_str;
+        }
+
+        // Add stable ID to prevent color changes when stats update
+        plot_label += "##" + key;
+
+        // Assign stable color based on key index in the vector
+        // This ensures each key always gets the same color regardless of stats changes
+        ImVec4 lineColor = ImPlot::GetColormapColor(keyIndex % colormapSize);
+        ImPlot::PushStyleColor(ImPlotCol_Line, lineColor);
+
         // Plot the line
-        ImPlot::PlotLine(selected_key.c_str(), x.data(), y.data(), bufferSize);
+        ImPlot::PlotLine(plot_label.c_str(), x.data(), y.data(), bufferSize);
+
+        // Pop the color after plotting
+        ImPlot::PopStyleColor();
+
+        // Increment key index for next iteration
+        keyIndex++;
     }
+}
+
+std::map<std::string, std::map<std::string, double>>
+GLFWApp::statGraphData(const std::vector<std::string>& keys, double xMin, double xMax)
+{
+    std::map<std::string, std::map<std::string, double>> result;
+
+    if (!mGraphData || !mRenderEnv)
+        return result;
+
+    double timeStep = mRenderEnv->getWorld()->getTimeStep();
+
+    for (const auto& key : keys)
+    {
+        if (!mGraphData->key_exists(key))
+            continue;
+
+        std::vector<double> values = mGraphData->get(key);
+        if (values.empty())
+            continue;
+
+        int bufferSize = static_cast<int>(values.size());
+        std::vector<double> filteredValues;
+
+        // Filter values within [xMin, xMax] range
+        // X-axis mapping: most recent data at x=0, older data at negative x values
+        for (int i = 0; i < bufferSize; ++i)
+        {
+            double x = -(bufferSize - 1 - i) * timeStep;
+            if (x >= xMin && x <= xMax)
+            {
+                filteredValues.push_back(values[i]);
+            }
+        }
+
+        if (filteredValues.empty())
+            continue;
+
+        // Compute statistics
+        double minVal = *std::min_element(filteredValues.begin(), filteredValues.end());
+        double maxVal = *std::max_element(filteredValues.begin(), filteredValues.end());
+        double sum = std::accumulate(filteredValues.begin(), filteredValues.end(), 0.0);
+        double meanVal = sum / filteredValues.size();
+
+        result[key]["min"] = minVal;
+        result[key]["mean"] = meanVal;
+        result[key]["max"] = maxVal;
+    }
+
+    return result;
 }
 
 void GLFWApp::plotPhaseBar(double x_min, double x_max, double y_min, double y_max)
@@ -1816,6 +1908,10 @@ void GLFWApp::drawSimVisualizationPanel()
 
         ImGui::Separator();
 
+        // Checkbox to toggle statistics in legend
+        static bool show_knee_stats = false;
+        ImGui::Checkbox("Stats##KneeLoadingStats", &show_knee_stats);
+
         std::string title_knee = mPlotTitle ? mCheckpointName : "Max Knee Loading";
         if (ImPlot::BeginPlot((title_knee + "##KneeLoading").c_str()))
         {
@@ -1823,7 +1919,7 @@ void GLFWApp::drawSimVisualizationPanel()
 
             // Plot max knee loading
             std::vector<std::string> kneeKeys = {"knee_loading_max"};
-            plotGraphData(kneeKeys, ImAxis_Y1, true, false, "");
+            plotGraphData(kneeKeys, ImAxis_Y1, true, false, "", show_knee_stats);
 
             ImPlot::EndPlot();
         }

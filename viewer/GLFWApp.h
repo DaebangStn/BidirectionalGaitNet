@@ -135,8 +135,12 @@ private:
     void exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::dynamics::SkeletonPtr &skel);
     
     void plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis = ImAxis_Y1,
-        bool show_phase = true, bool plot_avg_copy = false, std::string postfix = "");
-        
+        bool show_phase = true, bool plot_avg_copy = false, std::string postfix = "",
+        bool show_stat = false);
+
+    std::map<std::string, std::map<std::string, double>>
+    statGraphData(const std::vector<std::string>& keys, double xMin, double xMax);
+
     void plotPhaseBar(double x_min, double x_max, double y_min, double y_max);
     
     void initEnv(std::string metadata);
