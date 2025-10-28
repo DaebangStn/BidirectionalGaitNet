@@ -65,8 +65,8 @@ environment:
 
     # Metabolic configuration
     metabolic:
-      type: "A"  # A, A2, MA, MA2
-      weight: 0.02
+      type: "A2"  # A, A2, MA, MA2
+      weight: 0.03
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
@@ -86,7 +86,7 @@ environment:
       weight: 1.0
       scale: 1.0
       termination: false
-      use_max: true
+      use_max: false
       max_weight: 0.1
 
   # Parameterization for training

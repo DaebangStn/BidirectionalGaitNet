@@ -86,7 +86,7 @@ environment:
       weight: 1.0
       scale: 1.0
       termination: false
-      use_max: true
+      use_max: false
       max_weight: 0.1
 
   # Parameterization for training

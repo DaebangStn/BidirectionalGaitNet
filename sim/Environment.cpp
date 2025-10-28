@@ -771,20 +771,18 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
                 double coeff = torque_config["coeff"].as<double>(1.0);
                 mCharacter->setTorqueEnergyCoeff(coeff);
             }
-            if (torque_config["separate"]) {
-                mRewardConfig.flags |= REWARD_SEP_TORQUE_ENERGY;
-            }
+            if (torque_config["separate"] && torque_config["separate"].as<bool>(false)) mRewardConfig.flags |= REWARD_SEP_TORQUE_ENERGY;
         }
     }
 
     // === Knee pain ===
     if (env["reward"] && env["reward"]["knee_pain"]) {
         auto knee = env["reward"]["knee_pain"];
-        if (knee["use"]) mRewardConfig.flags |= REWARD_KNEE_PAIN;
+        if (knee["use"] && knee["use"].as<bool>(false)) mRewardConfig.flags |= REWARD_KNEE_PAIN;
+        if (knee["termination"] && knee["termination"].as<bool>(false)) mRewardConfig.flags |= TERM_KNEE_PAIN;
+        if (knee["use_max"] && knee["use_max"].as<bool>(false)) mRewardConfig.flags |= REWARD_KNEE_PAIN_MAX;
         if (knee["weight"]) mRewardConfig.knee_pain_weight = knee["weight"].as<double>(1.0);
         if (knee["scale"]) mRewardConfig.knee_pain_scale = knee["scale"].as<double>(1.0);
-        if (knee["termination"]) mRewardConfig.flags |= TERM_KNEE_PAIN;
-        if (knee["use_max"]) mRewardConfig.flags |= REWARD_KNEE_PAIN_MAX;
         if (knee["max_weight"]) mRewardConfig.knee_pain_max_weight = knee["max_weight"].as<double>(1.0);
     }
 
