@@ -58,8 +58,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Initialize viewer time management with default cycle duration
     mViewerTime = 0.0;
     mViewerPhase = 0.0;
-    mViewerPlaybackSpeed = 1.5;
-    mLastPlaybackSpeed = 1.5;
+    mViewerPlaybackSpeed = 2.5;
+    mLastPlaybackSpeed = mViewerPlaybackSpeed;
     mViewerCycleDuration = 2.0 / 1.1;  // Default cycle duration (~1.818s)
     mLastRealTime = 0.0;
     mSimulationStepDuration = 0.0;
@@ -73,7 +73,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     strcpy(mResizePlotKeys, "");
     mResizePlotPane = true;
     mSetResizablePlotPane = false;
-    mPlotTitleResizablePlotPane = false;
+    mPlotTitleResizablePlotPane = true;
 
     // Initialize motion navigation control
     mMotionNavigationMode = NAVIGATION_VIEWER_TIME;
@@ -727,7 +727,7 @@ GLFWApp::statGraphData(const std::vector<std::string>& keys, double xMin, double
         for (int i = 0; i < bufferSize; ++i)
         {
             double x = -(bufferSize - 1 - i) * timeStep;
-            if (x >= xMin && x <= xMax)
+            if (x >= xMin && x < xMax)
             {
                 filteredValues.push_back(values[i]);
             }
@@ -1846,11 +1846,15 @@ void GLFWApp::drawSimVisualizationPanel()
     {
         // Display current metabolic type
         MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
-        const char* typeNames[] = {"LEGACY (Disabled)", "A", "A2", "MA"};
+        const char* typeNames[] = {"A", "A2", "MA", "MA2"};
         if (currentType == MetabolicType::LEGACY) {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Mode: %s", typeNames[currentType]);
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Mode: LEGACY (Disabled)");
         } else {
-            ImGui::Text("Mode: %s", typeNames[currentType]);
+            const int typeIndex = static_cast<int>(currentType) - static_cast<int>(MetabolicType::A);
+            const char* displayName = (typeIndex >= 0 && typeIndex < IM_ARRAYSIZE(typeNames))
+                ? typeNames[typeIndex]
+                : "Unknown";
+            ImGui::Text("Mode: %s", displayName);
 
             // Display current metabolic energy value
             ImGui::Text("Current: %.2f", mRenderEnv->getCharacter()->getMetabolicStepEnergy());
@@ -1913,6 +1917,9 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::Checkbox("Stats##KneeLoadingStats", &show_knee_stats);
 
         std::string title_knee = mPlotTitle ? mCheckpointName : "Max Knee Loading";
+        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+        else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+        ImPlot::SetNextAxisLimits(3, 0, 5);
         if (ImPlot::BeginPlot((title_knee + "##KneeLoading").c_str()))
         {
             ImPlot::SetupAxes("Time (s)", "Knee Loading (kN)");
@@ -1926,7 +1933,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Joint Loading
-    if (ImGui::CollapsingHeader("Joint Loading", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Joint Loading"))
     {
         // Joint selection dropdown
         static int selected_joint = 1; // Default to knee (0=hip, 1=knee, 2=ankle)
@@ -1939,59 +1946,65 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::Combo("##JointSelector", &selected_joint, joint_names, IM_ARRAYSIZE(joint_names));
 
         static bool plot_component = false;
+        static bool plot_torque = false;
         ImGui::Checkbox("Component", &plot_component);
+        ImGui::SameLine();
+        ImGui::Checkbox("Torque", &plot_torque);
 
         std::string selected_prefix = joint_prefixes[selected_joint];
         std::string selected_name = joint_names[selected_joint];
 
         // Force plot
-        std::string title_force = mPlotTitle ? mCheckpointName : (selected_name + " Forces (N)");
-        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, -1, 6);
-        if (ImPlot::BeginPlot((title_force + "##JointForces").c_str()))
-        {
-            ImPlot::SetupAxes("Time (s)", "Force (N)");
-            std::vector<std::string> forceKeys;
-            if (plot_component) {
-                forceKeys = {
-                    selected_prefix + "_force_x",
-                    selected_prefix + "_force_y",
-                    selected_prefix + "_force_z",
-                };
-            } else {
-                forceKeys = {
-                    selected_prefix + "_force_mag"
-                };
+        if (!plot_torque) {
+            std::string title_force = mPlotTitle ? mCheckpointName : (selected_name + " Forces (N)");
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImPlot::SetNextAxisLimits(3, -1, 6);
+            if (ImPlot::BeginPlot((title_force + "##JointForces").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Force (N)");
+                std::vector<std::string> forceKeys;
+                if (plot_component) {
+                    forceKeys = {
+                        selected_prefix + "_force_x",
+                        selected_prefix + "_force_y",
+                        selected_prefix + "_force_z",
+                    };
+                } else {
+                    forceKeys = {
+                        selected_prefix + "_force_mag"
+                    };
+                }
+                plotGraphData(forceKeys, ImAxis_Y1, true, false, "");
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+                ImPlot::EndPlot();
             }
-            plotGraphData(forceKeys, ImAxis_Y1, true, false, "");
-            ImPlotRect limits = ImPlot::GetPlotLimits();
-            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-            ImPlot::EndPlot();
-        }
-
-        // Torque plot
-        std::string title_torque = mPlotTitle ? mCheckpointName : (selected_name + " Torques (Nm)");
-        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, -150, 150);
-        if (ImPlot::BeginPlot((title_torque + "##JointTorques").c_str()))
-        {
-            ImPlot::SetupAxes("Time (s)", "Torque (Nm)");
-            std::vector<std::string> torqueKeys;
-            if (plot_component) {
-                torqueKeys = {
-                    selected_prefix + "_torque_x",
-                    selected_prefix + "_torque_y",
-                    selected_prefix + "_torque_z",
-                };
-            } else {
-                torqueKeys = {
-                    selected_prefix + "_torque_mag"
-                };
+        } else {
+            // Torque plot
+            std::string title_torque = mPlotTitle ? mCheckpointName : (selected_name + " Torques (Nm)");
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            ImPlot::SetNextAxisLimits(3, -150, 150);
+            if (ImPlot::BeginPlot((title_torque + "##JointTorques").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Torque (Nm)");
+                std::vector<std::string> torqueKeys;
+                if (plot_component) {
+                    torqueKeys = {
+                        selected_prefix + "_torque_x",
+                        selected_prefix + "_torque_y",
+                        selected_prefix + "_torque_z",
+                    };
+                } else {
+                    torqueKeys = {
+                        selected_prefix + "_torque_mag"
+                    };
+                }
+                plotGraphData(torqueKeys, ImAxis_Y1, true, false, "");
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+                ImPlot::EndPlot();
             }
-            plotGraphData(torqueKeys, ImAxis_Y1, true, false, "");
-            ImPlotRect limits = ImPlot::GetPlotLimits();
-            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-            ImPlot::EndPlot();
         }
     }
 
@@ -2650,15 +2663,25 @@ void GLFWApp::drawSimControlPanel()
     {
         // Get current metabolic type
         MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
-        int currentTypeInt = static_cast<int>(currentType);
+        constexpr int typeOffset = static_cast<int>(MetabolicType::A);
+        const char* metabolicTypes[] = {"A", "A2", "MA", "MA2"};
 
-        // Dropdown for metabolic type selection
-        const char* metabolicTypes[] = {"LEGACY", "A", "A2", "MA", "MA2"};
+        // Map enum to combo index, default to first entry when legacy is active
+        int currentTypeInt = 0;
+        if (currentType >= MetabolicType::A && currentType <= MetabolicType::MA2) {
+            currentTypeInt = static_cast<int>(currentType) - typeOffset;
+        }
+
+        // Dropdown for metabolic type selection (legacy is read-only in combo)
         ImGui::SetNextItemWidth(50);
         if (ImGui::Combo("Type", &currentTypeInt, metabolicTypes, IM_ARRAYSIZE(metabolicTypes)))
         {
-            // Update metabolic type when selection changes
-            mRenderEnv->getCharacter()->setMetabolicType(static_cast<MetabolicType>(currentTypeInt));
+            // Clamp index and convert back to enum before applying
+            int maxIndex = static_cast<int>(IM_ARRAYSIZE(metabolicTypes)) - 1;
+            int clampedIdx = std::max(0, std::min(currentTypeInt, maxIndex));
+            MetabolicType newType = static_cast<MetabolicType>(clampedIdx + typeOffset);
+            mRenderEnv->getCharacter()->setMetabolicType(newType);
+            currentType = newType;
         }
         ImGui::SameLine();
         // Button to reset step-based metrics (metabolic, torque, knee loading)
@@ -3110,6 +3133,9 @@ void GLFWApp::drawResizablePlotPane()
     }
     ImGui::SameLine();
     ImGui::Checkbox("Title", &mPlotTitleResizablePlotPane);
+    static bool resizable_plot_show_stat = true;
+    ImGui::SameLine();
+    ImGui::Checkbox("Stat", &resizable_plot_show_stat);
 
     // height: ImGui::GetWindowSize().y - RESIZABLE_PLOT_TEXT_HEIGHT
 
@@ -3218,7 +3244,7 @@ void GLFWApp::drawResizablePlotPane()
         }
         if (ImPlot::BeginPlot(("##Plot" + std::to_string(i)).c_str(), ImVec2(-1, -1))) {
             ImPlot::SetupAxes("Time (s)", "Value");
-            plotGraphData(mResizablePlots[i].keys, ImAxis_Y1, true, false, "");
+            plotGraphData(mResizablePlots[i].keys, ImAxis_Y1, true, false, "", resizable_plot_show_stat);
 
             ImPlotRect limits = ImPlot::GetPlotLimits();
             plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);

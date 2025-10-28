@@ -38,37 +38,33 @@ The `motion` field contains 60 frames of skeletal pose data, resampled from the 
 ## Pipeline Overview
 
 ```
-C3D File → Python Loader → Skeleton Fitting → Frame Conversion → Resampling → Motion Struct
+C3D File → ezc3d Loader (C++) → Skeleton Fitting → Frame Conversion → Resampling → Motion Struct
 ```
 
 ## Step-by-Step Process
 
 ### 1. Load C3D File
 
-**Module**: `python/c3dTobvh.py`
-**Function**: `load_c3d(c3d_path)`
+**Location**: `viewer/C3D_Reader.cpp:77-154`
 
-```python
-def load_c3d(c3d_path):
-    # Returns: (labels, marker_positions, frame_rate)
-    pass
+```cpp
+ezc3d::c3d c3d(path);
 ```
 
 **Process**:
-- Opens C3D file using `c3d` library
-- Reads marker labels and 3D positions per frame
-- Converts units: millimeters → meters (× 0.001)
-- Reorients coordinate system: `[X, Y, Z]_c3d → [Z, X, Y]_system`
-- Returns marker labels, positions, and frame rate
+- Loads the file via `ezc3d::c3d`, retaining header, parameters, and point data.
+- Extracts `frameRate` from the header and rounds to the nearest integer.
+- Iterates frames with `c3d.data().frame(i).points().point(j)` to gather markers.
+- Converts units: millimeters → meters (× 0.001) directly in C++.
+- Reorients coordinate system: `[X, Y, Z]_c3d → [Y, Z, X]_system` to match the viewer.
 
 **Output**:
-- `labels`: List of marker names
-- `marker_positions`: List of frames, each containing list of 3D positions
-- `frame_rate`: Capture frame rate (Hz)
+- `frameMarkers`: Vector of frames, each containing 3D markers ready for scaling/offset.
+- `frame_rate`: Capture frame rate (Hz) stored in `mFrameRate`.
 
 ### 2. Initialize Skeleton
 
-**Location**: `viewer/C3D_Reader.cpp:74-97`
+**Location**: `viewer/C3D_Reader.cpp:111-154`
 
 ```cpp
 std::vector<Eigen::VectorXd> C3D_Reader::loadC3D(
@@ -81,46 +77,44 @@ std::vector<Eigen::VectorXd> C3D_Reader::loadC3D(
 ```
 
 **Process**:
-1. Call Python `c3dTobvh.load_c3d(path)` (line 76)
-2. Extract frame rate (line 78)
-3. Initialize skeleton to T-pose (lines 82-97):
+1. Initialize skeleton to T-pose (lines 111-124):
    - Set forearm angles to 90° (π/2)
    - Zero out tibia rotations for leg projection
 
 ### 3. Fit Skeleton to Markers
 
-**Location**: `viewer/C3D_Reader.cpp:99-116`
+**Location**: `viewer/C3D_Reader.cpp:125-154`
 
 **Process**:
-1. Extract initial frame markers (lines 103-108):
+1. Extract initial frame markers (lines 128-131):
    ```cpp
    init_markers = first_frame_markers * scale + Vector3d::UnitY() * height
    ```
-2. Call `fitSkeletonToMarker(init_markers, torsionL, torsionR)` (line 110)
+2. Call `fitSkeletonToMarker(init_markers, torsionL, torsionR)` (line 132)
    - Adjusts skeleton dimensions to match marker distances
    - Applies femur torsion corrections
-3. Store reference markers (line 112-113):
+3. Store reference markers (lines 134-136):
    ```cpp
    mRefMarkers = marker_set.getGlobalPos()
    ```
-4. Store reference transformations (lines 115-116):
+4. Store reference transformations (lines 138-140):
    ```cpp
    mRefBnTransformation = bodynode.getTransform()
    ```
 
 ### 4. Convert Each Frame
 
-**Location**: `viewer/C3D_Reader.cpp:118-132`
+**Location**: `viewer/C3D_Reader.cpp:146-154`
 
 **Process**:
 For each frame in the C3D data:
-1. Scale and offset markers (line 128):
+1. Scale and offset markers (lines 148-150):
    ```cpp
    markers = raw_markers * scale + Vector3d::UnitY() * height
    ```
-2. Call `getPoseFromC3D(markers)` to compute joint angles (line 130)
-3. Store resulting pose vector (line 130)
-4. Store original markers (line 131)
+2. Call `getPoseFromC3D(markers)` to compute joint angles (line 152)
+3. Store resulting pose vector (line 152)
+4. Store original markers (line 153)
 
 #### Frame Conversion Details (`getPoseFromC3D`)
 
@@ -156,11 +150,11 @@ For each body part:
 
 ### 5. Post-Process Motion
 
-**Location**: `viewer/C3D_Reader.cpp:135-178`
+**Location**: `viewer/C3D_Reader.cpp:157-197`
 
 **Process**:
 
-1. **Recenter X/Z** (lines 138-145):
+1. **Recenter X/Z** (lines 160-167):
    ```cpp
    for frame in motion[1:]:
        frame[3] -= motion[0][3]  // X position
@@ -169,13 +163,13 @@ For each body part:
    motion[0][5] = 0
    ```
 
-2. **Create looping motion** (lines 147-161):
+2. **Create looping motion** (lines 169-183):
    - Calculate offset point: `3/8 × total_frames`
    - Take frames from offset to end
    - Append frames from start to offset (with position adjustment)
    - Creates seamless cyclic motion
 
-3. **Final recentering** (lines 163-175):
+3. **Final recentering** (lines 185-197):
    - Recenter all frames relative to new first frame
    - Zero out X/Z of first frame
 
@@ -183,34 +177,34 @@ For each body part:
 
 ### 6. Convert to Motion Structure
 
-**Location**: `viewer/C3D_Reader.cpp:182-325`
+**Location**: `viewer/C3D_Reader.cpp:203-325`
 **Function**: `convertToMotion() → Motion`
 
 **Process**:
 
-#### A. Compute Global Ratio (lines 195-207)
+#### A. Compute Global Ratio (lines 219-228)
 ```cpp
 globalRatio = max(body_segment_scales)  // Exclude feet/talus
 ```
 Finds the largest body segment scale to use as reference.
 
-#### B. Compute Stride (lines 209-214)
+#### B. Compute Stride (lines 231-236)
 ```cpp
 abs_stride = (last_frame[5] - first_frame[5]) / (globalRatio × refStride)
 param[0] = abs_stride × 0.5  // Half-cycle stride
 ```
 
-#### C. Compute Cadence (line 216)
+#### C. Compute Cadence (line 238)
 ```cpp
 param[1] = refCadence × sqrt(globalRatio) / (duration × 0.5)
 ```
 
-#### D. Store Global Ratio (line 218)
+#### D. Store Global Ratio (line 240)
 ```cpp
 param[2] = globalRatio
 ```
 
-#### E. Compute Limb Ratios (lines 221-241)
+#### E. Compute Limb Ratios (lines 246-260)
 ```cpp
 param[3] = femurL_scale / globalRatio  // Clipped [0, 1]
 param[4] = femurR_scale / globalRatio
@@ -218,7 +212,7 @@ param[5] = tibiaL_scale / globalRatio
 param[6] = tibiaR_scale / globalRatio
 ```
 
-#### F. Store Torsion Angles (lines 255-256)
+#### F. Store Torsion Angles (lines 277-278)
 ```cpp
 param[11] = femurL_torsion
 param[12] = femurR_torsion

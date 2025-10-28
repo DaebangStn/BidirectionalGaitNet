@@ -50,28 +50,27 @@ enum RewardType
 enum RewardFlags
 {
     REWARD_NONE = 0,
-    REWARD_METABOLIC = 1 << 0,  // 0x01 (only for multiplicative flag)
+    REWARD_METABOLIC = 1 << 0,  // 0x01
     REWARD_KNEE_PAIN = 1 << 1,  // 0x02
+    REWARD_KNEE_PAIN_MAX = 1 << 2,  // 0x04
+    REWARD_SEP_TORQUE_ENERGY = 1 << 3,  // 0x08
+    TERM_KNEE_PAIN = 1 << 4,  // 0x10
 };
 
 // Centralized reward configuration
 struct RewardConfig
 {
-    int active = REWARD_NONE;
-    int multiplicative = REWARD_NONE;
+    int flags = REWARD_NONE;
 
     // Metabolic reward parameters
     double metabolic_weight = 0.05;
     double metabolic_scale = 1.0;
-    bool separate_torque_energy = false;
 
     // Knee pain reward parameters
     double knee_pain_weight = 1.0;
     double knee_pain_scale = 1.0;
-    bool use_knee_pain_termination = false;
 
     // Knee pain max (per gait cycle) reward parameters
-    bool use_knee_pain_max = false;
     double knee_pain_max_weight = 1.0;
 
     // Locomotion reward weights (always active for gaitnet)
@@ -300,16 +299,16 @@ public:
     void setMetabolicWeight(double weight) { mRewardConfig.metabolic_weight = weight; }
     double getScaleMetabolic() { return mRewardConfig.metabolic_scale; }
     void setScaleMetabolic(double scale) { mRewardConfig.metabolic_scale = scale; }
-    bool getSeparateTorqueEnergy() { return mRewardConfig.separate_torque_energy; }
-    void setSeparateTorqueEnergy(bool separate) { mRewardConfig.separate_torque_energy = separate; }
+    bool getSeparateTorqueEnergy() { return mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY; }
+    void setSeparateTorqueEnergy(bool separate) { mRewardConfig.flags |= REWARD_SEP_TORQUE_ENERGY; }
     double getKneePainWeight() { return mRewardConfig.knee_pain_weight; }
-    void setKneePainWeight(double weight) { mRewardConfig.knee_pain_weight = weight; }
-    double getScaleKneePain() { return mRewardConfig.knee_pain_scale; }
-    void setScaleKneePain(double scale) { mRewardConfig.knee_pain_scale = scale; }
-    bool getUseMultiplicativeKneePain() { return mRewardConfig.multiplicative & REWARD_KNEE_PAIN; }
+    void setKneePainWeight(double weight) { mRewardConfig.flags |= REWARD_KNEE_PAIN; mRewardConfig.knee_pain_weight = weight; }
+    double getScaleKneePain() { return mRewardConfig.flags & REWARD_KNEE_PAIN ? mRewardConfig.knee_pain_scale : -1.0; }
+    void setScaleKneePain(double scale) { if (mRewardConfig.flags & REWARD_KNEE_PAIN) mRewardConfig.knee_pain_scale = scale; else mRewardConfig.knee_pain_scale = -1.0; }
+    bool getUseMultiplicativeKneePain() { return mRewardConfig.flags & REWARD_KNEE_PAIN; }
     void setUseMultiplicativeKneePain(bool use) {
-        if (use) mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
-        else mRewardConfig.multiplicative &= ~REWARD_KNEE_PAIN;
+        if (use) mRewardConfig.flags |= REWARD_KNEE_PAIN;
+        else mRewardConfig.flags &= ~REWARD_KNEE_PAIN;
     }
 
     void setUseWeights(std::vector<bool> _useWeights)

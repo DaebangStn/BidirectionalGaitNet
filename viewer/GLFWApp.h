@@ -423,7 +423,7 @@ private:
     void drawJointControlSection();
 
     // Plot title control
-    bool mPlotTitle, mPlotTitleResizablePlotPane = true;
+    bool mPlotTitle, mPlotTitleResizablePlotPane;
     std::string mCheckpointName;
 
     // Configuration loading

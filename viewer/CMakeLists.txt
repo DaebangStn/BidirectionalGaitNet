@@ -7,6 +7,7 @@ include_directories(../libs/imgui)
 find_package(GLUT REQUIRED)
 find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS gui)
+find_package(ezc3d CONFIG REQUIRED)
 
 add_executable(viewer
     "main.cpp"
@@ -28,4 +29,5 @@ target_link_libraries(viewer
         sim
         dart-gui
         ${HDF5_CXX_LIBRARIES}
+        ezc3d
 )

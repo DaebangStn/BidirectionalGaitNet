@@ -41,7 +41,7 @@ class C3D_Reader
         std::vector<Eigen::VectorXd> loadC3D(std::string path, double torsionL = 0.0, double torsionR = 0.0, double scale = 1.0, double height = 0.0);
         Eigen::VectorXd getPoseFromC3D(std::vector<Eigen::Vector3d>& _pos);
         // Eigen::VectorXd getPoseFromC3D_2(std::vector<Eigen::Vector3d> _pos);
-        SkeletonPtr getBVHSkeleton() { return mBVHSkeleton; }
+        SkeletonPtr getBVHSkeleton() { return mVirtSkeleton; }
 
         // get Original Markers
         std::vector<Eigen::Vector3d> getMarkerPos(int idx) {return mOriginalMarkers[idx];}
@@ -53,83 +53,83 @@ class C3D_Reader
                 ref_markers.push_back(m.getGlobalPos());
             
             // Pelvis size
-            int idx = mBVHSkeleton->getBodyNode("Pelvis")->getIndexInSkeleton();
+            int idx = mVirtSkeleton->getBodyNode("Pelvis")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[11] - init_marker[10]).norm() / (ref_markers[11] - ref_markers[10]).norm();
 
             // FemurR size 
-            idx = mBVHSkeleton->getBodyNode("FemurR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("FemurR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[11] - init_marker[20]).norm() / (ref_markers[11] - ref_markers[20]).norm();  // (init_marker[10] - init_marker[14]).norm() / (ref_markers[10] - ref_markers[14]).norm();
 
             // TibiaR size 
-            idx = mBVHSkeleton->getBodyNode("TibiaR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("TibiaR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[16] - init_marker[14]).norm() / (ref_markers[16] - ref_markers[14]).norm();
 
             // TalusR size
-            idx = mBVHSkeleton->getBodyNode("TalusR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("TalusR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[18] - init_marker[19]).norm() / (ref_markers[18] - ref_markers[19]).norm();
 
             // FemurL size
-            idx = mBVHSkeleton->getBodyNode("FemurL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("FemurL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[11] - init_marker[20]).norm() / (ref_markers[11] - ref_markers[20]).norm();
 
             // TibiaL size
-            idx = mBVHSkeleton->getBodyNode("TibiaL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("TibiaL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[20] - init_marker[22]).norm() / (ref_markers[20] - ref_markers[22]).norm();
 
             // TalusL size
-            idx = mBVHSkeleton->getBodyNode("TalusL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("TalusL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[18] - init_marker[19]).norm() / (ref_markers[18] - ref_markers[19]).norm();
             // (init_marker[23] - init_marker[24]).norm() / (ref_markers[23] - ref_markers[24]).norm();
 
             // Upper Body
-            idx = mBVHSkeleton->getBodyNode("Spine")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("Spine")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("Torso")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("Torso")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("Neck")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("Neck")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("Head")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("Head")->getIndexInSkeleton();
             // std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("ShoulderR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("ShoulderR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("ShoulderL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("ShoulderL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("ArmR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("ArmR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("ArmL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("ArmL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("ForeArmR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("ForeArmR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("ForeArmL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("ForeArmL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[7] - init_marker[3]).norm() / (ref_markers[7] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("HandR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("HandR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[4] - init_marker[3]).norm() / (ref_markers[4] - ref_markers[3]).norm();
 
-            idx = mBVHSkeleton->getBodyNode("HandL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("HandL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[3] = (init_marker[4] - init_marker[3]).norm() / (ref_markers[4] - ref_markers[3]).norm();
 
             // Torsion
-            idx = mBVHSkeleton->getBodyNode("FemurR")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("FemurR")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[4] = torsionR;
 
-            idx = mBVHSkeleton->getBodyNode("FemurL")->getIndexInSkeleton();
+            idx = mVirtSkeleton->getBodyNode("FemurL")->getIndexInSkeleton();
             std::get<1>(mSkelInfos[idx]).value[4] = torsionL;
             
             femurR_torsion = torsionR;
             femurL_torsion = torsionL;
             
             // 10 , 14
-            mEnv->getCharacter()->applySkeletonBodyNode(mSkelInfos, mBVHSkeleton);
+            mEnv->getCharacter()->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
         }
         const std::vector<MocapMarker>& getMarkerSet() { return mMarkerSet; }
         MotionData convertToMotion();
@@ -137,7 +137,7 @@ class C3D_Reader
 
     private:
         Environment *mEnv;
-        SkeletonPtr mBVHSkeleton;
+        SkeletonPtr mVirtSkeleton;
 
         std::vector<BoneInfo> mSkelInfos;
 

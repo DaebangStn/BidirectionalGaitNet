@@ -345,7 +345,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mRewardConfig.metabolic_scale = doc.FirstChildElement("ScaleMetabolic")->DoubleText();
 
     if (doc.FirstChildElement("KneePainWeight") != NULL) {
-        mRewardConfig.active |= REWARD_KNEE_PAIN;
+        mRewardConfig.flags |= REWARD_KNEE_PAIN;
         mRewardConfig.knee_pain_weight = doc.FirstChildElement("KneePainWeight")->DoubleText();
     }
 
@@ -356,20 +356,20 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     {
         std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeKneePain")->GetText()));
         if (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE")
-            mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
+            mRewardConfig.flags |= REWARD_KNEE_PAIN;
     }
 
     if (doc.FirstChildElement("UseKneePainTermination") != NULL)
     {
         std::string useTermStr = Trim(std::string(doc.FirstChildElement("UseKneePainTermination")->GetText()));
-        mRewardConfig.use_knee_pain_termination = (useTermStr == "true" || useTermStr == "True" || useTermStr == "TRUE");
+        mRewardConfig.flags |= TERM_KNEE_PAIN;
     }
 
     if (doc.FirstChildElement("UseMultiplicativeMetabolic") != NULL)
     {
         std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeMetabolic")->GetText()));
         if (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE")
-            mRewardConfig.multiplicative |= REWARD_METABOLIC;
+            mRewardConfig.flags |= REWARD_METABOLIC;
     }
 
     // Parse MetabolicType configuration
@@ -749,7 +749,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         if (metabolic_config["scale"])
             mRewardConfig.metabolic_scale = metabolic_config["scale"].as<double>(1.0);
         if (metabolic_config["multiplicative"] && metabolic_config["multiplicative"].as<bool>(false))
-            mRewardConfig.multiplicative |= REWARD_METABOLIC;
+            mRewardConfig.flags |= REWARD_METABOLIC;
 
         if (metabolic_config["type"]) {
             std::string metaType = metabolic_config["type"].as<std::string>("A");
@@ -772,7 +772,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
                 mCharacter->setTorqueEnergyCoeff(coeff);
             }
             if (torque_config["separate"]) {
-                mRewardConfig.separate_torque_energy = torque_config["separate"].as<bool>(false);
+                mRewardConfig.flags |= REWARD_SEP_TORQUE_ENERGY;
             }
         }
     }
@@ -780,13 +780,11 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     // === Knee pain ===
     if (env["reward"] && env["reward"]["knee_pain"]) {
         auto knee = env["reward"]["knee_pain"];
-        mRewardConfig.active |= REWARD_KNEE_PAIN;
-
+        if (knee["use"]) mRewardConfig.flags |= REWARD_KNEE_PAIN;
         if (knee["weight"]) mRewardConfig.knee_pain_weight = knee["weight"].as<double>(1.0);
         if (knee["scale"]) mRewardConfig.knee_pain_scale = knee["scale"].as<double>(1.0);
-        if (knee["multiplicative"] && knee["multiplicative"].as<bool>(false)) mRewardConfig.multiplicative |= REWARD_KNEE_PAIN;
-        if (knee["termination"]) mRewardConfig.use_knee_pain_termination = knee["termination"].as<bool>(false);
-        if (knee["use_max"]) mRewardConfig.use_knee_pain_max = knee["use_max"].as<bool>(false);
+        if (knee["termination"]) mRewardConfig.flags |= TERM_KNEE_PAIN;
+        if (knee["use_max"]) mRewardConfig.flags |= REWARD_KNEE_PAIN_MAX;
         if (knee["max_weight"]) mRewardConfig.knee_pain_max_weight = knee["max_weight"].as<double>(1.0);
     }
 
@@ -1103,7 +1101,7 @@ void Environment::checkTerminated()
     // Episode ends due to failure: fall or character below height limit
     double root_y = mCharacter->getSkeleton()->getCOM()[1];
     bool is_fall = root_y < mLimitY * mCharacter->getGlobalRatio();
-    bool knee_pain = mRewardConfig.use_knee_pain_termination && (mSimulationStep > 100) && (mCharacter->getKneeLoadingMax() > 8.0);
+    bool knee_pain = (mRewardConfig.flags & TERM_KNEE_PAIN) && (mSimulationStep > 100) && (mCharacter->getKneeLoadingMax() > 8.0);
     bool terminated = is_fall || knee_pain;
 
     // Log to mInfoMap for TensorBoard
@@ -1185,50 +1183,44 @@ double Environment::calcReward()
         double r_loco = getLocoReward();
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
-        double r_energy = getEnergyReward();
 
         // Build multiplicative and additive components separately using bitflags
         double multiplicative_part = r_loco * r_avg * r_step;
         double additive_part = 0.0;
 
         // Apply energy reward (always active, multiplicative or additive)
-        if (mRewardConfig.multiplicative & REWARD_METABOLIC)
+        double r_energy = getEnergyReward();
+        if (mRewardConfig.flags & REWARD_METABOLIC)
             multiplicative_part *= r_energy;
         else
             additive_part += mRewardConfig.metabolic_scale * r_energy;
 
-        if (mRewardConfig.separate_torque_energy) {
+        if (mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY) {
             mInfoMap.insert(std::make_pair("r_metabolic", r_energy));
         }
 
         // When torque energy is separated, calculate and apply separate torque reward
-        if (mRewardConfig.separate_torque_energy) {
+        if (mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY) {
             double r_torque = exp(-mRewardConfig.metabolic_weight * mCharacter->getTorqueEnergy());
-            if (mRewardConfig.multiplicative & REWARD_METABOLIC) r_energy *= r_torque;
+            if (mRewardConfig.flags & REWARD_METABOLIC) r_energy *= r_torque;
             else r_energy += mRewardConfig.metabolic_scale * r_torque;
             mInfoMap.insert(std::make_pair("r_torque", r_torque));
         }
 
         // Apply knee pain reward (multiplicative or additive based on bitflag)
-        if (mRewardConfig.active & REWARD_KNEE_PAIN)
+        if (mRewardConfig.flags & REWARD_KNEE_PAIN)
         {
             double r_knee_pain = getKneePainReward();
-            if (mRewardConfig.multiplicative & REWARD_KNEE_PAIN)
-                multiplicative_part *= r_knee_pain;
-            else
-                additive_part += mRewardConfig.knee_pain_scale * r_knee_pain;
+            multiplicative_part *= r_knee_pain;
             mInfoMap.insert(std::make_pair("r_knee_pain", r_knee_pain));
 
-            // Apply knee pain max reward (per gait cycle) if enabled
-            if (mRewardConfig.use_knee_pain_max)
-            {
-                double r_knee_pain_max = getKneePainMaxReward();
-                if (mRewardConfig.multiplicative & REWARD_KNEE_PAIN)
-                    multiplicative_part *= r_knee_pain_max;
-                else
-                    additive_part += mRewardConfig.knee_pain_scale * r_knee_pain_max;
-                mInfoMap.insert(std::make_pair("r_knee_pain_max", r_knee_pain_max));
-            }
+        }
+        // Apply knee pain max reward (per gait cycle) if enabled
+        if (mRewardConfig.flags & REWARD_KNEE_PAIN_MAX)
+        {
+            double r_knee_pain_max = getKneePainMaxReward();
+            multiplicative_part *= r_knee_pain_max;
+            mInfoMap.insert(std::make_pair("r_knee_pain_max", r_knee_pain_max));
         }
 
         r = multiplicative_part + additive_part;
@@ -1815,13 +1807,8 @@ bool Environment::isFall()
 double Environment::getEnergyReward()
 {
     double energy;
-    if (mRewardConfig.separate_torque_energy) {
-        // When separated, use only metabolic energy
-        energy = mCharacter->getMetabolicEnergy();
-    } else {
-        // Default behavior: combined metabolic + torque energy
-        energy = mCharacter->getEnergy();
-    }
+    if (mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY) energy = mCharacter->getMetabolicEnergy();
+    else energy = mCharacter->getEnergy();
     double r_energy = exp(-mRewardConfig.metabolic_weight * energy);
     return r_energy;
 }

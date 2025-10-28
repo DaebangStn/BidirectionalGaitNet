@@ -70,7 +70,7 @@ environment:
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
-        coeff: 0.1
+        coeff: 0.5
         separate: true
 
     # Locomotion rewards (for gaitnet)
@@ -82,10 +82,12 @@ environment:
 
     # Penalty/auxiliary rewards
     knee_pain:
+      use: false
       weight: 1.0
       scale: 1.0
-      multiplicative: true  # if true, multiplies with main reward term
-      termination: true
+      termination: false
+      use_max: true
+      max_weight: 0.1
 
   # Parameterization for training
   parameters:

@@ -80,12 +80,11 @@ environment:
 
     # Penalty/auxiliary rewards
     knee_pain:
-      weight: 1.0
-      scale: 0.3
-      multiplicative: true  # if true, multiplies with main reward term
+      weight: 0.3
+      scale: 1.0
       termination: true
       use_max: true  # if true, uses max knee loading per gait cycle
-      max_weight: 0.2
+      max_weight: 0.1
 
   # Parameterization for training
   parameters:
