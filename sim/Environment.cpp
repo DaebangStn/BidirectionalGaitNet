@@ -1190,22 +1190,20 @@ double Environment::calcReward()
 
         // Apply energy reward (always active, multiplicative or additive)
         double r_energy = getEnergyReward();
-        if (mRewardConfig.flags & REWARD_METABOLIC)
-            multiplicative_part *= r_energy;
-        else
-            additive_part += mRewardConfig.metabolic_scale * r_energy;
-
-        if (mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY) {
-            mInfoMap.insert(std::make_pair("r_metabolic", r_energy));
-        }
-
+        
         // When torque energy is separated, calculate and apply separate torque reward
         if (mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY) {
+            mInfoMap.insert(std::make_pair("r_metabolic", r_energy));
+
             double r_torque = exp(-mRewardConfig.metabolic_weight * mCharacter->getTorqueEnergy());
             if (mRewardConfig.flags & REWARD_METABOLIC) r_energy *= r_torque;
             else r_energy += mRewardConfig.metabolic_scale * r_torque;
             mInfoMap.insert(std::make_pair("r_torque", r_torque));
         }
+
+        if (mRewardConfig.flags & REWARD_METABOLIC) multiplicative_part *= r_energy;
+        else additive_part += mRewardConfig.metabolic_scale * r_energy;
+        mInfoMap.insert(std::make_pair("r_energy", r_energy));
 
         // Apply knee pain reward (multiplicative or additive based on bitflag)
         if (mRewardConfig.flags & REWARD_KNEE_PAIN)
@@ -1229,7 +1227,6 @@ double Environment::calcReward()
         mInfoMap.insert(std::make_pair("r_loco", r_loco));
         mInfoMap.insert(std::make_pair("r_avg", r_avg));
         mInfoMap.insert(std::make_pair("r_step", r_step));
-        mInfoMap.insert(std::make_pair("r_energy", r_energy));
     }
 
     if (mCharacter->getActuatorType() == mus) r = 1.0;
