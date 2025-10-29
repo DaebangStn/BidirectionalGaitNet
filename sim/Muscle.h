@@ -15,6 +15,17 @@ struct Anchor
 	Anchor(std::vector<dart::dynamics::BodyNode *> bns, std::vector<Eigen::Vector3d> lps, std::vector<double> ws);
 	Eigen::Vector3d GetPoint();
 };
+
+// Reference to a specific anchor in a specific muscle
+struct AnchorReference
+{
+	std::string muscle_name;
+	int anchor_index;
+	int bodynode_index;
+
+	AnchorReference(const std::string& name, int anchor_idx, int bn_idx)
+		: muscle_name(name), anchor_index(anchor_idx), bodynode_index(bn_idx) {}
+};
 class Muscle
 {
 public:

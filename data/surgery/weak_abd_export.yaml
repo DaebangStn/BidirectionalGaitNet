@@ -1,0 +1,28 @@
+version: 1.0
+description: Weaken abductor muscles to 50% strength and export to file
+operations:
+  - type: weaken_muscle
+    muscles:
+      - L_Gluteus_Medius
+      - R_Gluteus_Medius
+      - L_Gluteus_Medius1
+      - R_Gluteus_Medius1
+      - L_Gluteus_Medius2
+      - R_Gluteus_Medius2
+      - L_Gluteus_Medius3
+      - R_Gluteus_Medius3
+      - L_Gluteus_Minimus
+      - R_Gluteus_Minimus
+      - L_Gluteus_Minimus1
+      - R_Gluteus_Minimus1
+      - L_Gluteus_Minimus2
+      - R_Gluteus_Minimus2
+      - L_Tensor_Fascia_Lata
+      - R_Tensor_Fascia_Lata
+      - L_Tensor_Fascia_Lata1
+      - R_Tensor_Fascia_Lata1
+      - L_Tensor_Fascia_Lata2
+      - R_Tensor_Fascia_Lata2
+    strength_ratio: 0.3
+  - type: export_muscles
+    filepath: data/muscle/weak_abd03.xml

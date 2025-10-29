@@ -110,11 +110,9 @@ Eigen::VectorXd NPZ::getPose(int frameIdx)
         pose = raw_pose;
     }
 
-    // Apply height calibration offsets if enabled
-    if (mHeightCalibration) {
-        pose[4] += mHeightOffset;  // Y position (height)
-        pose[3] -= mXOffset;        // X position
-    }
+    // Apply height calibration offsets (always enabled)
+    pose[4] += mHeightOffset;  // Y position (height)
+    pose[3] -= mXOffset;        // X position
 
     return pose;
 }
@@ -178,7 +176,7 @@ void NPZ::setRefMotion(Character* character, dart::simulation::WorldPtr world)
     }
 
     // Apply height calibration if enabled
-    if (mHeightCalibration && world) {
+    if (world) {
         // Convert first frame from 6D to angle format
         Eigen::VectorXd raw_initial_pose = mMotionData.row(0);
         Eigen::VectorXd initial_pose = character->sixDofToPos(raw_initial_pose);
@@ -187,8 +185,8 @@ void NPZ::setRefMotion(Character* character, dart::simulation::WorldPtr world)
         // Store initial root transform
         Eigen::Isometry3d initial_transform = FreeJoint::convertToTransform(initial_pose.head(6));
 
-        // Perform height calibration
-        character->heightCalibration(world, false);
+        // Perform height calibration (always enabled)
+        character->heightCalibration(world);
 
         // Get calibrated pose and calculate offsets
         Eigen::VectorXd calibrated_pose = character->getSkeleton()->getPositions();

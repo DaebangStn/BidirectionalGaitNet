@@ -10,6 +10,7 @@
 #include "HDF.h"
 #include "NPZ.h"
 #include "HDFRollout.h"
+#include "C3D.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -22,6 +23,7 @@
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
 #include "ImGuiFileDialog.h"
+#include <memory>
 
 struct ResizablePlot {
     std::vector<std::string> keys;
@@ -102,6 +104,15 @@ struct RolloutStatus
 // };
 
 /**
+ * @brief Unified navigation mode for all playable data (motion, markers, etc.)
+ */
+enum PlaybackNavigationMode
+{
+    PLAYBACK_SYNC = 0,           // Automatic playback (synced with viewer time or other data)
+    PLAYBACK_MANUAL_FRAME        // Manual frame selection via slider
+};
+
+/**
  * @brief Viewer-specific state for motion display
  *
  * Separates viewer concerns (positioning, caching) from motion data.
@@ -109,15 +120,23 @@ struct RolloutStatus
  */
 struct MotionViewerState
 {
-    Eigen::Vector3d displayOffset;        ///< World offset for motion display
-    Eigen::VectorXd currentPose;          ///< Last evaluated pose (cached from Motion::getPose())
-    Eigen::Vector3d initialRootPosition;  ///< Initial root position for delta calculations (HDF/BVH)
+    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        ///< World offset for motion display
+    Eigen::VectorXd currentPose;                                     ///< Last evaluated pose (cached from Motion::getPose())
+    Eigen::Vector3d initialRootPosition = Eigen::Vector3d::Zero();   ///< Initial root position for delta calculations (HDF/BVH)
+    Eigen::Vector3d cycleAccumulation = Eigen::Vector3d::Zero();     ///< Accumulated root translation across cycles
+    int lastFrameIdx = 0;                                            ///< Last evaluated frame index (for wrap detection)
+    PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;           ///< Playback mode for this motion
+    int manualFrameIndex = 0;                                        ///< Manual frame index when navigationMode == PLAYBACK_MANUAL_FRAME
 };
 
-enum MotionNavigationMode
+struct MarkerViewerState
 {
-    NAVIGATION_VIEWER_TIME = 0,  // Automatic playback driven by viewer time
-    NAVIGATION_MANUAL_FRAME      // Manual frame selection via slider
+    std::vector<Eigen::Vector3d> currentMarkers;
+    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();
+    Eigen::Vector3d cycleAccumulation = Eigen::Vector3d::Zero();
+    int lastFrameIdx = 0;
+    PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;
+    int manualFrameIndex = 0;
 };
 
 class GLFWApp
@@ -160,9 +179,11 @@ private:
     void drawKinematicsControlPanel();
     void drawSimVisualizationPanel();
     void drawTimingPane();
+    void drawTitlePanel();
     void drawResizablePlotPane();
     void drawCameraStatusSection();
     void drawPlayableMotion();
+    void drawPlayableMarkers();
 
     void drawFGNControl();
     void drawBGNControl();
@@ -188,6 +209,7 @@ private:
     void drawShape(const dart::dynamics::Shape *shape, const Eigen::Vector4d &color);
 
     void drawAxis();
+    void drawJointAxis(dart::dynamics::Joint* joint);
     void drawMuscles(MuscleRenderingType renderingType = activationLevel);
 
     void drawShadow();
@@ -265,6 +287,10 @@ private:
     char mMuscleFilterText[32];
     std::vector<bool> mMuscleSelectionStates;
 
+    // Muscle Activation Plot UI
+    char mActivationFilterText[256];
+    std::vector<std::string> mSelectedActivationKeys;
+
     // Muscle Rendering Option
     std::vector<Muscle *> mSelectedMuscles;
     std::vector<bool> mRelatedDofs;
@@ -292,6 +318,9 @@ private:
     int mC3DCount;
 
     C3D_Reader* mC3DReader;
+    std::unique_ptr<C3D> mC3DMarkers;
+    bool mRenderC3DMarkers;
+    MarkerViewerState mMarkerState;
 
 
     // For GVAE
@@ -306,11 +335,8 @@ private:
     MotionData mPredictedMotion;
 
     int mMotionIdx;
-    int mMotionFrameIdx;
-
-    // Motion playback tracking (cycle accumulation and forward progress - used for both NPZ and HDF5)
-    int mLastFrameIdx;
-    Eigen::Vector3d mCycleAccumulation;
+    PlaybackNavigationMode mFallbackMotionNavigationMode;
+    int mFallbackManualFrameIndex;
 
     // HDF5 selection (for selective param/cycle loading)
     std::vector<std::string> mHDF5Files;              // Available HDF5 files
@@ -331,6 +357,54 @@ private:
 
     // NEW: Load parameters from currently selected motion (works with new Motion* architecture)
     void loadParametersFromCurrentMotion();           // Load parameters from mMotionsNew[mMotionIdx] to environment
+    double computeMarkerHeightCalibration(const std::vector<Eigen::Vector3d>& markers);
+    void alignMarkerToSimulation();
+    void markerPoseEval(double frameFloat);
+
+    struct ViewerClock
+    {
+        double time = 0.0;
+        double phase = 0.0;
+    };
+
+    struct MotionPlaybackContext
+    {
+        Motion* motion = nullptr;
+        MotionViewerState* state = nullptr;
+        Character* character = nullptr;
+        double phase = 0.0;
+        double frameFloat = 0.0;
+        double wrappedFrameFloat = 0.0;
+        int frameIndex = 0;
+        int totalFrames = 0;
+        int valuesPerFrame = 0;
+    };
+
+    struct MarkerPlaybackContext
+    {
+        C3D* markers = nullptr;
+        MarkerViewerState* state = nullptr;
+        double phase = 0.0;
+        double frameFloat = 0.0;
+        int frameIndex = 0;
+        int totalFrames = 0;
+        bool valid = false;
+    };
+
+    ViewerClock updateViewerClock(double dt);
+    bool computeMotionPlayback(MotionPlaybackContext& context);
+    MarkerPlaybackContext computeMarkerPlayback(const ViewerClock& clock,
+                                                const MotionPlaybackContext* motionContext);
+    void evaluateMarkerPlayback(const MarkerPlaybackContext& context);
+    void evaluateMotionPlayback(const MotionPlaybackContext& context);
+
+    double computeMotionPhase();
+    double determineMotionFrame(Motion* motion, MotionViewerState& state, double phase);
+    void updateMotionCycleAccumulation(Motion* current_motion,
+                                       MotionViewerState& state,
+                                       int current_frame_idx,
+                                       Character* character,
+                                       int value_per_frame);
 
     std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads all types (npz, hdfRollout, hdfSingle, bvh)
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
@@ -405,10 +479,9 @@ private:
     bool mIsPlaybackTooFast;         // Warning: playback faster than simulation can handle
     bool mShowTimingPane;            // Toggle for timing information pane
     bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
+    bool mShowTitlePanel;            // Toggle for title panel (Ctrl+T)
 
     // Motion navigation control
-    MotionNavigationMode mMotionNavigationMode;  // Current navigation mode
-    int mManualFrameIndex;                        // Manual frame index (when in manual mode)
     int mMaxFrameIndex;                           // Maximum frame index for current motion
 
     // For Resizable Plot Pane
@@ -461,5 +534,6 @@ private:
     // Motion navigation helper - NEW: using Motion* interface
     double computeFrameFloat(Motion* motion, double phase);
     void motionPoseEval(Motion* motion, int motionIdx, double frame_float);
+    double computeMotionHeightCalibration(const Eigen::VectorXd& motion_pose);
     void alignMotionToSimulation();
 };

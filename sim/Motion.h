@@ -76,18 +76,6 @@ public:
     // ==================== Virtual Methods with Default Implementation ====================
 
     /**
-     * @brief Enable/disable height calibration
-     * @param enable True to enable height calibration
-     */
-    virtual void setHeightCalibration(bool enable) { mHeightCalibration = enable; }
-
-    /**
-     * @brief Check if height calibration is enabled
-     * @return True if height calibration is enabled
-     */
-    virtual bool getHeightCalibration() const { return mHeightCalibration; }
-
-    /**
      * @brief Get source type identifier
      * @return Source format string ("npz", "hdfSingle", "bvh", "hdfRollout")
      */
@@ -155,7 +143,6 @@ public:
     virtual bool applyParametersToEnvironment(Environment* env) const { return false; }
 
 protected:
-    bool mHeightCalibration = false;
     Character* mCharacter = nullptr;
 };
 

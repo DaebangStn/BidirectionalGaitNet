@@ -2,6 +2,7 @@ find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS collision-bullet)
 find_package(CURL REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(ezc3d CONFIG REQUIRED)
 
 file(GLOB srcs "*.h" "*.cpp")
 
@@ -16,4 +17,5 @@ target_link_libraries(sim PUBLIC
         CURL::libcurl
         yaml-cpp
         ${HDF5_CXX_LIBRARIES}
+        ezc3d
 )

@@ -1,0 +1,50 @@
+version: 1.0
+description: Weaken abductor and adductor muscles to 50% strength and export to file
+operations:
+  - type: weaken_muscle
+    muscles:
+      - L_Adductor_Brevis
+      - R_Adductor_Brevis
+      - L_Adductor_Brevis1
+      - R_Adductor_Brevis1
+      - L_Adductor_Longus
+      - R_Adductor_Longus
+      - L_Adductor_Longus1
+      - R_Adductor_Longus1
+      - L_Adductor_Magnus
+      - R_Adductor_Magnus
+      - L_Adductor_Magnus1
+      - R_Adductor_Magnus1
+      - L_Adductor_Magnus2
+      - R_Adductor_Magnus2
+      - L_Adductor_Magnus3
+      - R_Adductor_Magnus3
+      - L_Adductor_Magnus4
+      - R_Adductor_Magnus4
+      - L_Gluteus_Medius
+      - R_Gluteus_Medius
+      - L_Gluteus_Medius1
+      - R_Gluteus_Medius1
+      - L_Gluteus_Medius2
+      - R_Gluteus_Medius2
+      - L_Gluteus_Medius3
+      - R_Gluteus_Medius3
+      - L_Gluteus_Minimus
+      - R_Gluteus_Minimus
+      - L_Gluteus_Minimus1
+      - R_Gluteus_Minimus1
+      - L_Gluteus_Minimus2
+      - R_Gluteus_Minimus2
+      - L_Gracilis
+      - R_Gracilis
+      - L_Pectineus
+      - R_Pectineus
+      - L_Tensor_Fascia_Lata
+      - R_Tensor_Fascia_Lata
+      - L_Tensor_Fascia_Lata1
+      - R_Tensor_Fascia_Lata1
+      - L_Tensor_Fascia_Lata2
+      - R_Tensor_Fascia_Lata2
+    strength_ratio: 0.3
+  - type: export_muscles
+    filepath: data/muscle/weak_abddd03.xml

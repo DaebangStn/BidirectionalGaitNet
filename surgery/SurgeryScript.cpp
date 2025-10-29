@@ -1,5 +1,6 @@
 #include "SurgeryScript.h"
 #include "UriResolver.h"
+#include "Log.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -14,7 +15,7 @@ std::vector<std::unique_ptr<SurgeryOperation>> SurgeryScript::loadFromFile(const
     resolver.initialize();
     std::string resolved_path = resolver.resolve(filepath);
     
-    std::cout << "[SurgeryScript] Loading from: " << resolved_path << std::endl;
+    LOG_INFO("[SurgeryScript] Loading from: " << resolved_path);
     
     try {
         YAML::Node config = YAML::LoadFile(resolved_path);
@@ -22,18 +23,18 @@ std::vector<std::unique_ptr<SurgeryOperation>> SurgeryScript::loadFromFile(const
         // Check version (optional)
         if (config["version"]) {
             std::string version = config["version"].as<std::string>();
-            std::cout << "[SurgeryScript] Version: " << version << std::endl;
+            LOG_INFO("[SurgeryScript] Version: " << version);
         }
         
         // Load description (optional)
         if (config["description"]) {
             std::string desc = config["description"].as<std::string>();
-            std::cout << "[SurgeryScript] Description: " << desc << std::endl;
+            LOG_INFO("[SurgeryScript] Description: " << desc);
         }
         
         // Load operations
         if (!config["operations"]) {
-            std::cerr << "[SurgeryScript] Error: No 'operations' section found" << std::endl;
+            LOG_ERROR("[SurgeryScript] Error: No 'operations' section found");
             return operations;
         }
         
@@ -45,15 +46,14 @@ std::vector<std::unique_ptr<SurgeryOperation>> SurgeryScript::loadFromFile(const
                     operations.push_back(std::move(op));
                 }
             } catch (const std::exception& e) {
-                std::cerr << "[SurgeryScript] Error parsing operation " << i 
-                         << ": " << e.what() << std::endl;
+                LOG_ERROR("[SurgeryScript] Error parsing operation " << i << ": " << e.what());
             }
         }
         
-        std::cout << "[SurgeryScript] Loaded " << operations.size() << " operation(s)" << std::endl;
+        LOG_INFO("[SurgeryScript] Loaded " << operations.size() << " operation(s)");
         
     } catch (const std::exception& e) {
-        std::cerr << "[SurgeryScript] Error loading file: " << e.what() << std::endl;
+        LOG_ERROR("[SurgeryScript] Error loading file: " << e.what());
     }
     
     return operations;
@@ -85,7 +85,7 @@ void SurgeryScript::saveToFile(
     fout << config;
     fout.close();
     
-    std::cout << "[SurgeryScript] Saved " << ops.size() << " operation(s) to " << filepath << std::endl;
+    LOG_INFO("[SurgeryScript] Saved " << ops.size() << " operation(s) to " << filepath);
 }
 
 std::string SurgeryScript::preview(const std::vector<std::unique_ptr<SurgeryOperation>>& ops) {
@@ -128,8 +128,16 @@ std::unique_ptr<SurgeryOperation> SurgeryScript::createOperation(const YAML::Nod
         return RemoveBodyNodeFromAnchorOp::fromYAML(node);
     } else if (type == "export_muscles") {
         return ExportMusclesOp::fromYAML(node);
+    } else if (type == "rotate_joint_offset") {
+        return RotateJointOffsetOp::fromYAML(node);
+    } else if (type == "rotate_anchor_points") {
+        return RotateAnchorPointsOp::fromYAML(node);
+    } else if (type == "fdo_combined") {
+        return FDOCombinedOp::fromYAML(node);
+    } else if (type == "weaken_muscle") {
+        return WeakenMuscleOp::fromYAML(node);
     } else {
-        std::cerr << "[SurgeryScript] Unknown operation type: " << type << std::endl;
+        LOG_ERROR("[SurgeryScript] Unknown operation type: " << type);
         return nullptr;
     }
 }

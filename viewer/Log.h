@@ -15,7 +15,8 @@
 
 // Set current log level (change this line to control verbosity)
 #ifndef LOG_LEVEL
-#define LOG_LEVEL LOG_LEVEL_INFO
+#define LOG_LEVEL LOG_LEVEL_VERBOSE
+// #define LOG_LEVEL LOG_LEVEL_INFO
 #endif
 
 // Logging macros - automatically filtered by log level

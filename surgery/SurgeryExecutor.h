@@ -32,7 +32,7 @@ public:
     void applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles);
     
     // Surgery operations (virtual to allow GUI-specific overrides)
-    virtual void resetMuscles();
+    virtual void resetMuscles(const std::string& muscle_xml_path = "");
     virtual bool distributePassiveForce(const std::vector<std::string>& muscles, 
                                 const std::string& reference,
                                 const std::map<std::string, Eigen::VectorXd>& joint_angles = {});
@@ -42,13 +42,35 @@ public:
     virtual bool copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle);
     virtual bool editAnchorPosition(const std::string& muscle, int anchor_index, const Eigen::Vector3d& position);
     virtual bool editAnchorWeights(const std::string& muscle, int anchor_index, const std::vector<double>& weights);
-    virtual bool addBodyNodeToAnchor(const std::string& muscle, int anchor_index, 
+    virtual bool addBodyNodeToAnchor(const std::string& muscle, int anchor_index,
                             const std::string& bodynode_name, double weight);
     virtual bool removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index, int bodynode_index);
     virtual void exportMuscles(const std::string& path);
-    
-    // Helper method
+    virtual bool rotateJointOffset(const std::string& joint_name, const Eigen::Vector3d& axis, double angle, bool preserve_position = false);
+    virtual bool rotateAnchorPoints(const std::string& muscle_name, int ref_anchor_index,
+                           const Eigen::Vector3d& search_direction,
+                           const Eigen::Vector3d& rotation_axis, double angle);
+
+    // FDO Combined Surgery (joint + anchor rotation)
+    // Target bodynode is obtained from the reference anchor (must be single-LBS)
+    virtual bool executeFDO(const std::string& ref_muscle, int ref_anchor_index,
+                           const Eigen::Vector3d& search_direction,
+                           const Eigen::Vector3d& rotation_axis, double angle);
+
+    // Muscle weakening
+    virtual bool weakenMuscles(const std::vector<std::string>& muscles, double strength_ratio);
+
+    // Compute which anchors will be affected by rotation operation
+    // Throws std::runtime_error if ref_anchor has multiple bodynodes
+    std::vector<AnchorReference> computeAffectedAnchors(
+        const AnchorReference& ref_anchor,
+        const Eigen::Vector3d& search_direction) const;
+
+    // Helper methods
     Eigen::Isometry3d getBodyNodeZeroPoseTransform(dart::dynamics::BodyNode* bn);
+    bool validateAnchorReferencesBodynode(const std::string& muscle_name, int anchor_index,
+                                         const std::string& bodynode_name);
+    dart::dynamics::Joint* getChildJoint(dart::dynamics::BodyNode* bodynode);
 
 protected:
     Character* mCharacter;

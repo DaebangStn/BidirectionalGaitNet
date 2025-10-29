@@ -27,6 +27,7 @@ dependencies:
   - gxx_linux-64=14.1.0
   - h5py
   - hdf5
+  - ezc3d
   - dill
   - tinyxml2
   - kernel-headers_linux-64=3.10.0

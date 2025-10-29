@@ -1,4 +1,5 @@
 #include "PhysicalExam.h"
+#include "Log.h"
 #include <pybind11/embed.h>
 #include <iostream>
 #include <string>
@@ -29,15 +30,15 @@ int main(int argc, char** argv) {
     if (argc == 2) {
         // Trial mode: physical_exam <exam_setting.yaml>
         std::string config_path = argv[1];
-        std::cout << "Loading exam setting from config: " << config_path << std::endl;
+        LOG_INFO("Loading exam setting from config: " << config_path);
 
         try {
             exam.loadExamSetting(config_path);
-            std::cout << "Exam setting loaded. Starting in paused state." << std::endl;
-            std::cout << "Use 'Start Next Trial' button to begin trials." << std::endl;
+            LOG_INFO("Exam setting loaded. Starting in paused state.");
+            LOG_INFO("Use 'Start Next Trial' button to begin trials.");
             exam.mainLoop();  // Start interactive loop with trials
         } catch (const std::exception& e) {
-            std::cerr << "Error loading exam setting: " << e.what() << std::endl;
+            LOG_ERROR("Error loading exam setting: " << e.what());
             return 1;
         }
     }

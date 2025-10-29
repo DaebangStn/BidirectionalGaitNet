@@ -202,16 +202,104 @@ class ExportMusclesOp : public SurgeryOperation {
 public:
     ExportMusclesOp(const std::string& filepath)
         : mFilepath(filepath) {}
-    
+
     bool execute(SurgeryExecutor* executor) override;
     YAML::Node toYAML() const override;
     std::string getDescription() const override;
     std::string getType() const override { return "export_muscles"; }
-    
+
     static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
-    
+
 private:
     std::string mFilepath;
+};
+
+// Rotate joint offset and frame (FDO operation part 1)
+class RotateJointOffsetOp : public SurgeryOperation {
+public:
+    RotateJointOffsetOp(const std::string& joint_name, const Eigen::Vector3d& axis, double angle, bool preserve_position = false)
+        : mJointName(joint_name), mAxis(axis), mAngle(angle), mPreservePosition(preserve_position) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "rotate_joint_offset"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::string mJointName;
+    Eigen::Vector3d mAxis;
+    double mAngle;
+    bool mPreservePosition;
+};
+
+// Rotate muscle anchor points (FDO operation part 2)
+class RotateAnchorPointsOp : public SurgeryOperation {
+public:
+    RotateAnchorPointsOp(const std::string& muscle_name, int ref_anchor_index,
+                         const Eigen::Vector3d& search_direction,
+                         const Eigen::Vector3d& rotation_axis, double angle)
+        : mMuscleName(muscle_name), mRefAnchorIndex(ref_anchor_index),
+          mSearchDirection(search_direction), mRotationAxis(rotation_axis), mAngle(angle) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "rotate_anchor_points"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::string mMuscleName;
+    int mRefAnchorIndex;
+    Eigen::Vector3d mSearchDirection;
+    Eigen::Vector3d mRotationAxis;
+    double mAngle;
+};
+
+// FDO Combined Surgery Operation
+// Target bodynode is obtained from the reference anchor (must be single-LBS)
+class FDOCombinedOp : public SurgeryOperation {
+public:
+    FDOCombinedOp(const std::string& ref_muscle, int ref_anchor_index,
+                  const Eigen::Vector3d& search_direction,
+                  const Eigen::Vector3d& rotation_axis, double angle)
+        : mRefMuscle(ref_muscle), mRefAnchorIndex(ref_anchor_index),
+          mSearchDirection(search_direction),
+          mRotationAxis(rotation_axis), mAngle(angle) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "fdo_combined"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::string mRefMuscle;
+    int mRefAnchorIndex;
+    Eigen::Vector3d mSearchDirection;
+    Eigen::Vector3d mRotationAxis;
+    double mAngle;
+};
+
+// Weaken muscle by reducing force capacity
+class WeakenMuscleOp : public SurgeryOperation {
+public:
+    WeakenMuscleOp(const std::vector<std::string>& muscles, double strength_ratio)
+        : mMuscles(muscles), mStrengthRatio(strength_ratio) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "weaken_muscle"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::vector<std::string> mMuscles;
+    double mStrengthRatio;  // 0.0 to 1.0, where 1.0 = full strength, 0.0 = paralyzed
 };
 
 } // namespace PMuscle

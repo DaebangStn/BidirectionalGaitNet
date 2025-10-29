@@ -90,10 +90,12 @@ public:
 
     std::vector<dart::dynamics::BodyNode *> getEndEffectors() { return mEndEffectors; }
 
-    Eigen::VectorXd heightCalibration(dart::simulation::WorldPtr _world, bool isStrict = true);
+    Eigen::VectorXd heightCalibration(dart::simulation::WorldPtr _world);
     std::vector<Eigen::Matrix3d> getBodyNodeTransform() { return mBodyNodeTransform; }
     void setMuscles(std::string path, bool useVelocityForce = false, bool meshLbsWeight = false);
+    void clearMuscles();
     const std::vector<Muscle *> &getMuscles() { return mMuscles; }
+    Muscle* getMuscleByName(const std::string& name) const;
 
     void clearLogs();
 
@@ -205,6 +207,7 @@ private:
     // Muscle
     std::vector<Muscle *> mMuscles;
     std::vector<Muscle *> mRefMuscles;
+    std::map<std::string, Muscle*> mMuscleNameCache;  // Fast lookup by name
 
     int mNumMuscleRelatedDof;
     Eigen::VectorXd mActivations;

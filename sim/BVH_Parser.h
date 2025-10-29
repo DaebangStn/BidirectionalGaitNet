@@ -64,9 +64,6 @@ public:
 	std::string getSourceType() const override { return "bvh"; }
 	std::string getLogHeader() const override { return "[BVH]"; }
 
-	void setHeightCalibration(bool enable) override { mHeightCalibration = enable; }
-	bool getHeightCalibration() const override { return mHeightCalibration; }
-
 	// Extended interface for legacy ViewerMotion compatibility
 	Eigen::VectorXd getRawMotionData() const override;
 	int getValuesPerFrame() const override { return 56; }  // BVH uses skeleton DOF
@@ -95,7 +92,6 @@ private:
 	Character *mCharacter;
 
 	Eigen::Isometry3d mRootTransform;
-	bool mHeightCalibration;
 	double mHeightOffset;
 	double mXOffset;
 };

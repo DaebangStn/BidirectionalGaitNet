@@ -8,8 +8,8 @@
 
 
 Environment::Environment()
-    : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1), 
-    mHeightCalibration(0), mEnforceSymmetry(false), mLimitY(0.6), mLearningStd(false)
+    : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
+    mEnforceSymmetry(false), mLimitY(0.6), mLearningStd(false)
 {
     // Initialize URI resolver for path resolution
     PMuscle::URIResolver::getInstance().initialize();
@@ -266,7 +266,6 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         LOG_VERBOSE("[Environment] BVH Path resolved: " << bvh_path << " -> " << resolvedBvhPath);
         BVH *new_bvh = new BVH(resolvedBvhPath);
         new_bvh->setMode(std::string(doc.FirstChildElement("bvh")->Attribute("symmetry")) == "true");
-        new_bvh->setHeightCalibration(std::string(doc.FirstChildElement("bvh")->Attribute("heightCalibration")) == "true");
 
         new_bvh->setRefMotion(mCharacter, mWorld);
         mMotion = new_bvh;
@@ -277,7 +276,6 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         std::string resolvedNpzPath = PMuscle::URIResolver::getInstance().resolve(npz_path);
         LOG_VERBOSE("[Environment] NPZ Path resolved: " << npz_path << " -> " << resolvedNpzPath);
         NPZ *new_npz = new NPZ(resolvedNpzPath);
-        new_npz->setHeightCalibration(std::string(doc.FirstChildElement("npz")->Attribute("heightCalibration")) == "true");
 
         new_npz->setRefMotion(mCharacter, mWorld);
         mMotion = new_npz;
@@ -297,17 +295,8 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mMotion = new_hdf;
     }
 
-    // Advanced Option
-    if (doc.FirstChildElement("heightCalibration") != NULL)
-    {
-        if (doc.FirstChildElement("heightCalibration")->BoolText())
-        {
-            mHeightCalibration++;
-            if (std::string(doc.FirstChildElement("heightCalibration")->Attribute("strict")) == "true")
-                mHeightCalibration++;
-        }
-    }
 
+    // Advanced Option
     if (doc.FirstChildElement("enforceSymmetry") != NULL)
         mEnforceSymmetry = doc.FirstChildElement("enforceSymmetry")->BoolText();
 
@@ -610,15 +599,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     if (env["motion"]) {
         auto motion = env["motion"];
         mCyclic = motion["cyclic"].as<bool>(true);
-
-        if (motion["height_calibration"]) {
-            auto hcal = motion["height_calibration"];
-            if (hcal["enabled"].as<bool>()) {
-                mHeightCalibration++;
-                if (hcal["strict"].as<bool>(false))
-                    mHeightCalibration++;
-            }
-        }
+        // Height calibration is always applied in strict mode (no config needed)
     }
 
     // === Action (residual) ===
@@ -1743,13 +1724,8 @@ void Environment::reset(double phase)
         mCharacter->getSkeleton()->getRootJoint()->setVelocities(vel);
     }
     
-    // pose = mCharacter->getSkeleton()->getPositions().head(6);
-    // std::cout << "skel2 orientation: " << pose.transpose() * 180.0 / M_PI << std::endl;
-    // auto r_after = FreeJoint::convertToTransform(pose).linear();
-    // std::cout << "r_after: " << r_after.transpose() << std::endl;
-    
-    // Height / Pose Optimization
-    if (mHeightCalibration != 0) mCharacter->heightCalibration(mWorld, mHeightCalibration == 2);
+    // Height / Pose Optimization (always strict)
+    mCharacter->heightCalibration(mWorld);
 
     // Pose In ROM
     Eigen::VectorXd cur_pos = mCharacter->getSkeleton()->getPositions();

@@ -110,6 +110,7 @@ public:
     void render();
     void mainLoop();
     void reset();  // Reset camera and scene
+    void resetSkeleton();  // Reset skeleton by reloading from XML
 
     // UI
     void drawControlPanel();  // Left panel - force controls
@@ -139,7 +140,10 @@ public:
     void drawRelaxPassiveForceSection();
     void drawSaveMuscleConfigSection();
     void drawAnchorManipulationSection();
-    
+    void drawRotateJointOffsetSection();
+    void drawRotateAnchorPointsSection();
+    void drawFDOCombinedSection();
+
     // Surgery operations with GUI-specific logic (override base class)
     bool removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex) override;
     bool copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle) override;
@@ -147,7 +151,11 @@ public:
     bool editAnchorWeights(const std::string& muscle, int anchor_index, const std::vector<double>& weights) override;
     bool addBodyNodeToAnchor(const std::string& muscle, int anchor_index, const std::string& bodynode_name, double weight) override;
     bool removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index, int bodynode_index) override;
-    
+    bool rotateJointOffset(const std::string& joint_name, const Eigen::Vector3d& axis, double angle, bool preserve_position = false) override;
+    bool rotateAnchorPoints(const std::string& muscle_name, int ref_anchor_index,
+                           const Eigen::Vector3d& search_direction,
+                           const Eigen::Vector3d& rotation_axis, double angle) override;
+
     // Surgery script recording and execution
     void startRecording();
     void stopRecording();
@@ -167,6 +175,8 @@ public:
     void drawJointPassiveForces();
     void drawConfinementForces();
     void drawSelectedAnchors();
+
+    void drawReferenceAnchor();
 
     // Camera control
     void setCamera();
@@ -312,6 +322,7 @@ private:
     bool mShowJointForceLabels;      // Toggle for joint passive force text labels
     bool mShowPostureDebug;          // Toggle for posture control debug output
     bool mShowExamTable;             // Toggle for examination table visibility
+    bool mShowAnchorPoints;          // Toggle for anchor point visualization
 
     // Muscle Selection UI
     char mMuscleFilterText[32];
@@ -338,6 +349,27 @@ private:
     std::string mAnchorReferenceMuscle;              // Selected reference muscle name
     int mSelectedCandidateAnchorIndex;               // Selected candidate anchor index for operations
     int mSelectedReferenceAnchorIndex;               // Selected reference anchor index for copying
+
+    // Rotate Joint Offset section (FDO)
+    char mRotateJointComboBuffer[128];               // Buffer for joint selection combo
+    std::string mSelectedRotateJoint;                 // Selected joint name
+    float mRotateJointAxis[3];                        // Rotation axis vector
+    float mRotateJointAngleDeg;                       // Angle in degrees
+    bool mRotateJointPreservePosition;                // Preserve joint position (rotate orientation only)
+
+    // Rotate Anchor Points section (FDO)
+    char mRotateAnchorMuscleComboBuffer[128];        // Buffer for muscle selection combo
+    char mRotateAnchorMuscleFilterBuffer[128];       // Filter buffer for muscle search
+    std::string mSelectedRotateAnchorMuscle;          // Selected muscle name
+    int mSelectedRotateAnchorIndex;                   // Selected anchor index
+    float mRotateAnchorSearchDir[3];                  // Search direction vector
+    float mRotateAnchorRotAxis[3];                    // Rotation axis vector
+    float mRotateAnchorAngleDeg;                      // Angle in degrees
+
+    // FDO Combined Mode (joint + anchor rotation)
+    bool mFDOMode;                                    // FDO combined surgery mode toggle
+    std::string mSelectedFDOTargetBodynode;           // Target bodynode for FDO
+    char mFDOBodynodeFilterBuffer[128];               // Filter buffer for FDO bodynode search
 
     // Sweep restore option
     bool mSweepRestorePosition;                      // Whether to restore position after sweep

@@ -25,8 +25,8 @@ void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::str
     std::string resolved_skel = resolver.resolve(skel_path);
     std::string resolved_muscle = resolver.resolve(muscle_path);
 
-    LOG_INFO("Loading skeleton: " << resolved_skel);
-    LOG_INFO("Loading muscle: " << resolved_muscle);
+    LOG_INFO("Loading skeleton: %s", resolved_skel.c_str());
+    LOG_INFO("Loading muscle: %s", resolved_muscle.c_str());
 
     // Create character (without world/environment dependencies)
     mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, true);
@@ -52,12 +52,13 @@ void SurgeryExecutor::applyPosePreset(const std::map<std::string, Eigen::VectorX
     for (const auto& [joint_name, angles] : joint_angles) {
         auto joint = skeleton->getJoint(joint_name);
         if (!joint) {
-            LOG_ERROR("Joint not found: " << joint_name);
+            LOG_ERROR("Joint not found: %s", joint_name.c_str());
             continue;
         }
 
         if (angles.size() != joint->getNumDofs()) {
-            LOG_ERROR("Joint " << joint_name << " expects " << joint->getNumDofs() << " DOFs, got " << angles.size());
+            LOG_ERROR("Joint %s expects %zu DOFs, got %zu",
+                     joint_name.c_str(), joint->getNumDofs(), angles.size());
             continue;
         }
 
@@ -72,36 +73,8 @@ void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {
 
     // If XML path provided, reload muscles from file (resets anchors + parameters)
     if (!muscle_xml_path.empty()) {
-        // Resolve URI before loading
-        URIResolver& resolver = URIResolver::getInstance();
-        resolver.initialize();
-        std::string resolved_path = resolver.resolve(muscle_xml_path);
-
-        LOG_INFO("[Surgery] Reloading muscles from XML: " << resolved_path);
-
-        // CRITICAL: Muscle XML files store anchor positions in global coordinates
-        // assuming the skeleton is in ZERO POSE. We must temporarily set the skeleton
-        // to zero pose while loading so that global->local coordinate conversion is correct.
-
-        // 1. Save current skeleton state
-        auto skeleton = mCharacter->getSkeleton();
-        Eigen::VectorXd saved_positions = skeleton->getPositions();
-        Eigen::VectorXd saved_velocities = skeleton->getVelocities();
-
-        // 2. Clear existing muscles
-        mCharacter->clearMuscles();
-
-        // 3. Set skeleton to zero pose (the pose muscles were authored in)
-        skeleton->setPositions(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
-        skeleton->setVelocities(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
-
-        // 4. Load muscles (global positions will be correctly converted to local)
-        mCharacter->setMuscles(resolved_path);
-
-        // 5. Restore original skeleton state
-        skeleton->setPositions(saved_positions);
-        skeleton->setVelocities(saved_velocities);
-
+        LOG_INFO("[Surgery] Reloading muscles from XML: %s", muscle_xml_path.c_str());
+        mCharacter->setMuscles(muscle_xml_path);
         LOG_INFO("[Surgery] Muscles reloaded from XML (anchors + parameters reset)");
         return;
     }
@@ -118,21 +91,21 @@ void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {
         resetCount++;
     }
 
-    LOG_INFO("[Surgery] Muscle parameter reset complete. Reset " << resetCount << " muscles.");
+    LOG_INFO("[Surgery] Muscle parameter reset complete. Reset %d muscles.", resetCount);
 }
 
-bool SurgeryExecutor::distributePassiveForce(const std::vector<std::string>& muscles,
+bool SurgeryExecutor::distributePassiveForce(const std::vector<std::string>& muscles, 
                                             const std::string& reference,
                                             const std::map<std::string, Eigen::VectorXd>& joint_angles) {
     if (!mCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
-
+    
     // Apply joint angles if specified
     if (!joint_angles.empty()) {
         applyPosePreset(joint_angles);
-        LOG_INFO("[Surgery] Applied " << joint_angles.size() << " joint angle(s)");
+        LOG_INFO("[Surgery] Applied %zu joint angle(s)", joint_angles.size());
     }
     
     auto all_muscles = mCharacter->getMuscles();
@@ -147,7 +120,7 @@ bool SurgeryExecutor::distributePassiveForce(const std::vector<std::string>& mus
     }
     
     if (!refMuscle) {
-        LOG_ERROR("[Surgery] Error: Reference muscle '" << reference << "' not found!");
+        LOG_ERROR("[Surgery] Error: Reference muscle '%s' not found!", reference.c_str());
         return false;
     }
     
@@ -162,7 +135,8 @@ bool SurgeryExecutor::distributePassiveForce(const std::vector<std::string>& mus
         }
     }
     
-    LOG_INFO("[Surgery] Distributed passive force coefficient " << refCoeff << " from '" << reference << "' to " << modifiedCount << " muscles");
+    LOG_INFO("[Surgery] Distributed passive force coefficient %.3f from '%s' to %d muscles",
+              refCoeff, reference.c_str(), modifiedCount);
     
     return true;
 }
@@ -177,9 +151,9 @@ bool SurgeryExecutor::relaxPassiveForce(const std::vector<std::string>& muscles,
     // Apply joint angles if specified
     if (!joint_angles.empty()) {
         applyPosePreset(joint_angles);
-        LOG_INFO("[Surgery] Applied " << joint_angles.size() << " joint angle(s)");
+        LOG_INFO("[Surgery] Applied %zu joint angle(s)", joint_angles.size());
     }
-
+    
     auto all_muscles = mCharacter->getMuscles();
     int relaxedCount = 0;
     
@@ -191,7 +165,7 @@ bool SurgeryExecutor::relaxPassiveForce(const std::vector<std::string>& muscles,
         }
     }
     
-    LOG_INFO("[Surgery] Applied relaxation to " << relaxedCount << " muscles");
+    LOG_INFO("[Surgery] Applied relaxation to %d muscles", relaxedCount);
     
     return true;
 }
@@ -212,16 +186,17 @@ bool SurgeryExecutor::removeAnchorFromMuscle(const std::string& muscleName, int 
     }
     
     if (!targetMuscle) {
-        LOG_ERROR("[Surgery] Error: Muscle '" << muscleName << "' not found!");
+        LOG_ERROR("[Surgery] Error: Muscle '%s' not found!", muscleName.c_str());
         return false;
     }
-
+    
     if (anchorIndex < 0 || anchorIndex >= targetMuscle->mAnchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << anchorIndex);
+        LOG_ERROR("[Surgery] Error: Invalid anchor index %d", anchorIndex);
         return false;
     }
-
-    LOG_INFO("[Surgery] Removing anchor #" << anchorIndex << " from muscle '" << muscleName << "'...");
+    
+    LOG_INFO("[Surgery] Removing anchor #%d from muscle '%s'...",
+              anchorIndex, muscleName.c_str());
     
     // Remove the anchor
     delete targetMuscle->mAnchors[anchorIndex];  // Free memory
@@ -230,7 +205,8 @@ bool SurgeryExecutor::removeAnchorFromMuscle(const std::string& muscleName, int 
     // Recalculate muscle parameters
     targetMuscle->SetMuscle();
 
-    LOG_INFO("[Surgery] Anchor removal complete. Muscle now has " << targetMuscle->mAnchors.size() << " anchors.");
+    LOG_INFO("[Surgery] Anchor removal complete. Muscle now has %zu anchors.",
+              targetMuscle->mAnchors.size());
     
     return true;
 }
@@ -255,24 +231,25 @@ bool SurgeryExecutor::copyAnchorToMuscle(const std::string& fromMuscle, int from
     }
     
     if (!sourceMuscle) {
-        LOG_ERROR("[Surgery] Error: Source muscle '" << fromMuscle << "' not found!");
+        LOG_ERROR("[Surgery] Error: Source muscle '%s' not found!", fromMuscle.c_str());
         return false;
     }
-
+    
     if (!targetMuscle) {
-        LOG_ERROR("[Surgery] Error: Target muscle '" << toMuscle << "' not found!");
+        LOG_ERROR("[Surgery] Error: Target muscle '%s' not found!", toMuscle.c_str());
         return false;
     }
-
+    
     auto sourceAnchors = sourceMuscle->GetAnchors();
     if (fromIndex < 0 || fromIndex >= sourceAnchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << fromIndex);
+        LOG_ERROR("[Surgery] Error: Invalid anchor index %d", fromIndex);
         return false;
     }
-
+    
     auto sourceAnchor = sourceAnchors[fromIndex];
-
-    LOG_INFO("[Surgery] Copying anchor #" << fromIndex << " from '" << fromMuscle << "' to '" << toMuscle << "'...");
+    
+    LOG_INFO("[Surgery] Copying anchor #%d from '%s' to '%s'...",
+              fromIndex, fromMuscle.c_str(), toMuscle.c_str());
     
     // Create a deep copy of the anchor
     std::vector<dart::dynamics::BodyNode*> newBodyNodes = sourceAnchor->bodynodes;
@@ -287,13 +264,15 @@ bool SurgeryExecutor::copyAnchorToMuscle(const std::string& fromMuscle, int from
     // Recalculate muscle parameters
     targetMuscle->SetMuscle();
 
-    LOG_INFO("[Surgery] Anchor copied successfully. Target muscle now has " << targetMuscle->mAnchors.size() << " anchors.");
-
+    std::cout << "[Surgery] Anchor copied successfully. Target muscle now has "
+              << targetMuscle->mAnchors.size() << " anchors." << std::endl;
+    
     // Display info about the copied anchor
     if (!newBodyNodes.empty()) {
-        LOG_INFO("[Surgery]   Copied anchor attached to: " << newBodyNodes[0]->getName());
+        std::cout << "[Surgery]   Copied anchor attached to: " 
+                  << newBodyNodes[0]->getName() << std::endl;
         if (newBodyNodes.size() > 1) {
-            LOG_INFO("[Surgery]   (LBS with " << newBodyNodes.size() << " body nodes)");
+            std::cout << "[Surgery]   (LBS with " << newBodyNodes.size() << " body nodes)" << std::endl;
         }
     }
     
@@ -317,26 +296,27 @@ bool SurgeryExecutor::editAnchorPosition(const std::string& muscle, int anchor_i
     }
     
     if (!targetMuscle) {
-        LOG_ERROR("[Surgery] Error: Muscle '" << muscle << "' not found!");
+        std::cerr << "[Surgery] Error: Muscle '" << muscle << "' not found!" << std::endl;
         return false;
     }
-
+    
     auto anchors = targetMuscle->GetAnchors();
     if (anchor_index < 0 || anchor_index >= anchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << anchor_index);
+        std::cerr << "[Surgery] Error: Invalid anchor index " << anchor_index << std::endl;
         return false;
     }
-
+    
     auto anchor = anchors[anchor_index];
-
+    
     // Update anchor position for ALL bodynodes in this anchor
     for (size_t i = 0; i < anchor->local_positions.size(); ++i) {
         anchor->local_positions[i] = position;
     }
-
+    
     targetMuscle->SetMuscle();
-
-    LOG_INFO("[Surgery] Updated position for anchor #" << anchor_index << " in '" << muscle << "' to [" << position[0] << ", " << position[1] << ", " << position[2] << "]");
+    
+    std::cout << "[Surgery] Updated position for anchor #" << anchor_index 
+              << " in '" << muscle << "' to [" << position.transpose() << "]" << std::endl;
     
     return true;
 }
@@ -347,7 +327,7 @@ bool SurgeryExecutor::editAnchorWeights(const std::string& muscle, int anchor_in
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
-
+    
     auto muscles = mCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
@@ -356,15 +336,15 @@ bool SurgeryExecutor::editAnchorWeights(const std::string& muscle, int anchor_in
             break;
         }
     }
-
+    
     if (!targetMuscle) {
-        LOG_ERROR("[Surgery] Error: Muscle '" << muscle << "' not found!");
+        std::cerr << "[Surgery] Error: Muscle '" << muscle << "' not found!" << std::endl;
         return false;
     }
-
+    
     auto anchors = targetMuscle->GetAnchors();
     if (anchor_index < 0 || anchor_index >= anchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << anchor_index);
+        std::cerr << "[Surgery] Error: Invalid anchor index " << anchor_index << std::endl;
         return false;
     }
     
@@ -382,9 +362,10 @@ bool SurgeryExecutor::editAnchorWeights(const std::string& muscle, int anchor_in
     }
     
     targetMuscle->SetMuscle();
-
-    LOG_INFO("[Surgery] Updated weights for anchor #" << anchor_index << " in '" << muscle << "'");
-
+    
+    std::cout << "[Surgery] Updated weights for anchor #" << anchor_index 
+              << " in '" << muscle << "'" << std::endl;
+    
     return true;
 }
 
@@ -394,7 +375,7 @@ bool SurgeryExecutor::addBodyNodeToAnchor(const std::string& muscle, int anchor_
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
-
+    
     auto muscles = mCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
@@ -403,22 +384,22 @@ bool SurgeryExecutor::addBodyNodeToAnchor(const std::string& muscle, int anchor_
             break;
         }
     }
-
+    
     if (!targetMuscle) {
-        LOG_ERROR("[Surgery] Error: Muscle '" << muscle << "' not found!");
+        std::cerr << "[Surgery] Error: Muscle '" << muscle << "' not found!" << std::endl;
         return false;
     }
-
+    
     auto skel = mCharacter->getSkeleton();
     auto newBodyNode = skel->getBodyNode(bodynode_name);
     if (!newBodyNode) {
-        LOG_ERROR("[Surgery] Error: Body node '" << bodynode_name << "' not found!");
+        std::cerr << "[Surgery] Error: Body node '" << bodynode_name << "' not found!" << std::endl;
         return false;
     }
-
+    
     auto anchors = targetMuscle->GetAnchors();
     if (anchor_index < 0 || anchor_index >= anchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << anchor_index);
+        std::cerr << "[Surgery] Error: Invalid anchor index " << anchor_index << std::endl;
         return false;
     }
     
@@ -427,7 +408,7 @@ bool SurgeryExecutor::addBodyNodeToAnchor(const std::string& muscle, int anchor_
     // Check if bodynode already exists in anchor
     for (auto bn : anchor->bodynodes) {
         if (bn == newBodyNode) {
-            LOG_ERROR("[Surgery] Error: Body node already exists in this anchor!");
+            std::cerr << "[Surgery] Error: Body node already exists in this anchor!" << std::endl;
             return false;
         }
     }
@@ -456,7 +437,7 @@ bool SurgeryExecutor::removeBodyNodeFromAnchor(const std::string& muscle, int an
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
-
+    
     auto muscles = mCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
@@ -465,39 +446,40 @@ bool SurgeryExecutor::removeBodyNodeFromAnchor(const std::string& muscle, int an
             break;
         }
     }
-
+    
     if (!targetMuscle) {
-        LOG_ERROR("[Surgery] Error: Muscle '" << muscle << "' not found!");
+        std::cerr << "[Surgery] Error: Muscle '" << muscle << "' not found!" << std::endl;
         return false;
     }
-
+    
     auto anchors = targetMuscle->GetAnchors();
     if (anchor_index < 0 || anchor_index >= anchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << anchor_index);
+        std::cerr << "[Surgery] Error: Invalid anchor index " << anchor_index << std::endl;
         return false;
     }
-
+    
     auto anchor = anchors[anchor_index];
-
+    
     if (anchor->bodynodes.size() <= 1) {
-        LOG_ERROR("[Surgery] Error: Cannot remove last body node from anchor!");
+        std::cerr << "[Surgery] Error: Cannot remove last body node from anchor!" << std::endl;
         return false;
     }
-
+    
     if (bodynode_index < 0 || bodynode_index >= anchor->bodynodes.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid body node index " << bodynode_index);
+        std::cerr << "[Surgery] Error: Invalid body node index " << bodynode_index << std::endl;
         return false;
     }
-
+    
     // Remove this bodynode from anchor
     std::string removed_name = anchor->bodynodes[bodynode_index]->getName();
     anchor->bodynodes.erase(anchor->bodynodes.begin() + bodynode_index);
     anchor->weights.erase(anchor->weights.begin() + bodynode_index);
     anchor->local_positions.erase(anchor->local_positions.begin() + bodynode_index);
-
+    
     targetMuscle->SetMuscle();
-
-    LOG_INFO("[Surgery] Removed body node '" << removed_name << "' from anchor #" << anchor_index << " in '" << muscle << "'");
+    
+    std::cout << "[Surgery] Removed body node '" << removed_name << "' from anchor #" 
+              << anchor_index << " in '" << muscle << "'" << std::endl;
     
     return true;
 }
@@ -560,7 +542,7 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
         throw std::runtime_error("Failed to open file: " + path);
     }
 
-    LOG_INFO("[Surgery] Saving muscle configuration to: " << path);
+    std::cout << "[Surgery] Saving muscle configuration to: " << path << std::endl;
 
     // Save current skeleton state
     auto skel = mCharacter->getSkeleton();
@@ -616,7 +598,8 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
     // Restore original skeleton state
     skel->setPositions(saved_positions);
 
-    LOG_INFO("[Surgery] Successfully saved " << muscles.size() << " muscles to " << path);
+    std::cout << "[Surgery] Successfully saved " << muscles.size()
+              << " muscles to " << path << std::endl;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -625,10 +608,9 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
 
 bool SurgeryExecutor::rotateJointOffset(const std::string& joint_name,
                                         const Eigen::Vector3d& axis,
-                                        double angle,
-                                        bool preserve_position) {
+                                        double angle) {
     if (!mCharacter) {
-        LOG_ERROR("[Surgery] Error: No character loaded");
+        std::cerr << "[Surgery] Error: No character loaded" << std::endl;
         return false;
     }
 
@@ -636,14 +618,13 @@ bool SurgeryExecutor::rotateJointOffset(const std::string& joint_name,
     auto joint = skel->getJoint(joint_name);
 
     if (!joint) {
-        LOG_ERROR("[Surgery] Error: Joint '" << joint_name << "' not found");
+        std::cerr << "[Surgery] Error: Joint '" << joint_name << "' not found" << std::endl;
         return false;
     }
 
-    LOG_INFO("[Surgery] Rotating joint offset: " << joint_name);
-    LOG_INFO("[Surgery]   Axis: [" << axis[0] << ", " << axis[1] << ", " << axis[2] << "]");
-    LOG_INFO("[Surgery]   Angle: " << angle << " rad (" << (angle * 180.0 / M_PI) << " deg)");
-    LOG_INFO("[Surgery]   Preserve position: " << (preserve_position ? "true" : "false"));
+    std::cout << "[Surgery] Rotating joint offset: " << joint_name << std::endl;
+    std::cout << "[Surgery]   Axis: [" << axis[0] << ", " << axis[1] << ", " << axis[2] << "]" << std::endl;
+    std::cout << "[Surgery]   Angle: " << angle << " rad (" << (angle * 180.0 / M_PI) << " deg)" << std::endl;
 
     // Get current transform from parent body frame to this joint frame
     Eigen::Isometry3d T_parent_to_joint = joint->getTransformFromParentBodyNode();
@@ -653,113 +634,15 @@ bool SurgeryExecutor::rotateJointOffset(const std::string& joint_name,
     Eigen::Isometry3d R = Eigen::Isometry3d::Identity();
     R.linear() = rotation.toRotationMatrix();
 
-    Eigen::Isometry3d T_new;
-    if (preserve_position) {
-        // Preserve position: only rotate the orientation component
-        T_new = T_parent_to_joint;
-        T_new.linear() = R.linear() * T_parent_to_joint.linear();
-    } else {
-        // Original behavior: Apply rotation to both orientation and position
-        T_new = R * T_parent_to_joint;
-    }
+    // Apply rotation: new_T = R * old_T
+    Eigen::Isometry3d T_new = R * T_parent_to_joint;
 
     // Set new transform
     joint->setTransformFromParentBodyNode(T_new);
 
-    // Update all muscles to reflect new skeleton geometry
-    auto muscles = mCharacter->getMuscles();
-    for (auto muscle : muscles) {
-        muscle->SetMuscle();
-    }
-
-    LOG_INFO("[Surgery] Updated " << muscles.size() << " muscles after joint rotation");
-    LOG_INFO("[Surgery] Joint offset rotation complete");
+    std::cout << "[Surgery] Joint offset rotation complete" << std::endl;
 
     return true;
-}
-
-std::vector<AnchorReference> SurgeryExecutor::computeAffectedAnchors(
-    const AnchorReference& ref_anchor,
-    const Eigen::Vector3d& search_direction) const {
-
-    std::vector<AnchorReference> affected;
-
-    if (!mCharacter) {
-        return affected;
-    }
-
-    auto muscles = mCharacter->getMuscles();
-
-    // Find reference muscle using fast cache lookup
-    Muscle* ref_muscle = mCharacter->getMuscleByName(ref_anchor.muscle_name);
-    if (!ref_muscle) {
-        LOG_ERROR("[Surgery] Reference muscle not found: " << ref_anchor.muscle_name);
-        return affected;
-    }
-
-    auto ref_anchors = ref_muscle->GetAnchors();
-    if (ref_anchor.anchor_index < 0 || ref_anchor.anchor_index >= ref_anchors.size()) {
-        LOG_ERROR("[Surgery] Invalid reference anchor index: " << ref_anchor.anchor_index);
-        return affected;
-    }
-
-    auto ref_anchor_ptr = ref_anchors[ref_anchor.anchor_index];
-
-    // Validate: reference anchor must have exactly one bodynode
-    if (ref_anchor_ptr->bodynodes.empty()) {
-        LOG_ERROR("[Surgery] Reference anchor has no bodynodes");
-        return affected;
-    }
-
-    if (ref_anchor_ptr->bodynodes.size() != 1) {
-        throw std::runtime_error("[Surgery] Reference anchor must have exactly 1 bodynode (single-LBS only). Found: " +
-                               std::to_string(ref_anchor_ptr->bodynodes.size()));
-    }
-
-    auto ref_bodynode = ref_anchor_ptr->bodynodes[0];
-    Eigen::Vector3d ref_local_pos = ref_anchor_ptr->local_positions[0];
-
-    // Normalize search direction
-    Eigen::Vector3d search_dir = search_direction.normalized();
-
-    // Search through ALL muscles for affected anchors
-    for (auto muscle : muscles) {
-        auto anchors = muscle->GetAnchors();
-
-        for (int i = 0; i < anchors.size(); ++i) {
-            auto anchor = anchors[i];
-
-            // Skip reference anchor itself
-            if (muscle->name == ref_anchor.muscle_name && i == ref_anchor.anchor_index) {
-                continue;
-            }
-
-            // Find bodynode index for this anchor on the reference bodynode
-            int bodynode_index = -1;
-            for (int j = 0; j < anchor->bodynodes.size(); ++j) {
-                if (anchor->bodynodes[j] == ref_bodynode) {
-                    bodynode_index = j;
-                    break;
-                }
-            }
-
-            if (bodynode_index >= 0) {
-                // Get local position relative to shared bodynode
-                Eigen::Vector3d other_local_pos = anchor->local_positions[bodynode_index];
-
-                // Compute difference in LOCAL space
-                Eigen::Vector3d local_diff = other_local_pos - ref_local_pos;
-
-                // Check if anchor is in search direction (LOCAL space filtering)
-                double dot_product = local_diff.dot(search_dir);
-                if (dot_product > 0.0) {
-                    // This anchor will be affected
-                    affected.emplace_back(muscle->name, i, bodynode_index);
-                }
-            }
-        }
-    }
-    return affected;
 }
 
 bool SurgeryExecutor::rotateAnchorPoints(const std::string& muscle_name,
@@ -768,84 +651,129 @@ bool SurgeryExecutor::rotateAnchorPoints(const std::string& muscle_name,
                                          const Eigen::Vector3d& rotation_axis,
                                          double angle) {
     if (!mCharacter) {
-        LOG_ERROR("[Surgery] Error: No character loaded");
+        std::cerr << "[Surgery] Error: No character loaded" << std::endl;
         return false;
     }
 
-    LOG_INFO("[Surgery] Rotating anchor points on muscle '" << muscle_name << "'");
-    LOG_INFO("[Surgery]   Reference anchor index: " << ref_anchor_index);
-    LOG_INFO("[Surgery]   Search direction: [" << search_direction[0] << ", " << search_direction[1] << ", " << search_direction[2] << "]");
-    LOG_INFO("[Surgery]   Rotation axis: [" << rotation_axis[0] << ", " << rotation_axis[1] << ", " << rotation_axis[2] << "]");
-    LOG_INFO("[Surgery]   Angle: " << angle << " rad (" << (angle * 180.0 / M_PI) << " deg)");
+    std::cout << "[Surgery] Rotating anchor points on muscle '" << muscle_name << "'" << std::endl;
+    std::cout << "[Surgery]   Reference anchor index: " << ref_anchor_index << std::endl;
+    std::cout << "[Surgery]   Search direction: [" << search_direction[0] << ", "
+              << search_direction[1] << ", " << search_direction[2] << "]" << std::endl;
+    std::cout << "[Surgery]   Rotation axis: [" << rotation_axis[0] << ", "
+              << rotation_axis[1] << ", " << rotation_axis[2] << "]" << std::endl;
+    std::cout << "[Surgery]   Angle: " << angle << " rad (" << (angle * 180.0 / M_PI) << " deg)" << std::endl;
 
-    // Create AnchorReference for the reference anchor
-    // Note: We assume bodynode_index = 0 (single-LBS), validation happens in computeAffectedAnchors
-    AnchorReference ref_anchor(muscle_name, ref_anchor_index, 0);
-
-    // Compute affected anchors using shared method
-    std::vector<AnchorReference> affected_anchors;
-    try {
-        affected_anchors = computeAffectedAnchors(ref_anchor, search_direction);
-    } catch (const std::runtime_error& e) {
-        LOG_ERROR("[Surgery] " << e.what());
-        return false;
+    // Find reference muscle
+    Muscle* ref_muscle = nullptr;
+    auto muscles = mCharacter->getMuscles();
+    for (auto m : muscles) {
+        if (m->name == muscle_name) {
+            ref_muscle = m;
+            break;
+        }
     }
 
-    if (affected_anchors.empty()) {
-        LOG_WARN("[Surgery] No affected anchors found");
-        return true;  // Not an error, just nothing to do
-    }
-
-    // Get reference muscle and anchor for rotation center
-    Muscle* ref_muscle = mCharacter->getMuscleByName(muscle_name);
     if (!ref_muscle) {
-        LOG_ERROR("[Surgery] Reference muscle not found: " << muscle_name);
+        std::cerr << "[Surgery] Error: Muscle '" << muscle_name << "' not found" << std::endl;
         return false;
     }
 
+    // Validate reference anchor index
     auto ref_anchors = ref_muscle->GetAnchors();
-    auto ref_anchor_ptr = ref_anchors[ref_anchor_index];
-    Eigen::Vector3d ref_local_pos = ref_anchor_ptr->local_positions[0];
+    if (ref_anchor_index < 0 || ref_anchor_index >= ref_anchors.size()) {
+        std::cerr << "[Surgery] Error: Reference anchor index " << ref_anchor_index
+                  << " out of range [0, " << ref_anchors.size() << ")" << std::endl;
+        return false;
+    }
+
+    auto ref_anchor = ref_anchors[ref_anchor_index];
+
+    // Get reference anchor's primary bodynode
+    if (ref_anchor->bodynodes.empty()) {
+        std::cerr << "[Surgery] Error: Reference anchor has no bodynodes" << std::endl;
+        return false;
+    }
+
+    auto target_bodynode = ref_anchor->bodynodes[0];
+    std::cout << "[Surgery] Target bodynode: " << target_bodynode->getName() << std::endl;
+
+    // Get reference position in world frame
+    Eigen::Vector3d ref_pos = ref_anchor->GetPoint();
 
     // Create rotation matrix in bodynode's local frame
     Eigen::AngleAxisd rotation(angle, rotation_axis);
     Eigen::Matrix3d R_local = rotation.toRotationMatrix();
 
-    // Apply rotation to all affected anchors
+    // Get bodynode's world transform
+    Eigen::Isometry3d T_world = target_bodynode->getWorldTransform();
+    Eigen::Matrix3d R_world = T_world.linear();
+
+    // Transform rotation to world frame: R_world_total = R_world * R_local * R_world^T
+    Eigen::Matrix3d R_world_rotation = R_world * R_local * R_world.transpose();
+
+    // Find all anchors on this bodynode and apply rotation
+    int total_anchors_checked = 0;
+    int anchors_rotated = 0;
     std::set<Muscle*> modified_muscles;
 
-    for (const auto& anchor_ref : affected_anchors) {
-        Muscle* muscle = mCharacter->getMuscleByName(anchor_ref.muscle_name);
-        if (!muscle) {
-            LOG_WARN("[Surgery] Muscle not found: " << anchor_ref.muscle_name);
-            continue;
+    for (auto muscle : muscles) {
+        auto anchors = muscle->GetAnchors();
+
+        for (int i = 0; i < anchors.size(); ++i) {
+            auto anchor = anchors[i];
+
+            // Check if this anchor is attached to target bodynode
+            bool on_target = false;
+            for (auto bn : anchor->bodynodes) {
+                if (bn == target_bodynode) {
+                    on_target = true;
+                    break;
+                }
+            }
+
+            if (!on_target) continue;
+
+            total_anchors_checked++;
+
+            // Get current position
+            Eigen::Vector3d curr_pos = anchor->GetPoint();
+
+            // Apply positional filter: dot(pos - ref, search_dir) > 0
+            Eigen::Vector3d relative = curr_pos - ref_pos;
+            double dot_product = relative.dot(search_direction);
+
+            if (dot_product <= 0) {
+                continue;  // Skip this anchor
+            }
+
+            // Apply rotation around reference point
+            Eigen::Vector3d rotated = R_world_rotation * relative;
+            Eigen::Vector3d new_pos = ref_pos + rotated;
+
+            // Update anchor position (update local positions for all bodynodes)
+            for (int j = 0; j < anchor->bodynodes.size(); ++j) {
+                auto bn = anchor->bodynodes[j];
+                Eigen::Isometry3d T_bn = bn->getWorldTransform();
+                Eigen::Vector3d local_pos = T_bn.inverse() * new_pos;
+                anchor->local_positions[j] = local_pos;
+            }
+
+            anchors_rotated++;
+            modified_muscles.insert(muscle);
         }
-
-        auto anchor = muscle->GetAnchors()[anchor_ref.anchor_index];
-        Eigen::Vector3d current_local_pos = anchor->local_positions[anchor_ref.bodynode_index];
-
-        // Compute relative position in local frame
-        Eigen::Vector3d relative_local = current_local_pos - ref_local_pos;
-
-        // Apply rotation in local frame
-        Eigen::Vector3d rotated_local = R_local * relative_local;
-
-        // Update only the local position for the specific bodynode
-        anchor->local_positions[anchor_ref.bodynode_index] = ref_local_pos + rotated_local;
-
-        modified_muscles.insert(muscle);
     }
 
-    // Update all modified muscles
+    // Update muscles
     for (auto muscle : modified_muscles) {
         muscle->SetMuscle();
     }
 
-    LOG_INFO("[Surgery] Anchor rotation complete.");
-    LOG_INFO("[Surgery]   Rotated " << affected_anchors.size() << " anchors");
-    LOG_INFO("[Surgery]   Updated " << modified_muscles.size() << " muscles");
+    std::cout << "[Surgery] Anchor rotation complete." << std::endl;
+    std::cout << "[Surgery]   Checked " << total_anchors_checked << " anchors on target bodynode" << std::endl;
+    std::cout << "[Surgery]   Rotated " << anchors_rotated << " anchors (passed positional filter)" << std::endl;
+    std::cout << "[Surgery]   Updated " << modified_muscles.size() << " muscles" << std::endl;
 
-    return !affected_anchors.empty();
+    return anchors_rotated > 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -856,7 +784,7 @@ bool SurgeryExecutor::validateAnchorReferencesBodynode(const std::string& muscle
                                                         int anchor_index,
                                                         const std::string& bodynode_name) {
     if (!mCharacter) {
-        LOG_ERROR("[Surgery] Error: No character loaded");
+        std::cerr << "[Surgery] Error: No character loaded" << std::endl;
         return false;
     }
 
@@ -954,69 +882,57 @@ dart::dynamics::Joint* SurgeryExecutor::getChildJoint(dart::dynamics::BodyNode* 
 
 bool SurgeryExecutor::executeFDO(const std::string& ref_muscle,
                                  int ref_anchor_index,
+                                 const std::string& target_bodynode,
                                  const Eigen::Vector3d& search_direction,
                                  const Eigen::Vector3d& rotation_axis,
                                  double angle) {
     if (!mCharacter) {
-        LOG_ERROR("[Surgery] Error: No character loaded");
+        std::cerr << "[Surgery] Error: No character loaded" << std::endl;
         return false;
     }
-
-    // Get reference muscle and anchor
-    Muscle* muscle = mCharacter->getMuscleByName(ref_muscle);
-    if (!muscle) {
-        LOG_ERROR("[Surgery] Reference muscle not found: " << ref_muscle);
-        return false;
-    }
-
-    auto anchors = muscle->GetAnchors();
-    if (ref_anchor_index < 0 || ref_anchor_index >= anchors.size()) {
-        LOG_ERROR("[Surgery] Invalid anchor index: " << ref_anchor_index);
-        return false;
-    }
-
-    auto ref_anchor = anchors[ref_anchor_index];
-
-    // Validate: reference anchor must have exactly one bodynode (single-LBS)
-    if (ref_anchor->bodynodes.empty()) {
-        LOG_ERROR("[Surgery] Reference anchor has no bodynodes");
-        return false;
-    }
-
-    if (ref_anchor->bodynodes.size() != 1) {
-        LOG_ERROR("[Surgery] FDO requires single-LBS anchor (found " << ref_anchor->bodynodes.size() << " bodynodes)");
-        return false;
-    }
-
-    // Get target bodynode from reference anchor
-    auto target_bn = ref_anchor->bodynodes[0];
-    std::string target_bodynode = target_bn->getName();
 
     std::cout << "\n[Surgery] ═══════════════════════════════════════════════════" << std::endl;
     std::cout << "[Surgery] Executing FDO Combined Surgery" << std::endl;
     std::cout << "[Surgery] ═══════════════════════════════════════════════════" << std::endl;
     std::cout << "[Surgery]   Reference muscle: " << ref_muscle << std::endl;
     std::cout << "[Surgery]   Reference anchor: #" << ref_anchor_index << std::endl;
-    std::cout << "[Surgery]   Target bodynode: " << target_bodynode << " (from anchor)" << std::endl;
+    std::cout << "[Surgery]   Target bodynode: " << target_bodynode << std::endl;
     std::cout << "[Surgery]   Rotation angle: " << (angle * 180.0 / M_PI) << " degrees" << std::endl;
 
-    // Step 1: Get child joint of target bodynode
-    std::cout << "\n[Surgery] Step 1: Finding child joint of target bodynode..." << std::endl;
+    // Step 1: Validate anchor references target bodynode
+    std::cout << "\n[Surgery] Step 1: Validating anchor attachment..." << std::endl;
+    if (!validateAnchorReferencesBodynode(ref_muscle, ref_anchor_index, target_bodynode)) {
+        return false;  // Validation prints detailed error
+    }
+
+    // Step 2: Find target bodynode
+    auto skel = mCharacter->getSkeleton();
+    auto target_bn = skel->getBodyNode(target_bodynode);
+    if (!target_bn) {
+        std::cerr << "[Surgery] Error: Target bodynode '" << target_bodynode << "' not found" << std::endl;
+        return false;
+    }
+
+    // Step 3: Get child joint of target bodynode
+    std::cout << "\n[Surgery] Step 2: Finding child joint of target bodynode..." << std::endl;
     auto child_joint = getChildJoint(target_bn);
     if (!child_joint) {
         std::cerr << "[Surgery] Error: No child joint found for bodynode '" << target_bodynode << "'" << std::endl;
         return false;
     }
 
-    // Step 2: Rotate child joint
-    std::cout << "\n[Surgery] Step 2: Rotating child joint..." << std::endl;
+    // Step 4: Rotate child joint
+    std::cout << "\n[Surgery] Step 3: Rotating child joint..." << std::endl;
     if (!rotateJointOffset(child_joint->getName(), rotation_axis, angle)) {
         std::cerr << "[Surgery] Error: Failed to rotate child joint" << std::endl;
         return false;
     }
 
-    // Step 3: Rotate anchors on target bodynode
-    std::cout << "\n[Surgery] Step 3: Rotating anchors on target bodynode..." << std::endl;
+    // Step 5: Rotate anchors ON target bodynode (not ref anchor's bodynode)
+    std::cout << "\n[Surgery] Step 4: Rotating anchors on target bodynode..." << std::endl;
+
+    // We use the existing rotateAnchorPoints but pass the target_bodynode context
+    // The function filters anchors based on positional criterion
     if (!rotateAnchorPoints(ref_muscle, ref_anchor_index, search_direction, rotation_axis, angle)) {
         std::cerr << "[Surgery] Error: Failed to rotate anchor points" << std::endl;
         return false;
@@ -1025,38 +941,6 @@ bool SurgeryExecutor::executeFDO(const std::string& ref_muscle,
     std::cout << "\n[Surgery] ═══════════════════════════════════════════════════" << std::endl;
     std::cout << "[Surgery] FDO Combined Surgery Complete!" << std::endl;
     std::cout << "[Surgery] ═══════════════════════════════════════════════════\n" << std::endl;
-
-    return true;
-}
-
-bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, double strength_ratio) {
-    if (!mCharacter) {
-        LOG_ERROR("[Surgery] Error: No character loaded!");
-        return false;
-    }
-
-    if (strength_ratio < 0.0 || strength_ratio > 1.0) {
-        LOG_ERROR("[Surgery] Error: Strength ratio must be between 0.0 and 1.0, got " << strength_ratio);
-        return false;
-    }
-
-    auto all_muscles = mCharacter->getMuscles();
-    int weakenedCount = 0;
-
-    for (auto m : all_muscles) {
-        if (std::find(muscles.begin(), muscles.end(), m->name) != muscles.end()) {
-            m->change_f(strength_ratio);
-            weakenedCount++;
-        }
-    }
-
-    if (weakenedCount == 0) {
-        LOG_ERROR("[Surgery] Error: No muscles matched the provided names");
-        return false;
-    }
-
-    LOG_INFO("[Surgery] Weakened " << weakenedCount << " muscle(s) to "
-             << (strength_ratio * 100) << "% strength");
 
     return true;
 }

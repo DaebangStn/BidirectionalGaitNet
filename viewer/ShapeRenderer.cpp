@@ -163,6 +163,24 @@ void ShapeRenderer::invalidateMuscleCache(const Muscle* muscle) {
     }
 }
 
+void ShapeRenderer::clearCache() {
+    // Delete all muscle VBOs and IBOs
+    for (auto& [muscle, buffers] : muscleVboIbo) {
+        auto [vbo, ibo] = buffers;
+        glDeleteBuffers(1, &vbo);
+        glDeleteBuffers(1, &ibo);
+    }
+    muscleVboIbo.clear();
+
+    // Delete all mesh VBOs
+    for (auto& [meshShape, vboList] : meshShapeVbo) {
+        for (GLuint vbo : vboList) {
+            glDeleteBuffers(1, &vbo);
+        }
+    }
+    meshShapeVbo.clear();
+}
+
 void ShapeRenderer::renderMesh(const MeshShape *meshShape, bool drawShadows, float shadowY,
                                const Eigen::Vector4d &color)
 {

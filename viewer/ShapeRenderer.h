@@ -18,6 +18,7 @@ struct ShapeRenderer {
 
     void renderMuscle(const Muscle* muscle, double thickness = -1.0);
     void invalidateMuscleCache(const Muscle* muscle);
+    void clearCache();  // Clear all cached VBOs/IBOs (call before skeleton reset)
 
     void renderMesh(const MeshShape* meshShape, bool drawShadows = false, float shadowY = 0.0f,
                     const Eigen::Vector4d& color = Eigen::Vector4d(0.8, 0.8, 0.8, 1.0));

@@ -5,6 +5,7 @@
 #include "SurgeryOperation.h"
 #include "Character.h"
 #include "ShapeRenderer.h"
+#include "Log.h"
 #include <imgui.h>
 #include <map>
 #include <vector>

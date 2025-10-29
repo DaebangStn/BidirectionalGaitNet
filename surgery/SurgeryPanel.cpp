@@ -1,5 +1,6 @@
 #include "SurgeryPanel.h"
 #include "SurgeryScript.h"
+#include "Log.h"
 #include <algorithm>
 #include <iostream>
 #include <cstring>
@@ -332,9 +333,9 @@ void SurgeryPanel::drawDistributePassiveForceSection() {
 
     if (ImGui::Button("Apply Distribution", ImVec2(-1, 30))) {
         if (selectedMuscles.empty()) {
-            std::cout << "[Surgery] Error: No muscles selected!" << std::endl;
+            LOG_WARN("[Surgery] Error: No muscles selected!");
         } else if (mDistributeRefMuscle.empty()) {
-            std::cout << "[Surgery] Error: No reference muscle selected!" << std::endl;
+            LOG_WARN("[Surgery] Error: No reference muscle selected!");
         } else {
             std::map<std::string, Eigen::VectorXd> currentJointAngles;
             if (mRecordingSurgery && mCharacter) {
@@ -463,7 +464,7 @@ void SurgeryPanel::drawRelaxPassiveForceSection() {
 
     if (ImGui::Button("Apply Relaxation", ImVec2(-1, 30))) {
         if (selectedMuscles.empty()) {
-            std::cout << "[Surgery] Error: No muscles selected!" << std::endl;
+            LOG_WARN("[Surgery] Error: No muscles selected!");
         } else {
             std::map<std::string, Eigen::VectorXd> currentJointAngles;
             if (mRecordingSurgery && mCharacter) {
@@ -515,10 +516,10 @@ void SurgeryPanel::drawSaveMuscleConfigSection() {
                         recordOperation(std::move(op));
                     }
                 } catch (const std::exception& e) {
-                    std::cout << "[Surgery] Error saving muscle configuration: " << e.what() << std::endl;
+                    LOG_ERROR("[Surgery] Error saving muscle configuration: " << e.what());
                 }
             } else {
-                std::cout << "[Surgery] Error: No character loaded!" << std::endl;
+                LOG_WARN("[Surgery] Error: No character loaded!");
             }
             mSavingMuscle = false;
         }
@@ -916,7 +917,7 @@ void SurgeryPanel::drawAnchorManipulationSection() {
                                 recordOperation(std::move(op));
                             }
                         } else {
-                            std::cout << "[Surgery] Body node already exists in this anchor!" << std::endl;
+                            LOG_WARN("[Surgery] Body node already exists in this anchor!");
                         }
                     }
                 }
@@ -976,9 +977,9 @@ void SurgeryPanel::drawAnchorManipulationSection() {
     
     if (ImGui::Button("Remove Selected Anchor", ImVec2(-1, 30))) {
         if (mAnchorCandidateMuscle.empty()) {
-            std::cout << "[Surgery] Error: No candidate muscle selected!" << std::endl;
+            LOG_WARN("[Surgery] Error: No candidate muscle selected!");
         } else if (mSelectedCandidateAnchorIndex < 0) {
-            std::cout << "[Surgery] Error: No anchor selected for removal!" << std::endl;
+            LOG_WARN("[Surgery] Error: No anchor selected for removal!");
         } else {
             Muscle* candidateMuscle = nullptr;
             for (auto m : muscles) {
@@ -992,7 +993,7 @@ void SurgeryPanel::drawAnchorManipulationSection() {
                 int totalAnchors = candidateMuscle->GetAnchors().size();
                 
                 if (totalAnchors <= 2) {
-                    std::cout << "[Surgery] Error: Cannot remove anchor - muscle must have at least 2 anchors!" << std::endl;
+                    LOG_WARN("[Surgery] Error: Cannot remove anchor - muscle must have at least 2 anchors!");
                 } else {
                     if (removeAnchorFromMuscle(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex)) {
                         if (mRecordingSurgery) {
@@ -1012,11 +1013,11 @@ void SurgeryPanel::drawAnchorManipulationSection() {
     
     if (ImGui::Button("Copy Anchor to Candidate", ImVec2(-1, 30))) {
         if (mAnchorCandidateMuscle.empty()) {
-            std::cout << "[Surgery] Error: No candidate muscle selected!" << std::endl;
+            LOG_WARN("[Surgery] Error: No candidate muscle selected!");
         } else if (mAnchorReferenceMuscle.empty()) {
-            std::cout << "[Surgery] Error: No reference muscle selected!" << std::endl;
+            LOG_WARN("[Surgery] Error: No reference muscle selected!");
         } else if (mSelectedReferenceAnchorIndex < 0) {
-            std::cout << "[Surgery] Error: No reference anchor selected!" << std::endl;
+            LOG_WARN("[Surgery] Error: No reference anchor selected!");
         } else {
             if (copyAnchorToMuscle(mAnchorReferenceMuscle, mSelectedReferenceAnchorIndex, mAnchorCandidateMuscle)) {
                 if (mRecordingSurgery) {
@@ -1041,34 +1042,32 @@ void SurgeryPanel::drawAnchorManipulationSection() {
 void SurgeryPanel::startRecording() {
     mRecordedOperations.clear();
     mRecordingSurgery = true;
-    std::cout << "[Surgery Recording] Started recording surgery operations" << std::endl;
+    LOG_INFO("[Surgery Recording] Started recording surgery operations");
 }
 
 void SurgeryPanel::stopRecording() {
     mRecordingSurgery = false;
-    std::cout << "[Surgery Recording] Stopped recording. Captured " 
-              << mRecordedOperations.size() << " operation(s)" << std::endl;
+    LOG_INFO("[Surgery Recording] Stopped recording. Captured " << mRecordedOperations.size() << " operation(s)");
 }
 
 void SurgeryPanel::exportRecording(const std::string& filepath) {
     if (mRecordedOperations.empty()) {
-        std::cerr << "[Surgery Recording] No operations to export!" << std::endl;
+        LOG_WARN("[Surgery Recording] No operations to export!");
         return;
     }
     
     try {
         SurgeryScript::saveToFile(mRecordedOperations, filepath, "Recorded surgery operations");
-        std::cout << "[Surgery Recording] Exported " << mRecordedOperations.size() 
-                  << " operation(s) to " << filepath << std::endl;
+        LOG_INFO("[Surgery Recording] Exported " << mRecordedOperations.size() << " operation(s) to " << filepath);
     } catch (const std::exception& e) {
-        std::cerr << "[Surgery Recording] Export failed: " << e.what() << std::endl;
+        LOG_ERROR("[Surgery Recording] Export failed: " << e.what());
     }
 }
 
 void SurgeryPanel::recordOperation(std::unique_ptr<SurgeryOperation> op) {
     if (!mRecordingSurgery) return;
     
-    std::cout << "[Surgery Recording] Recorded: " << op->getDescription() << std::endl;
+    LOG_INFO("[Surgery Recording] Recorded: " << op->getDescription());
     mRecordedOperations.push_back(std::move(op));
 }
 
@@ -1077,46 +1076,43 @@ void SurgeryPanel::loadSurgeryScript(const std::string& filepath) {
         mLoadedScript = SurgeryScript::loadFromFile(filepath);
         
         if (mLoadedScript.empty()) {
-            std::cerr << "[Surgery Script] No operations loaded from " << filepath << std::endl;
+            LOG_WARN("[Surgery Script] No operations loaded from " << filepath);
             return;
         }
         
-        std::cout << "[Surgery Script] Loaded " << mLoadedScript.size() 
-                  << " operation(s) from " << filepath << std::endl;
+        LOG_INFO("[Surgery Script] Loaded " << mLoadedScript.size() << " operation(s) from " << filepath);
         
         mShowScriptPreview = true;
         
     } catch (const std::exception& e) {
-        std::cerr << "[Surgery Script] Failed to load: " << e.what() << std::endl;
+        LOG_ERROR("[Surgery Script] Failed to load: " << e.what());
     }
 }
 
 void SurgeryPanel::executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops) {
     if (!mCharacter) {
-        std::cerr << "[Surgery Script] Error: No character loaded!" << std::endl;
+        LOG_ERROR("[Surgery Script] Error: No character loaded!");
         return;
     }
     
-    std::cout << "[Surgery Script] Executing " << ops.size() << " operation(s)..." << std::endl;
+    LOG_INFO("[Surgery Script] Executing " << ops.size() << " operation(s)...");
     
     int successCount = 0;
     int failCount = 0;
     
     for (size_t i = 0; i < ops.size(); ++i) {
-        std::cout << "[Surgery Script] Operation " << (i + 1) << "/" << ops.size() 
-                  << ": " << ops[i]->getDescription() << std::endl;
+        LOG_INFO("[Surgery Script] Operation " << (i + 1) << "/" << ops.size() << ": " << ops[i]->getDescription());
         
         bool success = ops[i]->execute(this);
         if (success) {
             successCount++;
         } else {
             failCount++;
-            std::cerr << "[Surgery Script] Operation " << (i + 1) << " FAILED" << std::endl;
+            LOG_ERROR("[Surgery Script] Operation " << (i + 1) << " FAILED");
         }
     }
     
-    std::cout << "[Surgery Script] Execution complete. Success: " << successCount 
-              << ", Failed: " << failCount << std::endl;
+    LOG_INFO("[Surgery Script] Execution complete. Success: " << successCount << ", Failed: " << failCount);
 }
 
 void SurgeryPanel::showScriptPreview() {

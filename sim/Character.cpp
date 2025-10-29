@@ -1,6 +1,7 @@
 #include "Character.h"
 #include "UriResolver.h"
 #include "../viewer/Log.h"
+#include <limits>
 
 static std::map<std::string, int> skeletonAxis = {
     {"Pelvis", 1},
@@ -482,40 +483,71 @@ void Character::setZeroForces()
 // Height Calibration
 // Input : World Ptr
 // Output : Position of the input skeleton where there is no collision with ground
-// Caution :
-Eigen::VectorXd Character::heightCalibration(dart::simulation::WorldPtr _world, bool isStrict)
+// Caution : Always applies strict mode (initial Y-position calibration)
+Eigen::VectorXd Character::heightCalibration(dart::simulation::WorldPtr _world)
 {
-    // 위로 올라간것도 아래로 내려와서 맞춤.
-    if (isStrict)
+    // Find the lowest body node Y position
+    double lowest_y = std::numeric_limits<double>::max();
+    for (auto bn : mSkeleton->getBodyNodes())
     {
-        double init_y = mSkeleton->getCOM()[1];
-        for (auto bn : mSkeleton->getBodyNodes())
-            if (init_y < bn->getCOM()[1])
-                init_y = bn->getCOM()[1];
-        mSkeleton->setPosition(4, mSkeleton->getPosition(4) - init_y);
+        double bn_y = bn->getCOM()[1];
+        if (bn_y < lowest_y) lowest_y = bn_y;
     }
 
+    // Set skeleton so lowest body node is at ground level (y=0)
+    mSkeleton->setPosition(4, mSkeleton->getPosition(4) - lowest_y);
+
+    // Iteratively adjust height using penetration depth (bounded iterations)
     auto collisionGroup = _world->getConstraintSolver()->getCollisionGroup();
     dart::collision::CollisionOption option;
     dart::collision::CollisionResult results;
-    bool collision = collisionGroup->collide(option, &results);
-    while (collision)
+
+    const int MAX_ITERATIONS = 10;  // Reduced from 1000 due to penetration-based adjustment
+    const double SAFETY_MARGIN = 1E-3;  // Small margin above ground
+    int iterations = 0;
+
+    while (iterations < MAX_ITERATIONS)
     {
-        bool isGround = false;
-        for (auto bn : results.getCollidingBodyNodes())
-            if (bn->getName() == "ground")
+        bool collision = collisionGroup->collide(option, &results);
+        if (!collision) break;
+
+        // Find maximum penetration depth with ground
+        double max_penetration = 0.0;
+        bool hasGroundCollision = false;
+
+        for (std::size_t i = 0; i < results.getNumContacts(); ++i)
+        {
+            const auto& contact = results.getContact(i);
+
+            // Check if contact involves ground
+            bool isGroundContact =
+                (contact.collisionObject1->getShapeFrame()->getName().find("ground") != std::string::npos) ||
+                (contact.collisionObject2->getShapeFrame()->getName().find("ground") != std::string::npos);
+
+            if (isGroundContact)
             {
-                isGround = true;
-                break;
+                hasGroundCollision = true;
+                // penetrationDepth is positive when objects overlap
+                if (contact.penetrationDepth > max_penetration)
+                {
+                    max_penetration = contact.penetrationDepth;
+                }
             }
-        if (!isGround)
-            break;
+        }
+
+        if (!hasGroundCollision) break;  // No ground collision, done
+
+        // Adjust height by penetration depth plus safety margin
         Eigen::VectorXd pos = mSkeleton->getPositions();
-        // pos[3] = 0;
-        pos[4] += 5E-3;
+        pos[4] += max_penetration + SAFETY_MARGIN;
         mSkeleton->setPositions(pos);
-        collision = collisionGroup->collide(option, &results);
+
+        iterations++;
     }
+
+    if (iterations >= MAX_ITERATIONS) LOG_WARN("[Character] Failed to calibrate height after " << MAX_ITERATIONS << " iterations");
+    else LOG_VERBOSE("[Character] Calibrated height after " << iterations << " iterations");
+
     return mSkeleton->getPositions();
 }
 
@@ -627,6 +659,40 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
     for (auto m : mMuscles) mNumMuscleRelatedDof += m->num_related_dofs;
 
     mActivations = Eigen::VectorXd::Zero(mMuscles.size());
+
+    // Build muscle name cache for fast lookup
+    mMuscleNameCache.clear();
+    for (auto muscle : mMuscles) {
+        mMuscleNameCache[muscle->name] = muscle;
+    }
+}
+
+void Character::clearMuscles()
+{
+    // Delete all muscle objects
+    for (auto m : mMuscles) {
+        delete m;
+    }
+    mMuscles.clear();
+
+    // Also clear reference muscles
+    for (auto m : mRefMuscles) {
+        delete m;
+    }
+    mRefMuscles.clear();
+
+    // Clear muscle name cache
+    mMuscleNameCache.clear();
+
+    // Reset muscle-related state
+    mNumMuscleRelatedDof = 0;
+    mActivations = Eigen::VectorXd::Zero(0);
+}
+
+Muscle* Character::getMuscleByName(const std::string& name) const
+{
+    auto it = mMuscleNameCache.find(name);
+    return (it != mMuscleNameCache.end()) ? it->second : nullptr;
 }
 
 void Character::cacheMuscleMass()

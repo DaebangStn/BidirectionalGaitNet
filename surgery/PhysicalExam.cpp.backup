@@ -123,14 +123,13 @@ PhysicalExam::PhysicalExam(int width, int height)
     mRotateJointAxis[1] = 1.0f;  // Default: Y-axis
     mRotateJointAxis[2] = 0.0f;
     mRotateJointAngleDeg = 10.0f;  // Default: 10 degrees
-    mRotateJointPreservePosition = false;  // Default: original behavior
 
     mRotateAnchorMuscleComboBuffer[0] = '\0';
     mRotateAnchorMuscleFilterBuffer[0] = '\0';
     mSelectedRotateAnchorMuscle = "";
     mSelectedRotateAnchorIndex = -1;
     mRotateAnchorSearchDir[0] = 0.0f;
-    mRotateAnchorSearchDir[1] = 1.0f;  // Default: Y direction (below reference)
+    mRotateAnchorSearchDir[1] = -1.0f;  // Default: -Y direction (below reference)
     mRotateAnchorSearchDir[2] = 0.0f;
     mRotateAnchorRotAxis[0] = 0.0f;
     mRotateAnchorRotAxis[1] = 1.0f;  // Default: Y-axis
@@ -184,7 +183,7 @@ void PhysicalExam::loadRenderConfig() {
         resolver.initialize();
         std::string resolved_path = resolver.resolve("render.yaml");
 
-        LOG_INFO("[Config] Loading render config from: " << resolved_path);
+        std::cout << "[Config] Loading render config from: " << resolved_path << std::endl;
 
         YAML::Node config = YAML::LoadFile(resolved_path);
 
@@ -208,21 +207,21 @@ void PhysicalExam::loadRenderConfig() {
                 mPlotPanelWidth = config["geometry"]["plot"].as<int>();
         }
 
-        LOG_INFO("[Config] Loaded - Window: " << mWidth << "x" << mHeight
+        std::cout << "[Config] Loaded - Window: " << mWidth << "x" << mHeight
                   << " at (" << mWindowXPos << "," << mWindowYPos << ")"
                   << ", Control: " << mControlPanelWidth
-                  << ", Plot: " << mPlotPanelWidth);
+                  << ", Plot: " << mPlotPanelWidth << std::endl;
 
     } catch (const std::exception& e) {
-        LOG_ERROR("[Config] Warning: Could not load render.yaml: " << e.what());
-        LOG_ERROR("[Config] Using default values.");
+        std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
+        std::cerr << "[Config] Using default values." << std::endl;
     }
 }
 
 void PhysicalExam::initialize() {
     // Initialize GLFW
     if (!glfwInit()) {
-        LOG_ERROR("Failed to initialize GLFW");
+        std::cerr << "Failed to initialize GLFW" << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -233,7 +232,7 @@ void PhysicalExam::initialize() {
     glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
     mWindow = glfwCreateWindow(mWidth, mHeight, "MuscleSurgery", nullptr, nullptr);
     if (!mWindow) {
-        LOG_ERROR("Failed to create GLFW window");
+        std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         exit(EXIT_FAILURE);
     }
@@ -245,7 +244,7 @@ void PhysicalExam::initialize() {
 
     // Initialize GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        LOG_ERROR("Failed to initialize GLAD");
+        std::cerr << "Failed to initialize GLAD" << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -375,7 +374,7 @@ void PhysicalExam::initialize() {
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, mat_specular);
     glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, mat_shininess);
 
-    LOG_INFO("Physical Examination initialized");
+    std::cout << "Physical Examination initialized" << std::endl;
 }
 
 void PhysicalExam::createGround() {
@@ -415,8 +414,8 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     std::string resolved_skel = resolver.resolve(skel_path);
     std::string resolved_muscle = resolver.resolve(muscle_path);
 
-    LOG_INFO("Loading skeleton: " << resolved_skel);
-    LOG_INFO("Loading muscle: " << resolved_muscle);
+    std::cout << "Loading skeleton: " << resolved_skel << std::endl;
+    std::cout << "Loading muscle: " << resolved_muscle << std::endl;
 
     // Create character
     mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, true);
@@ -441,19 +440,19 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     auto skel = mCharacter->getSkeleton();
     mMarkedJointTargets.resize(skel->getNumDofs(), std::nullopt);
     mJointIntegralError.resize(skel->getNumDofs(), 0.0);
-    LOG_INFO("Initialized joint PI controller system (" << skel->getNumDofs() << " DOFs)");
+    std::cout << "Initialized joint PI controller system (" << skel->getNumDofs() << " DOFs)" << std::endl;
 
     // Initialize muscle selection states - select all muscles by default
     auto muscles = mCharacter->getMuscles();
     mMuscleSelectionStates.clear();
     mMuscleSelectionStates.resize(muscles.size(), true);  // All muscles selected by default
 
-    LOG_INFO("Character loaded successfully in supine position");
+    std::cout << "Character loaded successfully in supine position" << std::endl;
 }
 
 void PhysicalExam::applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles) {
     if (!mCharacter) {
-        LOG_ERROR("No character loaded");
+        std::cerr << "No character loaded" << std::endl;
         return;
     }
 
@@ -462,14 +461,14 @@ void PhysicalExam::applyPosePreset(const std::map<std::string, Eigen::VectorXd>&
     for (const auto& [joint_name, angles] : joint_angles) {
         auto joint = skeleton->getJoint(joint_name);
         if (!joint) {
-            LOG_ERROR("Joint not found: " << joint_name);
+            std::cerr << "Joint not found: " << joint_name << std::endl;
             continue;
         }
 
         if (angles.size() != joint->getNumDofs()) {
-            LOG_ERROR("Joint " << joint_name << " expects "
+            std::cerr << "Joint " << joint_name << " expects "
                      << joint->getNumDofs() << " DOFs, got "
-                     << angles.size());
+                     << angles.size() << std::endl;
             continue;
         }
 
@@ -479,7 +478,7 @@ void PhysicalExam::applyPosePreset(const std::map<std::string, Eigen::VectorXd>&
     // Store as initial pose for reset
     mInitialPose = joint_angles;
 
-    LOG_INFO("Pose preset applied");
+    std::cout << "Pose preset applied" << std::endl;
 }
 
 void PhysicalExam::applyForce(const std::string& body_node,
@@ -487,13 +486,13 @@ void PhysicalExam::applyForce(const std::string& body_node,
                              const Eigen::Vector3d& direction,
                              double magnitude) {
     if (!mCharacter) {
-        LOG_ERROR("No character loaded");
+        std::cerr << "No character loaded" << std::endl;
         return;
     }
 
     auto bn = mCharacter->getSkeleton()->getBodyNode(body_node);
     if (!bn) {
-        LOG_ERROR("Body node not found: " << body_node);
+        std::cerr << "Body node not found: " << body_node << std::endl;
         return;
     }
 
@@ -528,7 +527,7 @@ void PhysicalExam::setPaused(bool paused) {
     if (mSimulationPaused == paused) return;  // No change
 
     mSimulationPaused = paused;
-    LOG_INFO("Simulation " << (mSimulationPaused ? "PAUSED" : "RESUMED"));
+    std::cout << "Simulation " << (mSimulationPaused ? "PAUSED" : "RESUMED") << std::endl;
 
     // When pausing with PI controller enabled, update marked targets and reset integral errors
     if (mSimulationPaused && mEnableInterpolation && mCharacter) {
@@ -540,7 +539,7 @@ void PhysicalExam::setPaused(bool paused) {
                 mJointIntegralError[i] = 0.0;  // Reset integral error on pause
             }
         }
-        LOG_INFO("Updated marked target angles to current positions and reset integral errors");
+        std::cout << "Updated marked target angles to current positions and reset integral errors" << std::endl;
     }
 }
 
@@ -582,7 +581,7 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     resolver.initialize();
     std::string resolved_config_path = resolver.resolve(config_path);
     
-    LOG_INFO("Loading exam setting from: " << resolved_config_path);
+    std::cout << "Loading exam setting from: " << resolved_config_path << std::endl;
     
     // Parse YAML configuration
     YAML::Node config = YAML::LoadFile(resolved_config_path);
@@ -595,9 +594,9 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     std::string _actTypeString = config["character"]["actuator"].as<std::string>();
     ActuatorType _actType = getActuatorType(_actTypeString);
     
-    LOG_INFO("Exam setting: " << mExamName);
+    std::cout << "Exam setting: " << mExamName << std::endl;
     if (!mExamDescription.empty()) {
-        LOG_INFO("Description: " << mExamDescription);
+        std::cout << "Description: " << mExamDescription << std::endl;
     }
     
     // Load character
@@ -620,7 +619,7 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
                 URIResolver& resolver = URIResolver::getInstance();
                 std::string resolved_path = resolver.resolve(trial_file);
                 
-                LOG_INFO("  Loading trial from file: " << resolved_path);
+                std::cout << "  Loading trial from file: " << resolved_path << std::endl;
                 trial_node = YAML::LoadFile(resolved_path);
             } else {
                 // Inline trial definition - use the node directly
@@ -668,7 +667,7 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
             trial.output_file = trial_node["recording"]["output_file"].as<std::string>();
             
             mTrials.push_back(trial);
-            LOG_INFO("  Loaded trial: " << trial.name);
+            std::cout << "  Loaded trial: " << trial.name << std::endl;
         }
     }
     
@@ -678,29 +677,29 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     setPaused(true);
     
     if (mTrials.empty()) {
-        LOG_INFO("Exam setting loaded (no trials defined - interactive mode)");
+        std::cout << "Exam setting loaded (no trials defined - interactive mode)" << std::endl;
     } else {
-        LOG_INFO("Exam setting loaded with " << mTrials.size() << " trial(s)");
+        std::cout << "Exam setting loaded with " << mTrials.size() << " trial(s)" << std::endl;
     }
 }
 
 void PhysicalExam::startNextTrial() {
     if (!mExamSettingLoaded || mTrials.empty()) {
-        LOG_ERROR("No exam setting loaded or no trials available");
+        std::cerr << "No exam setting loaded or no trials available" << std::endl;
         return;
     }
     
     mCurrentTrialIndex++;
     if (mCurrentTrialIndex >= static_cast<int>(mTrials.size())) {
-        LOG_INFO("All trials completed!");
+        std::cout << "All trials completed!" << std::endl;
         mCurrentTrialIndex = mTrials.size() - 1;
         mTrialRunning = false;
         return;
     }
     
-    LOG_INFO("Starting trial " << (mCurrentTrialIndex + 1) << "/" 
+    std::cout << "Starting trial " << (mCurrentTrialIndex + 1) << "/" 
               << mTrials.size() << ": " 
-              << mTrials[mCurrentTrialIndex].name);
+              << mTrials[mCurrentTrialIndex].name << std::endl;
     
     mTrialRunning = true;
     mCurrentForceStep = 0;
@@ -710,14 +709,14 @@ void PhysicalExam::startNextTrial() {
     runCurrentTrial();
     
     mTrialRunning = false;
-    LOG_INFO("Trial completed. Results saved to: " 
-              << mTrials[mCurrentTrialIndex].output_file);
+    std::cout << "Trial completed. Results saved to: " 
+              << mTrials[mCurrentTrialIndex].output_file << std::endl;
 }
 
 void PhysicalExam::runCurrentTrial() {
     if (!mExamSettingLoaded || mCurrentTrialIndex < 0 || 
         mCurrentTrialIndex >= static_cast<int>(mTrials.size())) {
-        LOG_ERROR("Invalid trial index");
+        std::cerr << "Invalid trial index" << std::endl;
         return;
     }
     
@@ -733,8 +732,8 @@ void PhysicalExam::runCurrentTrial() {
         double magnitude = trial.force_min + 
             (trial.force_max - trial.force_min) * double(i) / trial.force_steps;
         
-        LOG_INFO("  Force step " << i << "/" << trial.force_steps 
-                  << ": " << magnitude << " N");
+        std::cout << "  Force step " << i << "/" << trial.force_steps 
+                  << ": " << magnitude << " N" << std::endl;
         
         // Reset to initial pose
         applyPosePreset(trial.pose);
@@ -764,7 +763,7 @@ void PhysicalExam::runExamination(const std::string& config_path) {
     YAML::Node config = YAML::LoadFile(config_path);
 
     mCurrentExamName = config["name"].as<std::string>();
-    LOG_INFO("Running examination: " << mCurrentExamName);
+    std::cout << "Running examination: " << mCurrentExamName << std::endl;
 
     std::string skeleton_path = config["character"]["skeleton"].as<std::string>();
     std::string muscle_path = config["character"]["muscle"].as<std::string>();
@@ -822,7 +821,7 @@ void PhysicalExam::runExamination(const std::string& config_path) {
     for (int i = 0; i <= steps; ++i) {
         double magnitude = min_force + (max_force - min_force) * double(i) / steps;
 
-        LOG_INFO("Step " << i << "/" << steps << ": Force = " << magnitude << " N");
+        std::cout << "Step " << i << "/" << steps << ": Force = " << magnitude << " N" << std::endl;
 
         // Reset to initial pose
         applyPosePreset(pose);
@@ -844,14 +843,14 @@ void PhysicalExam::runExamination(const std::string& config_path) {
     // Save results
     saveToCSV(output_file);
 
-    LOG_INFO("Examination complete. Results saved to: " << output_file);
+    std::cout << "Examination complete. Results saved to: " << output_file << std::endl;
 }
 
 void PhysicalExam::saveToCSV(const std::string& output_path) {
     std::ofstream file(output_path);
 
     if (!file.is_open()) {
-        LOG_ERROR("Failed to open output file: " << output_path);
+        std::cerr << "Failed to open output file: " << output_path << std::endl;
         return;
     }
 
@@ -964,8 +963,8 @@ void PhysicalExam::mainLoop() {
                     joint->setPositions(mSweepOriginalPos);
                 }
                 mSweepRunning = false;
-                LOG_INFO("Sweep completed. Collected " << mSweepAngles.size()
-                          << " data points");
+                std::cout << "Sweep completed. Collected " << mSweepAngles.size()
+                          << " data points" << std::endl;
             }
 
             // Check for user interruption (ESC key)
@@ -974,7 +973,7 @@ void PhysicalExam::mainLoop() {
                     joint->setPositions(mSweepOriginalPos);
                 }
                 mSweepRunning = false;
-                LOG_INFO("Sweep interrupted by user");
+                std::cout << "Sweep interrupted by user" << std::endl;
             }
         }
 
@@ -1198,7 +1197,7 @@ void PhysicalExam::drawSurgeryPanel() {
     // SURGERY OPERATIONS
     // ========================================================================
         
-    // 2. Distribute Passive Force
+    // 2. Distribute Passive Force (CollapssingHeader)
     if (ImGui::CollapsingHeader("Distribute Passive Force")) {
         drawDistributePassiveForceSection();
     }
@@ -1216,8 +1215,8 @@ void PhysicalExam::drawSurgeryPanel() {
     }
     ImGui::Spacing();
     
-    // 5. Rotate Joint Offset
-    if (ImGui::CollapsingHeader("Rotate Joint Offset")) {
+    // 5. Rotate Joint Offset (FDO)
+    if (ImGui::CollapsingHeader("Rotate Joint Offset (FDO)")) {
         drawRotateJointOffsetSection();
     }
     ImGui::Spacing();
@@ -1444,9 +1443,9 @@ void PhysicalExam::drawDistributePassiveForceSection() {
     // Apply button
     if (ImGui::Button("Apply Distribution", ImVec2(-1, 30))) {
         if (selectedMuscles.empty()) {
-            LOG_INFO("[Surgery] Error: No muscles selected!");
+            std::cout << "[Surgery] Error: No muscles selected!" << std::endl;
         } else if (mDistributeRefMuscle.empty()) {
-            LOG_INFO("[Surgery] Error: No reference muscle selected!");
+            std::cout << "[Surgery] Error: No reference muscle selected!" << std::endl;
         } else {
             // Capture current joint angles for recording
             std::map<std::string, Eigen::VectorXd> currentJointAngles;
@@ -1590,7 +1589,7 @@ void PhysicalExam::drawRelaxPassiveForceSection() {
     // Apply button
     if (ImGui::Button("Apply Relaxation", ImVec2(-1, 30))) {
         if (selectedMuscles.empty()) {
-            LOG_INFO("[Surgery] Error: No muscles selected!");
+            std::cout << "[Surgery] Error: No muscles selected!" << std::endl;
         } else {
             // Capture current joint angles for recording
             std::map<std::string, Eigen::VectorXd> currentJointAngles;
@@ -1648,10 +1647,10 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
                         recordOperation(std::move(op));
                     }
                 } catch (const std::exception& e) {
-                    LOG_INFO("[Surgery] Error saving muscle configuration: " << e.what());
+                    std::cout << "[Surgery] Error saving muscle configuration: " << e.what() << std::endl;
                 }
             } else {
-                LOG_INFO("[Surgery] Error: No character loaded!");
+                std::cout << "[Surgery] Error: No character loaded!" << std::endl;
             }
             mSavingMuscle = false;
         }
@@ -2095,7 +2094,7 @@ void PhysicalExam::drawAnchorManipulationSection() {
                                 recordOperation(std::move(op));
                             }
                         } else {
-                            LOG_INFO("[Surgery] Body node already exists in this anchor!");
+                            std::cout << "[Surgery] Body node already exists in this anchor!" << std::endl;
                         }
                     }
                 }
@@ -2162,9 +2161,9 @@ void PhysicalExam::drawAnchorManipulationSection() {
     // Remove Anchor button
     if (ImGui::Button("Remove Selected Anchor", ImVec2(-1, 30))) {
         if (mAnchorCandidateMuscle.empty()) {
-            LOG_INFO("[Surgery] Error: No candidate muscle selected!");
+            std::cout << "[Surgery] Error: No candidate muscle selected!" << std::endl;
         } else if (mSelectedCandidateAnchorIndex < 0) {
-            LOG_INFO("[Surgery] Error: No anchor selected for removal!");
+            std::cout << "[Surgery] Error: No anchor selected for removal!" << std::endl;
         } else {
             // Check if we're removing the last anchor (need at least 2)
             Muscle* candidateMuscle = nullptr;
@@ -2179,7 +2178,7 @@ void PhysicalExam::drawAnchorManipulationSection() {
                 int totalAnchors = candidateMuscle->GetAnchors().size();
                 
                 if (totalAnchors <= 2) {
-                    LOG_INFO("[Surgery] Error: Cannot remove anchor - muscle must have at least 2 anchors!");
+                    std::cout << "[Surgery] Error: Cannot remove anchor - muscle must have at least 2 anchors!" << std::endl;
                 } else {
                     if (removeAnchorFromMuscle(mAnchorCandidateMuscle, mSelectedCandidateAnchorIndex)) {
                         // Record operation if recording
@@ -2201,11 +2200,11 @@ void PhysicalExam::drawAnchorManipulationSection() {
     // Copy Anchor button
     if (ImGui::Button("Copy Anchor to Candidate", ImVec2(-1, 30))) {
         if (mAnchorCandidateMuscle.empty()) {
-            LOG_INFO("[Surgery] Error: No candidate muscle selected!");
+            std::cout << "[Surgery] Error: No candidate muscle selected!" << std::endl;
         } else if (mAnchorReferenceMuscle.empty()) {
-            LOG_INFO("[Surgery] Error: No reference muscle selected!");
+            std::cout << "[Surgery] Error: No reference muscle selected!" << std::endl;
         } else if (mSelectedReferenceAnchorIndex < 0) {
-            LOG_INFO("[Surgery] Error: No reference anchor selected!");
+            std::cout << "[Surgery] Error: No reference anchor selected!" << std::endl;
         } else {
             if (copyAnchorToMuscle(mAnchorReferenceMuscle, mSelectedReferenceAnchorIndex, mAnchorCandidateMuscle)) {
                 // Record operation if recording
@@ -2296,8 +2295,7 @@ void PhysicalExam::drawRotateJointOffsetSection() {
 
     // Joint selection combo box
     ImGui::Text("Joint Name:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(-1);
     if (ImGui::BeginCombo("##RotateJoint", mSelectedRotateJoint.empty() ? "(select joint)" : mSelectedRotateJoint.c_str())) {
         for (const auto& joint_name : jointNames) {
             bool isSelected = (joint_name == mSelectedRotateJoint);
@@ -2318,7 +2316,6 @@ void PhysicalExam::drawRotateJointOffsetSection() {
 
     // Rotation axis input
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Rotation Axis (in parent frame):");
-    ImGui::SameLine();
 
     // Radio buttons for axis selection
     if (ImGui::RadioButton("X##RotJoint", mRotateJointAxis[0] == 1.0f && mRotateJointAxis[1] == 0.0f && mRotateJointAxis[2] == 0.0f)) {
@@ -2333,44 +2330,44 @@ void PhysicalExam::drawRotateJointOffsetSection() {
         mRotateJointAxis[0] = 0.0f; mRotateJointAxis[1] = 0.0f; mRotateJointAxis[2] = 1.0f;
     }
 
-    ImGui::SameLine();
-    ImGui::Checkbox("Preserve Position##RotJointPreservePositionCheckbox", &mRotateJointPreservePosition);
     ImGui::Spacing();
 
     // Angle input (degrees and radians)
-    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Angle:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
+    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Rotation Angle:");
+    ImGui::SetNextItemWidth(150);
     ImGui::InputFloat("degrees##RotJoint", &mRotateJointAngleDeg, 1.0f, 10.0f, "%.2f");
+    ImGui::SameLine();
+    float angle_rad = mRotateJointAngleDeg * M_PI / 180.0f;
+    ImGui::Text("= %.4f rad", angle_rad);
+
+    // Angle slider
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderFloat("##RotJointAngleSlider", &mRotateJointAngleDeg, -180.0f, 180.0f, "%.1f°");
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Preserve position checkbox
-
-    ImGui::Spacing();
-
     // Apply button
     if (ImGui::Button("Apply Joint Rotation", ImVec2(-1, 30))) {
         if (mSelectedRotateJoint.empty()) {
-            LOG_INFO("[Surgery] Error: No joint selected!");
+            std::cout << "[Surgery] Error: No joint selected!" << std::endl;
         } else {
             // Normalize axis
             Eigen::Vector3d axis(mRotateJointAxis[0], mRotateJointAxis[1], mRotateJointAxis[2]);
             double axis_norm = axis.norm();
             if (axis_norm < 1e-6) {
-                LOG_INFO("[Surgery] Error: Rotation axis cannot be zero!");
+                std::cout << "[Surgery] Error: Rotation axis cannot be zero!" << std::endl;
             } else {
                 axis.normalize();
                 double angle_rad_d = mRotateJointAngleDeg * M_PI / 180.0;
 
                 // Execute operation
-                if (rotateJointOffset(mSelectedRotateJoint, axis, angle_rad_d, mRotateJointPreservePosition)) {
+                if (rotateJointOffset(mSelectedRotateJoint, axis, angle_rad_d)) {
                     // Record operation if recording
                     if (mRecordingSurgery) {
                         auto op = std::make_unique<RotateJointOffsetOp>(
-                            mSelectedRotateJoint, axis, angle_rad_d, mRotateJointPreservePosition);
+                            mSelectedRotateJoint, axis, angle_rad_d);
                         recordOperation(std::move(op));
                     }
                 }
@@ -2486,14 +2483,7 @@ void PhysicalExam::drawRotateAnchorPointsSection() {
                         label += " (" + anchors[i]->bodynodes[0]->getName() + ")";
                     }
                     if (ImGui::Selectable(label.c_str(), isSelected)) {
-                        // Validate: reference anchor must have exactly one bodynode
-                        if (anchors[i]->bodynodes.size() != 1) {
-                            LOG_ERROR("[Surgery] Reference anchor must have exactly 1 bodynode (single-LBS only). Found: "
-                                     << anchors[i]->bodynodes.size());
-                            mSelectedRotateAnchorIndex = -1;
-                        } else {
-                            mSelectedRotateAnchorIndex = i;
-                        }
+                        mSelectedRotateAnchorIndex = i;
                     }
                     if (isSelected) {
                         ImGui::SetItemDefaultFocus();
@@ -2552,7 +2542,6 @@ void PhysicalExam::drawRotateAnchorPointsSection() {
 
     // Rotation axis input
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Rotation Axis (in bodynode frame):");
-    ImGui::SameLine();
 
     // Radio buttons for axis selection
     if (ImGui::RadioButton("X##RotAnchor", mRotateAnchorRotAxis[0] == 1.0f && mRotateAnchorRotAxis[1] == 0.0f && mRotateAnchorRotAxis[2] == 0.0f)) {
@@ -2571,10 +2560,15 @@ void PhysicalExam::drawRotateAnchorPointsSection() {
 
     // Angle input
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Rotation Angle:");
-    ImGui::SameLine();
-
-    ImGui::SetNextItemWidth(80);
+    ImGui::SetNextItemWidth(150);
     ImGui::InputFloat("degrees##RotAnchor", &mRotateAnchorAngleDeg, 1.0f, 10.0f, "%.2f");
+    ImGui::SameLine();
+    float angle_rad = mRotateAnchorAngleDeg * M_PI / 180.0f;
+    ImGui::Text("= %.4f rad", angle_rad);
+
+    // Angle slider
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderFloat("##RotAnchorAngleSlider", &mRotateAnchorAngleDeg, -180.0f, 180.0f, "%.1f°");
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -2583,21 +2577,21 @@ void PhysicalExam::drawRotateAnchorPointsSection() {
     // Apply button
     if (ImGui::Button("Apply Anchor Rotation", ImVec2(-1, 30))) {
         if (mSelectedRotateAnchorMuscle.empty()) {
-            LOG_WARN("[Surgery GUI] Error: No muscle selected!");
+            std::cout << "[Surgery] Error: No muscle selected!" << std::endl;
         } else if (mSelectedRotateAnchorIndex < 0) {
-            LOG_WARN("[Surgery GUI] Error: No anchor selected!");
+            std::cout << "[Surgery] Error: No anchor selected!" << std::endl;
         } else {
             // Normalize vectors
             Eigen::Vector3d search_dir(mRotateAnchorSearchDir[0], mRotateAnchorSearchDir[1], mRotateAnchorSearchDir[2]);
             Eigen::Vector3d rot_axis(mRotateAnchorRotAxis[0], mRotateAnchorRotAxis[1], mRotateAnchorRotAxis[2]);
-            
+
             double search_norm = search_dir.norm();
             double axis_norm = rot_axis.norm();
-            
+
             if (search_norm < 1e-6) {
-                LOG_WARN("[Surgery GUI] Error: Search direction cannot be zero!");
+                std::cout << "[Surgery] Error: Search direction cannot be zero!" << std::endl;
             } else if (axis_norm < 1e-6) {
-                LOG_WARN("[Surgery GUI] Error: Rotation axis cannot be zero!");
+                std::cout << "[Surgery] Error: Rotation axis cannot be zero!" << std::endl;
             } else {
                 search_dir.normalize();
                 rot_axis.normalize();
@@ -2726,14 +2720,7 @@ void PhysicalExam::drawFDOCombinedSection() {
                         label += " (" + anchors[i]->bodynodes[0]->getName() + ")";
                     }
                     if (ImGui::Selectable(label.c_str(), isSelected)) {
-                        // Validate: reference anchor must have exactly one bodynode
-                        if (anchors[i]->bodynodes.size() != 1) {
-                            LOG_ERROR("[Surgery] Reference anchor must have exactly 1 bodynode (single-LBS only). Found: "
-                                     << anchors[i]->bodynodes.size());
-                            mSelectedRotateAnchorIndex = -1;
-                        } else {
-                            mSelectedRotateAnchorIndex = i;
-                        }
+                        mSelectedRotateAnchorIndex = i;
                     }
                     if (isSelected) {
                         ImGui::SetItemDefaultFocus();
@@ -2755,7 +2742,64 @@ void PhysicalExam::drawFDOCombinedSection() {
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Note: Target bodynode is automatically determined from the reference anchor");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Target bodynode selection
+    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "FDO Target Bodynode:");
+
+    // Get skeleton and build bodynode list
+    auto skel = mCharacter->getSkeleton();
+    std::vector<std::string> bodynodeNames;
+    for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
+        bodynodeNames.push_back(skel->getBodyNode(i)->getName());
+    }
+
+    // Search filter
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##FDOBodynodeFilter", "Search bodynodes...",
+                            mFDOBodynodeFilterBuffer, sizeof(mFDOBodynodeFilterBuffer));
+
+    // Convert filter to lowercase for case-insensitive search
+    std::string fdo_filter_lower(mFDOBodynodeFilterBuffer);
+    std::transform(fdo_filter_lower.begin(), fdo_filter_lower.end(), fdo_filter_lower.begin(), ::tolower);
+
+    // Build filtered bodynode list
+    std::vector<std::string> filteredBodynodes;
+    for (const auto& bn_name : bodynodeNames) {
+        if (fdo_filter_lower.empty()) {
+            filteredBodynodes.push_back(bn_name);
+        } else {
+            std::string bn_lower = bn_name;
+            std::transform(bn_lower.begin(), bn_lower.end(), bn_lower.begin(), ::tolower);
+            if (bn_lower.find(fdo_filter_lower) != std::string::npos) {
+                filteredBodynodes.push_back(bn_name);
+            }
+        }
+    }
+
+    // Bodynode selection combo
+    ImGui::SetNextItemWidth(-1);
+    std::string fdo_preview = mSelectedFDOTargetBodynode.empty()
+        ? "(select target bone)"
+        : mSelectedFDOTargetBodynode;
+    if (!fdo_filter_lower.empty()) {
+        fdo_preview += " [" + std::to_string(filteredBodynodes.size()) + " found]";
+    }
+
+    if (ImGui::BeginCombo("##FDOTargetBodynode", fdo_preview.c_str())) {
+        for (const auto& bn_name : filteredBodynodes) {
+            bool isSelected = (bn_name == mSelectedFDOTargetBodynode);
+            if (ImGui::Selectable(bn_name.c_str(), isSelected)) {
+                mSelectedFDOTargetBodynode = bn_name;
+            }
+            if (isSelected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -2829,9 +2873,11 @@ void PhysicalExam::drawFDOCombinedSection() {
     // Apply button
     if (ImGui::Button("Apply FDO Combined Surgery", ImVec2(-1, 30))) {
         if (mSelectedRotateAnchorMuscle.empty()) {
-            LOG_INFO("[Surgery] Error: No muscle selected!");
+            std::cout << "[Surgery] Error: No muscle selected!" << std::endl;
         } else if (mSelectedRotateAnchorIndex < 0) {
-            LOG_INFO("[Surgery] Error: No anchor selected!");
+            std::cout << "[Surgery] Error: No anchor selected!" << std::endl;
+        } else if (mSelectedFDOTargetBodynode.empty()) {
+            std::cout << "[Surgery] Error: No target bodynode selected!" << std::endl;
         } else {
             // Normalize vectors
             Eigen::Vector3d search_dir(mRotateAnchorSearchDir[0], mRotateAnchorSearchDir[1], mRotateAnchorSearchDir[2]);
@@ -2841,22 +2887,22 @@ void PhysicalExam::drawFDOCombinedSection() {
             double axis_norm = rot_axis.norm();
 
             if (search_norm < 1e-6) {
-                LOG_INFO("[Surgery] Error: Search direction cannot be zero!");
+                std::cout << "[Surgery] Error: Search direction cannot be zero!" << std::endl;
             } else if (axis_norm < 1e-6) {
-                LOG_INFO("[Surgery] Error: Rotation axis cannot be zero!");
+                std::cout << "[Surgery] Error: Rotation axis cannot be zero!" << std::endl;
             } else {
                 search_dir.normalize();
                 rot_axis.normalize();
                 double angle_rad_d = mRotateAnchorAngleDeg * M_PI / 180.0;
 
-                // Execute FDO Combined Surgery (target bodynode obtained from anchor)
+                // Execute FDO Combined Surgery
                 if (executeFDO(mSelectedRotateAnchorMuscle, mSelectedRotateAnchorIndex,
-                              search_dir, rot_axis, angle_rad_d)) {
+                              mSelectedFDOTargetBodynode, search_dir, rot_axis, angle_rad_d)) {
                     // Record operation if recording
                     if (mRecordingSurgery) {
                         auto op = std::make_unique<FDOCombinedOp>(
                             mSelectedRotateAnchorMuscle, mSelectedRotateAnchorIndex,
-                            search_dir, rot_axis, angle_rad_d);
+                            mSelectedFDOTargetBodynode, search_dir, rot_axis, angle_rad_d);
                         recordOperation(std::move(op));
                     }
                 }
@@ -2871,9 +2917,9 @@ void PhysicalExam::drawFDOCombinedSection() {
 }
 
 // Override methods for GUI-specific logic
-bool PhysicalExam::rotateJointOffset(const std::string& joint_name, const Eigen::Vector3d& axis, double angle, bool preserve_position) {
+bool PhysicalExam::rotateJointOffset(const std::string& joint_name, const Eigen::Vector3d& axis, double angle) {
     // Call base class implementation
-    bool success = SurgeryExecutor::rotateJointOffset(joint_name, axis, angle, preserve_position);
+    bool success = SurgeryExecutor::rotateJointOffset(joint_name, axis, angle);
 
     // No GUI-specific logic needed for joint rotation
     // (skeleton updates automatically)
@@ -3266,37 +3312,68 @@ void PhysicalExam::drawReferenceAnchor() {
                 glPopMatrix();
 
                 // Draw affected anchors in sky blue based on search direction
-                // Use shared computeAffectedAnchors method for consistency with execution
-                Eigen::Vector3d search_dir(mRotateAnchorSearchDir[0],
-                                          mRotateAnchorSearchDir[1],
-                                          mRotateAnchorSearchDir[2]);
+                // Affected anchors: ALL anchors (across all muscles) that share the same body node
+                // Criterion: dot(anchor_local_pos - ref_local_pos, search_dir) > 0 (in local space)
 
-                if (search_dir.norm() > 1e-6 && !anchor->bodynodes.empty()) {
-                    try {
-                        // Create AnchorReference for reference anchor
-                        AnchorReference ref_anchor(mSelectedRotateAnchorMuscle, mSelectedRotateAnchorIndex, 0);
+                if (!anchor->bodynodes.empty()) {
+                    auto refBodyNode = anchor->bodynodes[0];  // Reference anchor's body node
 
-                        // Compute affected anchors using shared method (this class inherits from SurgeryExecutor)
-                        auto affected_anchors = computeAffectedAnchors(ref_anchor, search_dir);
+                    // Get reference anchor's local position relative to refBodyNode
+                    Eigen::Vector3d refLocalPos = anchor->local_positions[0];
 
-                        // Render affected anchors in sky blue
-                        glColor4f(0.3f, 0.7f, 1.0f, 0.8f);  // Transparent sky blue
+                    Eigen::Vector3d searchDir(mRotateAnchorSearchDir[0],
+                                             mRotateAnchorSearchDir[1],
+                                             mRotateAnchorSearchDir[2]);
 
-                        for (const auto& anchor_ref : affected_anchors) {
-                            Muscle* muscle = mCharacter->getMuscleByName(anchor_ref.muscle_name);
-                            if (!muscle) continue;
+                    // Normalize search direction
+                    if (searchDir.norm() > 1e-6) {
+                        searchDir.normalize();
 
-                            auto affected_anchor = muscle->GetAnchors()[anchor_ref.anchor_index];
-                            Eigen::Vector3d world_pos = affected_anchor->GetPoint();
+                        glColor4f(0.3f, 0.7f, 1.0f, 0.4f);  // Transparent sky blue
 
-                            glPushMatrix();
-                            glTranslatef(world_pos[0], world_pos[1], world_pos[2]);
-                            glutSolidSphere(0.005, 15, 15);  // Reduced size
-                            glPopMatrix();
+                        // Search through ALL muscles to find anchors on the same body node
+                        for (auto muscle : muscles) {
+                            auto muscleAnchors = muscle->GetAnchors();
+
+                            for (int i = 0; i < muscleAnchors.size(); ++i) {
+                                auto otherAnchor = muscleAnchors[i];
+
+                                // Skip if this is the reference anchor itself
+                                if (muscle->name == mSelectedRotateAnchorMuscle && i == mSelectedRotateAnchorIndex) {
+                                    continue;
+                                }
+
+                                // Check if this anchor is attached to the same body node
+                                // and get the local position index
+                                int bodyNodeIndex = -1;
+                                for (int j = 0; j < otherAnchor->bodynodes.size(); ++j) {
+                                    if (otherAnchor->bodynodes[j] == refBodyNode) {
+                                        bodyNodeIndex = j;
+                                        break;
+                                    }
+                                }
+
+                                if (bodyNodeIndex >= 0) {
+                                    // Get local position relative to the shared body node
+                                    Eigen::Vector3d otherLocalPos = otherAnchor->local_positions[bodyNodeIndex];
+
+                                    // Compute difference in local space
+                                    Eigen::Vector3d localDiff = otherLocalPos - refLocalPos;
+
+                                    // Check if anchor is in the search direction (local space)
+                                    double dotProduct = localDiff.dot(searchDir);
+                                    if (dotProduct > 0.0) {
+                                        // This anchor would be affected by the rotation
+                                        // Use world position for rendering
+                                        Eigen::Vector3d otherWorldPos = otherAnchor->GetPoint();
+                                        glPushMatrix();
+                                        glTranslatef(otherWorldPos[0], otherWorldPos[1], otherWorldPos[2]);
+                                        glutSolidSphere(0.005, 15, 15);  // Reduced size
+                                        glPopMatrix();
+                                    }
+                                }
+                            }
                         }
-                    } catch (const std::runtime_error& e) {
-                        // Multi-LBS anchor - already validated during selection
-                        LOG_ERROR("[PhysicalExam] " << e.what());
                     }
                 }
 
@@ -3634,16 +3711,16 @@ void PhysicalExam::reset() {
     if (mWorld) {
         mWorld->setTime(0.0);
     }
-    LOG_INFO("Scene reset");
+    std::cout << "Scene reset" << std::endl;
 }
 
 void PhysicalExam::resetSkeleton() {
     if (!mCharacter) {
-        LOG_ERROR("[PhysicalExam] Cannot reset skeleton: no character loaded");
+        std::cerr << "[PhysicalExam] Cannot reset skeleton: no character loaded" << std::endl;
         return;
     }
 
-    LOG_INFO("[PhysicalExam] Resetting skeleton by reloading from XML...");
+    std::cout << "[PhysicalExam] Resetting skeleton by reloading from XML..." << std::endl;
 
     // Store the actuator type before deletion
     ActuatorType actType = mCharacter->getActuatorType();
@@ -3654,32 +3731,32 @@ void PhysicalExam::resetSkeleton() {
     // FIRST: Ensure GPU has finished all pending rendering operations
     // This prevents GPU from accessing VBOs after we delete them
     glFinish();
-    LOG_INFO("[PhysicalExam] Synchronized with GPU (all operations completed)");
+    std::cout << "[PhysicalExam] Synchronized with GPU (all operations completed)" << std::endl;
 
     // SECOND: Delete VBOs from GPU (now safe - GPU not using them)
     mShapeRenderer.clearCache();
-    LOG_INFO("[PhysicalExam] Cleared ShapeRenderer cache (deleted VBOs)");
+    std::cout << "[PhysicalExam] Cleared ShapeRenderer cache (deleted VBOs)" << std::endl;
 
     // THIRD: Remove skeleton from world (stops it from being rendered)
     if (mWorld) {
         mWorld->removeSkeleton(skel);
-        LOG_INFO("[PhysicalExam] Removed skeleton from world");
+        std::cout << "[PhysicalExam] Removed skeleton from world" << std::endl;
     }
 
     // FOURTH: Delete the character object
     delete mCharacter;
     mCharacter = nullptr;
-    LOG_INFO("[PhysicalExam] Deleted character object");
+    std::cout << "[PhysicalExam] Deleted character object" << std::endl;
 
     // Reload character from stored XML paths
     if (mSkeletonPath.empty() || mMusclePath.empty()) {
-        LOG_ERROR("[PhysicalExam] Error: skeleton or muscle path not stored");
+        std::cerr << "[PhysicalExam] Error: skeleton or muscle path not stored" << std::endl;
         return;
     }
 
     loadCharacter(mSkeletonPath, mMusclePath, actType);
 
-    LOG_INFO("[PhysicalExam] Skeleton reset complete");
+    std::cout << "[PhysicalExam] Skeleton reset complete" << std::endl;
 }
 
 void PhysicalExam::setPoseStanding() {
@@ -3699,7 +3776,7 @@ void PhysicalExam::setPoseStanding() {
         root->setPositions(root_pos);
     }
 
-    LOG_INFO("Pose: Standing");
+    std::cout << "Pose: Standing" << std::endl;
 }
 
 void PhysicalExam::setPoseSupine() {
@@ -3721,7 +3798,7 @@ void PhysicalExam::setPoseSupine() {
         root->setPositions(root_pos);
     }
 
-    LOG_INFO("Pose: Supine (laying on back)");
+    std::cout << "Pose: Supine (laying on back)" << std::endl;
 }
 
 void PhysicalExam::setPoseProne() {
@@ -3743,7 +3820,7 @@ void PhysicalExam::setPoseProne() {
         root->setPositions(root_pos);
     }
 
-    LOG_INFO("Pose: Prone (laying on front)");
+    std::cout << "Pose: Prone (laying on front)" << std::endl;
 }
 
 void PhysicalExam::setPoseSupineKneeFlexed(double knee_angle) {
@@ -3785,52 +3862,52 @@ void PhysicalExam::setPoseSupineKneeFlexed(double knee_angle) {
         knee_l->setPositions(knee_l_pos);
     }
 
-    LOG_INFO("Pose: Supine with knee flexion (" << knee_angle << " degrees)");
+    std::cout << "Pose: Supine with knee flexion (" << knee_angle << " degrees)" << std::endl;
 }
 
 void PhysicalExam::printCameraInfo() {
     Eigen::Quaterniond quat = mTrackball.getCurrQuat();
     
-    LOG_INFO("\n======================================");
-    LOG_INFO("Copy and paste below to CAMERA_PRESET_DEFINITIONS:");
-    LOG_INFO("======================================");
-    LOG_INFO("PRESET|[Add description]|" 
+    std::cout << "\n======================================" << std::endl;
+    std::cout << "Copy and paste below to CAMERA_PRESET_DEFINITIONS:" << std::endl;
+    std::cout << "======================================" << std::endl;
+    std::cout << "PRESET|[Add description]|" 
               << mEye[0] << "," << mEye[1] << "," << mEye[2] << "|"
               << mUp[0] << "," << mUp[1] << "," << mUp[2] << "|"
               << mTrans[0] << "," << mTrans[1] << "," << mTrans[2] << "|"
               << mZoom << "|"
               << quat.w() << "," << quat.x() << "," << quat.y() << "," << quat.z() 
-             );
-    LOG_INFO("======================================\n");
+              << std::endl;
+    std::cout << "======================================\n" << std::endl;
 }
 
 void PhysicalExam::printBodyNodePositions() {
     if (!mCharacter) {
-        LOG_INFO("No character loaded");
+        std::cout << "No character loaded" << std::endl;
         return;
     }
 
     auto skel = mCharacter->getSkeleton();
     if (!skel) {
-        LOG_INFO("No skeleton available");
+        std::cout << "No skeleton available" << std::endl;
         return;
     }
 
-    LOG_INFO("\n======================================");
-    LOG_INFO("Body Node Positions (World Coordinates)");
-    LOG_INFO("======================================");
+    std::cout << "\n======================================" << std::endl;
+    std::cout << "Body Node Positions (World Coordinates)" << std::endl;
+    std::cout << "======================================" << std::endl;
 
     for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
         auto bn = skel->getBodyNode(i);
         Eigen::Vector3d pos = bn->getWorldTransform().translation();
 
-        LOG_INFO(std::setw(20) << std::left << bn->getName() << " | "
+        std::cout << std::setw(20) << std::left << bn->getName() << " | "
                   << "X: " << std::setw(8) << std::fixed << std::setprecision(4) << pos.x() << " "
                   << "Y: " << std::setw(8) << pos.y() << " "
                   << "Z: " << std::setw(8) << pos.z()
-                 );
+                  << std::endl;
     }
-    LOG_INFO("======================================\n");
+    std::cout << "======================================\n" << std::endl;
 }
 
 void PhysicalExam::parseAndPrintPostureConfig(const std::string& pastedData) {
@@ -3842,9 +3919,9 @@ void PhysicalExam::parseAndPrintPostureConfig(const std::string& pastedData) {
     // )";
     // exam.parseAndPrintPostureConfig(pastedData);
 
-    LOG_INFO("\n======================================");
-    LOG_INFO("Parsed C++ Array Format (Copy to setupPostureTargets)");
-    LOG_INFO("======================================");
+    std::cout << "\n======================================" << std::endl;
+    std::cout << "Parsed C++ Array Format (Copy to setupPostureTargets)" << std::endl;
+    std::cout << "======================================" << std::endl;
 
     std::istringstream stream(pastedData);
     std::string line;
@@ -3876,32 +3953,32 @@ void PhysicalExam::parseAndPrintPostureConfig(const std::string& pastedData) {
             z = std::stod(coords.substr(zPos + 2));
 
             // Output in C++ array format
-            LOG_INFO("{\"" << std::setw(12) << std::left << (bodyName + "\",")
+            std::cout << "{\"" << std::setw(12) << std::left << (bodyName + "\",")
                       << std::setw(9) << std::right << std::fixed << std::setprecision(4) << x << ", "
                       << std::setw(8) << y << ", "
                       << std::setw(8) << z << ", "
                       << "true,  true,  true,  500.0, 50.0},"
-                     );
+                      << std::endl;
         }
     }
-    LOG_INFO("======================================\n");
+    std::cout << "======================================\n" << std::endl;
 }
 
 void PhysicalExam::setupPostureTargets() {
-    LOG_INFO("\n=== setupPostureTargets() called ===");
+    std::cout << "\n=== setupPostureTargets() called ===" << std::endl;
     
     if (!mCharacter) {
-        LOG_INFO("ERROR: No character loaded for posture control");
+        std::cout << "ERROR: No character loaded for posture control" << std::endl;
         return;
     }
 
     auto skel = mCharacter->getSkeleton();
     if (!skel) {
-        LOG_INFO("ERROR: No skeleton available for posture control");
+        std::cout << "ERROR: No skeleton available for posture control" << std::endl;
         return;
     }
 
-    LOG_INFO("Character and skeleton OK, setting up targets...");
+    std::cout << "Character and skeleton OK, setting up targets..." << std::endl;
 
     // Clear existing targets
     mPostureTargets.clear();
@@ -4001,7 +4078,7 @@ HandL                | X: 0.8813   Y: 1.1240   Z: -0.4947
             // Check if body node exists in skeleton
             auto bn = skel->getBodyNode(bodyName);
             if (!bn) {
-                LOG_INFO("Warning: Body node '" << bodyName << "' not found in skeleton");
+                std::cout << "Warning: Body node '" << bodyName << "' not found in skeleton" << std::endl;
                 continue;
             }
 
@@ -4025,12 +4102,12 @@ HandL                | X: 0.8813   Y: 1.1240   Z: -0.4947
             if (config.controlY) mGraphData->register_key(base_key + "_Y", 500);
             if (config.controlZ) mGraphData->register_key(base_key + "_Z", 500);
 
-            LOG_INFO("Added posture target: " << bodyName
+            std::cout << "Added posture target: " << bodyName
                       << " at (" << x << ", " << y << ", " << z << ")"
                       << " [X:" << (config.controlX ? "Y" : "N")
                       << " Y:" << (config.controlY ? "Y" : "N")
                       << " Z:" << (config.controlZ ? "Y" : "N") << "]"
-                      << " Kp=" << config.kp << " Ki=" << config.ki);
+                      << " Kp=" << config.kp << " Ki=" << config.ki << std::endl;
         }
     }
 
@@ -4041,7 +4118,7 @@ HandL                | X: 0.8813   Y: 1.1240   Z: -0.4947
     }
     mPostureForces = Eigen::VectorXd::Zero(num_controlled_dims);
 
-    LOG_INFO("Posture control setup complete with " << mPostureTargets.size() << " targets");
+    std::cout << "Posture control setup complete with " << mPostureTargets.size() << " targets" << std::endl;
 }
 
 void PhysicalExam::applyPostureControl() {
@@ -4061,8 +4138,8 @@ void PhysicalExam::applyPostureControl() {
     bool print_debug = mShowPostureDebug && (debug_counter++ % 100 == 0);
     
     if (print_debug) {
-        LOG_INFO("\n=== Posture Control Debug (frame " << debug_counter << ") ===");
-        LOG_INFO("Targets: " << mPostureTargets.size() << ", Apply: " << mApplyPostureControl);
+        std::cout << "\n=== Posture Control Debug (frame " << debug_counter << ") ===" << std::endl;
+        std::cout << "Targets: " << mPostureTargets.size() << ", Apply: " << mApplyPostureControl << std::endl;
     }
 
     for (auto& target : mPostureTargets) {
@@ -4082,11 +4159,11 @@ void PhysicalExam::applyPostureControl() {
         Eigen::Vector3d controlForce = target.kp * error + target.ki * target.integralError;
         
         if (print_debug) {
-            LOG_INFO("  " << target.bodyNodeName << ":");
-            LOG_INFO("    Current:   [" << currentPos.transpose() << "]");
-            LOG_INFO("    Reference: [" << target.referencePosition.transpose() << "]");
-            LOG_INFO("    Error:     [" << error.transpose() << "]");
-            LOG_INFO("    Force:     [" << controlForce.transpose() << "]");
+            std::cout << "  " << target.bodyNodeName << ":" << std::endl;
+            std::cout << "    Current:   [" << currentPos.transpose() << "]" << std::endl;
+            std::cout << "    Reference: [" << target.referencePosition.transpose() << "]" << std::endl;
+            std::cout << "    Error:     [" << error.transpose() << "]" << std::endl;
+            std::cout << "    Force:     [" << controlForce.transpose() << "]" << std::endl;
         }
 
         // Apply control only to specified dimensions
@@ -4236,12 +4313,12 @@ void PhysicalExam::saveCameraPreset(int index) {
 
 void PhysicalExam::loadCameraPreset(int index) {
     if (index < 0 || index >= 3) {
-        LOG_ERROR("Invalid camera preset index: " << index);
+        std::cerr << "Invalid camera preset index: " << index << std::endl;
         return;
     }
     
     if (!mCameraPresets[index].isSet) {
-        LOG_INFO("Camera preset " << (index + 1) << " is not set yet");
+        std::cout << "Camera preset " << (index + 1) << " is not set yet" << std::endl;
         return;
     }
     
@@ -4252,8 +4329,8 @@ void PhysicalExam::loadCameraPreset(int index) {
     mTrackball.setQuaternion(mCameraPresets[index].quat);
     mCurrentCameraPreset = index;
     
-    LOG_INFO("Camera preset " << (index + 1) << " loaded: " 
-              << mCameraPresets[index].description);
+    std::cout << "Camera preset " << (index + 1) << " loaded: " 
+              << mCameraPresets[index].description << std::endl;
 }
 
 // ============================================================================
@@ -4325,7 +4402,7 @@ void PhysicalExam::initializeCameraPresets() {
                                                             quatVals[2], quatVals[3]);
                 mCameraPresets[i].isSet = true;
                 
-                LOG_INFO("Camera preset " << (i + 1) << " parsed: " << tokens[1]);
+                std::cout << "Camera preset " << (i + 1) << " parsed: " << tokens[1] << std::endl;
             }
         }
     }
@@ -4353,7 +4430,7 @@ void PhysicalExam::setupSweepMuscles() {
 
     auto skel = mCharacter->getSkeleton();
     if (mSweepConfig.joint_index >= skel->getNumJoints()) {
-        LOG_ERROR("Invalid joint index: " << mSweepConfig.joint_index);
+        std::cerr << "Invalid joint index: " << mSweepConfig.joint_index << std::endl;
         return;
     }
 
@@ -4390,14 +4467,14 @@ void PhysicalExam::setupSweepMuscles() {
     }
     mMuscleVisibility = newVisibility;
 
-    LOG_INFO("Detected " << mTrackedMuscles.size()
+    std::cout << "Detected " << mTrackedMuscles.size()
               << " muscles crossing joint: "
-              << joint->getName());
+              << joint->getName() << std::endl;
 }
 
 void PhysicalExam::runSweep() {
     if (!mCharacter) {
-        LOG_ERROR("No character loaded");
+        std::cerr << "No character loaded" << std::endl;
         return;
     }
 
@@ -4406,17 +4483,17 @@ void PhysicalExam::runSweep() {
     setupSweepMuscles();
 
     if (mTrackedMuscles.empty()) {
-        LOG_INFO("No muscles cross this joint");
+        std::cout << "No muscles cross this joint" << std::endl;
         return;
     }
 
     auto skel = mCharacter->getSkeleton();
     auto joint = skel->getJoint(mSweepConfig.joint_index);
 
-    LOG_INFO("Starting sweep: " << joint->getName()
+    std::cout << "Starting sweep: " << joint->getName()
               << " from " << mSweepConfig.angle_min
               << " to " << mSweepConfig.angle_max
-              << " rad (" << mSweepConfig.num_steps << " steps)");
+              << " rad (" << mSweepConfig.num_steps << " steps)" << std::endl;
 
     // Store original joint position for restoration
     mSweepOriginalPos = joint->getPositions();
@@ -4525,7 +4602,7 @@ void PhysicalExam::clearSweepData() {
     if (mGraphData) {
         mGraphData->clear_all();
     }
-    LOG_INFO("Sweep data cleared");
+    std::cout << "Sweep data cleared" << std::endl;
 }
 
 // ============================================================================
@@ -5020,9 +5097,9 @@ void PhysicalExam::drawJointAngleSweepSection() {
                         mSweepConfig.angle_min = pos_lower[dof_idx];
                         mSweepConfig.angle_max = pos_upper[dof_idx];
                         
-                        LOG_INFO("Joint " << joint->getName() 
+                        std::cout << "Joint " << joint->getName() 
                                   << " limits: [" << mSweepConfig.angle_min 
-                                  << ", " << mSweepConfig.angle_max << "] rad");
+                                  << ", " << mSweepConfig.angle_max << "] rad" << std::endl;
                     }
                 }
             }
@@ -5067,9 +5144,9 @@ void PhysicalExam::drawJointAngleSweepSection() {
                     mSweepConfig.angle_min = pos_lower[dof_idx];
                     mSweepConfig.angle_max = pos_upper[dof_idx];
                     
-                    LOG_INFO("Reset to joint " << joint->getName() 
+                    std::cout << "Reset to joint " << joint->getName() 
                               << " limits: [" << mSweepConfig.angle_min 
-                              << ", " << mSweepConfig.angle_max << "] rad");
+                              << ", " << mSweepConfig.angle_max << "] rad" << std::endl;
                 }
             }
             ImGui::SameLine();
@@ -5172,7 +5249,7 @@ void PhysicalExam::drawTrialManagementSection() {
                 mCurrentTrialIndex = -1;
                 mTrialRunning = false;
                 mRecordedData.clear();
-                LOG_INFO("Trials reset");
+                std::cout << "Trials reset" << std::endl;
             }
 
         } else {
@@ -5597,34 +5674,34 @@ void PhysicalExam::drawMuscleInfoSection() {
 void PhysicalExam::startRecording() {
     mRecordedOperations.clear();
     mRecordingSurgery = true;
-    LOG_INFO("[Surgery Recording] Started recording surgery operations");
+    std::cout << "[Surgery Recording] Started recording surgery operations" << std::endl;
 }
 
 void PhysicalExam::stopRecording() {
     mRecordingSurgery = false;
-    LOG_INFO("[Surgery Recording] Stopped recording. Captured " 
-              << mRecordedOperations.size() << " operation(s)");
+    std::cout << "[Surgery Recording] Stopped recording. Captured " 
+              << mRecordedOperations.size() << " operation(s)" << std::endl;
 }
 
 void PhysicalExam::exportRecording(const std::string& filepath) {
     if (mRecordedOperations.empty()) {
-        LOG_ERROR("[Surgery Recording] No operations to export!");
+        std::cerr << "[Surgery Recording] No operations to export!" << std::endl;
         return;
     }
     
     try {
         SurgeryScript::saveToFile(mRecordedOperations, filepath, "Recorded surgery operations");
-        LOG_INFO("[Surgery Recording] Exported " << mRecordedOperations.size() 
-                  << " operation(s) to " << filepath);
+        std::cout << "[Surgery Recording] Exported " << mRecordedOperations.size() 
+                  << " operation(s) to " << filepath << std::endl;
     } catch (const std::exception& e) {
-        LOG_ERROR("[Surgery Recording] Export failed: " << e.what());
+        std::cerr << "[Surgery Recording] Export failed: " << e.what() << std::endl;
     }
 }
 
 void PhysicalExam::recordOperation(std::unique_ptr<SurgeryOperation> op) {
     if (!mRecordingSurgery) return;
     
-    LOG_INFO("[Surgery Recording] Recorded: " << op->getDescription());
+    std::cout << "[Surgery Recording] Recorded: " << op->getDescription() << std::endl;
     mRecordedOperations.push_back(std::move(op));
 }
 
@@ -5633,47 +5710,47 @@ void PhysicalExam::loadSurgeryScript() {
         mLoadedScript = SurgeryScript::loadFromFile(mLoadScriptPath);
         
         if (mLoadedScript.empty()) {
-            LOG_ERROR("[Surgery Script] No operations loaded from " << mLoadScriptPath);
+            std::cerr << "[Surgery Script] No operations loaded from " << mLoadScriptPath << std::endl;
             return;
         }
         
-        LOG_INFO("[Surgery Script] Loaded " << mLoadedScript.size() 
-                  << " operation(s) from " << mLoadScriptPath);
+        std::cout << "[Surgery Script] Loaded " << mLoadedScript.size() 
+                  << " operation(s) from " << mLoadScriptPath << std::endl;
         
         // Show preview
         mShowScriptPreview = true;
         
     } catch (const std::exception& e) {
-        LOG_ERROR("[Surgery Script] Failed to load: " << e.what());
+        std::cerr << "[Surgery Script] Failed to load: " << e.what() << std::endl;
     }
 }
 
 void PhysicalExam::executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops) {
     if (!mCharacter) {
-        LOG_ERROR("[Surgery Script] Error: No character loaded!");
+        std::cerr << "[Surgery Script] Error: No character loaded!" << std::endl;
         return;
     }
     
-    LOG_INFO("[Surgery Script] Executing " << ops.size() << " operation(s)...");
+    std::cout << "[Surgery Script] Executing " << ops.size() << " operation(s)..." << std::endl;
     
     int successCount = 0;
     int failCount = 0;
     
     for (size_t i = 0; i < ops.size(); ++i) {
-        LOG_INFO("[Surgery Script] Operation " << (i + 1) << "/" << ops.size() 
-                  << ": " << ops[i]->getDescription());
+        std::cout << "[Surgery Script] Operation " << (i + 1) << "/" << ops.size() 
+                  << ": " << ops[i]->getDescription() << std::endl;
         
         bool success = ops[i]->execute(this);
         if (success) {
             successCount++;
         } else {
             failCount++;
-            LOG_ERROR("[Surgery Script] Operation " << (i + 1) << " FAILED");
+            std::cerr << "[Surgery Script] Operation " << (i + 1) << " FAILED" << std::endl;
         }
     }
     
-    LOG_INFO("[Surgery Script] Execution complete. Success: " << successCount 
-              << ", Failed: " << failCount);
+    std::cout << "[Surgery Script] Execution complete. Success: " << successCount 
+              << ", Failed: " << failCount << std::endl;
 }
 
 void PhysicalExam::showScriptPreview() {

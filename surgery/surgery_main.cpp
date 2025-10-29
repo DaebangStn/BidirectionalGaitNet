@@ -4,15 +4,16 @@
 #include "SurgeryExecutor.h"
 #include "SurgeryScript.h"
 #include "SurgeryOperation.h"
+#include "Log.h"
 
 // Default values
-const std::string DEFAULT_SKELETON = "@data/skeleton_gaitnet_narrow_model.xml";
-const std::string DEFAULT_MUSCLE = "@data/muscle_gaitnet.xml";
+const std::string DEFAULT_SKELETON = "@data/skeleton/gaitnet_narrow_model.xml";
+const std::string DEFAULT_MUSCLE = "@data/muscle/distribute_lower_only.xml";
 const std::string DEFAULT_SCRIPT = "@data/recorded_surgery.yaml";
 
 void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options]" << std::endl;
-    std::cout << std::endl;
+    LOG_INFO("");
     std::cout << "Options:" << std::endl;
     std::cout << "  --skeleton PATH    Path to skeleton XML file" << std::endl;
     std::cout << "                     (default: " << DEFAULT_SKELETON << ")" << std::endl;
@@ -21,14 +22,14 @@ void printUsage(const char* programName) {
     std::cout << "  --script PATH      Path to surgery script YAML file" << std::endl;
     std::cout << "                     (default: " << DEFAULT_SCRIPT << ")" << std::endl;
     std::cout << "  --help, -h         Show this help message" << std::endl;
-    std::cout << std::endl;
+    LOG_INFO("");
     std::cout << "Examples:" << std::endl;
     std::cout << "  # Use all defaults" << std::endl;
     std::cout << "  " << programName << std::endl;
-    std::cout << std::endl;
+    LOG_INFO("");
     std::cout << "  # Use custom script with default skeleton and muscle" << std::endl;
     std::cout << "  " << programName << " --script data/my_surgery.yaml" << std::endl;
-    std::cout << std::endl;
+    LOG_INFO("");
     std::cout << "  # Specify all parameters" << std::endl;
     std::cout << "  " << programName << " --skeleton data/skeleton_gaitnet_narrow_model.xml \\" << std::endl;
     std::cout << "                     --muscle data/muscle_gaitnet.xml \\" << std::endl;
@@ -45,10 +46,10 @@ bool hasExportOperation(const std::vector<std::unique_ptr<PMuscle::SurgeryOperat
 }
 
 int main(int argc, char** argv) {
-    std::cout << "==============================================================================" << std::endl;
-    std::cout << "Surgery Tool - Standalone Surgery Script Executor" << std::endl;
-    std::cout << "==============================================================================" << std::endl;
-    std::cout << std::endl;
+    LOG_INFO("==============================================================================");
+    LOG_INFO("Surgery Tool - Standalone Surgery Script Executor");
+    LOG_INFO("==============================================================================");
+    LOG_INFO("");
 
     // Default values
     std::string skeleton_path = DEFAULT_SKELETON;
@@ -66,26 +67,26 @@ int main(int argc, char** argv) {
             if (i + 1 < argc) {
                 skeleton_path = argv[++i];
             } else {
-                std::cerr << "Error: --skeleton requires a path argument" << std::endl;
+                LOG_ERROR("Error: --skeleton requires a path argument");
                 return 1;
             }
         } else if (arg == "--muscle") {
             if (i + 1 < argc) {
                 muscle_path = argv[++i];
             } else {
-                std::cerr << "Error: --muscle requires a path argument" << std::endl;
+                LOG_ERROR("Error: --muscle requires a path argument");
                 return 1;
             }
         } else if (arg == "--script") {
             if (i + 1 < argc) {
                 script_path = argv[++i];
             } else {
-                std::cerr << "Error: --script requires a path argument" << std::endl;
+                LOG_ERROR("Error: --script requires a path argument");
                 return 1;
             }
         } else {
-            std::cerr << "Error: Unknown argument: " << arg << std::endl;
-            std::cout << std::endl;
+            LOG_ERROR("Error: Unknown argument: " << arg);
+            LOG_INFO("");
             printUsage(argv[0]);
             return 1;
         }
@@ -103,91 +104,90 @@ int main(int argc, char** argv) {
     muscle_path = convertPath(muscle_path);
     script_path = convertPath(script_path);
 
-    std::cout << "Configuration:" << std::endl;
-    std::cout << "  Skeleton: " << skeleton_path << std::endl;
-    std::cout << "  Muscles:  " << muscle_path << std::endl;
-    std::cout << "  Script:   " << script_path << std::endl;
-    std::cout << std::endl;
+    LOG_INFO("Configuration:");
+    LOG_INFO("  Skeleton: " << skeleton_path);
+    LOG_INFO("  Muscles:  " << muscle_path);
+    LOG_INFO("  Script:   " << script_path);
+    LOG_INFO("");
 
     try {
         // Create surgery executor
-        std::cout << "Initializing surgery executor..." << std::endl;
+        LOG_INFO("Initializing surgery executor...");
         PMuscle::SurgeryExecutor executor;
 
         // Load character
-        std::cout << "Loading character..." << std::endl;
+        LOG_INFO("Loading character...");
         executor.loadCharacter(skeleton_path, muscle_path, mus);
-        std::cout << "Character loaded successfully!" << std::endl;
-        std::cout << std::endl;
+        LOG_INFO("Character loaded successfully!");
+        LOG_INFO("");
 
         // Load surgery script
-        std::cout << "Loading surgery script..." << std::endl;
+        LOG_INFO("Loading surgery script...");
         auto operations = PMuscle::SurgeryScript::loadFromFile(script_path);
         
         if (operations.empty()) {
-            std::cerr << "Error: No operations loaded from script!" << std::endl;
+            LOG_ERROR("Error: No operations loaded from script!");
             return 1;
         }
 
-        std::cout << "Loaded " << operations.size() << " operation(s)" << std::endl;
-        std::cout << std::endl;
+        LOG_INFO("Loaded " << operations.size() << " operation(s)");
+        LOG_INFO("");
 
         // Check for export operation
         if (!hasExportOperation(operations)) {
-            std::cout << "WARNING: No export operation found in script!" << std::endl;
-            std::cout << "         Muscles will be modified but not saved." << std::endl;
-            std::cout << "         Add an 'export_muscles' operation to save results." << std::endl;
-            std::cout << std::endl;
+            LOG_WARN("WARNING: No export operation found in script!");
+            LOG_WARN("         Muscles will be modified but not saved.");
+            LOG_WARN("         Add an 'export_muscles' operation to save results.");
+            LOG_INFO("");
         }
 
         // Execute operations
-        std::cout << "==============================================================================" << std::endl;
-        std::cout << "Executing Surgery Script" << std::endl;
-        std::cout << "==============================================================================" << std::endl;
-        std::cout << std::endl;
+        LOG_INFO("==============================================================================");
+        LOG_INFO("Executing Surgery Script");
+        LOG_INFO("==============================================================================");
+        LOG_INFO("");
 
         int successCount = 0;
         int failCount = 0;
 
         for (size_t i = 0; i < operations.size(); ++i) {
-            std::cout << "Operation " << (i + 1) << "/" << operations.size() << ": " 
-                      << operations[i]->getDescription() << std::endl;
+            LOG_INFO("Operation " << (i + 1) << "/" << operations.size() << ": " << operations[i]->getDescription());
 
             bool success = operations[i]->execute(&executor);
             
             if (success) {
                 successCount++;
-                std::cout << "  ✓ Success" << std::endl;
+                LOG_INFO("  ✓ Success");
             } else {
                 failCount++;
-                std::cout << "  ✗ FAILED" << std::endl;
+                LOG_ERROR("  ✗ FAILED");
             }
-            std::cout << std::endl;
+            LOG_INFO("");
         }
 
         // Summary
-        std::cout << "==============================================================================" << std::endl;
-        std::cout << "Execution Summary" << std::endl;
-        std::cout << "==============================================================================" << std::endl;
-        std::cout << "Total operations: " << operations.size() << std::endl;
-        std::cout << "Successful:       " << successCount << std::endl;
-        std::cout << "Failed:           " << failCount << std::endl;
-        std::cout << std::endl;
+        LOG_INFO("==============================================================================");
+        LOG_INFO("Execution Summary");
+        LOG_INFO("==============================================================================");
+        LOG_INFO("Total operations: " << operations.size());
+        LOG_INFO("Successful:       " << successCount);
+        LOG_INFO("Failed:           " << failCount);
+        LOG_INFO("");
 
         if (failCount == 0) {
-            std::cout << "✓ All operations completed successfully!" << std::endl;
+            LOG_INFO("✓ All operations completed successfully!");
             
             // Warn if no export operation
             if (!hasExportOperation(operations)) {
-                std::cout << std::endl;
-                std::cout << "⚠ WARNING: No export_muscles operation found!" << std::endl;
-                std::cout << "           Modified muscles were NOT saved to disk." << std::endl;
-                std::cout << "           Add an 'export_muscles' operation to your script to save the results." << std::endl;
+                LOG_INFO("");
+                LOG_WARN("⚠ WARNING: No export_muscles operation found!");
+                LOG_WARN("           Modified muscles were NOT saved to disk.");
+                LOG_WARN("           Add an 'export_muscles' operation to your script to save the results.");
             }
             
             return 0;
         } else {
-            std::cout << "✗ Some operations failed. Check the output above for details." << std::endl;
+            LOG_ERROR("✗ Some operations failed. Check the output above for details.");
             return 1;
         }
 

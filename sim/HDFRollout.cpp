@@ -287,8 +287,8 @@ Eigen::VectorXd HDFRollout::getPose(int frameIdx)
 
     Eigen::VectorXd pose = mMotionData.row(frameIdx);
 
-    // Apply height calibration if enabled
-    if (mHeightCalibration && pose.size() >= 6) {
+    // Apply height calibration (always enabled)
+    if (pose.size() >= 6) {
         pose[4] += mHeightOffset;  // Y position (height)
         pose[3] -= mXOffset;        // X position
     }
@@ -365,8 +365,8 @@ void HDFRollout::setRefMotion(Character* character, dart::simulation::WorldPtr w
         return;
     }
 
-    // Apply height calibration if enabled
-    if (mHeightCalibration && world) {
+    // Apply height calibration (always enabled)
+    if (world) {
         // Get initial pose (already in angle format)
         Eigen::VectorXd initial_pose = mMotionData.row(0);
         character->getSkeleton()->setPositions(initial_pose);
@@ -375,7 +375,7 @@ void HDFRollout::setRefMotion(Character* character, dart::simulation::WorldPtr w
         Eigen::Isometry3d initial_transform = FreeJoint::convertToTransform(initial_pose.head(6));
 
         // Perform height calibration
-        character->heightCalibration(world, false);
+        character->heightCalibration(world);
 
         // Get calibrated pose and calculate offsets
         Eigen::VectorXd calibrated_pose = character->getSkeleton()->getPositions();

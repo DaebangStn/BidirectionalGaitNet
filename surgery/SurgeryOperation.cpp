@@ -1,5 +1,6 @@
 #include "SurgeryOperation.h"
 #include "SurgeryExecutor.h"
+#include "Log.h"
 #include <sstream>
 
 namespace PMuscle {
@@ -361,7 +362,7 @@ bool ExportMusclesOp::execute(SurgeryExecutor* executor) {
         executor->exportMuscles(mFilepath);
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[Surgery] Export failed: " << e.what() << std::endl;
+        LOG_ERROR("[Surgery] Export failed: " << e.what());
         return false;
     }
 }
@@ -380,6 +381,188 @@ std::string ExportMusclesOp::getDescription() const {
 std::unique_ptr<SurgeryOperation> ExportMusclesOp::fromYAML(const YAML::Node& node) {
     std::string filepath = node["filepath"].as<std::string>();
     return std::make_unique<ExportMusclesOp>(filepath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RotateJointOffsetOp Implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool RotateJointOffsetOp::execute(SurgeryExecutor* executor) {
+    return executor->rotateJointOffset(mJointName, mAxis, mAngle, mPreservePosition);
+}
+
+YAML::Node RotateJointOffsetOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "rotate_joint_offset";
+    node["joint_name"] = mJointName;
+
+    node["axis"].push_back(mAxis[0]);
+    node["axis"].push_back(mAxis[1]);
+    node["axis"].push_back(mAxis[2]);
+
+    node["angle"] = mAngle;
+    node["preserve_position"] = mPreservePosition;
+    return node;
+}
+
+std::string RotateJointOffsetOp::getDescription() const {
+    std::ostringstream oss;
+    oss << "Rotate joint offset for '" << mJointName << "' by " << mAngle << " rad";
+    if (mPreservePosition) {
+        oss << " (preserve position)";
+    }
+    return oss.str();
+}
+
+std::unique_ptr<SurgeryOperation> RotateJointOffsetOp::fromYAML(const YAML::Node& node) {
+    std::string joint_name = node["joint_name"].as<std::string>();
+
+    std::vector<double> axis_vec = node["axis"].as<std::vector<double>>();
+    Eigen::Vector3d axis(axis_vec[0], axis_vec[1], axis_vec[2]);
+
+    double angle = node["angle"].as<double>();
+
+    // Backward compatible: default to false if not present
+    bool preserve_position = false;
+    if (node["preserve_position"]) {
+        preserve_position = node["preserve_position"].as<bool>();
+    }
+
+    return std::make_unique<RotateJointOffsetOp>(joint_name, axis, angle, preserve_position);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RotateAnchorPointsOp Implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool RotateAnchorPointsOp::execute(SurgeryExecutor* executor) {
+    return executor->rotateAnchorPoints(mMuscleName, mRefAnchorIndex,
+                                       mSearchDirection, mRotationAxis, mAngle);
+}
+
+YAML::Node RotateAnchorPointsOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "rotate_anchor_points";
+    node["muscle_name"] = mMuscleName;
+    node["ref_anchor_index"] = mRefAnchorIndex;
+
+    node["search_direction"].push_back(mSearchDirection[0]);
+    node["search_direction"].push_back(mSearchDirection[1]);
+    node["search_direction"].push_back(mSearchDirection[2]);
+
+    node["rotation_axis"].push_back(mRotationAxis[0]);
+    node["rotation_axis"].push_back(mRotationAxis[1]);
+    node["rotation_axis"].push_back(mRotationAxis[2]);
+
+    node["angle"] = mAngle;
+    return node;
+}
+
+std::string RotateAnchorPointsOp::getDescription() const {
+    std::ostringstream oss;
+    oss << "Rotate anchor points on muscle '" << mMuscleName << "' (ref anchor #"
+        << mRefAnchorIndex << ") by " << mAngle << " rad";
+    return oss.str();
+}
+
+std::unique_ptr<SurgeryOperation> RotateAnchorPointsOp::fromYAML(const YAML::Node& node) {
+    std::string muscle_name = node["muscle_name"].as<std::string>();
+    int ref_anchor_index = node["ref_anchor_index"].as<int>();
+
+    std::vector<double> search_dir_vec = node["search_direction"].as<std::vector<double>>();
+    Eigen::Vector3d search_direction(search_dir_vec[0], search_dir_vec[1], search_dir_vec[2]);
+
+    std::vector<double> rot_axis_vec = node["rotation_axis"].as<std::vector<double>>();
+    Eigen::Vector3d rotation_axis(rot_axis_vec[0], rot_axis_vec[1], rot_axis_vec[2]);
+
+    double angle = node["angle"].as<double>();
+
+    return std::make_unique<RotateAnchorPointsOp>(muscle_name, ref_anchor_index,
+                                                   search_direction, rotation_axis, angle);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FDOCombinedOp Implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool FDOCombinedOp::execute(SurgeryExecutor* executor) {
+    return executor->executeFDO(mRefMuscle, mRefAnchorIndex,
+                               mSearchDirection, mRotationAxis, mAngle);
+}
+
+YAML::Node FDOCombinedOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "fdo_combined";
+    node["ref_muscle"] = mRefMuscle;
+    node["ref_anchor_index"] = mRefAnchorIndex;
+    // Note: target_bodynode is no longer stored - obtained from anchor at execution time
+
+    node["search_direction"].push_back(mSearchDirection[0]);
+    node["search_direction"].push_back(mSearchDirection[1]);
+    node["search_direction"].push_back(mSearchDirection[2]);
+
+    node["rotation_axis"].push_back(mRotationAxis[0]);
+    node["rotation_axis"].push_back(mRotationAxis[1]);
+    node["rotation_axis"].push_back(mRotationAxis[2]);
+
+    node["angle"] = mAngle;
+    return node;
+}
+
+std::string FDOCombinedOp::getDescription() const {
+    std::ostringstream oss;
+    oss << "FDO Combined Surgery: ref_muscle='" << mRefMuscle
+        << "' (anchor #" << mRefAnchorIndex
+        << "), angle=" << (mAngle * 180.0 / M_PI) << " deg";
+    return oss.str();
+}
+
+std::unique_ptr<SurgeryOperation> FDOCombinedOp::fromYAML(const YAML::Node& node) {
+    std::string ref_muscle = node["ref_muscle"].as<std::string>();
+    int ref_anchor_index = node["ref_anchor_index"].as<int>();
+    // Note: target_bodynode is no longer needed - obtained from anchor at execution time
+    // Old YAML files with target_bodynode field will simply ignore it
+
+    std::vector<double> search_dir_vec = node["search_direction"].as<std::vector<double>>();
+    Eigen::Vector3d search_direction(search_dir_vec[0], search_dir_vec[1], search_dir_vec[2]);
+
+    std::vector<double> rot_axis_vec = node["rotation_axis"].as<std::vector<double>>();
+    Eigen::Vector3d rotation_axis(rot_axis_vec[0], rot_axis_vec[1], rot_axis_vec[2]);
+
+    double angle = node["angle"].as<double>();
+
+    return std::make_unique<FDOCombinedOp>(ref_muscle, ref_anchor_index,
+                                           search_direction, rotation_axis, angle);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WeakenMuscleOp Implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool WeakenMuscleOp::execute(SurgeryExecutor* executor) {
+    return executor->weakenMuscles(mMuscles, mStrengthRatio);
+}
+
+YAML::Node WeakenMuscleOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "weaken_muscle";
+    node["muscles"] = mMuscles;
+    node["strength_ratio"] = mStrengthRatio;
+    return node;
+}
+
+std::string WeakenMuscleOp::getDescription() const {
+    std::ostringstream oss;
+    int percentage = static_cast<int>(mStrengthRatio * 100);
+    oss << "Weaken " << mMuscles.size() << " muscle(s) to "
+        << percentage << "% strength";
+    return oss.str();
+}
+
+std::unique_ptr<SurgeryOperation> WeakenMuscleOp::fromYAML(const YAML::Node& node) {
+    std::vector<std::string> muscles = node["muscles"].as<std::vector<std::string>>();
+    double strength_ratio = node["strength_ratio"].as<double>();
+    return std::make_unique<WeakenMuscleOp>(muscles, strength_ratio);
 }
 
 } // namespace PMuscle

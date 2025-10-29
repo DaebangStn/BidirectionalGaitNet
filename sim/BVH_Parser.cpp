@@ -45,7 +45,6 @@ BVH::BVH(const std::string file)
 	is.close();
 	mXOffset = 0.0;
 	mHeightOffset = 0.0;
-	mHeightCalibration = false;
 }
 
 BVH::~BVH()
@@ -106,8 +105,8 @@ Eigen::VectorXd BVH::getPose(double phase)
 	// Strict Interpolation
 	Eigen::VectorXd pos = mCharacter->interpolatePose(p1, p2, idx_f, false);
 
-	// Height Calibration
-	if (mHeightCalibration) pos[4] += mHeightOffset;
+	// Height Calibration (always applied)
+	pos[4] += mHeightOffset;
 	pos[3] -= mXOffset;
 	pos[3] *= 0.1;
 	return pos;
