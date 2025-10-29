@@ -320,9 +320,10 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaul
 		{
 			std::string c = body->Attribute("contact");
 			if (c == "On") contact = true & isContact;
+		}		
+		// Apply collide_all override - this should enable collision for ALL body nodes when collide_all=true
+		contact |= collide_all;
 
-			contact |= collide_all;
-		}
 		Eigen::Vector4d color = Eigen::Vector4d::Constant(0.2);
 		if (body->Attribute("color") != nullptr)
 			color = color_filter.asDiagonal() * string_to_vector4d(body->Attribute("color"));
@@ -413,18 +414,15 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaul
 		}
 
 		auto bn = MakeBodyNode(skel, parent, props, type, inertia);
-		if (contact)
-			bn->createShapeNodeWith<VisualAspect, CollisionAspect, DynamicsAspect>(shape);
-		else
-			bn->createShapeNodeWith<VisualAspect, DynamicsAspect>(shape);
+		if (contact) bn->createShapeNodeWith<VisualAspect, CollisionAspect, DynamicsAspect>(shape);
+		else bn->createShapeNodeWith<VisualAspect, DynamicsAspect>(shape);
 
 		dart::dynamics::ShapeNode* lastShapeNode = nullptr;
 		bn->eachShapeNodeWith<VisualAspect>([&lastShapeNode](dart::dynamics::ShapeNode* sn) {
 			lastShapeNode = sn;
 			return true;
 		});
-		if (lastShapeNode)
-			lastShapeNode->getVisualAspect()->setColor(color);
+		if (lastShapeNode) lastShapeNode->getVisualAspect()->setColor(color);
 
 		if (obj_file != "None")
 		{

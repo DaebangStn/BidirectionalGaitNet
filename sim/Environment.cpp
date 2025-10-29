@@ -110,7 +110,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
 
         std::string skeletonPath = Trim(std::string(doc.FirstChildElement("skeleton")->GetText()));
         std::string resolvedSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skeletonPath);
-        addCharacter(resolvedSkeletonPath, defaultKp, defaultKv, defaultDamping);
+        addCharacter(resolvedSkeletonPath, defaultKp, defaultKv, defaultDamping, false);
 
         std::string _actTypeString;
         if (doc.FirstChildElement("skeleton")->Attribute("actuator") != NULL) _actTypeString = Trim(doc.FirstChildElement("skeleton")->Attribute("actuator"));
@@ -539,11 +539,14 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         auto skel = env["skeleton"];
         std::string skelPath = skel["file"].as<std::string>();
         std::string resolved = PMuscle::URIResolver::getInstance().resolve(skelPath);
+        bool selfCollide = skel["self_collide"].as<bool>(false);  // NEW: default to false
+        
         addCharacter(
             resolved,
             skel["kp"].as<double>(),
             skel["kv"].as<double>(),
-            skel["damping"].as<double>(0.4)
+            skel["damping"].as<double>(0.4),
+            selfCollide  // NEW: pass self_collide parameter
         );
 
         std::string actType = skel["actuator"].as<std::string>();
@@ -949,9 +952,9 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     }
 }
 
-void Environment::addCharacter(std::string path, double kp, double kv, double damping)
+void Environment::addCharacter(std::string path, double kp, double kv, double damping, bool collide_all)
 {
-    mCharacter = new Character(path, kp, kv, damping);
+    mCharacter = new Character(path, kp, kv, damping, collide_all);
     // std::cout << "Skeleton Added " << mCharacter->getSkeleton()->getName() << " Degree Of Freedom : " << mCharacter->getSkeleton()->getNumDofs() << std::endl;
 }
 

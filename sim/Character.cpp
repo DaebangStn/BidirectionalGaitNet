@@ -135,7 +135,8 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
 
     // If path is empty, use default
     if (path.empty()) {
-        path = "@data/skeleton_gaitnet_narrow_model.xml";
+        LOG_VERBOSE("[Character] Using default skeleton path");
+        path = "@data/skeleton/gaitnet_narrow_model.xml";
     }
 
     // Always resolve paths through UriResolver for backwards compatibility
@@ -143,6 +144,13 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
 
     mSkeleton = BuildFromFile(resolvedPath, defaultDamping, Eigen::Vector4d(1,1,1,1), true, collide_all);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
+
+    // Configure self-collision if enabled
+    if (collide_all) {
+        LOG_VERBOSE("[Character] Enabling self-collision check");
+        mSkeleton->enableSelfCollisionCheck();  // Enable self-collision check
+        mSkeleton->setAdjacentBodyCheck(false);  // Disable adjacent body filtering for true self-collision
+    }
 
     mTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
     mPDTarget = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
@@ -175,8 +183,7 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
             auto bvh_list = split_string(bvh_str);
             mBVHMap.insert(std::make_pair(node->Attribute("name"), bvh_list));
         }
-        if (dof == 0)
-            continue;
+        if (dof == 0) continue;
 
         int idx = mSkeleton->getJoint(node->Attribute("name"))->getIndexInSkeleton(0);
 
@@ -505,7 +512,7 @@ Eigen::VectorXd Character::heightCalibration(dart::simulation::WorldPtr _world, 
             break;
         Eigen::VectorXd pos = mSkeleton->getPositions();
         // pos[3] = 0;
-        pos[4] += 1E-3;
+        pos[4] += 5E-3;
         mSkeleton->setPositions(pos);
         collision = collisionGroup->collide(option, &results);
     }

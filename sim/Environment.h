@@ -98,7 +98,7 @@ public:
     void initialize_xml(std::string xml_content);  // Backward compatibility: XML content
 
     // Simulation environment configuration
-    void addCharacter(std::string path, double kp, double kv, double damping);
+    void addCharacter(std::string path, double kp, double kv, double damping, bool collide_all = false);
     void addObject(std::string path = nullptr);
 
     Character *getCharacter() { return mCharacter; }

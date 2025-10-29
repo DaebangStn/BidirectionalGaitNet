@@ -73,7 +73,6 @@ void Environment::InitFromYaml(const string &path) {
         mControlHz = simulation["control_hz"].as<int>();
         mSimulationHz = simulation["simulation_hz"].as<int>();
         if(simulation["device_hz"]) mDeviceHz = simulation["device_hz"].as<int>();
-        mSelfCollision = simulation["self_collision"].as<bool>();
 
         if(env["contact"].IsDefined()){
             YAML::Node contact = env["contact"];
@@ -1415,7 +1414,6 @@ void Environment::_initFinalize()
 	mCharacter->SetWorld(mWorld);
 	mCharacter->SetUseMuscle(mUseMuscle);
 	mCharacter->SetHz(mSimulationHz, mControlHz);
-	mCharacter->SetSelfCollisionCheck(mSelfCollision);
 
 	mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
 	mWorld->setGravity(Eigen::Vector3d(0, -9.8, 0.0));
