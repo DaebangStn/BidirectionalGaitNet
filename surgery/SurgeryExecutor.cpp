@@ -553,6 +553,19 @@ Eigen::Isometry3d SurgeryExecutor::getBodyNodeZeroPoseTransform(dart::dynamics::
 }
 
 void SurgeryExecutor::exportMuscles(const std::string& path) {
+    // Auto-detect format from file extension
+    size_t len = path.length();
+    bool is_yaml = (len >= 5 && path.substr(len - 5) == ".yaml") ||
+                   (len >= 4 && path.substr(len - 4) == ".yml");
+
+    if (is_yaml) {
+        exportMusclesYAML(path);
+    } else {
+        exportMusclesXML(path);  // Default to XML for backward compatibility
+    }
+}
+
+void SurgeryExecutor::exportMusclesXML(const std::string& path) {
     if (!mCharacter) {
         throw std::runtime_error("No character loaded");
     }
@@ -624,6 +637,83 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
     skel->setPositions(saved_positions);
 
     LOG_INFO("[Surgery] Successfully saved " << muscles.size() << " muscles to " << path);
+}
+
+void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
+    if (!mCharacter) {
+        throw std::runtime_error("No character loaded");
+    }
+
+    auto muscles = mCharacter->getMuscles();
+    if (muscles.empty()) {
+        throw std::runtime_error("No muscles found in character");
+    }
+
+    std::ofstream mfs(path);
+    if (!mfs.is_open()) {
+        throw std::runtime_error("Failed to open file: " + path);
+    }
+
+    LOG_INFO("[Surgery] Saving muscle configuration to YAML: " << path);
+
+    // Sort muscles alphabetically by name
+    std::vector<Muscle*> sorted_muscles = muscles;
+    std::sort(sorted_muscles.begin(), sorted_muscles.end(),
+              [](Muscle* a, Muscle* b) { return a->name < b->name; });
+
+    // Calculate max body node name length for visual alignment
+    size_t max_body_len = 0;
+    for (auto m : sorted_muscles) {
+        for (auto anchor : m->GetAnchors()) {
+            if (!anchor->bodynodes.empty()) {
+                size_t len = anchor->bodynodes[0]->getName().length();
+                if (len > max_body_len) max_body_len = len;
+            }
+        }
+    }
+
+    // Write YAML header
+    mfs << "muscles:" << std::endl;
+
+    // Write each muscle with compact formatting
+    for (auto m : sorted_muscles) {
+        std::string name = m->name;
+        double f0 = m->f0;
+        double lm = m->lm_opt;
+        double lt = m->lt_rel;
+
+        // Muscle properties (single line, 2 decimals)
+        mfs << "  - {name: " << name
+            << ", f0: " << std::fixed << std::setprecision(2) << f0
+            << ", lm: " << std::fixed << std::setprecision(2) << lm
+            << ", lt: " << std::fixed << std::setprecision(2) << lt
+            << "}" << std::endl;
+
+        // Waypoints header
+        mfs << "    waypoints:" << std::endl;
+
+        // Write each waypoint (single line, 4 decimals)
+        for (auto anchor : m->GetAnchors()) {
+            if (anchor->bodynodes.empty()) continue;
+
+            auto body_node = anchor->bodynodes[0];
+            std::string body_name = body_node->getName();
+
+            // Use LOCAL position (pose-independent)
+            Eigen::Vector3d local_pos = anchor->local_positions[0];
+
+            // Format waypoint with padding for visual alignment
+            mfs << "      - {body: " << std::left << std::setw(max_body_len) << body_name
+                << ", p: [" << std::fixed << std::setprecision(6)
+                << local_pos[0] << ", "
+                << local_pos[1] << ", "
+                << local_pos[2] << "]}" << std::endl;
+        }
+    }
+
+    mfs.close();
+
+    LOG_INFO("[Surgery] Successfully saved " << sorted_muscles.size() << " muscles to " << path << " (YAML format)");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

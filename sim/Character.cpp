@@ -558,8 +558,8 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
     
     // If path is empty, use default
     if (path.empty()) {
-        path = "@data/muscle_gaitnet.xml";
-        path = PMuscle::URIResolver::getInstance().resolve(path);
+        LOG_ERROR("[Character] No muscle path provided");
+        exit(-1);
     }
 
     LOG_VERBOSE("[Character] Using Muscle Path: " << path);

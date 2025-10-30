@@ -1,0 +1,1005 @@
+muscles:
+  - {name: L_Adductor_Brevis, f0: 151.85, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.031900, -0.061300, 0.053200]}
+      - {body: FemurL    , p: [-0.004973, 0.109399, 0.031095]}
+      - {body: FemurL    , p: [0.018876, 0.101637, 0.012362]}
+  - {name: L_Adductor_Brevis1, f0: 151.85, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.014100, -0.069300, 0.054300]}
+      - {body: FemurL    , p: [-0.013711, 0.032299, 0.025907]}
+      - {body: FemurL    , p: [0.013215, 0.005869, 0.023077]}
+  - {name: L_Adductor_Longus, f0: 199.75, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.030200, -0.059300, 0.054300]}
+      - {body: FemurL    , p: [0.009774, 0.014016, 0.024141]}
+      - {body: FemurL    , p: [0.017963, -0.023684, 0.020457]}
+  - {name: L_Adductor_Longus1, f0: 199.75, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.014000, -0.066100, 0.060500]}
+      - {body: FemurL    , p: [-0.038613, 0.005877, 0.036620]}
+      - {body: FemurL    , p: [0.006546, -0.090221, 0.021733]}
+  - {name: L_Adductor_Magnus, f0: 259.38, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.022300, -0.089600, 0.025000]}
+      - {body: FemurL    , p: [0.013347, 0.113135, 0.004724]}
+      - {body: FemurL    , p: [0.040014, 0.109158, -0.001353]}
+  - {name: L_Adductor_Magnus1, f0: 259.38, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.023500, -0.099600, 0.024600]}
+      - {body: FemurL    , p: [0.002948, 0.076467, 0.000056]}
+      - {body: FemurL    , p: [0.032750, 0.034750, 0.014862]}
+  - {name: L_Adductor_Magnus2, f0: 259.38, lm: 0.95, lt: 0.52}
+    waypoints:
+      - {body: Pelvis    , p: [0.035600, -0.110500, -0.014200]}
+      - {body: FemurL    , p: [-0.024294, 0.085370, 0.005009]}
+      - {body: FemurL    , p: [0.006484, 0.020936, -0.003155]}
+      - {body: FemurL    , p: [0.025090, -0.005184, 0.019068]}
+  - {name: L_Adductor_Magnus3, f0: 259.38, lm: 0.95, lt: 0.48}
+    waypoints:
+      - {body: Pelvis    , p: [0.047500, -0.111200, -0.032000]}
+      - {body: FemurL    , p: [-0.022370, 0.058275, -0.005867]}
+      - {body: FemurL    , p: [0.006057, -0.020190, -0.001408]}
+      - {body: FemurL    , p: [0.012099, -0.082752, 0.017014]}
+  - {name: L_Adductor_Magnus4, f0: 259.38, lm: 0.95, lt: 0.48}
+    waypoints:
+      - {body: Pelvis    , p: [0.068700, -0.103700, -0.044400]}
+      - {body: Pelvis    , p: [0.063000, -0.136600, -0.036600]}
+      - {body: FemurL    , p: [-0.034716, -0.082285, -0.002986]}
+      - {body: FemurL    , p: [-0.034104, -0.168029, -0.002005]}
+  - {name: L_Bicep_Femoris_Longus, f0: 705.20, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.070900, -0.080700, -0.052000]}
+      - {body: TibiaL    , p: [0.043109, 0.234664, -0.019236]}
+      - {body: TibiaL    , p: [0.038846, 0.187343, -0.021116]}
+  - {name: L_Bicep_Femoris_Short, f0: 157.90, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: FemurL    , p: [0.026625, 0.005008, 0.017895]}
+      - {body: TibiaL    , p: [0.042182, 0.244272, -0.016965]}
+      - {body: TibiaL    , p: [0.040435, 0.188107, -0.016465]}
+  - {name: L_Bicep_Femoris_Short1, f0: 157.90, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: FemurL    , p: [0.018804, -0.106304, 0.019399]}
+      - {body: TibiaL    , p: [0.040736, 0.232118, -0.006063]}
+      - {body: TibiaL    , p: [0.038557, 0.187740, -0.013020]}
+  - {name: L_Extensor_Digitorum_Longus, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaL    , p: [0.024165, 0.183118, 0.005353]}
+      - {body: TibiaL    , p: [0.026999, 0.146823, -0.004219]}
+      - {body: TalusL    , p: [0.001800, 0.072500, -0.001300]}
+      - {body: TalusL    , p: [-0.000700, 0.044100, 0.008900]}
+      - {body: FootThumbL, p: [0.013500, -0.003100, -0.026200]}
+      - {body: FootThumbL, p: [0.015500, -0.009600, 0.002300]}
+      - {body: FootThumbL, p: [0.017300, -0.017800, 0.018300]}
+  - {name: L_Extensor_Digitorum_Longus1, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaL    , p: [0.029144, 0.192607, 0.007333]}
+      - {body: TibiaL    , p: [0.037104, 0.107383, 0.004754]}
+      - {body: TalusL    , p: [0.004700, 0.073600, 0.000300]}
+      - {body: TalusL    , p: [0.005800, 0.040400, 0.012700]}
+      - {body: FootPinkyL, p: [-0.019700, -0.006400, -0.019400]}
+      - {body: FootPinkyL, p: [-0.017000, -0.011400, -0.001400]}
+      - {body: FootPinkyL, p: [-0.012400, -0.020300, 0.022200]}
+  - {name: L_Extensor_Digitorum_Longus2, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaL    , p: [0.027767, 0.189114, 0.008141]}
+      - {body: TibiaL    , p: [0.044310, 0.107823, 0.010337]}
+      - {body: TalusL    , p: [0.005900, 0.073400, -0.000300]}
+      - {body: TalusL    , p: [0.008700, 0.037200, 0.013600]}
+      - {body: FootPinkyL, p: [-0.006400, -0.004900, -0.026700]}
+      - {body: FootPinkyL, p: [-0.003000, -0.008500, -0.012300]}
+      - {body: FootPinkyL, p: [0.000800, -0.018000, 0.003600]}
+  - {name: L_Extensor_Digitorum_Longus3, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaL    , p: [0.030501, 0.193702, 0.005531]}
+      - {body: TibiaL    , p: [0.035005, 0.106168, -0.008289]}
+      - {body: TalusL    , p: [0.011100, 0.042100, 0.006700]}
+      - {body: TalusL    , p: [0.021600, 0.019100, 0.025100]}
+      - {body: FootPinkyL, p: [0.006300, -0.002600, -0.041500]}
+      - {body: FootPinkyL, p: [0.012700, -0.021600, -0.006500]}
+  - {name: L_Extensor_Hallucis_Longus, f0: 165.00, lm: 0.70, lt: 0.50}
+    waypoints:
+      - {body: TibiaL    , p: [0.019536, 0.079733, -0.001157]}
+      - {body: TalusL    , p: [0.004400, 0.079600, 0.001200]}
+      - {body: TalusL    , p: [-0.009200, 0.042200, 0.009100]}
+      - {body: FootThumbL, p: [-0.004100, 0.032700, -0.066400]}
+      - {body: FootThumbL, p: [-0.010900, 0.001000, -0.022100]}
+      - {body: FootThumbL, p: [-0.015900, -0.017900, 0.019000]}
+  - {name: L_Flexor_Digiti_Minimi_Brevis_Foot, f0: 50.00, lm: 1.00, lt: 0.10}
+    waypoints:
+      - {body: FootPinkyL, p: [0.012000, -0.019700, -0.031400]}
+      - {body: TalusL    , p: [0.027500, -0.016700, 0.015000]}
+  - {name: L_Flexor_Digitorum_Longus, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaL    , p: [-0.006676, 0.097452, 0.005222]}
+      - {body: TalusL    , p: [-0.029900, 0.070900, -0.031300]}
+      - {body: TalusL    , p: [-0.028900, 0.000100, 0.002000]}
+      - {body: TalusL    , p: [-0.009500, -0.008100, 0.022800]}
+      - {body: FootThumbL, p: [0.010200, -0.021400, -0.034700]}
+      - {body: FootThumbL, p: [0.016200, -0.022000, 0.014600]}
+  - {name: L_Flexor_Digitorum_Longus1, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaL    , p: [-0.006676, 0.097452, 0.005222]}
+      - {body: TalusL    , p: [-0.026900, 0.070700, -0.032000]}
+      - {body: TalusL    , p: [-0.027700, -0.000000, 0.000300]}
+      - {body: TalusL    , p: [-0.007600, -0.008600, 0.015300]}
+      - {body: FootPinkyL, p: [-0.022800, -0.023900, -0.028000]}
+      - {body: FootPinkyL, p: [-0.014200, -0.021700, 0.018700]}
+  - {name: L_Flexor_Digitorum_Longus2, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaL    , p: [-0.006252, 0.087962, 0.003343]}
+      - {body: TalusL    , p: [-0.026000, 0.075600, -0.032000]}
+      - {body: TalusL    , p: [-0.029200, 0.002700, -0.001500]}
+      - {body: TalusL    , p: [-0.001400, -0.010100, 0.017800]}
+      - {body: FootPinkyL, p: [-0.009300, -0.022000, -0.038900]}
+      - {body: FootPinkyL, p: [-0.000300, -0.021400, 0.002100]}
+  - {name: L_Flexor_Digitorum_Longus3, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaL    , p: [-0.011906, 0.086944, 0.007748]}
+      - {body: TalusL    , p: [-0.024400, 0.080400, -0.032200]}
+      - {body: TalusL    , p: [-0.032800, 0.010700, -0.003100]}
+      - {body: FootPinkyL, p: [-0.017600, -0.004900, -0.082100]}
+      - {body: FootPinkyL, p: [0.006500, -0.022100, -0.042000]}
+      - {body: FootPinkyL, p: [0.012000, -0.023800, -0.010500]}
+  - {name: L_Flexor_Hallucis, f0: 218.40, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaL    , p: [0.023701, 0.091314, -0.012811]}
+      - {body: TalusL    , p: [-0.018000, 0.067300, -0.033800]}
+      - {body: TalusL    , p: [-0.031200, 0.026800, -0.039300]}
+      - {body: TalusL    , p: [-0.024800, 0.006400, -0.018600]}
+      - {body: FootThumbL, p: [-0.011600, -0.019400, -0.036100]}
+      - {body: FootThumbL, p: [-0.014800, -0.022800, 0.013400]}
+  - {name: L_Flexor_Hallucis1, f0: 218.40, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaL    , p: [0.023701, 0.091314, -0.012811]}
+      - {body: TalusL    , p: [-0.018000, 0.067300, -0.033800]}
+      - {body: TalusL    , p: [-0.031200, 0.026800, -0.039300]}
+      - {body: TalusL    , p: [-0.024800, 0.006400, -0.018600]}
+      - {body: FootThumbL, p: [-0.011600, -0.019400, -0.036100]}
+      - {body: FootThumbL, p: [-0.014800, -0.022800, 0.013400]}
+  - {name: L_Gastrocnemius_Lateral_Head, f0: 606.40, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: FemurL    , p: [0.030521, -0.162767, 0.008015]}
+      - {body: TibiaL    , p: [0.020256, 0.252429, -0.026312]}
+      - {body: TibiaL    , p: [0.026257, 0.201561, -0.049866]}
+      - {body: TibiaL    , p: [0.019167, -0.003758, -0.057491]}
+      - {body: TalusL    , p: [-0.005000, 0.012500, -0.074000]}
+  - {name: L_Gastrocnemius_Medial_Head, f0: 1308.00, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: FemurL    , p: [-0.021430, -0.156607, 0.010344]}
+      - {body: TibiaL    , p: [-0.006288, 0.246794, -0.034150]}
+      - {body: TibiaL    , p: [-0.007519, 0.200033, -0.052643]}
+      - {body: TibiaL    , p: [-0.031482, -0.031792, -0.022413]}
+      - {body: TalusL    , p: [-0.019700, 0.012600, -0.071000]}
+  - {name: L_Gluteus_Maximus, f0: 370.52, lm: 1.05, lt: 0.02}
+    waypoints:
+      - {body: Pelvis    , p: [0.053900, 0.054900, -0.084600]}
+      - {body: Pelvis    , p: [0.111500, 0.032400, -0.077700]}
+      - {body: FemurL    , p: [0.054751, 0.215141, -0.032298]}
+      - {body: FemurL    , p: [0.054911, 0.147635, -0.003118]}
+  - {name: L_Gluteus_Maximus1, f0: 370.52, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [0.038200, 0.007700, -0.087700]}
+      - {body: Pelvis    , p: [0.103800, -0.012100, -0.099200]}
+      - {body: FemurL    , p: [0.055670, 0.175564, -0.035918]}
+      - {body: FemurL    , p: [0.049147, 0.120942, 0.003366]}
+  - {name: L_Gluteus_Maximus2, f0: 370.52, lm: 1.05, lt: 0.22}
+    waypoints:
+      - {body: Pelvis    , p: [0.029700, -0.031100, -0.082700]}
+      - {body: Pelvis    , p: [0.051700, -0.038700, -0.108500]}
+      - {body: Pelvis    , p: [0.122100, -0.074000, -0.085400]}
+      - {body: FemurL    , p: [0.051485, 0.115444, -0.022562]}
+      - {body: FemurL    , p: [0.041925, 0.093313, 0.006870]}
+  - {name: L_Gluteus_Maximus3, f0: 370.52, lm: 1.05, lt: 0.39}
+    waypoints:
+      - {body: Pelvis    , p: [0.035200, -0.061700, -0.069100]}
+      - {body: Pelvis    , p: [0.066500, -0.100100, -0.100100]}
+      - {body: FemurL    , p: [0.019068, 0.127553, -0.056530]}
+      - {body: FemurL    , p: [0.039098, 0.064349, 0.014845]}
+  - {name: L_Gluteus_Maximus4, f0: 370.52, lm: 1.15, lt: 0.47}
+    waypoints:
+      - {body: Pelvis    , p: [0.045000, -0.084900, -0.053200]}
+      - {body: Pelvis    , p: [0.064500, -0.132200, -0.061400]}
+      - {body: FemurL    , p: [0.017136, 0.084992, -0.020051]}
+      - {body: FemurL    , p: [0.038553, 0.047302, 0.018760]}
+  - {name: L_Gluteus_Medius, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.129500, 0.032900, 0.040300]}
+      - {body: FemurL    , p: [0.067352, 0.220301, 0.007349]}
+      - {body: FemurL    , p: [0.066880, 0.198126, 0.005643]}
+  - {name: L_Gluteus_Medius1, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.128200, 0.086400, -0.018300]}
+      - {body: FemurL    , p: [0.061422, 0.225973, -0.012976]}
+      - {body: FemurL    , p: [0.073924, 0.166053, 0.001477]}
+  - {name: L_Gluteus_Medius2, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.079200, 0.083600, -0.058000]}
+      - {body: Pelvis    , p: [0.122200, 0.047500, -0.062000]}
+      - {body: FemurL    , p: [0.063595, 0.193688, -0.017451]}
+      - {body: FemurL    , p: [0.065640, 0.166137, -0.009249]}
+  - {name: L_Gluteus_Medius3, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.061100, 0.027800, -0.075900]}
+      - {body: Pelvis    , p: [0.088300, 0.007500, -0.071300]}
+      - {body: FemurL    , p: [0.041252, 0.211956, -0.031152]}
+      - {body: FemurL    , p: [0.051258, 0.174708, -0.018450]}
+  - {name: L_Gluteus_Minimus, f0: 198.33, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.068600, 0.011700, -0.055200]}
+      - {body: FemurL    , p: [-0.001405, 0.247917, -0.032828]}
+      - {body: FemurL    , p: [0.061052, 0.206975, 0.002111]}
+      - {body: FemurL    , p: [0.070170, 0.180054, 0.006487]}
+  - {name: L_Gluteus_Minimus1, f0: 198.33, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.098200, 0.065100, -0.030100]}
+      - {body: Pelvis    , p: [0.125700, 0.035000, -0.028400]}
+      - {body: FemurL    , p: [0.067095, 0.207755, 0.010870]}
+      - {body: FemurL    , p: [0.069069, 0.167574, 0.013764]}
+  - {name: L_Gluteus_Minimus2, f0: 198.33, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.133400, 0.056400, 0.020600]}
+      - {body: FemurL    , p: [0.067090, 0.207553, 0.018635]}
+      - {body: FemurL    , p: [0.063082, 0.172027, 0.017549]}
+  - {name: L_Gracilis, f0: 137.30, lm: 0.95, lt: 0.30}
+    waypoints:
+      - {body: Pelvis    , p: [0.011300, -0.077800, 0.042300]}
+      - {body: TibiaL    , p: [-0.051827, 0.224626, -0.028194]}
+      - {body: TibiaL    , p: [-0.037393, 0.177210, -0.003064]}
+      - {body: TibiaL    , p: [-0.020911, 0.165333, 0.016446]}
+  - {name: L_Inferior_Gemellus, f0: 50.00, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [0.066200, -0.095200, -0.050500]}
+      - {body: FemurL    , p: [0.025971, 0.184157, -0.027082]}
+      - {body: FemurL    , p: [0.039951, 0.184371, -0.016014]}
+  - {name: L_Internal_Oblique, f0: 94.00, lm: 1.10, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [0.137741, 0.089160, -0.004166]}
+      - {body: Torso     , p: [0.035873, -0.165570, 0.097064]}
+  - {name: L_Internal_Oblique1, f0: 90.00, lm: 1.10, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [0.138752, 0.070680, 0.021856]}
+      - {body: Torso     , p: [0.030350, -0.203960, 0.096159]}
+  - {name: L_Internal_Oblique2, f0: 91.00, lm: 1.10, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [0.124519, 0.047810, 0.039007]}
+      - {body: Torso     , p: [0.029898, -0.248730, 0.093660]}
+  - {name: L_Obturator_Externus, f0: 50.00, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [0.021200, -0.069500, 0.036300]}
+      - {body: FemurL    , p: [-0.025182, 0.170842, 0.002242]}
+      - {body: FemurL    , p: [0.043594, 0.185128, -0.009920]}
+  - {name: L_Obturator_Internus, f0: 50.00, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [0.018500, -0.075100, 0.025500]}
+      - {body: FemurL    , p: [-0.047664, 0.182375, -0.023807]}
+      - {body: FemurL    , p: [-0.028162, 0.181553, -0.039874]}
+      - {body: FemurL    , p: [0.043411, 0.189386, -0.013999]}
+  - {name: L_Pectineus, f0: 177.00, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.040400, -0.053100, 0.044300]}
+      - {body: FemurL    , p: [-0.020244, 0.193150, 0.078636]}
+      - {body: FemurL    , p: [0.010101, 0.112353, 0.015101]}
+      - {body: FemurL    , p: [0.021571, 0.105641, 0.016156]}
+  - {name: L_Peroneus_Brevis, f0: 305.90, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: TibiaL    , p: [0.025709, -0.017890, -0.009275]}
+      - {body: TalusL    , p: [0.019600, 0.069400, -0.043600]}
+      - {body: TalusL    , p: [0.009300, 0.027400, -0.044800]}
+      - {body: TalusL    , p: [0.024300, -0.016000, 0.009100]}
+  - {name: L_Peroneus_Longus, f0: 653.30, lm: 0.80, lt: 0.40}
+    waypoints:
+      - {body: TibiaL    , p: [0.041469, 0.179254, -0.007861]}
+      - {body: TibiaL    , p: [0.057623, 0.065668, -0.009563]}
+      - {body: TalusL    , p: [0.023000, 0.063400, -0.039400]}
+      - {body: TalusL    , p: [0.012300, 0.018700, -0.044500]}
+      - {body: TalusL    , p: [0.019200, -0.000400, -0.017000]}
+      - {body: TalusL    , p: [-0.007600, -0.002600, 0.012800]}
+      - {body: TalusL    , p: [-0.020500, -0.003700, 0.049200]}
+  - {name: L_Peroneus_Tertius, f0: 45.00, lm: 0.70, lt: 0.50}
+    waypoints:
+      - {body: TibiaL    , p: [0.020575, -0.168931, -0.003483]}
+      - {body: TalusL    , p: [0.019400, 0.041600, -0.001800]}
+      - {body: TalusL    , p: [0.026300, -0.005500, 0.026700]}
+  - {name: L_Peroneus_Tertius1, f0: 45.00, lm: 0.70, lt: 0.50}
+    waypoints:
+      - {body: TibiaL    , p: [0.020575, -0.168931, -0.003483]}
+      - {body: TalusL    , p: [0.019400, 0.041600, -0.001800]}
+      - {body: TalusL    , p: [0.026300, -0.005500, 0.026700]}
+  - {name: L_Piriformis, f0: 148.00, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.031600, 0.000500, -0.078200]}
+      - {body: FemurL    , p: [0.043337, 0.206221, -0.008692]}
+  - {name: L_Piriformis1, f0: 148.00, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.016000, -0.044600, -0.076500]}
+      - {body: FemurL    , p: [0.046202, 0.195741, -0.006507]}
+  - {name: L_Plantaris, f0: 50.00, lm: 0.60, lt: 0.50}
+    waypoints:
+      - {body: FemurL    , p: [0.022138, -0.158748, 0.002383]}
+      - {body: TibiaL    , p: [0.010047, 0.246904, -0.024523]}
+      - {body: TibiaL    , p: [0.007144, 0.194486, -0.032382]}
+      - {body: TalusL    , p: [-0.018900, 0.062500, -0.055400]}
+      - {body: TalusL    , p: [-0.017500, -0.003000, -0.073800]}
+  - {name: L_Popliteus, f0: 50.00, lm: 1.00, lt: 0.20}
+    waypoints:
+      - {body: FemurL    , p: [0.039376, -0.184500, -0.001365]}
+      - {body: TibiaL    , p: [0.035618, 0.225688, -0.018952]}
+      - {body: TibiaL    , p: [0.016737, 0.198277, -0.026189]}
+      - {body: TibiaL    , p: [-0.017639, 0.153430, 0.001928]}
+  - {name: L_Psoas_Major, f0: 239.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: Torso     , p: [0.014600, -0.100500, -0.036500]}
+      - {body: Pelvis    , p: [0.092000, 0.092500, -0.019500]}
+      - {body: FemurL    , p: [0.008828, 0.205960, 0.070702]}
+      - {body: FemurL    , p: [0.006259, 0.156987, 0.025859]}
+      - {body: FemurL    , p: [0.017030, 0.126061, 0.005804]}
+  - {name: L_Psoas_Major1, f0: 239.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: Spine     , p: [0.021400, 0.012000, -0.025600]}
+      - {body: Spine     , p: [0.068300, -0.087100, -0.009300]}
+      - {body: FemurL    , p: [-0.003816, 0.205455, 0.072327]}
+      - {body: FemurL    , p: [0.002366, 0.153059, 0.017821]}
+      - {body: FemurL    , p: [0.018647, 0.132151, 0.012107]}
+  - {name: L_Psoas_Major2, f0: 239.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: Spine     , p: [0.018400, -0.071900, -0.025800]}
+      - {body: Pelvis    , p: [0.053600, 0.029500, -0.021300]}
+      - {body: FemurL    , p: [-0.011105, 0.204758, 0.066386]}
+      - {body: FemurL    , p: [0.004209, 0.154914, 0.026459]}
+      - {body: FemurL    , p: [0.016217, 0.131862, 0.006890]}
+  - {name: L_Quadratus_Femoris, f0: 254.00, lm: 1.05, lt: 0.52}
+    waypoints:
+      - {body: Pelvis    , p: [0.085900, -0.063300, -0.031700]}
+      - {body: FemurL    , p: [0.010096, 0.174013, -0.026065]}
+      - {body: FemurL    , p: [0.040788, 0.155097, -0.011982]}
+  - {name: L_Rectus_Femoris, f0: 424.40, lm: 0.90, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [0.107500, -0.000600, 0.026000]}
+      - {body: FemurL    , p: [0.034919, 0.216274, 0.051190]}
+      - {body: FemurL    , p: [0.019882, -0.122479, 0.061107]}
+      - {body: TibiaL    , p: [0.009599, 0.245981, 0.047733]}
+  - {name: L_Rectus_Femoris1, f0: 424.40, lm: 0.90, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [0.105900, -0.007400, 0.028100]}
+      - {body: FemurL    , p: [0.025036, 0.201105, 0.053828]}
+      - {body: FemurL    , p: [-0.002481, -0.118357, 0.065771]}
+      - {body: TibiaL    , p: [-0.025399, 0.242218, 0.045151]}
+  - {name: L_Sartorius, f0: 113.50, lm: 0.90, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [0.124100, 0.028900, 0.043000]}
+      - {body: FemurL    , p: [-0.049674, -0.016747, 0.059921]}
+      - {body: TibiaL    , p: [-0.045172, 0.193525, -0.005195]}
+      - {body: TibiaL    , p: [-0.007407, 0.155131, 0.029887]}
+  - {name: L_Semimembranosus, f0: 581.35, lm: 0.90, lt: 0.28}
+    waypoints:
+      - {body: Pelvis    , p: [0.075100, -0.079200, -0.045800]}
+      - {body: Pelvis    , p: [0.070100, -0.134700, -0.027500]}
+      - {body: TibiaL    , p: [-0.047839, 0.238708, -0.036454]}
+      - {body: TibiaL    , p: [-0.043410, 0.207228, -0.026069]}
+      - {body: TibiaL    , p: [-0.037260, 0.186984, -0.011950]}
+  - {name: L_Semimembranosus1, f0: 581.35, lm: 0.90, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [0.078400, -0.075600, -0.041700]}
+      - {body: FemurL    , p: [-0.002170, 0.138390, -0.009066]}
+      - {body: TibiaL    , p: [0.002575, 0.256459, -0.036301]}
+      - {body: TibiaL    , p: [-0.019459, 0.222074, -0.041623]}
+      - {body: TibiaL    , p: [-0.017536, 0.191265, -0.024873]}
+  - {name: L_Semitendinosus, f0: 301.90, lm: 0.80, lt: 0.35}
+    waypoints:
+      - {body: Pelvis    , p: [0.068000, -0.086800, -0.053600]}
+      - {body: Pelvis    , p: [0.088100, -0.127600, -0.034700]}
+      - {body: TibiaL    , p: [-0.016392, 0.259732, -0.049838]}
+      - {body: TibiaL    , p: [-0.029115, 0.190001, -0.030082]}
+      - {body: TibiaL    , p: [-0.033209, 0.168772, -0.007044]}
+      - {body: TibiaL    , p: [-0.018108, 0.148143, 0.017449]}
+  - {name: L_Soleus, f0: 1792.95, lm: 0.70, lt: 0.30}
+    waypoints:
+      - {body: TibiaL    , p: [-0.011115, 0.166686, -0.004151]}
+      - {body: TibiaL    , p: [-0.009887, 0.114292, -0.035200]}
+      - {body: TalusL    , p: [-0.019200, 0.058000, -0.053300]}
+      - {body: TalusL    , p: [-0.019700, -0.010400, -0.071000]}
+  - {name: L_Soleus1, f0: 1792.95, lm: 0.70, lt: 0.30}
+    waypoints:
+      - {body: TibiaL    , p: [0.037174, 0.188794, -0.027969]}
+      - {body: TibiaL    , p: [0.034794, 0.088491, -0.049505]}
+      - {body: TalusL    , p: [-0.007300, 0.046000, -0.061300]}
+      - {body: TalusL    , p: [-0.005000, -0.010500, -0.074000]}
+  - {name: L_Superior_Gemellus, f0: 50.00, lm: 0.85, lt: 0.25}
+    waypoints:
+      - {body: Pelvis    , p: [0.061300, -0.062200, -0.047600]}
+      - {body: FemurL    , p: [-0.009919, 0.198967, -0.034011]}
+      - {body: FemurL    , p: [0.046294, 0.196567, -0.008556]}
+  - {name: L_Tensor_Fascia_Lata, f0: 77.50, lm: 0.75, lt: 0.40}
+    waypoints:
+      - {body: Pelvis    , p: [0.137300, 0.081900, -0.012300]}
+      - {body: FemurL    , p: [0.068490, 0.198646, -0.012979]}
+      - {body: FemurL    , p: [0.067868, 0.086581, 0.005804]}
+      - {body: TibiaL    , p: [0.040006, 0.258040, 0.017265]}
+      - {body: TibiaL    , p: [0.033087, 0.183059, 0.010277]}
+  - {name: L_Tensor_Fascia_Lata1, f0: 77.50, lm: 0.75, lt: 0.40}
+    waypoints:
+      - {body: Pelvis    , p: [0.135400, 0.049800, 0.030800]}
+      - {body: FemurL    , p: [0.038440, 0.195097, 0.074723]}
+      - {body: FemurL    , p: [0.055157, -0.118539, 0.035164]}
+      - {body: TibiaL    , p: [0.009396, 0.246012, 0.047027]}
+  - {name: L_Tensor_Fascia_Lata2, f0: 77.50, lm: 0.75, lt: 0.40}
+    waypoints:
+      - {body: Pelvis    , p: [0.142900, 0.068300, 0.014800]}
+      - {body: FemurL    , p: [0.074226, 0.191933, 0.033224]}
+      - {body: TibiaL    , p: [0.032865, 0.259960, 0.027135]}
+      - {body: TibiaL    , p: [0.022654, 0.179227, 0.023461]}
+  - {name: L_Tibialis_Anterior, f0: 673.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaL    , p: [0.030961, 0.189272, 0.007524]}
+      - {body: TalusL    , p: [-0.020400, 0.062800, 0.010200]}
+      - {body: TalusL    , p: [-0.036700, 0.021000, 0.015100]}
+      - {body: TalusL    , p: [-0.026500, -0.003000, 0.048400]}
+  - {name: L_Tibialis_Posterior, f0: 905.60, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaL    , p: [0.006035, 0.171279, -0.004452]}
+      - {body: TalusL    , p: [-0.007900, 0.097500, -0.026200]}
+      - {body: TalusL    , p: [-0.038900, 0.050700, -0.028100]}
+      - {body: TalusL    , p: [-0.033600, 0.008500, 0.002900]}
+      - {body: TalusL    , p: [-0.002700, -0.001100, 0.034200]}
+  - {name: L_Vastus_Intermedius, f0: 512.10, lm: 1.00, lt: 0.04}
+    waypoints:
+      - {body: FemurL    , p: [0.025568, 0.146315, 0.021214]}
+      - {body: FemurL    , p: [0.014048, 0.086537, 0.056044]}
+      - {body: FemurL    , p: [-0.003331, -0.120553, 0.058963]}
+      - {body: TibiaL    , p: [-0.021780, 0.246974, 0.039515]}
+  - {name: L_Vastus_Intermedius1, f0: 512.10, lm: 1.00, lt: 0.09}
+    waypoints:
+      - {body: FemurL    , p: [0.035219, 0.146454, 0.020927]}
+      - {body: FemurL    , p: [0.046512, 0.064580, 0.048140]}
+      - {body: FemurL    , p: [0.032772, -0.074675, 0.052562]}
+      - {body: TibiaL    , p: [-0.006725, 0.260437, 0.043857]}
+  - {name: L_Vastus_Lateralis, f0: 1127.70, lm: 0.95, lt: 0.14}
+    waypoints:
+      - {body: FemurL    , p: [0.060001, 0.189721, 0.014816]}
+      - {body: FemurL    , p: [0.048037, 0.157276, 0.033031]}
+      - {body: TibiaL    , p: [0.002504, 0.291771, 0.048141]}
+      - {body: TibiaL    , p: [-0.012842, 0.252486, 0.047264]}
+  - {name: L_Vastus_Lateralis1, f0: 1127.70, lm: 0.95, lt: 0.12}
+    waypoints:
+      - {body: FemurL    , p: [0.069548, 0.179827, 0.009373]}
+      - {body: FemurL    , p: [0.063047, 0.133890, 0.012213]}
+      - {body: TibiaL    , p: [0.033157, 0.299530, 0.016645]}
+      - {body: TibiaL    , p: [0.001164, 0.244080, 0.048903]}
+  - {name: L_Vastus_Medialis, f0: 721.85, lm: 0.95, lt: 0.01}
+    waypoints:
+      - {body: FemurL    , p: [0.029993, 0.146325, 0.022329]}
+      - {body: FemurL    , p: [-0.049050, -0.043683, 0.046255]}
+      - {body: FemurL    , p: [-0.048114, -0.119674, 0.035477]}
+      - {body: TibiaL    , p: [-0.026451, 0.242988, 0.037153]}
+  - {name: L_Vastus_Medialis1, f0: 721.85, lm: 0.95, lt: 0.15}
+    waypoints:
+      - {body: FemurL    , p: [0.030534, 0.142109, 0.022757]}
+      - {body: FemurL    , p: [-0.001112, -0.055453, 0.072369]}
+      - {body: TibiaL    , p: [-0.013904, 0.254313, 0.047907]}
+  - {name: L_Vastus_Medialis2, f0: 721.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: FemurL    , p: [0.029993, 0.146325, 0.022329]}
+      - {body: FemurL    , p: [-0.026284, -0.077135, 0.065436]}
+      - {body: TibiaL    , p: [-0.024544, 0.249155, 0.043741]}
+  - {name: L_iliacus, f0: 207.30, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: Pelvis    , p: [0.068000, 0.066200, -0.049500]}
+      - {body: FemurL    , p: [-0.005808, 0.217534, 0.046480]}
+      - {body: FemurL    , p: [0.002402, 0.156263, 0.009998]}
+      - {body: FemurL    , p: [0.017556, 0.129025, 0.000327]}
+  - {name: L_iliacus1, f0: 207.30, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: Pelvis    , p: [0.116900, 0.088800, -0.020800]}
+      - {body: FemurL    , p: [0.000054, 0.248418, 0.040660]}
+      - {body: FemurL    , p: [0.005171, 0.192218, 0.055705]}
+      - {body: FemurL    , p: [0.009016, 0.152690, 0.014476]}
+      - {body: FemurL    , p: [0.024749, 0.143248, -0.002886]}
+  - {name: L_iliacus2, f0: 207.30, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: Pelvis    , p: [0.128500, 0.052600, 0.034000]}
+      - {body: FemurL    , p: [0.019275, 0.247895, 0.055316]}
+      - {body: FemurL    , p: [0.016819, 0.183954, 0.037789]}
+      - {body: FemurL    , p: [0.017337, 0.139226, 0.008312]}
+  - {name: R_Adductor_Brevis, f0: 151.85, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.031900, -0.061300, 0.053200]}
+      - {body: FemurR    , p: [0.004973, -0.109399, -0.031095]}
+      - {body: FemurR    , p: [-0.018876, -0.101637, -0.012362]}
+  - {name: R_Adductor_Brevis1, f0: 151.85, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.014100, -0.069300, 0.054300]}
+      - {body: FemurR    , p: [0.013711, -0.032299, -0.025907]}
+      - {body: FemurR    , p: [-0.013215, -0.005869, -0.023077]}
+  - {name: R_Adductor_Longus, f0: 199.75, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.030200, -0.059300, 0.054300]}
+      - {body: FemurR    , p: [-0.009774, -0.014016, -0.024141]}
+      - {body: FemurR    , p: [-0.017963, 0.023684, -0.020457]}
+  - {name: R_Adductor_Longus1, f0: 199.75, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.014000, -0.066100, 0.060500]}
+      - {body: FemurR    , p: [0.038613, -0.005877, -0.036620]}
+      - {body: FemurR    , p: [-0.006546, 0.090221, -0.021733]}
+  - {name: R_Adductor_Magnus, f0: 259.38, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.022300, -0.089600, 0.025000]}
+      - {body: FemurR    , p: [-0.013347, -0.113135, -0.004724]}
+      - {body: FemurR    , p: [-0.040014, -0.109158, 0.001353]}
+  - {name: R_Adductor_Magnus1, f0: 259.38, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.023500, -0.099600, 0.024600]}
+      - {body: FemurR    , p: [-0.002948, -0.076467, -0.000056]}
+      - {body: FemurR    , p: [-0.032750, -0.034750, -0.014862]}
+  - {name: R_Adductor_Magnus2, f0: 259.38, lm: 0.95, lt: 0.52}
+    waypoints:
+      - {body: Pelvis    , p: [-0.035600, -0.110500, -0.014200]}
+      - {body: FemurR    , p: [0.024294, -0.085370, -0.005009]}
+      - {body: FemurR    , p: [-0.006484, -0.020936, 0.003155]}
+      - {body: FemurR    , p: [-0.025090, 0.005184, -0.019068]}
+  - {name: R_Adductor_Magnus3, f0: 259.38, lm: 0.95, lt: 0.48}
+    waypoints:
+      - {body: Pelvis    , p: [-0.047500, -0.111200, -0.032000]}
+      - {body: FemurR    , p: [0.022370, -0.058275, 0.005867]}
+      - {body: FemurR    , p: [-0.006057, 0.020190, 0.001408]}
+      - {body: FemurR    , p: [-0.012099, 0.082752, -0.017014]}
+  - {name: R_Adductor_Magnus4, f0: 259.38, lm: 0.95, lt: 0.48}
+    waypoints:
+      - {body: Pelvis    , p: [-0.068700, -0.103700, -0.044400]}
+      - {body: Pelvis    , p: [-0.063000, -0.136600, -0.036600]}
+      - {body: FemurR    , p: [0.034716, 0.082285, 0.002986]}
+      - {body: FemurR    , p: [0.034104, 0.168029, 0.002005]}
+  - {name: R_Bicep_Femoris_Longus, f0: 705.20, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.070900, -0.080700, -0.052000]}
+      - {body: TibiaR    , p: [-0.043109, -0.234664, 0.019236]}
+      - {body: TibiaR    , p: [-0.038846, -0.187343, 0.021116]}
+  - {name: R_Bicep_Femoris_Short, f0: 157.90, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: FemurR    , p: [-0.026625, -0.005008, -0.017895]}
+      - {body: TibiaR    , p: [-0.042182, -0.244272, 0.016965]}
+      - {body: TibiaR    , p: [-0.040435, -0.188107, 0.016465]}
+  - {name: R_Bicep_Femoris_Short1, f0: 157.90, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: FemurR    , p: [-0.018804, 0.106304, -0.019399]}
+      - {body: TibiaR    , p: [-0.040736, -0.232118, 0.006063]}
+      - {body: TibiaR    , p: [-0.038557, -0.187740, 0.013020]}
+  - {name: R_Extensor_Digitorum_Longus, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaR    , p: [-0.024165, -0.183118, -0.005353]}
+      - {body: TibiaR    , p: [-0.026999, -0.146823, 0.004219]}
+      - {body: TalusR    , p: [-0.001800, 0.072500, -0.001300]}
+      - {body: TalusR    , p: [0.000700, 0.044100, 0.008900]}
+      - {body: FootThumbR, p: [-0.013500, -0.003100, -0.026200]}
+      - {body: FootThumbR, p: [-0.015500, -0.009600, 0.002300]}
+      - {body: FootThumbR, p: [-0.017300, -0.017800, 0.018300]}
+  - {name: R_Extensor_Digitorum_Longus1, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaR    , p: [-0.029144, -0.192607, -0.007333]}
+      - {body: TibiaR    , p: [-0.037104, -0.107383, -0.004754]}
+      - {body: TalusR    , p: [-0.004700, 0.073600, 0.000300]}
+      - {body: TalusR    , p: [-0.005800, 0.040400, 0.012700]}
+      - {body: FootPinkyR, p: [0.019700, -0.006400, -0.019400]}
+      - {body: FootPinkyR, p: [0.017000, -0.011400, -0.001400]}
+      - {body: FootPinkyR, p: [0.012400, -0.020300, 0.022200]}
+  - {name: R_Extensor_Digitorum_Longus2, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaR    , p: [-0.027767, -0.189114, -0.008141]}
+      - {body: TibiaR    , p: [-0.044310, -0.107823, -0.010337]}
+      - {body: TalusR    , p: [-0.005900, 0.073400, -0.000300]}
+      - {body: TalusR    , p: [-0.008700, 0.037200, 0.013600]}
+      - {body: FootPinkyR, p: [0.006400, -0.004900, -0.026700]}
+      - {body: FootPinkyR, p: [0.003000, -0.008500, -0.012300]}
+      - {body: FootPinkyR, p: [-0.000800, -0.018000, 0.003600]}
+  - {name: R_Extensor_Digitorum_Longus3, f0: 172.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaR    , p: [-0.030501, -0.193702, -0.005531]}
+      - {body: TibiaR    , p: [-0.035005, -0.106168, 0.008289]}
+      - {body: TalusR    , p: [-0.011100, 0.042100, 0.006700]}
+      - {body: TalusR    , p: [-0.021600, 0.019100, 0.025100]}
+      - {body: FootPinkyR, p: [-0.006300, -0.002600, -0.041500]}
+      - {body: FootPinkyR, p: [-0.012700, -0.021600, -0.006500]}
+  - {name: R_Extensor_Hallucis_Longus, f0: 165.00, lm: 0.70, lt: 0.50}
+    waypoints:
+      - {body: TibiaR    , p: [-0.019536, -0.079733, 0.001157]}
+      - {body: TalusR    , p: [-0.004400, 0.079600, 0.001200]}
+      - {body: TalusR    , p: [0.009200, 0.042200, 0.009100]}
+      - {body: FootThumbR, p: [0.004100, 0.032700, -0.066400]}
+      - {body: FootThumbR, p: [0.010900, 0.001000, -0.022100]}
+      - {body: FootThumbR, p: [0.015900, -0.017900, 0.019000]}
+  - {name: R_Flexor_Digiti_Minimi_Brevis_Foot, f0: 50.00, lm: 1.00, lt: 0.10}
+    waypoints:
+      - {body: FootPinkyR, p: [-0.012000, -0.019700, -0.031400]}
+      - {body: TalusR    , p: [-0.027500, -0.016700, 0.015000]}
+  - {name: R_Flexor_Digitorum_Longus, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaR    , p: [0.006676, -0.097452, -0.005222]}
+      - {body: TalusR    , p: [0.029900, 0.070900, -0.031300]}
+      - {body: TalusR    , p: [0.028900, 0.000100, 0.002000]}
+      - {body: TalusR    , p: [0.009500, -0.008100, 0.022800]}
+      - {body: FootThumbR, p: [-0.010200, -0.021400, -0.034700]}
+      - {body: FootThumbR, p: [-0.016200, -0.022000, 0.014600]}
+  - {name: R_Flexor_Digitorum_Longus1, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaR    , p: [0.006676, -0.097452, -0.005222]}
+      - {body: TalusR    , p: [0.026900, 0.070700, -0.032000]}
+      - {body: TalusR    , p: [0.027700, -0.000000, 0.000300]}
+      - {body: TalusR    , p: [0.007600, -0.008600, 0.015300]}
+      - {body: FootPinkyR, p: [0.022800, -0.023900, -0.028000]}
+      - {body: FootPinkyR, p: [0.014200, -0.021700, 0.018700]}
+  - {name: R_Flexor_Digitorum_Longus2, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaR    , p: [0.006252, -0.087962, -0.003343]}
+      - {body: TalusR    , p: [0.026000, 0.075600, -0.032000]}
+      - {body: TalusR    , p: [0.029200, 0.002700, -0.001500]}
+      - {body: TalusR    , p: [0.001400, -0.010100, 0.017800]}
+      - {body: FootPinkyR, p: [0.009300, -0.022000, -0.038900]}
+      - {body: FootPinkyR, p: [0.000300, -0.021400, 0.002100]}
+  - {name: R_Flexor_Digitorum_Longus3, f0: 137.20, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaR    , p: [0.011906, -0.086944, -0.007748]}
+      - {body: TalusR    , p: [0.024400, 0.080400, -0.032200]}
+      - {body: TalusR    , p: [0.032800, 0.010700, -0.003100]}
+      - {body: FootPinkyR, p: [0.017600, -0.004900, -0.082100]}
+      - {body: FootPinkyR, p: [-0.006500, -0.022100, -0.042000]}
+      - {body: FootPinkyR, p: [-0.012000, -0.023800, -0.010500]}
+  - {name: R_Flexor_Hallucis, f0: 218.40, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaR    , p: [-0.023701, -0.091314, 0.012811]}
+      - {body: TalusR    , p: [0.018000, 0.067300, -0.033800]}
+      - {body: TalusR    , p: [0.031200, 0.026800, -0.039300]}
+      - {body: TalusR    , p: [0.024800, 0.006400, -0.018600]}
+      - {body: FootThumbR, p: [0.011600, -0.019400, -0.036100]}
+      - {body: FootThumbR, p: [0.014800, -0.022800, 0.013400]}
+  - {name: R_Flexor_Hallucis1, f0: 218.40, lm: 0.65, lt: 0.45}
+    waypoints:
+      - {body: TibiaR    , p: [-0.023701, -0.091314, 0.012811]}
+      - {body: TalusR    , p: [0.018000, 0.067300, -0.033800]}
+      - {body: TalusR    , p: [0.031200, 0.026800, -0.039300]}
+      - {body: TalusR    , p: [0.024800, 0.006400, -0.018600]}
+      - {body: FootThumbR, p: [0.011600, -0.019400, -0.036100]}
+      - {body: FootThumbR, p: [0.014800, -0.022800, 0.013400]}
+  - {name: R_Gastrocnemius_Lateral_Head, f0: 606.40, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: FemurR    , p: [-0.030521, 0.162767, -0.008015]}
+      - {body: TibiaR    , p: [-0.020256, -0.252429, 0.026312]}
+      - {body: TibiaR    , p: [-0.026257, -0.201561, 0.049866]}
+      - {body: TibiaR    , p: [-0.019167, 0.003758, 0.057491]}
+      - {body: TalusR    , p: [0.005000, 0.012500, -0.074000]}
+  - {name: R_Gastrocnemius_Medial_Head, f0: 1308.00, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: FemurR    , p: [0.021430, 0.156607, -0.010344]}
+      - {body: TibiaR    , p: [0.006288, -0.246794, 0.034150]}
+      - {body: TibiaR    , p: [0.007519, -0.200033, 0.052643]}
+      - {body: TibiaR    , p: [0.031482, 0.031792, 0.022413]}
+      - {body: TalusR    , p: [0.019700, 0.012600, -0.071000]}
+  - {name: R_Gluteus_Maximus, f0: 370.52, lm: 1.05, lt: 0.02}
+    waypoints:
+      - {body: Pelvis    , p: [-0.053900, 0.054900, -0.084600]}
+      - {body: Pelvis    , p: [-0.111500, 0.032400, -0.077700]}
+      - {body: FemurR    , p: [-0.054751, -0.215141, 0.032298]}
+      - {body: FemurR    , p: [-0.054911, -0.147635, 0.003118]}
+  - {name: R_Gluteus_Maximus1, f0: 370.52, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [-0.038200, 0.007700, -0.087700]}
+      - {body: Pelvis    , p: [-0.103800, -0.012100, -0.099200]}
+      - {body: FemurR    , p: [-0.055670, -0.175564, 0.035918]}
+      - {body: FemurR    , p: [-0.049147, -0.120942, -0.003366]}
+  - {name: R_Gluteus_Maximus2, f0: 370.52, lm: 1.05, lt: 0.22}
+    waypoints:
+      - {body: Pelvis    , p: [-0.029700, -0.031100, -0.082700]}
+      - {body: Pelvis    , p: [-0.051700, -0.038700, -0.108500]}
+      - {body: Pelvis    , p: [-0.122100, -0.074000, -0.085400]}
+      - {body: FemurR    , p: [-0.051485, -0.115444, 0.022562]}
+      - {body: FemurR    , p: [-0.041925, -0.093313, -0.006870]}
+  - {name: R_Gluteus_Maximus3, f0: 370.52, lm: 1.05, lt: 0.39}
+    waypoints:
+      - {body: Pelvis    , p: [-0.035200, -0.061700, -0.069100]}
+      - {body: Pelvis    , p: [-0.066500, -0.100100, -0.100100]}
+      - {body: FemurR    , p: [-0.019068, -0.127553, 0.056530]}
+      - {body: FemurR    , p: [-0.039098, -0.064349, -0.014845]}
+  - {name: R_Gluteus_Maximus4, f0: 370.52, lm: 1.15, lt: 0.47}
+    waypoints:
+      - {body: Pelvis    , p: [-0.045000, -0.084900, -0.053200]}
+      - {body: Pelvis    , p: [-0.064500, -0.132200, -0.061400]}
+      - {body: FemurR    , p: [-0.017136, -0.084992, 0.020051]}
+      - {body: FemurR    , p: [-0.038553, -0.047302, -0.018760]}
+  - {name: R_Gluteus_Medius, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.129500, 0.032900, 0.040300]}
+      - {body: FemurR    , p: [-0.067352, -0.220301, -0.007349]}
+      - {body: FemurR    , p: [-0.066880, -0.198126, -0.005643]}
+  - {name: R_Gluteus_Medius1, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.128200, 0.086400, -0.018300]}
+      - {body: FemurR    , p: [-0.061422, -0.225973, 0.012976]}
+      - {body: FemurR    , p: [-0.073924, -0.166053, -0.001477]}
+  - {name: R_Gluteus_Medius2, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.079200, 0.083600, -0.058000]}
+      - {body: Pelvis    , p: [-0.122200, 0.047500, -0.062000]}
+      - {body: FemurR    , p: [-0.063595, -0.193688, 0.017451]}
+      - {body: FemurR    , p: [-0.065640, -0.166137, 0.009249]}
+  - {name: R_Gluteus_Medius3, f0: 549.90, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.061100, 0.027800, -0.075900]}
+      - {body: Pelvis    , p: [-0.088300, 0.007500, -0.071300]}
+      - {body: FemurR    , p: [-0.041252, -0.211956, 0.031152]}
+      - {body: FemurR    , p: [-0.051258, -0.174708, 0.018450]}
+  - {name: R_Gluteus_Minimus, f0: 198.33, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.068600, 0.011700, -0.055200]}
+      - {body: FemurR    , p: [0.001405, -0.247917, 0.032828]}
+      - {body: FemurR    , p: [-0.061052, -0.206975, -0.002111]}
+      - {body: FemurR    , p: [-0.070170, -0.180054, -0.006487]}
+  - {name: R_Gluteus_Minimus1, f0: 198.33, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.098200, 0.065100, -0.030100]}
+      - {body: Pelvis    , p: [-0.125700, 0.035000, -0.028400]}
+      - {body: FemurR    , p: [-0.067095, -0.207755, -0.010870]}
+      - {body: FemurR    , p: [-0.069069, -0.167574, -0.013764]}
+  - {name: R_Gluteus_Minimus2, f0: 198.33, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.133400, 0.056400, 0.020600]}
+      - {body: FemurR    , p: [-0.067090, -0.207553, -0.018635]}
+      - {body: FemurR    , p: [-0.063082, -0.172027, -0.017549]}
+  - {name: R_Gracilis, f0: 137.30, lm: 0.95, lt: 0.30}
+    waypoints:
+      - {body: Pelvis    , p: [-0.011300, -0.077800, 0.042300]}
+      - {body: TibiaR    , p: [0.051827, -0.224626, 0.028194]}
+      - {body: TibiaR    , p: [0.037393, -0.177210, 0.003064]}
+      - {body: TibiaR    , p: [0.020911, -0.165333, -0.016446]}
+  - {name: R_Inferior_Gemellus, f0: 50.00, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [-0.066200, -0.095200, -0.050500]}
+      - {body: FemurR    , p: [-0.025971, -0.184157, 0.027082]}
+      - {body: FemurR    , p: [-0.039951, -0.184371, 0.016014]}
+  - {name: R_Internal_Oblique, f0: 94.00, lm: 1.10, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [-0.137741, 0.089160, -0.004166]}
+      - {body: Torso     , p: [-0.035873, -0.165570, 0.097064]}
+  - {name: R_Internal_Oblique1, f0: 90.00, lm: 1.10, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [-0.138752, 0.070680, 0.021856]}
+      - {body: Torso     , p: [-0.030350, -0.203960, 0.096159]}
+  - {name: R_Internal_Oblique2, f0: 91.00, lm: 1.10, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [-0.124519, 0.047810, 0.039007]}
+      - {body: Torso     , p: [-0.029898, -0.248730, 0.093660]}
+  - {name: R_Obturator_Externus, f0: 50.00, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [-0.021200, -0.069500, 0.036300]}
+      - {body: FemurR    , p: [0.025182, -0.170842, -0.002242]}
+      - {body: FemurR    , p: [-0.043594, -0.185128, 0.009920]}
+  - {name: R_Obturator_Internus, f0: 50.00, lm: 1.05, lt: 0.10}
+    waypoints:
+      - {body: Pelvis    , p: [-0.018500, -0.075100, 0.025500]}
+      - {body: FemurR    , p: [0.047664, -0.182375, 0.023807]}
+      - {body: FemurR    , p: [0.028162, -0.181553, 0.039874]}
+      - {body: FemurR    , p: [-0.043411, -0.189386, 0.013999]}
+  - {name: R_Pectineus, f0: 177.00, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.040400, -0.053100, 0.044300]}
+      - {body: FemurR    , p: [0.020244, -0.193150, -0.078636]}
+      - {body: FemurR    , p: [-0.010101, -0.112353, -0.015101]}
+      - {body: FemurR    , p: [-0.021571, -0.105641, -0.016156]}
+  - {name: R_Peroneus_Brevis, f0: 305.90, lm: 0.95, lt: 0.20}
+    waypoints:
+      - {body: TibiaR    , p: [-0.025709, 0.017890, 0.009275]}
+      - {body: TalusR    , p: [-0.019600, 0.069400, -0.043600]}
+      - {body: TalusR    , p: [-0.009300, 0.027400, -0.044800]}
+      - {body: TalusR    , p: [-0.024300, -0.016000, 0.009100]}
+  - {name: R_Peroneus_Longus, f0: 653.30, lm: 0.80, lt: 0.40}
+    waypoints:
+      - {body: TibiaR    , p: [-0.041469, -0.179254, 0.007861]}
+      - {body: TibiaR    , p: [-0.057623, -0.065668, 0.009563]}
+      - {body: TalusR    , p: [-0.023000, 0.063400, -0.039400]}
+      - {body: TalusR    , p: [-0.012300, 0.018700, -0.044500]}
+      - {body: TalusR    , p: [-0.019200, -0.000400, -0.017000]}
+      - {body: TalusR    , p: [0.007600, -0.002600, 0.012800]}
+      - {body: TalusR    , p: [0.020500, -0.003700, 0.049200]}
+  - {name: R_Peroneus_Tertius, f0: 45.00, lm: 0.70, lt: 0.50}
+    waypoints:
+      - {body: TibiaR    , p: [-0.020575, 0.168931, 0.003483]}
+      - {body: TalusR    , p: [-0.019400, 0.041600, -0.001800]}
+      - {body: TalusR    , p: [-0.026300, -0.005500, 0.026700]}
+  - {name: R_Peroneus_Tertius1, f0: 45.00, lm: 0.70, lt: 0.50}
+    waypoints:
+      - {body: TibiaR    , p: [-0.020575, 0.168931, 0.003483]}
+      - {body: TalusR    , p: [-0.019400, 0.041600, -0.001800]}
+      - {body: TalusR    , p: [-0.026300, -0.005500, 0.026700]}
+  - {name: R_Piriformis, f0: 148.00, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.031600, 0.000500, -0.078200]}
+      - {body: FemurR    , p: [-0.043337, -0.206221, 0.008692]}
+  - {name: R_Piriformis1, f0: 148.00, lm: 1.05, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.016000, -0.044600, -0.076500]}
+      - {body: FemurR    , p: [-0.046202, -0.195741, 0.006507]}
+  - {name: R_Plantaris, f0: 50.00, lm: 0.60, lt: 0.50}
+    waypoints:
+      - {body: FemurR    , p: [-0.022138, 0.158748, -0.002383]}
+      - {body: TibiaR    , p: [-0.010047, -0.246904, 0.024523]}
+      - {body: TibiaR    , p: [-0.007144, -0.194486, 0.032382]}
+      - {body: TalusR    , p: [0.018900, 0.062500, -0.055400]}
+      - {body: TalusR    , p: [0.017500, -0.003000, -0.073800]}
+  - {name: R_Popliteus, f0: 50.00, lm: 1.00, lt: 0.20}
+    waypoints:
+      - {body: FemurR    , p: [-0.039376, 0.184500, 0.001365]}
+      - {body: TibiaR    , p: [-0.035618, -0.225688, 0.018952]}
+      - {body: TibiaR    , p: [-0.016737, -0.198277, 0.026189]}
+      - {body: TibiaR    , p: [0.017639, -0.153430, -0.001928]}
+  - {name: R_Psoas_Major, f0: 239.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: Torso     , p: [-0.014600, -0.100500, -0.036500]}
+      - {body: Pelvis    , p: [-0.092000, 0.092500, -0.019500]}
+      - {body: FemurR    , p: [-0.008828, -0.205960, -0.070702]}
+      - {body: FemurR    , p: [-0.006259, -0.156987, -0.025859]}
+      - {body: FemurR    , p: [-0.017030, -0.126061, -0.005804]}
+  - {name: R_Psoas_Major1, f0: 239.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: Spine     , p: [-0.021400, 0.012000, -0.025600]}
+      - {body: Spine     , p: [-0.068300, -0.087100, -0.009300]}
+      - {body: FemurR    , p: [0.003816, -0.205455, -0.072327]}
+      - {body: FemurR    , p: [-0.002366, -0.153059, -0.017821]}
+      - {body: FemurR    , p: [-0.018647, -0.132151, -0.012107]}
+  - {name: R_Psoas_Major2, f0: 239.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: Spine     , p: [-0.018400, -0.071900, -0.025800]}
+      - {body: Pelvis    , p: [-0.053600, 0.029500, -0.021300]}
+      - {body: FemurR    , p: [0.011105, -0.204758, -0.066386]}
+      - {body: FemurR    , p: [-0.004209, -0.154914, -0.026459]}
+      - {body: FemurR    , p: [-0.016217, -0.131862, -0.006890]}
+  - {name: R_Quadratus_Femoris, f0: 254.00, lm: 1.05, lt: 0.52}
+    waypoints:
+      - {body: Pelvis    , p: [-0.085900, -0.063300, -0.031700]}
+      - {body: FemurR    , p: [-0.010096, -0.174013, 0.026065]}
+      - {body: FemurR    , p: [-0.040788, -0.155097, 0.011982]}
+  - {name: R_Rectus_Femoris, f0: 424.40, lm: 0.90, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [-0.107500, -0.000600, 0.026000]}
+      - {body: FemurR    , p: [-0.034919, -0.216274, -0.051190]}
+      - {body: FemurR    , p: [-0.019882, 0.122479, -0.061107]}
+      - {body: TibiaR    , p: [-0.009599, -0.245981, -0.047733]}
+  - {name: R_Rectus_Femoris1, f0: 424.40, lm: 0.90, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [-0.105900, -0.007400, 0.028100]}
+      - {body: FemurR    , p: [-0.025036, -0.201105, -0.053828]}
+      - {body: FemurR    , p: [0.002481, 0.118357, -0.065771]}
+      - {body: TibiaR    , p: [0.025399, -0.242218, -0.045151]}
+  - {name: R_Sartorius, f0: 113.50, lm: 0.90, lt: 0.20}
+    waypoints:
+      - {body: Pelvis    , p: [-0.124100, 0.028900, 0.043000]}
+      - {body: FemurR    , p: [0.049674, 0.016747, -0.059921]}
+      - {body: TibiaR    , p: [0.045172, -0.193525, 0.005195]}
+      - {body: TibiaR    , p: [0.007407, -0.155131, -0.029887]}
+  - {name: R_Semimembranosus, f0: 581.35, lm: 0.90, lt: 0.28}
+    waypoints:
+      - {body: Pelvis    , p: [-0.075100, -0.079200, -0.045800]}
+      - {body: Pelvis    , p: [-0.070100, -0.134700, -0.027500]}
+      - {body: TibiaR    , p: [0.047839, -0.238708, 0.036454]}
+      - {body: TibiaR    , p: [0.043410, -0.207228, 0.026069]}
+      - {body: TibiaR    , p: [0.037260, -0.186984, 0.011950]}
+  - {name: R_Semimembranosus1, f0: 581.35, lm: 0.90, lt: 0.15}
+    waypoints:
+      - {body: Pelvis    , p: [-0.078400, -0.075600, -0.041700]}
+      - {body: FemurR    , p: [0.002170, -0.138390, 0.009066]}
+      - {body: TibiaR    , p: [-0.002575, -0.256459, 0.036301]}
+      - {body: TibiaR    , p: [0.019459, -0.222074, 0.041623]}
+      - {body: TibiaR    , p: [0.017536, -0.191265, 0.024873]}
+  - {name: R_Semitendinosus, f0: 301.90, lm: 0.80, lt: 0.35}
+    waypoints:
+      - {body: Pelvis    , p: [-0.068000, -0.086800, -0.053600]}
+      - {body: Pelvis    , p: [-0.088100, -0.127600, -0.034700]}
+      - {body: TibiaR    , p: [0.016392, -0.259732, 0.049838]}
+      - {body: TibiaR    , p: [0.029115, -0.190001, 0.030082]}
+      - {body: TibiaR    , p: [0.033209, -0.168772, 0.007044]}
+      - {body: TibiaR    , p: [0.018108, -0.148143, -0.017449]}
+  - {name: R_Soleus, f0: 1792.95, lm: 0.70, lt: 0.30}
+    waypoints:
+      - {body: TibiaR    , p: [0.011115, -0.166686, 0.004151]}
+      - {body: TibiaR    , p: [0.009887, -0.114292, 0.035200]}
+      - {body: TalusR    , p: [0.019200, 0.058000, -0.053300]}
+      - {body: TalusR    , p: [0.019700, -0.010400, -0.071000]}
+  - {name: R_Soleus1, f0: 1792.95, lm: 0.70, lt: 0.30}
+    waypoints:
+      - {body: TibiaR    , p: [-0.037174, -0.188794, 0.027969]}
+      - {body: TibiaR    , p: [-0.034794, -0.088491, 0.049505]}
+      - {body: TalusR    , p: [0.007300, 0.046000, -0.061300]}
+      - {body: TalusR    , p: [0.005000, -0.010500, -0.074000]}
+  - {name: R_Superior_Gemellus, f0: 50.00, lm: 0.85, lt: 0.25}
+    waypoints:
+      - {body: Pelvis    , p: [-0.061300, -0.062200, -0.047600]}
+      - {body: FemurR    , p: [0.009919, -0.198967, 0.034011]}
+      - {body: FemurR    , p: [-0.046294, -0.196567, 0.008556]}
+  - {name: R_Tensor_Fascia_Lata, f0: 77.50, lm: 0.75, lt: 0.40}
+    waypoints:
+      - {body: Pelvis    , p: [-0.137300, 0.081900, -0.012300]}
+      - {body: FemurR    , p: [-0.068490, -0.198646, 0.012979]}
+      - {body: FemurR    , p: [-0.067868, -0.086581, -0.005804]}
+      - {body: TibiaR    , p: [-0.040006, -0.258040, -0.017265]}
+      - {body: TibiaR    , p: [-0.033087, -0.183059, -0.010277]}
+  - {name: R_Tensor_Fascia_Lata1, f0: 77.50, lm: 0.75, lt: 0.40}
+    waypoints:
+      - {body: Pelvis    , p: [-0.135400, 0.049800, 0.030800]}
+      - {body: FemurR    , p: [-0.038440, -0.195097, -0.074723]}
+      - {body: FemurR    , p: [-0.055157, 0.118539, -0.035164]}
+      - {body: TibiaR    , p: [-0.009396, -0.246012, -0.047027]}
+  - {name: R_Tensor_Fascia_Lata2, f0: 77.50, lm: 0.75, lt: 0.40}
+    waypoints:
+      - {body: Pelvis    , p: [-0.142900, 0.068300, 0.014800]}
+      - {body: FemurR    , p: [-0.074226, -0.191933, -0.033224]}
+      - {body: TibiaR    , p: [-0.032865, -0.259960, -0.027135]}
+      - {body: TibiaR    , p: [-0.022654, -0.179227, -0.023461]}
+  - {name: R_Tibialis_Anterior, f0: 673.70, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaR    , p: [-0.030961, -0.189272, -0.007524]}
+      - {body: TalusR    , p: [0.020400, 0.062800, 0.010200]}
+      - {body: TalusR    , p: [0.036700, 0.021000, 0.015100]}
+      - {body: TalusR    , p: [0.026500, -0.003000, 0.048400]}
+  - {name: R_Tibialis_Posterior, f0: 905.60, lm: 0.70, lt: 0.40}
+    waypoints:
+      - {body: TibiaR    , p: [-0.006035, -0.171279, 0.004452]}
+      - {body: TalusR    , p: [0.007900, 0.097500, -0.026200]}
+      - {body: TalusR    , p: [0.038900, 0.050700, -0.028100]}
+      - {body: TalusR    , p: [0.033600, 0.008500, 0.002900]}
+      - {body: TalusR    , p: [0.002700, -0.001100, 0.034200]}
+  - {name: R_Vastus_Intermedius, f0: 512.10, lm: 1.00, lt: 0.04}
+    waypoints:
+      - {body: FemurR    , p: [-0.025568, -0.146315, -0.021214]}
+      - {body: FemurR    , p: [-0.014048, -0.086537, -0.056044]}
+      - {body: FemurR    , p: [0.003331, 0.120553, -0.058963]}
+      - {body: TibiaR    , p: [0.021780, -0.246974, -0.039515]}
+  - {name: R_Vastus_Intermedius1, f0: 512.10, lm: 1.00, lt: 0.09}
+    waypoints:
+      - {body: FemurR    , p: [-0.035219, -0.146454, -0.020927]}
+      - {body: FemurR    , p: [-0.046512, -0.064580, -0.048140]}
+      - {body: FemurR    , p: [-0.032772, 0.074675, -0.052562]}
+      - {body: TibiaR    , p: [0.006725, -0.260437, -0.043857]}
+  - {name: R_Vastus_Lateralis, f0: 1127.70, lm: 0.95, lt: 0.14}
+    waypoints:
+      - {body: FemurR    , p: [-0.060001, -0.189721, -0.014816]}
+      - {body: FemurR    , p: [-0.048037, -0.157276, -0.033031]}
+      - {body: TibiaR    , p: [-0.002504, -0.291771, -0.048141]}
+      - {body: TibiaR    , p: [0.012842, -0.252486, -0.047264]}
+  - {name: R_Vastus_Lateralis1, f0: 1127.70, lm: 0.95, lt: 0.12}
+    waypoints:
+      - {body: FemurR    , p: [-0.069548, -0.179827, -0.009373]}
+      - {body: FemurR    , p: [-0.063047, -0.133890, -0.012213]}
+      - {body: TibiaR    , p: [-0.033157, -0.299530, -0.016645]}
+      - {body: TibiaR    , p: [-0.001164, -0.244080, -0.048903]}
+  - {name: R_Vastus_Medialis, f0: 721.85, lm: 0.95, lt: 0.01}
+    waypoints:
+      - {body: FemurR    , p: [-0.029993, -0.146325, -0.022329]}
+      - {body: FemurR    , p: [0.049050, 0.043683, -0.046255]}
+      - {body: FemurR    , p: [0.048114, 0.119674, -0.035477]}
+      - {body: TibiaR    , p: [0.026451, -0.242988, -0.037153]}
+  - {name: R_Vastus_Medialis1, f0: 721.85, lm: 0.95, lt: 0.15}
+    waypoints:
+      - {body: FemurR    , p: [-0.030534, -0.142109, -0.022757]}
+      - {body: FemurR    , p: [0.001112, 0.055453, -0.072369]}
+      - {body: TibiaR    , p: [0.013904, -0.254313, -0.047907]}
+  - {name: R_Vastus_Medialis2, f0: 721.85, lm: 0.95, lt: 0.10}
+    waypoints:
+      - {body: FemurR    , p: [-0.029993, -0.146325, -0.022329]}
+      - {body: FemurR    , p: [0.026284, 0.077135, -0.065436]}
+      - {body: TibiaR    , p: [0.024544, -0.249155, -0.043741]}
+  - {name: R_iliacus, f0: 207.30, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: Pelvis    , p: [-0.068000, 0.066200, -0.049500]}
+      - {body: FemurR    , p: [0.005808, -0.217534, -0.046480]}
+      - {body: FemurR    , p: [-0.002402, -0.156263, -0.009998]}
+      - {body: FemurR    , p: [-0.017556, -0.129025, -0.000327]}
+  - {name: R_iliacus1, f0: 207.30, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: Pelvis    , p: [-0.116900, 0.088800, -0.020800]}
+      - {body: FemurR    , p: [-0.000054, -0.248418, -0.040660]}
+      - {body: FemurR    , p: [-0.005171, -0.192218, -0.055705]}
+      - {body: FemurR    , p: [-0.009016, -0.152690, -0.014476]}
+      - {body: FemurR    , p: [-0.024749, -0.143248, 0.002886]}
+  - {name: R_iliacus2, f0: 207.30, lm: 1.00, lt: 0.05}
+    waypoints:
+      - {body: Pelvis    , p: [-0.128500, 0.052600, 0.034000]}
+      - {body: FemurR    , p: [-0.019275, -0.247895, -0.055316]}
+      - {body: FemurR    , p: [-0.016819, -0.183954, -0.037789]}
+      - {body: FemurR    , p: [-0.017337, -0.139226, -0.008312]}

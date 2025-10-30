@@ -74,6 +74,10 @@ public:
     dart::dynamics::Joint* getChildJoint(dart::dynamics::BodyNode* bodynode);
 
 private:
+    // Muscle export helper functions
+    void exportMusclesXML(const std::string& path);
+    void exportMusclesYAML(const std::string& path);
+
     // Skeleton export helper functions
     std::string formatRotationMatrix(const Eigen::Matrix3d& R);
     std::string formatVector3d(const Eigen::Vector3d& v);
