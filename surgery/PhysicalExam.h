@@ -139,6 +139,7 @@ public:
     void drawDistributePassiveForceSection();
     void drawRelaxPassiveForceSection();
     void drawSaveMuscleConfigSection();
+    void drawSaveSkeletonConfigSection();
     void drawAnchorManipulationSection();
     void drawRotateJointOffsetSection();
     void drawRotateAnchorPointsSection();
@@ -331,6 +332,7 @@ private:
     // Surgery Panel
     bool mShowSurgeryPanel;          // Toggle for surgery panel visibility
     char mSaveMuscleFilename[64];   // Buffer for save muscle config filename
+    char mSaveSkeletonFilename[64]; // Buffer for save skeleton config filename
     bool mSavingMuscle;              // Flag to prevent duplicate saves
 
     // Distribute Passive Force section

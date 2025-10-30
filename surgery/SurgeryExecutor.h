@@ -46,6 +46,7 @@ public:
                             const std::string& bodynode_name, double weight);
     virtual bool removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index, int bodynode_index);
     virtual void exportMuscles(const std::string& path);
+    virtual void exportSkeleton(const std::string& path);
     virtual bool rotateJointOffset(const std::string& joint_name, const Eigen::Vector3d& axis, double angle, bool preserve_position = false);
     virtual bool rotateAnchorPoints(const std::string& muscle_name, int ref_anchor_index,
                            const Eigen::Vector3d& search_direction,
@@ -72,8 +73,24 @@ public:
                                          const std::string& bodynode_name);
     dart::dynamics::Joint* getChildJoint(dart::dynamics::BodyNode* bodynode);
 
+private:
+    // Skeleton export helper functions
+    std::string formatRotationMatrix(const Eigen::Matrix3d& R);
+    std::string formatVector3d(const Eigen::Vector3d& v);
+    std::pair<std::string, Eigen::Vector3d> getShapeInfo(dart::dynamics::ShapePtr shape);
+    std::string getJointTypeString(dart::dynamics::Joint* joint);
+    std::string formatJointLimits(dart::dynamics::Joint* joint, bool isLower);
+    std::string formatJointParams(dart::dynamics::Joint* joint, const std::string& param);
+    bool validateSkeletonExport(const std::string& exported_path);
+
+    // Metadata preservation helpers
+    Eigen::VectorXd string_to_vectorXd(const char* str, int expected_size);
+    std::string formatVectorXd(const Eigen::VectorXd& vec);
+
 protected:
     Character* mCharacter;
+    std::string mOriginalSkeletonPath;  // Cached for metadata preservation
+    std::string mOriginalMusclePath;    // Cached for future reference
 };
 
 } // namespace PMuscle

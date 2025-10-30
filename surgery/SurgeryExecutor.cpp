@@ -1,8 +1,11 @@
 #include "SurgeryExecutor.h"
 #include "UriResolver.h"
 #include "Log.h"
+#include "DARTHelper.h"
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <algorithm>
 
 namespace PMuscle {
@@ -18,6 +21,10 @@ SurgeryExecutor::~SurgeryExecutor() {
 
 void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::string& muscle_path,
                                    ActuatorType actuator_type) {
+    // Cache original paths for metadata preservation
+    mOriginalSkeletonPath = skel_path;
+    mOriginalMusclePath = muscle_path;
+
     // Resolve URIs
     URIResolver& resolver = URIResolver::getInstance();
     resolver.initialize();
@@ -617,6 +624,457 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
     skel->setPositions(saved_positions);
 
     LOG_INFO("[Surgery] Successfully saved " << muscles.size() << " muscles to " << path);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Skeleton Export Helper Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::string SurgeryExecutor::formatRotationMatrix(const Eigen::Matrix3d& R) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(4);
+    oss << R(0,0) << " " << R(0,1) << " " << R(0,2) << " "
+        << R(1,0) << " " << R(1,1) << " " << R(1,2) << " "
+        << R(2,0) << " " << R(2,1) << " " << R(2,2);
+    return oss.str();
+}
+
+std::string SurgeryExecutor::formatVector3d(const Eigen::Vector3d& v) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(4);
+    oss << v[0] << " " << v[1] << " " << v[2];
+    return oss.str();
+}
+
+std::pair<std::string, Eigen::Vector3d> SurgeryExecutor::getShapeInfo(dart::dynamics::ShapePtr shape) {
+    if (auto box = std::dynamic_pointer_cast<dart::dynamics::BoxShape>(shape)) {
+        return {"Box", box->getSize()};
+    } else if (auto sphere = std::dynamic_pointer_cast<dart::dynamics::SphereShape>(shape)) {
+        double r = sphere->getRadius();
+        return {"Sphere", Eigen::Vector3d(r, r, r)};
+    } else if (auto capsule = std::dynamic_pointer_cast<dart::dynamics::CapsuleShape>(shape)) {
+        double r = capsule->getRadius();
+        double h = capsule->getHeight();
+        return {"Capsule", Eigen::Vector3d(r, h, r)};
+    } else if (auto cylinder = std::dynamic_pointer_cast<dart::dynamics::CylinderShape>(shape)) {
+        double r = cylinder->getRadius();
+        double h = cylinder->getHeight();
+        return {"Cylinder", Eigen::Vector3d(r, h, r)};
+    } else if (auto mesh = std::dynamic_pointer_cast<dart::dynamics::MeshShape>(shape)) {
+        return {"Mesh", Eigen::Vector3d(0, 0, 0)};
+    }
+    return {"Box", Eigen::Vector3d(0.1, 0.1, 0.1)};  // Default fallback
+}
+
+std::string SurgeryExecutor::getJointTypeString(dart::dynamics::Joint* joint) {
+    if (dynamic_cast<dart::dynamics::FreeJoint*>(joint)) {
+        return "Free";
+    } else if (dynamic_cast<dart::dynamics::BallJoint*>(joint)) {
+        return "Ball";
+    } else if (dynamic_cast<dart::dynamics::RevoluteJoint*>(joint)) {
+        return "Revolute";
+    } else if (dynamic_cast<dart::dynamics::PrismaticJoint*>(joint)) {
+        return "Prismatic";
+    } else if (dynamic_cast<dart::dynamics::WeldJoint*>(joint)) {
+        return "Weld";
+    }
+    return "Ball";  // Default fallback
+}
+
+std::string SurgeryExecutor::formatJointLimits(dart::dynamics::Joint* joint, bool isLower) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(4);
+
+    size_t numDofs = joint->getNumDofs();
+    for (size_t i = 0; i < numDofs; ++i) {
+        if (i > 0) oss << " ";
+        if (isLower) {
+            oss << joint->getPositionLowerLimit(i);
+        } else {
+            oss << joint->getPositionUpperLimit(i);
+        }
+    }
+    return oss.str();
+}
+
+std::string SurgeryExecutor::formatJointParams(dart::dynamics::Joint* joint, const std::string& param) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(1);
+
+    size_t numDofs = joint->getNumDofs();
+    for (size_t i = 0; i < numDofs; ++i) {
+        if (i > 0) oss << " ";
+        if (param == "kp") {
+            oss << joint->getSpringStiffness(i);
+        } else if (param == "kv") {
+            oss << joint->getDampingCoefficient(i);
+        }
+    }
+    return oss.str();
+}
+
+// Parse space-separated string to VectorXd
+Eigen::VectorXd SurgeryExecutor::string_to_vectorXd(const char* str, int expected_size) {
+    std::vector<double> values;
+    std::istringstream iss(str);
+    double val;
+    while (iss >> val) {
+        values.push_back(val);
+    }
+
+    Eigen::VectorXd result(values.size());
+    for (size_t i = 0; i < values.size(); ++i) {
+        result[i] = values[i];
+    }
+    return result;
+}
+
+// Format VectorXd to space-separated string
+std::string SurgeryExecutor::formatVectorXd(const Eigen::VectorXd& vec) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(1);
+    for (int i = 0; i < vec.size(); ++i) {
+        if (i > 0) oss << " ";
+        oss << vec[i];
+    }
+    return oss.str();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Skeleton Metadata Preservation
+// ═══════════════════════════════════════════════════════════════════════════
+
+struct SkeletonMetadata {
+    std::map<std::string, std::string> joint_bvh_mappings;     // joint_name → bvh attribute
+    std::map<std::string, std::string> node_endeffector_flags; // node_name → "True"/"False"
+    std::map<std::string, Eigen::VectorXd> joint_kp_original;  // joint_name → kp values
+    std::map<std::string, Eigen::VectorXd> joint_kv_original;  // joint_name → kv values
+    std::map<std::string, std::string> body_contact_labels;    // node_name → "On"/"Off"
+    std::map<std::string, std::string> body_obj_files;         // node_name → "Pelvis.obj"
+};
+
+static SkeletonMetadata parseOriginalSkeletonMetadata(const std::string& xml_path) {
+    SkeletonMetadata metadata;
+
+    if (xml_path.empty()) {
+        return metadata;  // Empty metadata if no path
+    }
+
+    // Resolve URI before loading
+    URIResolver& resolver = URIResolver::getInstance();
+    resolver.initialize();
+    std::string resolved_path = resolver.resolve(xml_path);
+
+    // Parse XML with TinyXML2
+    TiXmlDocument doc;
+    if (doc.LoadFile(resolved_path.c_str()) != tinyxml2::XML_SUCCESS) {
+        LOG_WARN("[Surgery] Failed to load original skeleton XML for metadata: " << resolved_path);
+        return metadata;
+    }
+
+    TiXmlElement* skeleton_elem = doc.FirstChildElement("Skeleton");
+    if (!skeleton_elem) {
+        LOG_WARN("[Surgery] No <Skeleton> element found in: " << resolved_path);
+        return metadata;
+    }
+
+    // Iterate through all <Node> elements
+    for (TiXmlElement* node = skeleton_elem->FirstChildElement("Node");
+         node;
+         node = node->NextSiblingElement("Node")) {
+
+        const char* node_name = node->Attribute("name");
+        if (!node_name) continue;
+
+        // 1. Parse endeffector flag
+        const char* endeffector = node->Attribute("endeffector");
+        if (endeffector) {
+            metadata.node_endeffector_flags[node_name] = endeffector;
+        }
+
+        // 2. Parse Body metadata
+        TiXmlElement* body = node->FirstChildElement("Body");
+        if (body) {
+            const char* contact = body->Attribute("contact");
+            if (contact) {
+                metadata.body_contact_labels[node_name] = contact;
+            }
+
+            const char* obj = body->Attribute("obj");
+            if (obj) {
+                metadata.body_obj_files[node_name] = obj;
+            }
+        }
+
+        // 3. Parse Joint metadata
+        TiXmlElement* joint = node->FirstChildElement("Joint");
+        if (joint) {
+            const char* bvh = joint->Attribute("bvh");
+            if (bvh) {
+                metadata.joint_bvh_mappings[node_name] = bvh;
+            }
+
+            const char* kp_str = joint->Attribute("kp");
+            if (kp_str) {
+                std::istringstream iss(kp_str);
+                std::vector<double> kp_vals;
+                double val;
+                while (iss >> val) {
+                    kp_vals.push_back(val);
+                }
+                Eigen::VectorXd kp_vec(kp_vals.size());
+                for (size_t i = 0; i < kp_vals.size(); ++i) {
+                    kp_vec[i] = kp_vals[i];
+                }
+                metadata.joint_kp_original[node_name] = kp_vec;
+            }
+
+            const char* kv_str = joint->Attribute("kv");
+            if (kv_str) {
+                std::istringstream iss(kv_str);
+                std::vector<double> kv_vals;
+                double val;
+                while (iss >> val) {
+                    kv_vals.push_back(val);
+                }
+                Eigen::VectorXd kv_vec(kv_vals.size());
+                for (size_t i = 0; i < kv_vals.size(); ++i) {
+                    kv_vec[i] = kv_vals[i];
+                }
+                metadata.joint_kv_original[node_name] = kv_vec;
+            }
+        }
+    }
+
+    LOG_INFO("[Surgery] Loaded metadata from original skeleton XML: "
+             << metadata.joint_bvh_mappings.size() << " BVH mappings, "
+             << metadata.node_endeffector_flags.size() << " endeffector flags, "
+             << metadata.joint_kp_original.size() << " kp/kv values");
+
+    return metadata;
+}
+
+void SurgeryExecutor::exportSkeleton(const std::string& path) {
+    if (!mCharacter) {
+        throw std::runtime_error("No character loaded");
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    if (!skel) {
+        throw std::runtime_error("No skeleton found in character");
+    }
+
+    std::ofstream ofs(path);
+    if (!ofs.is_open()) {
+        throw std::runtime_error("Failed to open file: " + path);
+    }
+
+    LOG_INFO("[Surgery] Saving skeleton configuration to: " << path);
+
+    // Save current skeleton state
+    Eigen::VectorXd saved_positions = skel->getPositions();
+
+    // Move to zero pose (all joint angles = 0)
+    Eigen::VectorXd zero_positions = Eigen::VectorXd::Zero(skel->getNumDofs());
+    skel->setPositions(zero_positions);
+
+    // Parse original XML for metadata preservation
+    SkeletonMetadata metadata = parseOriginalSkeletonMetadata(mOriginalSkeletonPath);
+
+    // Write XML header
+    ofs << "<!-- Exported skeleton configuration -->" << std::endl;
+    ofs << std::endl;
+    ofs << "<Skeleton name=\"" << skel->getName() << "\">" << std::endl;
+
+    // Iterate through all body nodes and write Node elements
+    auto bodyNodes = skel->getBodyNodes();
+    for (auto bn : bodyNodes) {
+        std::string nodeName = bn->getName();
+        auto parent = bn->getParentBodyNode();
+        std::string parentName = parent ? parent->getName() : "None";
+
+        ofs << "    <Node name=\"" << nodeName << "\" parent=\"" << parentName << "\"";
+
+        // PRESERVE: Endeffector flag from original XML
+        if (metadata.node_endeffector_flags.count(nodeName)) {
+            ofs << " endeffector=\"" << metadata.node_endeffector_flags.at(nodeName) << "\"";
+        }
+
+        ofs << " >" << std::endl;
+
+        // Body element
+        if (bn->getNumShapeNodes() > 0) {
+            auto shapeNode = bn->getShapeNode(0);
+            auto shape = shapeNode->getShape();
+            auto [shapeType, shapeSize] = getShapeInfo(shape);
+
+            double mass = bn->getMass();
+
+            // Get visual aspect for color
+            dart::dynamics::VisualAspect* visualAspect = shapeNode->getVisualAspect();
+            Eigen::Vector4d color = visualAspect ? visualAspect->getRGBA() : Eigen::Vector4d(0.6, 0.6, 1.5, 1.0);
+
+            // Get transform in zero pose
+            Eigen::Isometry3d bodyTransform = bn->getWorldTransform();
+
+            // Try to get mesh filename from properties (if stored during load)
+            std::string meshFile = "";
+            // Note: DART may not store obj filename, we'll leave empty if not available
+
+            ofs << "        <Body type=\"" << shapeType << "\" mass=\"" << mass << "\" size=\""
+                << formatVector3d(shapeSize) << "\" contact=\"";
+
+            // PRESERVE: Contact label from original XML (not DART's default)
+            std::string contact_label = "On";  // default
+            if (metadata.body_contact_labels.count(nodeName)) {
+                contact_label = metadata.body_contact_labels.at(nodeName);
+            }
+            ofs << contact_label << "\" color=\""
+                << color[0] << " " << color[1] << " " << color[2] << " " << color[3] << "\"";
+
+            // PRESERVE: obj filename from original XML
+            if (metadata.body_obj_files.count(nodeName)) {
+                ofs << " obj=\"" << metadata.body_obj_files.at(nodeName) << "\"";
+            } else if (auto meshShape = std::dynamic_pointer_cast<dart::dynamics::MeshShape>(shape)) {
+                // Fallback: try to get mesh URI from DART
+                std::string meshPath = meshShape->getMeshUri();
+                if (!meshPath.empty()) {
+                    size_t lastSlash = meshPath.find_last_of("/\\");
+                    std::string meshFilename = (lastSlash != std::string::npos) ?
+                        meshPath.substr(lastSlash + 1) : meshPath;
+                    ofs << " obj=\"" << meshFilename << "\"";
+                }
+            }
+
+            ofs << ">" << std::endl;
+
+            // Body Transformation
+            ofs << "            <Transformation linear=\""
+                << formatRotationMatrix(bodyTransform.linear())
+                << "\" translation=\""
+                << formatVector3d(bodyTransform.translation()) << " \"/>" << std::endl;
+
+            ofs << "        </Body>" << std::endl;
+        }
+
+        // Joint element
+        auto joint = bn->getParentJoint();
+        if (joint) {
+            std::string jointType = getJointTypeString(joint);
+
+            ofs << "        <Joint type=\"" << jointType << "\"";
+
+            // PRESERVE: BVH mapping from original XML
+            if (metadata.joint_bvh_mappings.count(nodeName)) {
+                ofs << " bvh=\"" << metadata.joint_bvh_mappings.at(nodeName) << "\"";
+            }
+
+            // Add axis for Revolute/Prismatic joints
+            if (auto revJoint = dynamic_cast<dart::dynamics::RevoluteJoint*>(joint)) {
+                Eigen::Vector3d axis = revJoint->getAxis();
+                ofs << " axis =\"" << formatVector3d(axis) << "\"";
+            } else if (auto prisJoint = dynamic_cast<dart::dynamics::PrismaticJoint*>(joint)) {
+                Eigen::Vector3d axis = prisJoint->getAxis();
+                ofs << " axis =\"" << formatVector3d(axis) << "\"";
+            }
+
+            // Add joint limits for non-Free joints
+            if (jointType != "Free" && joint->getNumDofs() > 0) {
+                ofs << " lower=\"" << formatJointLimits(joint, true) << "\"";
+                ofs << " upper=\"" << formatJointLimits(joint, false) << "\"";
+
+                // PRESERVE: Original kp/kv from XML (not DART's 0.0/5.0 defaults)
+                if (metadata.joint_kp_original.count(nodeName)) {
+                    ofs << " kp=\"" << formatVectorXd(metadata.joint_kp_original.at(nodeName)) << "\"";
+                } else {
+                    ofs << " kp=\"" << formatJointParams(joint, "kp") << "\"";
+                }
+
+                if (metadata.joint_kv_original.count(nodeName)) {
+                    ofs << " kv=\"" << formatVectorXd(metadata.joint_kv_original.at(nodeName)) << "\"";
+                } else {
+                    ofs << " kv=\"" << formatJointParams(joint, "kv") << "\"";
+                }
+            }
+
+            ofs << ">" << std::endl;
+
+            // Joint Transformation
+            Eigen::Isometry3d jointTransform = joint->getTransformFromParentBodyNode();
+            ofs << "            <Transformation linear=\""
+                << formatRotationMatrix(jointTransform.linear())
+                << "\" translation=\""
+                << formatVector3d(jointTransform.translation()) << "\"/>" << std::endl;
+
+            ofs << "        </Joint>" << std::endl;
+        }
+
+        ofs << "    </Node>" << std::endl;
+    }
+
+    ofs << "</Skeleton>" << std::endl;
+    ofs << std::endl;
+
+    ofs.close();
+
+    // Restore original skeleton state
+    skel->setPositions(saved_positions);
+
+    LOG_INFO("[Surgery] Successfully saved skeleton with " << bodyNodes.size() << " nodes to " << path);
+
+    // Run automated validation
+    if (!validateSkeletonExport(path)) {
+        LOG_WARN("[Surgery] Skeleton export validation failed - please check the exported file");
+    }
+}
+
+bool SurgeryExecutor::validateSkeletonExport(const std::string& exported_path) {
+    LOG_INFO("[Surgery] Validating skeleton export: " << exported_path);
+
+    // Check if file exists and is readable
+    std::ifstream ifs(exported_path);
+    if (!ifs.is_open()) {
+        LOG_ERROR("[Surgery] Validation failed: Cannot open exported file");
+        return false;
+    }
+
+    // Read entire file content
+    std::string line;
+    std::string content;
+    while (std::getline(ifs, line)) {
+        content += line + "\n";
+    }
+    ifs.close();
+
+    // Basic structural checks
+    if (content.find("<Skeleton") == std::string::npos) {
+        LOG_ERROR("[Surgery] Validation failed: Missing <Skeleton> tag");
+        return false;
+    }
+
+    if (content.find("</Skeleton>") == std::string::npos) {
+        LOG_ERROR("[Surgery] Validation failed: Missing </Skeleton> closing tag");
+        return false;
+    }
+
+    // Count Node elements
+    size_t nodeCount = 0;
+    size_t pos = 0;
+    while ((pos = content.find("<Node", pos)) != std::string::npos) {
+        nodeCount++;
+        pos++;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    size_t expectedNodes = skel->getBodyNodes().size();
+
+    if (nodeCount != expectedNodes) {
+        LOG_WARN("[Surgery] Node count mismatch: expected " << expectedNodes << ", found " << nodeCount);
+        return false;
+    }
+
+    LOG_INFO("[Surgery] Validation passed: " << nodeCount << " nodes found");
+    return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

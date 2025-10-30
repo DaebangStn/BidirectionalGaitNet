@@ -1,0 +1,5 @@
+version: 1.0
+description: Test skeleton export - load base skeleton and export to verify round-trip consistency
+operations:
+  - type: export_skeleton
+    filepath: data/skeleton/test_exported.xml

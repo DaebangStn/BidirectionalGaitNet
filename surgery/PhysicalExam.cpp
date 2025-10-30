@@ -108,6 +108,9 @@ PhysicalExam::PhysicalExam(int width, int height)
     std::strncpy(mSaveMuscleFilename, "data/muscle_modified.xml", sizeof(mSaveMuscleFilename));
     mSaveMuscleFilename[sizeof(mSaveMuscleFilename) - 1] = '\0';
 
+    std::strncpy(mSaveSkeletonFilename, "data/skeleton/modified.xml", sizeof(mSaveSkeletonFilename));
+    mSaveSkeletonFilename[sizeof(mSaveSkeletonFilename) - 1] = '\0';
+
     // Initialize surgery section filter buffers
     mDistributeFilterBuffer[0] = '\0';
     mRelaxFilterBuffer[0] = '\0';
@@ -1240,6 +1243,12 @@ void PhysicalExam::drawSurgeryPanel() {
     }
     ImGui::Spacing();
 
+    // 9. Save Skeleton Config (CollapsingHeader)
+    if (ImGui::CollapsingHeader("Save Skeleton Config", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawSaveSkeletonConfigSection();
+    }
+    ImGui::Spacing();
+
     ImGui::End();
 }
 
@@ -1660,6 +1669,48 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
         ImGui::SetTooltip("Save muscle properties to the specified XML file");
     }
     
+    ImGui::Unindent();
+}
+
+void PhysicalExam::drawSaveSkeletonConfigSection() {
+    ImGui::Indent();
+
+    ImGui::TextWrapped("Save current skeleton configuration to an XML file.");
+    ImGui::Spacing();
+
+    // Text input for filename
+    ImGui::Text("Output Filename:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##save_skeleton_filename", mSaveSkeletonFilename, sizeof(mSaveSkeletonFilename));
+
+    ImGui::Spacing();
+
+    // Save button (with debounce to prevent duplicate saves on double-click)
+    if (ImGui::Button("Save Skeleton to File", ImVec2(-1, 30))) {
+        if (mCharacter) {
+            try {
+                exportSkeleton(mSaveSkeletonFilename);
+
+                // Record operation if recording
+                if (mRecordingSurgery) {
+                    auto op = std::make_unique<ExportSkeletonOp>(
+                        std::string(mSaveSkeletonFilename));
+                    recordOperation(std::move(op));
+                }
+
+                LOG_INFO("[Surgery] Skeleton configuration saved successfully");
+            } catch (const std::exception& e) {
+                LOG_ERROR("[Surgery] Error saving skeleton configuration: " << e.what());
+            }
+        } else {
+            LOG_ERROR("[Surgery] Error: No character loaded!");
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Save skeleton properties (masses, sizes, transforms, joint parameters) to the specified XML file");
+    }
+
     ImGui::Unindent();
 }
 
@@ -2312,10 +2363,6 @@ void PhysicalExam::drawRotateJointOffsetSection() {
         ImGui::EndCombo();
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
     // Rotation axis input
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Rotation Axis (in parent frame):");
     ImGui::SameLine();
@@ -2332,16 +2379,14 @@ void PhysicalExam::drawRotateJointOffsetSection() {
     if (ImGui::RadioButton("Z##RotJoint", mRotateJointAxis[0] == 0.0f && mRotateJointAxis[1] == 0.0f && mRotateJointAxis[2] == 1.0f)) {
         mRotateJointAxis[0] = 0.0f; mRotateJointAxis[1] = 0.0f; mRotateJointAxis[2] = 1.0f;
     }
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Preserve Position##RotJointPreservePositionCheckbox", &mRotateJointPreservePosition);
-    ImGui::Spacing();
-
+    
     // Angle input (degrees and radians)
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Angle:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
+    ImGui::SetNextItemWidth(150);
     ImGui::InputFloat("degrees##RotJoint", &mRotateJointAngleDeg, 1.0f, 10.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::Checkbox("Preserve Position##RotJointPreservePositionCheckbox", &mRotateJointPreservePosition);
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -2413,13 +2458,15 @@ void PhysicalExam::drawRotateAnchorPointsSection() {
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Reference Muscle:");
 
     // Search filter
-    ImGui::SetNextItemWidth(-1);
+    ImGui::SetNextItemWidth(200);
     ImGui::InputTextWithHint("##RotateAnchorMuscleFilter", "Search muscles...",
                             mRotateAnchorMuscleFilterBuffer, sizeof(mRotateAnchorMuscleFilterBuffer));
 
     // Convert filter to lowercase for case-insensitive search
     std::string filter_lower(mRotateAnchorMuscleFilterBuffer);
     std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
 
     // Build filtered muscle list
     std::vector<std::string> filteredMuscles;
@@ -2513,10 +2560,6 @@ void PhysicalExam::drawRotateAnchorPointsSection() {
             }
         }
     }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 
     // Search direction input
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Search Direction (filter criterion):");
@@ -2811,16 +2854,10 @@ void PhysicalExam::drawFDOCombinedSection() {
     ImGui::Spacing();
 
     // Angle input
-    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Rotation Angle:");
+    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Angle:");
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(150);
     ImGui::InputFloat("degrees##FDORotAnchor", &mRotateAnchorAngleDeg, 1.0f, 10.0f, "%.2f");
-    ImGui::SameLine();
-    float angle_rad = mRotateAnchorAngleDeg * M_PI / 180.0f;
-    ImGui::Text("= %.4f rad", angle_rad);
-
-    // Angle slider
-    ImGui::SetNextItemWidth(-1);
-    ImGui::SliderFloat("##FDORotAnchorAngleSlider", &mRotateAnchorAngleDeg, -180.0f, 180.0f, "%.1f°");
 
     ImGui::Spacing();
     ImGui::Separator();

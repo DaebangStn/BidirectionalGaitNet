@@ -38,7 +38,8 @@ void printUsage(const char* programName) {
 
 bool hasExportOperation(const std::vector<std::unique_ptr<PMuscle::SurgeryOperation>>& ops) {
     for (const auto& op : ops) {
-        if (op->getType() == "export_muscles") {
+        std::string type = op->getType();
+        if (type == "export_muscles" || type == "export_skeleton") {
             return true;
         }
     }
@@ -132,14 +133,6 @@ int main(int argc, char** argv) {
 
         LOG_INFO("Loaded " << operations.size() << " operation(s)");
         LOG_INFO("");
-
-        // Check for export operation
-        if (!hasExportOperation(operations)) {
-            LOG_WARN("WARNING: No export operation found in script!");
-            LOG_WARN("         Muscles will be modified but not saved.");
-            LOG_WARN("         Add an 'export_muscles' operation to save results.");
-            LOG_INFO("");
-        }
 
         // Execute operations
         LOG_INFO("==============================================================================");

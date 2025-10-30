@@ -384,6 +384,36 @@ std::unique_ptr<SurgeryOperation> ExportMusclesOp::fromYAML(const YAML::Node& no
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ExportSkeletonOp Implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool ExportSkeletonOp::execute(SurgeryExecutor* executor) {
+    try {
+        executor->exportSkeleton(mFilepath);
+        return true;
+    } catch (const std::exception& e) {
+        LOG_ERROR("[Surgery] Skeleton export failed: " << e.what());
+        return false;
+    }
+}
+
+YAML::Node ExportSkeletonOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "export_skeleton";
+    node["filepath"] = mFilepath;
+    return node;
+}
+
+std::string ExportSkeletonOp::getDescription() const {
+    return "Export skeleton to '" + mFilepath + "'";
+}
+
+std::unique_ptr<SurgeryOperation> ExportSkeletonOp::fromYAML(const YAML::Node& node) {
+    std::string filepath = node["filepath"].as<std::string>();
+    return std::make_unique<ExportSkeletonOp>(filepath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RotateJointOffsetOp Implementation
 // ═══════════════════════════════════════════════════════════════════════════
 

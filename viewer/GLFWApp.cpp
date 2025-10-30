@@ -2157,16 +2157,14 @@ void GLFWApp::drawSimVisualizationPanel()
     // Kinematics
     if (ImGui::CollapsingHeader("Kinematics", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        static bool show_major_joints = true;
-        static bool show_minor_joints = false;
-        static bool show_pelvis_joints = false;
-        ImGui::Checkbox("Major##MajorJointsCheckbox", &show_major_joints);
+        static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis
+        ImGui::RadioButton("Major##MajorJointsRadio", &angle_selection, 0);
         ImGui::SameLine();
-        ImGui::Checkbox("Minor##MinorJointsCheckbox", &show_minor_joints);
+        ImGui::RadioButton("Minor##MinorJointsRadio", &angle_selection, 1);
         ImGui::SameLine();
-        ImGui::Checkbox("Pelvis##PelvisJointsCheckbox", &show_pelvis_joints);
+        ImGui::RadioButton("Pelvis##PelvisJointsRadio", &angle_selection, 2);
 
-        if (show_major_joints) {
+        if (angle_selection == 0) { // Major joints
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(0, -1.5, 0);
             ImPlot::SetNextAxisLimits(3, -45, 60);
@@ -2188,7 +2186,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImGui::Separator();
         }
 
-        if (show_minor_joints) {
+        if (angle_selection == 1) { // Minor joints
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(0, -1.5, 0);
             ImPlot::SetNextAxisLimits(3, -10, 15);
@@ -2210,7 +2208,7 @@ void GLFWApp::drawSimVisualizationPanel()
             }
             ImGui::Separator();
         }
-        if (show_pelvis_joints) {
+        if (angle_selection == 2) { // Pelvis joints
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(0, -1.5, 0);
             ImPlot::SetNextAxisLimits(3, -20, 20);

@@ -214,6 +214,23 @@ private:
     std::string mFilepath;
 };
 
+// Export skeleton to file
+class ExportSkeletonOp : public SurgeryOperation {
+public:
+    ExportSkeletonOp(const std::string& filepath)
+        : mFilepath(filepath) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "export_skeleton"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::string mFilepath;
+};
+
 // Rotate joint offset and frame (FDO operation part 1)
 class RotateJointOffsetOp : public SurgeryOperation {
 public:

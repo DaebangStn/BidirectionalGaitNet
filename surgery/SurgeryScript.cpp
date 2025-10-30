@@ -128,6 +128,8 @@ std::unique_ptr<SurgeryOperation> SurgeryScript::createOperation(const YAML::Nod
         return RemoveBodyNodeFromAnchorOp::fromYAML(node);
     } else if (type == "export_muscles") {
         return ExportMusclesOp::fromYAML(node);
+    } else if (type == "export_skeleton") {
+        return ExportSkeletonOp::fromYAML(node);
     } else if (type == "rotate_joint_offset") {
         return RotateJointOffsetOp::fromYAML(node);
     } else if (type == "rotate_anchor_points") {
