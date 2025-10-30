@@ -656,17 +656,37 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
 
     LOG_INFO("[Surgery] Saving muscle configuration to YAML: " << path);
 
-    // Sort muscles alphabetically by name
+    // Sort muscles by L/R pairs (maintain symmetry structure for Character loading)
+    // Expected format: L_muscle1, R_muscle1, L_muscle2, R_muscle2, ...
     std::vector<Muscle*> sorted_muscles = muscles;
     std::sort(sorted_muscles.begin(), sorted_muscles.end(),
-              [](Muscle* a, Muscle* b) { return a->name < b->name; });
+              [](Muscle* a, Muscle* b) {
+                  // Extract base name (without L_/R_ prefix)
+                  auto get_base = [](const std::string& name) -> std::string {
+                      if (name.length() > 2 && (name[0] == 'L' || name[0] == 'R') && name[1] == '_') {
+                          return name.substr(2);
+                      }
+                      return name;
+                  };
+
+                  std::string base_a = get_base(a->name);
+                  std::string base_b = get_base(b->name);
+
+                  // First sort by base name
+                  if (base_a != base_b) {
+                      return base_a < base_b;
+                  }
+
+                  // Then L before R for same base name
+                  return a->name < b->name;
+              });
 
     // Calculate max body node name length for visual alignment
     size_t max_body_len = 0;
     for (auto m : sorted_muscles) {
         for (auto anchor : m->GetAnchors()) {
-            if (!anchor->bodynodes.empty()) {
-                size_t len = anchor->bodynodes[0]->getName().length();
+            for (size_t i = 0; i < anchor->bodynodes.size(); ++i) {
+                size_t len = anchor->bodynodes[i]->getName().length();
                 if (len > max_body_len) max_body_len = len;
             }
         }
@@ -675,40 +695,65 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
     // Write YAML header
     mfs << "muscles:" << std::endl;
 
-    // Write each muscle with compact formatting
+    // Write each muscle with compact flow-style formatting
     for (auto m : sorted_muscles) {
         std::string name = m->name;
         double f0 = m->f0;
         double lm = m->lm_opt;
         double lt = m->lt_rel;
 
-        // Muscle properties (single line, 2 decimals)
+        // Start muscle entry with properties
         mfs << "  - {name: " << name
             << ", f0: " << std::fixed << std::setprecision(2) << f0
             << ", lm: " << std::fixed << std::setprecision(2) << lm
-            << ", lt: " << std::fixed << std::setprecision(2) << lt
-            << "}" << std::endl;
+            << ", lt: " << std::fixed << std::setprecision(2) << lt << "," << std::endl;
 
-        // Waypoints header
-        mfs << "    waypoints:" << std::endl;
+        // Waypoints array (flow style)
+        mfs << "     waypoints: [" << std::endl;
 
-        // Write each waypoint (single line, 4 decimals)
+        // Write each anchor as nested array
+        bool first_anchor = true;
         for (auto anchor : m->GetAnchors()) {
             if (anchor->bodynodes.empty()) continue;
 
-            auto body_node = anchor->bodynodes[0];
-            std::string body_name = body_node->getName();
+            if (!first_anchor) mfs << "," << std::endl;
+            first_anchor = false;
 
-            // Use LOCAL position (pose-independent)
-            Eigen::Vector3d local_pos = anchor->local_positions[0];
+            // Start anchor array
+            mfs << "       [";
 
-            // Format waypoint with padding for visual alignment
-            mfs << "      - {body: " << std::left << std::setw(max_body_len) << body_name
-                << ", p: [" << std::fixed << std::setprecision(6)
-                << local_pos[0] << ", "
-                << local_pos[1] << ", "
-                << local_pos[2] << "]}" << std::endl;
+            // Export ALL bodynodes in this anchor (multi-LBS support)
+            for (size_t i = 0; i < anchor->bodynodes.size(); ++i) {
+                auto body_node = anchor->bodynodes[i];
+                std::string body_name = body_node->getName();
+                Eigen::Vector3d local_pos = anchor->local_positions[i];
+                double weight = anchor->weights[i];
+
+                if (i > 0) mfs << ", ";
+
+                // Format body entry in flow style with padded body name
+                mfs << "{body: " << std::left << std::setw(max_body_len) << body_name << ", p: [";
+
+                // Format coordinates with 5 decimals and sign alignment
+                for (int j = 0; j < 3; ++j) {
+                    if (j > 0) mfs << ", ";
+                    // Add leading space for positive numbers for alignment
+                    if (local_pos[j] >= 0.0) {
+                        mfs << " " << std::fixed << std::setprecision(5) << local_pos[j];
+                    } else {
+                        mfs << std::fixed << std::setprecision(5) << local_pos[j];
+                    }
+                }
+
+                mfs << "], w: " << std::fixed << std::setprecision(4) << weight << "}";
+            }
+
+            // Close anchor array
+            mfs << "]";
         }
+
+        // Close waypoints array and muscle entry
+        mfs << std::endl << "     ]}" << std::endl;
     }
 
     mfs.close();

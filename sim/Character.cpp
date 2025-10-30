@@ -2,6 +2,7 @@
 #include "UriResolver.h"
 #include "../viewer/Log.h"
 #include <limits>
+#include <yaml-cpp/yaml.h>
 
 static std::map<std::string, int> skeletonAxis = {
     {"Pelvis", 1},
@@ -554,8 +555,6 @@ Eigen::VectorXd Character::heightCalibration(dart::simulation::WorldPtr _world)
 // Muscle
 void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbsWeight)
 {
-    TiXmlDocument doc;
-    
     // If path is empty, use default
     if (path.empty()) {
         LOG_ERROR("[Character] No muscle path provided");
@@ -563,6 +562,22 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
     }
 
     LOG_VERBOSE("[Character] Using Muscle Path: " << path);
+
+    // Detect format from file extension
+    size_t len = path.length();
+    bool is_yaml = (len >= 5 && path.substr(len - 5) == ".yaml") ||
+                   (len >= 4 && path.substr(len - 4) == ".yml");
+
+    if (is_yaml) {
+        setMusclesYAML(path, useVelocityForce);
+    } else {
+        setMusclesXML(path, useVelocityForce, meshLbsWeight);
+    }
+}
+
+void Character::setMusclesXML(std::string path, bool useVelocityForce, bool meshLbsWeight)
+{
+    TiXmlDocument doc;
     
     if (doc.LoadFile(path.c_str())) {
         LOG_ERROR("[Character] Failed to load muscle file: " << path);
@@ -664,6 +679,146 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
     mMuscleNameCache.clear();
     for (auto muscle : mMuscles) {
         mMuscleNameCache[muscle->name] = muscle;
+    }
+}
+
+void Character::setMusclesYAML(std::string path, bool useVelocityForce)
+{
+    try {
+        YAML::Node config = YAML::LoadFile(path);
+        YAML::Node muscles_node = config["muscles"];
+
+        if (!muscles_node) {
+            LOG_ERROR("[Character] No 'muscles' key found in YAML file: " << path);
+            exit(-1);
+        }
+
+        for (auto muscle_node : muscles_node) {
+            // Parse muscle properties
+            std::string name = muscle_node["name"].as<std::string>();
+            double f0 = muscle_node["f0"].as<double>();
+            double lm = muscle_node["lm"].as<double>();
+            double lt = muscle_node["lt"].as<double>();
+
+            // Use defaults for optional fields
+            double pen_angle = 0.0;
+            double type1_fraction = 0.5;
+
+            // Create muscle objects (for both skeleton and reference)
+            Muscle *muscle_elem = new Muscle(name, f0, lm, lt, pen_angle, type1_fraction, useVelocityForce);
+            Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt, pen_angle, type1_fraction, useVelocityForce);
+
+            bool isValid = true;
+
+            // Parse waypoints (anchors) - nested list structure
+            YAML::Node waypoints_node = muscle_node["waypoints"];
+            if (!waypoints_node) {
+                LOG_WARN("[Character] No waypoints found for muscle: " << name);
+                delete muscle_elem;
+                delete refmuscle_elem;
+                continue;
+            }
+
+            for (auto anchor_node : waypoints_node) {
+                std::vector<dart::dynamics::BodyNode*> bodynodes;
+                std::vector<Eigen::Vector3d> local_positions;
+                std::vector<double> weights;
+
+                std::vector<dart::dynamics::BodyNode*> ref_bodynodes;
+                std::vector<Eigen::Vector3d> ref_local_positions;
+                std::vector<double> ref_weights;
+
+                // Parse all bodies in this anchor (multi-LBS support)
+                for (auto body_node : anchor_node) {
+                    std::string body_name = body_node["body"].as<std::string>();
+
+                    // Get body node from skeleton
+                    auto body = mSkeleton->getBodyNode(body_name);
+                    auto ref_body = mRefSkeleton->getBodyNode(body_name);
+
+                    if (body == nullptr) {
+                        LOG_ERROR("[Character] Body node not found: " << body_name << " for muscle: " << name);
+                        isValid = false;
+                        break;
+                    }
+
+                    // Read pre-computed local position
+                    auto p_list = body_node["p"];
+                    Eigen::Vector3d local_pos(
+                        p_list[0].as<double>(),
+                        p_list[1].as<double>(),
+                        p_list[2].as<double>()
+                    );
+
+                    // Read pre-computed LBS weight
+                    double weight = body_node["w"].as<double>();
+
+                    // Add to vectors
+                    bodynodes.push_back(body);
+                    local_positions.push_back(local_pos);
+                    weights.push_back(weight);
+
+                    ref_bodynodes.push_back(ref_body);
+                    ref_local_positions.push_back(local_pos);
+                    ref_weights.push_back(weight);
+                }
+
+                if (!isValid) break;
+
+                // Create anchor directly (skip AddAnchor computation!)
+                muscle_elem->mAnchors.push_back(new Anchor(bodynodes, local_positions, weights));
+                refmuscle_elem->mAnchors.push_back(new Anchor(ref_bodynodes, ref_local_positions, ref_weights));
+            }
+
+            if (isValid) {
+                muscle_elem->SetMuscle();
+                if (muscle_elem->GetNumRelatedDofs() > 0) {
+                    mMuscles.push_back(muscle_elem);
+                    refmuscle_elem->SetMuscle();
+                    mRefMuscles.push_back(refmuscle_elem);
+                } else {
+                    delete muscle_elem;
+                    delete refmuscle_elem;
+                }
+            } else {
+                delete muscle_elem;
+                delete refmuscle_elem;
+            }
+        }
+
+        // Attach Symmetry pattern (same as XML loading)
+        for (int i = 0; i < mMuscles.size(); i += 2) {
+            for (int idx = 0; idx < mMuscles[i]->GetAnchors().size(); idx++) {
+                for (int b_idx = 0; b_idx < mMuscles[i]->GetAnchors()[idx]->num_related_bodies; b_idx++) {
+                    mMuscles[i]->GetAnchors()[idx]->weights[b_idx] = mMuscles[i + 1]->GetAnchors()[idx]->weights[b_idx];
+                    mRefMuscles[i]->GetAnchors()[idx]->weights[b_idx] = mRefMuscles[i + 1]->GetAnchors()[idx]->weights[b_idx];
+                    auto name = mMuscles[i]->GetAnchors()[idx]->bodynodes[b_idx]->getName();
+                    if (mMuscles[i + 1]->GetAnchors()[idx]->bodynodes[b_idx]->getName().substr(0, name.length() - 1) != name.substr(0, name.length() - 1)) {
+                        LOG_ERROR("[Character] Body Node Setting Calibrate: " << mMuscles[i]->name << " " << mMuscles[i + 1]->name);
+                        exit(-1);
+                    }
+                }
+            }
+        }
+
+        for (auto m : mMuscles) mNumMuscleRelatedDof += m->num_related_dofs;
+
+        mActivations = Eigen::VectorXd::Zero(mMuscles.size());
+
+        // Build muscle name cache for fast lookup
+        mMuscleNameCache.clear();
+        for (auto muscle : mMuscles) {
+            mMuscleNameCache[muscle->name] = muscle;
+        }
+
+        LOG_INFO("[Character] Loaded " << mMuscles.size() << " muscles from YAML: " << path);
+
+    } catch (const YAML::Exception& e) {
+        LOG_ERROR("[Character] YAML parsing error: " << e.what());
+        exit(-1);
+    } catch (const std::exception& e) {
+        LOG_ERROR("[Character] Error loading YAML muscle file: " << e.what());
+        exit(-1);
     }
 }
 
