@@ -565,7 +565,7 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
     LOG_VERBOSE("[Character] Using Muscle Path: " << path);
     
     if (doc.LoadFile(path.c_str())) {
-        std::cerr << "Failed to load muscle file: " << path << std::endl;
+        LOG_ERROR("[Character] Failed to load muscle file: " << path);
         exit(-1);
     }
     
@@ -650,7 +650,7 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
                 auto name = mMuscles[i]->GetAnchors()[idx]->bodynodes[b_idx]->getName();
                 if (mMuscles[i + 1]->GetAnchors()[idx]->bodynodes[b_idx]->getName().substr(0, name.length() - 1) != name.substr(0, name.length() - 1))
                 {
-                    std::cout << "[DEBUG] Body Node Setting Calibrate : " << mMuscles[i]->name << " " << mMuscles[i + 1]->name << std::endl;
+                    LOG_ERROR("[Character] Body Node Setting Calibrate: " << mMuscles[i]->name << " " << mMuscles[i + 1]->name);
                     exit(-1);
                 }
             }
@@ -786,7 +786,7 @@ MuscleTuple Character::getMuscleTuple(bool isMirror)
 {
     if (mMuscles.size() == 0)
     {
-        std::cout << "Character::getMuscleTuple()\tNo Muscles" << std::endl;
+        LOG_ERROR("[Character] getMuscleTuple() called with no muscles");
         exit(-1);
     }
     MuscleTuple mt;
@@ -853,7 +853,7 @@ MuscleTuple Character::getMuscleTuple(bool isMirror)
 
     if (mTorqueClipping)
     {
-        std::cout << "Torque Clipping is Deprecated" << std::endl;
+        LOG_ERROR("[Character] Torque Clipping is deprecated");
         exit(-1);
         // Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(mSkeleton->getNumDofs() - mSkeleton->getRootJoint()->getNumDofs());
         // Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(mSkeleton->getNumDofs() - mSkeleton->getRootJoint()->getNumDofs());
@@ -924,7 +924,7 @@ Character::interpolatePose(const Eigen::VectorXd& pose1,
     if (t <= 0.000001) return pose1;
     if (t >= 0.999999) return pose2;
     if (t < 0 || t > 1) {
-        std::cerr << "[interpolatePose] Warning: t is out of range: " << t << std::endl;
+        LOG_WARN("[Character] interpolatePose: t is out of range: " << t);
         exit(-1);
     }
     Eigen::VectorXd interpolated = Eigen::VectorXd::Zero(pose1.rows());
@@ -1318,10 +1318,10 @@ double Character::getSkelParamValue(std::string skel_name)
                     return std::get<1>(s_i).value[1] / mGlobalRatio;
             }
     }
-    LOG_ERROR("Skeleton parameter '" << skel_name << "' not found in skeleton definition.");
-    LOG_ERROR("Available skeleton bones:");
+    LOG_ERROR("[Character] Skeleton parameter '" << skel_name << "' not found in skeleton definition.");
+    LOG_ERROR("[Character] Available skeleton bones:");
     for (auto s_i : mSkelInfos)
-        LOG_ERROR("  - " << std::get<0>(s_i));
+        LOG_ERROR("[Character]   - " << std::get<0>(s_i));
     exit(-1);
     return -1;
 }
@@ -1388,9 +1388,9 @@ Eigen::VectorXd Character::sixDofToPos(Eigen::VectorXd raw_pos)
         int idx = jn->getIndexInSkeleton(0);
         if (jn->getNumDofs() == 1) {
             if (p_idx >= raw_pos.size()) {
-                std::cerr << "[sixDofToPos] ERROR: Trying to read index " << p_idx
+                LOG_WARN("[Character] sixDofToPos: Trying to read index " << p_idx
                           << " from vector of size " << raw_pos.size()
-                          << " for joint " << jn->getName() << std::endl;
+                          << " for joint " << jn->getName());
                 return pos;
             }
             pos[idx] = raw_pos[p_idx++];
@@ -1399,9 +1399,9 @@ Eigen::VectorXd Character::sixDofToPos(Eigen::VectorXd raw_pos)
         {
             // convert 6d-rotation to angle axis rotation
             if (p_idx + 6 > raw_pos.size()) {
-                std::cerr << "[sixDofToPos] ERROR: Trying to read 6 values starting at index " << p_idx
+                LOG_WARN("[Character] sixDofToPos: Trying to read 6 values starting at index " << p_idx
                           << " from vector of size " << raw_pos.size()
-                          << " for 3-DOF joint " << jn->getName() << std::endl;
+                          << " for 3-DOF joint " << jn->getName());
                 return pos;
             }
             Eigen::Matrix3d r = Eigen::Matrix3d::Identity();
@@ -1423,9 +1423,9 @@ Eigen::VectorXd Character::sixDofToPos(Eigen::VectorXd raw_pos)
         else if (jn->getNumDofs() == 6)
         {
             if (p_idx + 9 > raw_pos.size()) {
-                std::cerr << "[sixDofToPos] ERROR: Trying to read 9 values starting at index " << p_idx
+                LOG_WARN("[Character] sixDofToPos: Trying to read 9 values starting at index " << p_idx
                           << " from vector of size " << raw_pos.size()
-                          << " for 6-DOF joint " << jn->getName() << std::endl;
+                          << " for 6-DOF joint " << jn->getName());
                 return pos;
             }
             Eigen::Matrix3d r = Eigen::Matrix3d::Identity();
