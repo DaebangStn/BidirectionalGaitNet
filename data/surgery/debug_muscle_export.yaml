@@ -1,0 +1,11 @@
+version: 1.0
+description: Debug muscle export - set supine pose, reset muscles, then export
+operations:
+  - type: apply_pose_preset
+    preset: supine
+
+  - type: reset_muscles
+    muscle_path: "@data/muscle/distribute_lower_only.xml"
+
+  - type: export_muscles
+    filepath: data/muscle/test_exported_debug.yaml

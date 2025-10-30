@@ -30,7 +30,8 @@ public:
     
     // Pose preset application
     void applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles);
-    
+    bool applyPosePresetByName(const std::string& preset_name);
+
     // Surgery operations (virtual to allow GUI-specific overrides)
     virtual void resetMuscles(const std::string& muscle_xml_path = "");
     virtual bool distributePassiveForce(const std::vector<std::string>& muscles, 

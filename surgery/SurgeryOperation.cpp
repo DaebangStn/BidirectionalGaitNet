@@ -595,5 +595,29 @@ std::unique_ptr<SurgeryOperation> WeakenMuscleOp::fromYAML(const YAML::Node& nod
     return std::make_unique<WeakenMuscleOp>(muscles, strength_ratio);
 }
 
+// ============================================================================
+// ApplyPosePresetOp
+// ============================================================================
+
+bool ApplyPosePresetOp::execute(SurgeryExecutor* executor) {
+    return executor->applyPosePresetByName(mPresetName);
+}
+
+YAML::Node ApplyPosePresetOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "apply_pose_preset";
+    node["preset"] = mPresetName;
+    return node;
+}
+
+std::string ApplyPosePresetOp::getDescription() const {
+    return "Apply pose preset: '" + mPresetName + "'";
+}
+
+std::unique_ptr<SurgeryOperation> ApplyPosePresetOp::fromYAML(const YAML::Node& node) {
+    std::string preset_name = node["preset"].as<std::string>();
+    return std::make_unique<ApplyPosePresetOp>(preset_name);
+}
+
 } // namespace PMuscle
 

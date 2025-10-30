@@ -138,6 +138,8 @@ std::unique_ptr<SurgeryOperation> SurgeryScript::createOperation(const YAML::Nod
         return FDOCombinedOp::fromYAML(node);
     } else if (type == "weaken_muscle") {
         return WeakenMuscleOp::fromYAML(node);
+    } else if (type == "apply_pose_preset") {
+        return ApplyPosePresetOp::fromYAML(node);
     } else {
         LOG_ERROR("[SurgeryScript] Unknown operation type: " << type);
         return nullptr;

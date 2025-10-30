@@ -319,5 +319,22 @@ private:
     double mStrengthRatio;  // 0.0 to 1.0, where 1.0 = full strength, 0.0 = paralyzed
 };
 
+// Apply pose preset to skeleton
+class ApplyPosePresetOp : public SurgeryOperation {
+public:
+    ApplyPosePresetOp(const std::string& preset_name)
+        : mPresetName(preset_name) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "apply_pose_preset"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::string mPresetName;  // "supine", "standing", "prone", etc.
+};
+
 } // namespace PMuscle
 

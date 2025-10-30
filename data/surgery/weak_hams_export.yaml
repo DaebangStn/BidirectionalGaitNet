@@ -1,0 +1,20 @@
+version: 1.0
+description: Weaken abductor muscles to 50% strength and export to file
+operations:
+  - type: weaken_muscle
+    muscles:
+      - L_Bicep_Femoris_Longus
+      - R_Bicep_Femoris_Longus
+      - L_Bicep_Femoris_Short
+      - R_Bicep_Femoris_Short
+      - L_Bicep_Femoris_Short1
+      - R_Bicep_Femoris_Short1
+      - L_Semimembranosus
+      - R_Semimembranosus
+      - L_Semimembranosus1
+      - R_Semimembranosus1
+      - L_Semitendinosus
+      - R_Semitendinosus
+    strength_ratio: 4.0
+  - type: export_muscles
+    filepath: data/muscle/hams4.xml

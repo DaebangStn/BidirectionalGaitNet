@@ -7,7 +7,7 @@
 #include "Log.h"
 
 // Default values
-const std::string DEFAULT_SKELETON = "@data/skeleton/gaitnet_narrow_model.xml";
+const std::string DEFAULT_SKELETON = "@data/skeleton/base.xml";
 const std::string DEFAULT_MUSCLE = "@data/muscle/distribute_lower_only.xml";
 const std::string DEFAULT_SCRIPT = "@data/recorded_surgery.yaml";
 
@@ -31,8 +31,8 @@ void printUsage(const char* programName) {
     std::cout << "  " << programName << " --script data/my_surgery.yaml" << std::endl;
     LOG_INFO("");
     std::cout << "  # Specify all parameters" << std::endl;
-    std::cout << "  " << programName << " --skeleton data/skeleton_gaitnet_narrow_model.xml \\" << std::endl;
-    std::cout << "                     --muscle data/muscle_gaitnet.xml \\" << std::endl;
+    std::cout << "  " << programName << " --skeleton data/skeleton/base.xml \\" << std::endl;
+    std::cout << "                     --muscle data/muscle/distribute_lower_only.xml \\" << std::endl;
     std::cout << "                     --script data/example_surgery.yaml" << std::endl;
 }
 
@@ -119,7 +119,6 @@ int main(int argc, char** argv) {
         // Load character
         LOG_INFO("Loading character...");
         executor.loadCharacter(skeleton_path, muscle_path, mus);
-        LOG_INFO("Character loaded successfully!");
         LOG_INFO("");
 
         // Load surgery script

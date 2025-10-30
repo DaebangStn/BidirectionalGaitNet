@@ -10,7 +10,7 @@
 
 namespace PMuscle {
 
-SurgeryExecutor::SurgeryExecutor() 
+SurgeryExecutor::SurgeryExecutor()
     : mCharacter(nullptr) {
 }
 
@@ -35,8 +35,10 @@ void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::str
     LOG_INFO("Loading skeleton: " << resolved_skel);
     LOG_INFO("Loading muscle: " << resolved_muscle);
 
-    // Create character (without world/environment dependencies)
+    // Create character
     mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, true);
+
+    // Load muscles
     mCharacter->setMuscles(resolved_muscle);
     mCharacter->setActuatorType(actuator_type);
 
@@ -72,6 +74,59 @@ void SurgeryExecutor::applyPosePreset(const std::map<std::string, Eigen::VectorX
     }
 
     LOG_INFO("Pose preset applied");
+}
+
+bool SurgeryExecutor::applyPosePresetByName(const std::string& preset_name) {
+    if (!mCharacter) {
+        LOG_ERROR("[Surgery] No character loaded");
+        return false;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+
+    if (preset_name == "supine") {
+        // Supine pose: laying on back, face up
+        // Reset all joints first
+        skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+
+        // Rotate to lay on back
+        auto root = skel->getRootJoint();
+        if (root->getNumDofs() >= 6) {
+            Eigen::VectorXd root_pos = root->getPositions();
+            root_pos[0] = -M_PI / 2.0;  // Roll rotation (X axis)
+            root_pos[4] = 0.1;          // Table height (Y translation)
+            root->setPositions(root_pos);
+        }
+
+        LOG_INFO("[Surgery] Applied pose preset: supine");
+        return true;
+
+    } else if (preset_name == "standing") {
+        // Standing pose: all joints at zero (default stance)
+        skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+
+        LOG_INFO("[Surgery] Applied pose preset: standing");
+        return true;
+
+    } else if (preset_name == "prone") {
+        // Prone pose: laying on front, face down
+        skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+
+        auto root = skel->getRootJoint();
+        if (root->getNumDofs() >= 6) {
+            Eigen::VectorXd root_pos = root->getPositions();
+            root_pos[0] = M_PI / 2.0;   // Roll rotation (X axis) - opposite direction from supine
+            root_pos[4] = 0.1;          // Table height (Y translation)
+            root->setPositions(root_pos);
+        }
+
+        LOG_INFO("[Surgery] Applied pose preset: prone");
+        return true;
+
+    } else {
+        LOG_ERROR("[Surgery] Unknown pose preset: " << preset_name);
+        return false;
+    }
 }
 
 void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {

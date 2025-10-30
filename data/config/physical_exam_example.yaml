@@ -8,6 +8,7 @@ character:
   skeleton: "@data/skeleton/base.xml"
   # skeleton: "@data/skeleton/test_exported.xml"
   muscle: "@data/muscle/distribute_lower_only.xml"
+  # muscle: "@data/muscle/test_exported.yaml"
   actuator: "mass_lower"
 
 trials:
