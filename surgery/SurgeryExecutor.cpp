@@ -10,8 +10,8 @@
 
 namespace PMuscle {
 
-SurgeryExecutor::SurgeryExecutor()
-    : mCharacter(nullptr) {
+SurgeryExecutor::SurgeryExecutor(const std::string& generator_context)
+    : mCharacter(nullptr), mGeneratorContext(generator_context) {
 }
 
 SurgeryExecutor::~SurgeryExecutor() {
@@ -645,6 +645,23 @@ void SurgeryExecutor::exportMusclesXML(const std::string& path) {
     Eigen::VectorXd zero_positions = Eigen::VectorXd::Zero(skel->getNumDofs());
     skel->setPositions(zero_positions);
 
+    // Write metadata section as XML comment
+    auto [git_hash, git_message] = getGitInfo();
+    mfs << "<!-- " << std::endl;
+    mfs << "<Metadata>" << std::endl;
+    mfs << "  <generator>" << mGeneratorContext << "</generator>" << std::endl;
+    mfs << "  <timestamp>" << getCurrentTimestamp() << "</timestamp>" << std::endl;
+    mfs << "  <version>v1</version>" << std::endl;
+    mfs << "  <skeleton>" << getSkeletonName() << "</skeleton>" << std::endl;
+    if (!git_hash.empty()) {
+        mfs << "  <git_commit>" << git_hash << "</git_commit>" << std::endl;
+        if (!git_message.empty()) {
+            mfs << "  <git_message>" << git_message << "</git_message>" << std::endl;
+        }
+    }
+    mfs << "</Metadata>" << std::endl;
+    mfs << "-->" << std::endl;
+
     mfs << "<Muscle>" << std::endl;
 
     for (auto m : muscles) {
@@ -710,6 +727,21 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
     }
 
     LOG_INFO("[Surgery] Saving muscle configuration to YAML: " << path);
+
+    // Write metadata section
+    auto [git_hash, git_message] = getGitInfo();
+    mfs << "metadata:" << std::endl;
+    mfs << "  generator: \"" << mGeneratorContext << "\"" << std::endl;
+    mfs << "  timestamp: \"" << getCurrentTimestamp() << "\"" << std::endl;
+    mfs << "  version: v1" << std::endl;
+    mfs << "  skeleton: \"" << getSkeletonName() << "\"" << std::endl;
+    if (!git_hash.empty()) {
+        mfs << "  git_commit: \"" << git_hash << "\"" << std::endl;
+        if (!git_message.empty()) {
+            mfs << "  git_message: \"" << git_message << "\"" << std::endl;
+        }
+    }
+    mfs << std::endl;
 
     // Sort muscles by L/R pairs (maintain symmetry structure for Character loading)
     // Expected format: L_muscle1, R_muscle1, L_muscle2, R_muscle2, ...
@@ -1683,30 +1715,93 @@ bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, dou
         return false;
     }
 
-    if (strength_ratio < 0.0 || strength_ratio > 1.0) {
-        LOG_ERROR("[Surgery] Error: Strength ratio must be between 0.0 and 1.0, got " << strength_ratio);
+    if (strength_ratio <= 0.0) {
+        LOG_ERROR("[Surgery] Error: Strength ratio must be positive, got " << strength_ratio);
         return false;
     }
 
     auto all_muscles = mCharacter->getMuscles();
-    int weakenedCount = 0;
+    int modifiedCount = 0;
 
     for (auto m : all_muscles) {
         if (std::find(muscles.begin(), muscles.end(), m->name) != muscles.end()) {
             m->change_f(strength_ratio);
-            weakenedCount++;
+            modifiedCount++;
         }
     }
 
-    if (weakenedCount == 0) {
+    if (modifiedCount == 0) {
         LOG_ERROR("[Surgery] Error: No muscles matched the provided names");
         return false;
     }
 
-    LOG_INFO("[Surgery] Weakened " << weakenedCount << " muscle(s) to "
+    std::string action = (strength_ratio < 1.0) ? "Weakened" : (strength_ratio > 1.0) ? "Strengthened" : "Scaled";
+    LOG_INFO("[Surgery] " << action << " " << modifiedCount << " muscle(s) to "
              << (strength_ratio * 100) << "% strength");
 
     return true;
+}
+
+// ============================================================================
+// Metadata Helper Methods
+// ============================================================================
+
+std::pair<std::string, std::string> SurgeryExecutor::getGitInfo() const {
+    std::string hash, message;
+
+    // Get commit hash: git rev-parse HEAD
+    FILE* pipe = popen("git rev-parse HEAD 2>/dev/null", "r");
+    if (pipe) {
+        char buffer[128];
+        if (fgets(buffer, sizeof(buffer), pipe)) {
+            hash = std::string(buffer);
+            // Trim whitespace
+            size_t end = hash.find_last_not_of(" \n\r\t");
+            if (end != std::string::npos) {
+                hash = hash.substr(0, end + 1);
+            }
+        }
+        pclose(pipe);
+    }
+
+    // Get commit message: git log -1 --pretty=%B
+    pipe = popen("git log -1 --pretty=%B 2>/dev/null", "r");
+    if (pipe) {
+        char buffer[512];
+        if (fgets(buffer, sizeof(buffer), pipe)) {
+            message = std::string(buffer);
+            // Trim whitespace
+            size_t end = message.find_last_not_of(" \n\r\t");
+            if (end != std::string::npos) {
+                message = message.substr(0, end + 1);
+            }
+        }
+        pclose(pipe);
+    }
+
+    return {hash, message};
+}
+
+std::string SurgeryExecutor::getCurrentTimestamp() const {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S");
+    return ss.str();
+}
+
+std::string SurgeryExecutor::getSkeletonName() const {
+    if (mOriginalSkeletonPath.empty()) {
+        return "unknown";
+    }
+
+    // Extract filename from path (handle both / and \ separators)
+    size_t lastSlash = mOriginalSkeletonPath.find_last_of("/\\");
+    if (lastSlash != std::string::npos) {
+        return mOriginalSkeletonPath.substr(lastSlash + 1);
+    }
+
+    return mOriginalSkeletonPath;
 }
 
 } // namespace PMuscle

@@ -112,9 +112,16 @@ int main(int argc, char** argv) {
     LOG_INFO("");
 
     try {
-        // Create surgery executor
+        // Create surgery executor with generator context
+        // Extract script filename for context
+        size_t lastSlash = script_path.find_last_of("/\\");
+        std::string script_name = (lastSlash != std::string::npos)
+            ? script_path.substr(lastSlash + 1)
+            : script_path;
+        std::string generator_context = "surgery-tool: " + script_name;
+
         LOG_INFO("Initializing surgery executor...");
-        PMuscle::SurgeryExecutor executor;
+        PMuscle::SurgeryExecutor executor(generator_context);
 
         // Load character
         LOG_INFO("Loading character...");

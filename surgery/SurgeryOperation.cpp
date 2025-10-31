@@ -575,7 +575,7 @@ bool WeakenMuscleOp::execute(SurgeryExecutor* executor) {
 
 YAML::Node WeakenMuscleOp::toYAML() const {
     YAML::Node node;
-    node["type"] = "weaken_muscle";
+    node["type"] = "scale_muscle_strength";  // Use new name (backward compatible with "weaken_muscle")
     node["muscles"] = mMuscles;
     node["strength_ratio"] = mStrengthRatio;
     return node;
@@ -584,7 +584,8 @@ YAML::Node WeakenMuscleOp::toYAML() const {
 std::string WeakenMuscleOp::getDescription() const {
     std::ostringstream oss;
     int percentage = static_cast<int>(mStrengthRatio * 100);
-    oss << "Weaken " << mMuscles.size() << " muscle(s) to "
+    std::string action = (mStrengthRatio < 1.0) ? "Weaken" : (mStrengthRatio > 1.0) ? "Strengthen" : "Scale";
+    oss << action << " " << mMuscles.size() << " muscle(s) to "
         << percentage << "% strength";
     return oss.str();
 }

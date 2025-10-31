@@ -1,4 +1,3 @@
-from 
 <Muscle>
     <Unit name="L_Internal_Oblique" f0="94" lm="1.1" lt="0.15" pen_angle="0">
         <Waypoint body="Pelvis" p="0.137741 1.07006 -0.015766 "/>

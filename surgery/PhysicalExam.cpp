@@ -30,7 +30,8 @@ constexpr double BED_LENGTH = 2.5;     // Length (Z-axis): 2.5m
 constexpr double BED_POSITION_Y = 0.60; // Elevation above ground: 0.60m
 
 PhysicalExam::PhysicalExam(int width, int height)
-    : mWindow(nullptr)
+    : SurgeryExecutor("physical_exam")
+    , mWindow(nullptr)
     , mWidth(width)
     , mHeight(height)
     , mWindowXPos(0)

@@ -136,7 +136,8 @@ std::unique_ptr<SurgeryOperation> SurgeryScript::createOperation(const YAML::Nod
         return RotateAnchorPointsOp::fromYAML(node);
     } else if (type == "fdo_combined") {
         return FDOCombinedOp::fromYAML(node);
-    } else if (type == "weaken_muscle") {
+    } else if (type == "weaken_muscle" || type == "scale_muscle_strength") {
+        // Support both old and new operation names for backward compatibility
         return WeakenMuscleOp::fromYAML(node);
     } else if (type == "apply_pose_preset") {
         return ApplyPosePresetOp::fromYAML(node);

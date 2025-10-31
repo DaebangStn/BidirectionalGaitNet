@@ -17,7 +17,7 @@ namespace PMuscle {
  */
 class SurgeryExecutor {
 public:
-    SurgeryExecutor();
+    SurgeryExecutor(const std::string& generator_context = "unknown");
     virtual ~SurgeryExecutor();
     
     // Character loading
@@ -74,6 +74,11 @@ public:
                                          const std::string& bodynode_name);
     dart::dynamics::Joint* getChildJoint(dart::dynamics::BodyNode* bodynode);
 
+    // Metadata helper methods
+    std::pair<std::string, std::string> getGitInfo() const;
+    std::string getCurrentTimestamp() const;
+    std::string getSkeletonName() const;
+
 private:
     // Muscle export helper functions
     void exportMusclesXML(const std::string& path);
@@ -96,6 +101,7 @@ protected:
     Character* mCharacter;
     std::string mOriginalSkeletonPath;  // Cached for metadata preservation
     std::string mOriginalMusclePath;    // Cached for future reference
+    std::string mGeneratorContext;      // "physical_exam" or "surgery-tool: script.yaml"
 };
 
 } // namespace PMuscle

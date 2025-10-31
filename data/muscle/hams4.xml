@@ -1,3 +1,13 @@
+<!-- 
+<Metadata>
+  <generator>surgery-tool: weak_hams_export.yaml</generator>
+  <timestamp>2025-10-31 14:09:55</timestamp>
+  <version>v1</version>
+  <skeleton>base.xml</skeleton>
+  <git_commit>d98edf0bbe5b904697cba8f8041767cebc9a1edf</git_commit>
+  <git_message>feat: pose in the surgery</git_message>
+</Metadata>
+-->
 <Muscle>
     <Unit name="L_Internal_Oblique" f0="94" lm="1.1" lt="0.15" pen_angle="0">
         <Waypoint body="Pelvis" p="0.137741 1.07006 -0.015766 "/>
@@ -119,32 +129,32 @@
         <Waypoint body="FemurR" p="-0.0637 0.6412 -0.0314 "/>
         <Waypoint body="FemurR" p="-0.0653 0.5555 -0.0289 "/>
     </Unit>
-    <Unit name="L_Bicep_Femoris_Longus" f0="705.2" lm="0.95" lt="0.2" pen_angle="0">
+    <Unit name="L_Bicep_Femoris_Longus" f0="2820.8" lm="0.95" lt="0.2" pen_angle="0">
         <Waypoint body="Pelvis" p="0.0709 0.9002 -0.0636 "/>
         <Waypoint body="TibiaL" p="0.1441 0.5356 -0.0328 "/>
         <Waypoint body="TibiaL" p="0.1382 0.4888 -0.0388 "/>
     </Unit>
-    <Unit name="R_Bicep_Femoris_Longus" f0="705.2" lm="0.95" lt="0.2" pen_angle="0">
+    <Unit name="R_Bicep_Femoris_Longus" f0="2820.8" lm="0.95" lt="0.2" pen_angle="0">
         <Waypoint body="Pelvis" p="-0.0709 0.9002 -0.0636 "/>
         <Waypoint body="TibiaR" p="-0.1441 0.5356 -0.0328 "/>
         <Waypoint body="TibiaR" p="-0.1382 0.4888 -0.0388 "/>
     </Unit>
-    <Unit name="L_Bicep_Femoris_Short" f0="157.9" lm="0.95" lt="0.1" pen_angle="0">
+    <Unit name="L_Bicep_Femoris_Short" f0="631.6" lm="0.95" lt="0.1" pen_angle="0">
         <Waypoint body="FemurL" p="0.1182 0.7298 0.0002 "/>
         <Waypoint body="TibiaL" p="0.1435 0.545 -0.0297 "/>
         <Waypoint body="TibiaL" p="0.1398 0.4891 -0.0341 "/>
     </Unit>
-    <Unit name="R_Bicep_Femoris_Short" f0="157.9" lm="0.95" lt="0.1" pen_angle="0">
+    <Unit name="R_Bicep_Femoris_Short" f0="631.6" lm="0.95" lt="0.1" pen_angle="0">
         <Waypoint body="FemurR" p="-0.1182 0.7298 0.0002 "/>
         <Waypoint body="TibiaR" p="-0.1435 0.545 -0.0297 "/>
         <Waypoint body="TibiaR" p="-0.1398 0.4891 -0.0341 "/>
     </Unit>
-    <Unit name="L_Bicep_Femoris_Short1" f0="157.9" lm="1" lt="0.05" pen_angle="0">
+    <Unit name="L_Bicep_Femoris_Short1" f0="631.6" lm="1" lt="0.05" pen_angle="0">
         <Waypoint body="FemurL" p="0.1118 0.6184 0.0019 "/>
         <Waypoint body="TibiaL" p="0.1416 0.532 -0.0199 "/>
         <Waypoint body="TibiaL" p="0.1379 0.4885 -0.0307 "/>
     </Unit>
-    <Unit name="R_Bicep_Femoris_Short1" f0="157.9" lm="1" lt="0.05" pen_angle="0">
+    <Unit name="R_Bicep_Femoris_Short1" f0="631.6" lm="1" lt="0.05" pen_angle="0">
         <Waypoint body="FemurR" p="-0.1118 0.6184 0.0019 "/>
         <Waypoint body="TibiaR" p="-0.1416 0.532 -0.0199 "/>
         <Waypoint body="TibiaR" p="-0.1379 0.4885 -0.0307 "/>
@@ -743,35 +753,35 @@
         <Waypoint body="TibiaR" p="-0.0544 0.4965 -0.0224 "/>
         <Waypoint body="TibiaR" p="-0.0907 0.4539 0.0092 "/>
     </Unit>
-    <Unit name="L_Semimembranosus" f0="581.35" lm="0.9" lt="0.275202" pen_angle="0">
+    <Unit name="L_Semimembranosus" f0="2325.4" lm="0.9" lt="0.275202" pen_angle="0">
         <Waypoint body="Pelvis" p="0.0751 0.9017 -0.0574 "/>
         <Waypoint body="Pelvis" p="0.0701 0.8462 -0.0391 "/>
         <Waypoint body="TibiaL" p="0.0534 0.5443 -0.0496 "/>
         <Waypoint body="TibiaL" p="0.0567 0.5119 -0.042 "/>
         <Waypoint body="TibiaL" p="0.0621 0.4903 -0.0297 "/>
     </Unit>
-    <Unit name="R_Semimembranosus" f0="581.35" lm="0.9" lt="0.275202" pen_angle="0">
+    <Unit name="R_Semimembranosus" f0="2325.4" lm="0.9" lt="0.275202" pen_angle="0">
         <Waypoint body="Pelvis" p="-0.0751 0.9017 -0.0574 "/>
         <Waypoint body="Pelvis" p="-0.0701 0.8462 -0.0391 "/>
         <Waypoint body="TibiaR" p="-0.0534 0.5443 -0.0496 "/>
         <Waypoint body="TibiaR" p="-0.0567 0.5119 -0.042 "/>
         <Waypoint body="TibiaR" p="-0.0621 0.4903 -0.0297 "/>
     </Unit>
-    <Unit name="L_Semimembranosus1" f0="581.35" lm="0.9" lt="0.15" pen_angle="0">
+    <Unit name="L_Semimembranosus1" f0="2325.4" lm="0.9" lt="0.15" pen_angle="0">
         <Waypoint body="Pelvis" p="0.0784 0.9053 -0.0533 "/>
         <Waypoint body="FemurL" p="0.0937 0.8623 -0.0343 "/>
         <Waypoint body="TibiaL" p="0.1044 0.5602 -0.0479 "/>
         <Waypoint body="TibiaL" p="0.0812 0.5272 -0.0562 "/>
         <Waypoint body="TibiaL" p="0.082 0.495 -0.0422 "/>
     </Unit>
-    <Unit name="R_Semimembranosus1" f0="581.35" lm="0.9" lt="0.15" pen_angle="0">
+    <Unit name="R_Semimembranosus1" f0="2325.4" lm="0.9" lt="0.15" pen_angle="0">
         <Waypoint body="Pelvis" p="-0.0784 0.9053 -0.0533 "/>
         <Waypoint body="FemurR" p="-0.0937 0.8623 -0.0343 "/>
         <Waypoint body="TibiaR" p="-0.1044 0.5602 -0.0479 "/>
         <Waypoint body="TibiaR" p="-0.0812 0.5272 -0.0562 "/>
         <Waypoint body="TibiaR" p="-0.082 0.495 -0.0422 "/>
     </Unit>
-    <Unit name="L_Semitendinosus" f0="301.9" lm="0.8" lt="0.349209" pen_angle="0">
+    <Unit name="L_Semitendinosus" f0="1207.6" lm="0.8" lt="0.349209" pen_angle="0">
         <Waypoint body="Pelvis" p="0.068 0.8941 -0.0652 "/>
         <Waypoint body="Pelvis" p="0.0881 0.8533 -0.0463 "/>
         <Waypoint body="TibiaL" p="0.0856 0.5653 -0.0611 "/>
@@ -779,7 +789,7 @@
         <Waypoint body="TibiaL" p="0.0655 0.4716 -0.0264 "/>
         <Waypoint body="TibiaL" p="0.0798 0.4484 -0.0038 "/>
     </Unit>
-    <Unit name="R_Semitendinosus" f0="301.9" lm="0.8" lt="0.349209" pen_angle="0">
+    <Unit name="R_Semitendinosus" f0="1207.6" lm="0.8" lt="0.349209" pen_angle="0">
         <Waypoint body="Pelvis" p="-0.068 0.8941 -0.0652 "/>
         <Waypoint body="Pelvis" p="-0.0881 0.8533 -0.0463 "/>
         <Waypoint body="TibiaR" p="-0.0856 0.5653 -0.0611 "/>
