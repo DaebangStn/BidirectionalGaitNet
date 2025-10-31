@@ -1,0 +1,9 @@
+# Test config for loading XML
+name: "xml_test"
+description: "Load base.xml to verify positions"
+
+character:
+  skeleton: "@data/skeleton/base.xml"
+  muscle: "@data/muscle/distribute_lower_only.xml"
+  use_muscle: false
+  actuator: "mass_lower"

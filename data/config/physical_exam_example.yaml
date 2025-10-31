@@ -5,10 +5,11 @@ name: "example_exam"
 description: "Example exam showing inline and referenced trial definitions"
 
 character:
-  skeleton: "@data/skeleton/base.xml"
-  # skeleton: "@data/skeleton/test_exported.xml"
+  # skeleton: "@data/skeleton/base.xml"
+  skeleton: "@data/skeleton/test_exported.yaml"
   muscle: "@data/muscle/distribute_lower_only.xml"
   # muscle: "@data/muscle/test_exported.yaml"
+  use_muscle: false  # Set to false to load skeleton only, true to load both skeleton and muscles
   actuator: "mass_lower"
 
 trials:

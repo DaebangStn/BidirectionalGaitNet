@@ -1,6 +1,6 @@
 # Training Configuration
 training:
-  max_epoch: 100002
+  max_epoch: 12002
   checkpoint_freq: 1000
 
 environment:

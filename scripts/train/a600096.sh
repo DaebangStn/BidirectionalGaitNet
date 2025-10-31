@@ -11,7 +11,7 @@ ray stop
 ray start --head --num-cpus=${SLURM_CPUS_PER_TASK} --num-gpus=1 \
   --ray-client-server-port=19999 --min-worker-port=20000 --max-worker-port=21000
 
-python3 -u python/ray_train.py --config=ppo_96_a6000 --env "data/${SLURM_JOB_NAME}.yaml"
+python3 -u python/ray_train.py --config=ppo_96_a6000 --env "data/env/${SLURM_JOB_NAME}.yaml"
 
 ray stop
 echo "Training finished"

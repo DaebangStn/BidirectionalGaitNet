@@ -40,23 +40,23 @@ echo "Each process will run in the background. "
 echo "---------------------------------------------------------"
 
 # Loop through all items in the specified checkpoint directory.
-# We check if each item is a regular file before attempting to render it.
+# We check if each item is a directory (RLlib checkpoint) before attempting to render it.
 for CKPT_PATH in "${CHECKPOINT_DIR}"/*; do
-    # Check if the current item is a regular file.
-    # This prevents trying to render subdirectories or other non-file entries.
-    if [ -f "${CKPT_PATH}" ]; then
-        # Extract just the filename for filtering
+    # Check if the current item is a directory.
+    # RLlib checkpoints are stored as directories containing algorithm_state.pkl and policies/
+    if [ -d "${CKPT_PATH}" ]; then
+        # Extract just the directory name for filtering
         FILENAME=$(basename "${CKPT_PATH}")
-        
+
         # Apply filter if specified
         if [ -n "$FILTER" ]; then
-            # Check if the filename contains the filter pattern
+            # Check if the directory name contains the filter pattern
             if [[ "$FILENAME" != *"$FILTER"* ]]; then
                 echo "Skipping: ${FILENAME} (doesn't match filter '$FILTER')"
                 continue
             fi
         fi
-        
+
         echo "Launching: scripts/viewer \"${CKPT_PATH}\""
         # Execute the 'scripts/viewer' command with the checkpoint relative path.
         # The '&' symbol at the end sends the command to the background,
