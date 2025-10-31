@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 #include <algorithm>
+#include <filesystem>
 #include <imgui.h>
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -105,11 +106,11 @@ PhysicalExam::PhysicalExam(int width, int height)
     mMuscleInfoFilterBuffer[0] = '\0';  // Initialize muscle info filter buffer
     mSelectedMuscleInfo = "";  // No muscle selected initially
 
-    // Initialize surgery panel filename buffer with default name
-    std::strncpy(mSaveMuscleFilename, "data/muscle_modified.xml", sizeof(mSaveMuscleFilename));
+    // Initialize surgery panel filename buffers with default leaf names only
+    std::strncpy(mSaveMuscleFilename, "muscle_modified.xml", sizeof(mSaveMuscleFilename));
     mSaveMuscleFilename[sizeof(mSaveMuscleFilename) - 1] = '\0';
 
-    std::strncpy(mSaveSkeletonFilename, "data/skeleton/modified.xml", sizeof(mSaveSkeletonFilename));
+    std::strncpy(mSaveSkeletonFilename, "skeleton_modified.xml", sizeof(mSaveSkeletonFilename));
     mSaveSkeletonFilename[sizeof(mSaveSkeletonFilename) - 1] = '\0';
 
     // Initialize surgery section filter buffers
@@ -127,7 +128,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     mRotateJointAxis[1] = 1.0f;  // Default: Y-axis
     mRotateJointAxis[2] = 0.0f;
     mRotateJointAngleDeg = 10.0f;  // Default: 10 degrees
-    mRotateJointPreservePosition = false;  // Default: original behavior
+    mRotateJointPreservePosition = true;  // Default: original behavior
 
     mRotateAnchorMuscleComboBuffer[0] = '\0';
     mRotateAnchorMuscleFilterBuffer[0] = '\0';
@@ -1631,45 +1632,59 @@ void PhysicalExam::drawRelaxPassiveForceSection() {
 
 void PhysicalExam::drawSaveMuscleConfigSection() {
     ImGui::Indent();
-    
+
     ImGui::TextWrapped("Save current muscle configuration to an XML file.");
     ImGui::Spacing();
-    
-    // Text input for filename
-    ImGui::Text("Output Filename:");
+
+    // Directory prefix display
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: ./data/muscle/");
+    ImGui::Spacing();
+
+    // Text input for leaf filename only
+    ImGui::Text("Filename:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##save_muscle_filename", mSaveMuscleFilename, sizeof(mSaveMuscleFilename));
-    
+
+    // Construct full path and check if file exists
+    std::string fullPath = std::string("./data/muscle/") + mSaveMuscleFilename;
+    bool fileExists = std::filesystem::exists(fullPath);
+
+    // Show warning if file exists
+    if (fileExists) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "⚠ Warning: File already exists and will be overwritten!");
+    }
+
     ImGui::Spacing();
-    
+
     // Save button (with debounce to prevent duplicate saves on double-click)
-    if (ImGui::Button("Save to File", ImVec2(-1, 30))) {
+    if (ImGui::Button("Save Muscle Config", ImVec2(-1, 30))) {
         if (!mSavingMuscle) {  // Only process if not already saving
             mSavingMuscle = true;
             if (mCharacter) {
                 try {
-                    exportMuscles(mSaveMuscleFilename);
-                    
+                    exportMuscles(fullPath);
+
                     // Record operation if recording
                     if (mRecordingSurgery) {
-                        auto op = std::make_unique<ExportMusclesOp>(
-                            std::string(mSaveMuscleFilename));
+                        auto op = std::make_unique<ExportMusclesOp>(fullPath);
                         recordOperation(std::move(op));
                     }
+                    LOG_INFO("[Surgery] Muscle configuration saved to: " << fullPath);
                 } catch (const std::exception& e) {
-                    LOG_INFO("[Surgery] Error saving muscle configuration: " << e.what());
+                    LOG_ERROR("[Surgery] Error saving muscle configuration: " << e.what());
                 }
             } else {
-                LOG_INFO("[Surgery] Error: No character loaded!");
+                LOG_ERROR("[Surgery] Error: No character loaded!");
             }
             mSavingMuscle = false;
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Save muscle properties to the specified XML file");
+        ImGui::SetTooltip("Save muscle properties to ./data/muscle/%s", mSaveMuscleFilename);
     }
-    
+
     ImGui::Unindent();
 }
 
@@ -1679,28 +1694,41 @@ void PhysicalExam::drawSaveSkeletonConfigSection() {
     ImGui::TextWrapped("Save current skeleton configuration to an XML file.");
     ImGui::Spacing();
 
-    // Text input for filename
-    ImGui::Text("Output Filename:");
+    // Directory prefix display
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: ./data/skeleton/");
+    ImGui::Spacing();
+
+    // Text input for leaf filename only
+    ImGui::Text("Filename:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##save_skeleton_filename", mSaveSkeletonFilename, sizeof(mSaveSkeletonFilename));
 
+    // Construct full path and check if file exists
+    std::string fullPath = std::string("./data/skeleton/") + mSaveSkeletonFilename;
+    bool fileExists = std::filesystem::exists(fullPath);
+
+    // Show warning if file exists
+    if (fileExists) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "⚠ Warning: File already exists and will be overwritten!");
+    }
+
     ImGui::Spacing();
 
     // Save button (with debounce to prevent duplicate saves on double-click)
-    if (ImGui::Button("Save Skeleton to File", ImVec2(-1, 30))) {
+    if (ImGui::Button("Save Skeleton Config", ImVec2(-1, 30))) {
         if (mCharacter) {
             try {
-                exportSkeleton(mSaveSkeletonFilename);
+                exportSkeleton(fullPath);
 
                 // Record operation if recording
                 if (mRecordingSurgery) {
-                    auto op = std::make_unique<ExportSkeletonOp>(
-                        std::string(mSaveSkeletonFilename));
+                    auto op = std::make_unique<ExportSkeletonOp>(fullPath);
                     recordOperation(std::move(op));
                 }
 
-                LOG_INFO("[Surgery] Skeleton configuration saved successfully");
+                LOG_INFO("[Surgery] Skeleton configuration saved to: " << fullPath);
             } catch (const std::exception& e) {
                 LOG_ERROR("[Surgery] Error saving skeleton configuration: " << e.what());
             }
@@ -1709,7 +1737,7 @@ void PhysicalExam::drawSaveSkeletonConfigSection() {
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Save skeleton properties (masses, sizes, transforms, joint parameters) to the specified XML file");
+        ImGui::SetTooltip("Save skeleton properties to ./data/skeleton/%s", mSaveSkeletonFilename);
     }
 
     ImGui::Unindent();

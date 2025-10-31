@@ -2,4 +2,4 @@ version: 1.0
 description: Test muscle export to YAML format with compact single-line formatting
 operations:
   - type: export_muscles
-    filepath: data/muscle/test_exported3.yaml
+    filepath: data/muscle/test_exported.yaml

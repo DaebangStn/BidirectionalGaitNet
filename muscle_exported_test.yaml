@@ -1,3 +1,12 @@
+metadata:
+  generator: "surgery-tool: export_muscle_yaml_test.yaml"
+  timestamp: "2025-10-31 15:27:30"
+  version: v1
+  skeleton: "base.xml"
+  muscle_from: "distribute_lower_only.xml"
+  git_commit: "b179c8db24289d8dc25475b6bc8df08dc4964152"
+  git_message: "config"
+
 muscles:
   - {name: L_Adductor_Brevis, f0: 151.85, lm: 0.95, lt: 0.20,
      waypoints: [

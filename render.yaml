@@ -1,8 +1,9 @@
 geometry:
   window:
-    width: 1280
-    # width: 2560
-    height: 720
+    # width: 1280
+    width: 2560
+    # height: 720
+    height: 1440
     xpos: 0
     ypos: 0
   control: 250

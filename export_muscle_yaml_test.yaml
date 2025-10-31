@@ -1,0 +1,6 @@
+version: "1.0"
+description: "Test muscle YAML export with muscle_from metadata"
+
+operations:
+  - type: export_muscles
+    filepath: "./muscle_exported_test.yaml"

@@ -78,6 +78,7 @@ public:
     std::pair<std::string, std::string> getGitInfo() const;
     std::string getCurrentTimestamp() const;
     std::string getSkeletonName() const;
+    std::string getMuscleName() const;
 
 private:
     // Muscle export helper functions
@@ -85,17 +86,24 @@ private:
     void exportMusclesYAML(const std::string& path);
 
     // Skeleton export helper functions
+    void exportSkeletonXML(const std::string& path);
+    void exportSkeletonYAML(const std::string& path);
     std::string formatRotationMatrix(const Eigen::Matrix3d& R);
     std::string formatVector3d(const Eigen::Vector3d& v);
+    std::string formatMatrixYAML(const Eigen::Matrix3d& M);
+    std::string formatVectorYAML(const Eigen::Vector3d& v);
     std::pair<std::string, Eigen::Vector3d> getShapeInfo(dart::dynamics::ShapePtr shape);
     std::string getJointTypeString(dart::dynamics::Joint* joint);
     std::string formatJointLimits(dart::dynamics::Joint* joint, bool isLower);
+    std::string formatJointLimitsYAML(dart::dynamics::Joint* joint, bool isLower);
     std::string formatJointParams(dart::dynamics::Joint* joint, const std::string& param);
+    std::string formatJointParamsYAML(dart::dynamics::Joint* joint, const std::string& param);
     bool validateSkeletonExport(const std::string& exported_path);
 
     // Metadata preservation helpers
     Eigen::VectorXd string_to_vectorXd(const char* str, int expected_size);
     std::string formatVectorXd(const Eigen::VectorXd& vec);
+    std::string formatVectorXdYAML(const Eigen::VectorXd& vec);
 
 protected:
     Character* mCharacter;
