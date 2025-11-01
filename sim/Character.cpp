@@ -1,7 +1,8 @@
 #include "Character.h"
 #include "UriResolver.h"
-#include "../viewer/Log.h"
+#include "Log.h"
 #include <limits>
+#include <algorithm>
 #include <yaml-cpp/yaml.h>
 
 static std::map<std::string, int> skeletonAxis = {
@@ -144,7 +145,9 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     // Always resolve paths through UriResolver for backwards compatibility
     std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
 
-    mSkeleton = BuildFromFile(resolvedPath, defaultDamping, Eigen::Vector4d(1,1,1,1), true, collide_all);
+    int flags = SKEL_DEFAULT;
+    if (collide_all) flags |= SKEL_COLLIDE_ALL;
+    mSkeleton = BuildFromFile(resolvedPath, flags);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
 
     // Configure self-collision if enabled
@@ -157,7 +160,7 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     mTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
     mPDTarget = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
-    mLocalTime = 0.0; 
+    mLocalTime = 0.0;
 
     mKp = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
     mKv = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
@@ -165,11 +168,26 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
 
     mActivations = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
-    TiXmlDocument doc;
-    doc.LoadFile(resolvedPath.c_str());
-    TiXmlElement *skel_elem = doc.FirstChildElement("Skeleton");
+    // Check if this is a YAML file (skip XML metadata parsing for YAML)
+    bool isYAML = false;
+    size_t dot_pos = resolvedPath.find_last_of('.');
+    if (dot_pos != std::string::npos) {
+        std::string ext = resolvedPath.substr(dot_pos);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        isYAML = (ext == ".yaml" || ext == ".yml");
+    }
 
-    for (TiXmlElement *node = skel_elem->FirstChildElement("Node"); node != nullptr; node = node->NextSiblingElement("Node"))
+    if (!isYAML) {
+        TiXmlDocument doc;
+        doc.LoadFile(resolvedPath.c_str());
+        TiXmlElement *skel_elem = doc.FirstChildElement("Skeleton");
+
+        if (skel_elem == nullptr) {
+            LOG_ERROR("[Character] ERROR: Failed to parse XML skeleton file: " << resolvedPath);
+            throw std::runtime_error("Failed to parse XML skeleton file");
+        }
+
+        for (TiXmlElement *node = skel_elem->FirstChildElement("Node"); node != nullptr; node = node->NextSiblingElement("Node"))
     {
         if (node->Attribute("endeffector") != nullptr)
         {
@@ -210,6 +228,7 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
         if (joint_elem->Attribute("weight") != nullptr)
             mTorqueWeight.segment(idx, dof) = string_to_vectorXd(joint_elem->Attribute("weight"), dof);
     }
+    }  // end of else block for XML parsing
 
     mKp.head(6).setZero();
     mKv.head(6).setZero();
@@ -270,7 +289,7 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     mKneeLoadingMax = 0.0;
     mStepComplete = true;
 
-    mRefSkeleton = BuildFromFile(path, defaultDamping);
+    mRefSkeleton = BuildFromFile(path, SKEL_NO_COLLISION);
     for (auto bn : mSkeleton->getBodyNodes())
     {
         ModifyInfo SkelInfo;

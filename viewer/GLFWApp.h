@@ -212,6 +212,9 @@ private:
     void drawJointAxis(dart::dynamics::Joint* joint);
     void drawMuscles(MuscleRenderingType renderingType = activationLevel);
 
+    void drawNoiseControlPanel();
+    void drawNoiseVisualizations();
+
     void drawShadow();
 
     // Plot control
@@ -283,6 +286,10 @@ private:
     int mMuscleRenderTypeInt;
     float mMuscleResolution, mMuscleTransparency;
 
+    // Noise Injector UI state
+    bool mDrawNoiseArrows;
+    int mNoiseMode;  // 0=None, 1=Position, 2=Force, 3=Activation, 4=All
+
     // Muscle Selection UI
     char mMuscleFilterText[32];
     std::vector<bool> mMuscleSelectionStates;
@@ -290,6 +297,7 @@ private:
     // Muscle Activation Plot UI
     char mActivationFilterText[256];
     std::vector<std::string> mSelectedActivationKeys;
+    bool mPlotActivationNoise;
 
     // Muscle Rendering Option
     std::vector<Muscle *> mSelectedMuscles;

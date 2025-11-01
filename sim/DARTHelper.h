@@ -2,6 +2,7 @@
 #define __MS_DARTHELPER_H__
 #include "dart/dart.hpp"
 #include <tinyxml2.h>
+#include <yaml-cpp/yaml.h>
 
 #include <experimental/filesystem>
 #include "UriResolver.h"
@@ -39,7 +40,16 @@ dart::dynamics::BallJoint::Properties* MakeBallJointProperties(const std::string
 dart::dynamics::RevoluteJoint::Properties *MakeRevoluteJointProperties(const std::string &name, const Eigen::Vector3d &axis, const Eigen::Isometry3d &parent_to_joint = Eigen::Isometry3d::Identity(), const Eigen::Isometry3d &child_to_joint = Eigen::Isometry3d::Identity(), const Eigen::Vector1d &lower = Eigen::Vector1d::Constant(-2.0), const Eigen::Vector1d &upper = Eigen::Vector1d::Constant(2.0), const double damping = 0.4, const double friction = 0.0, const double stiffness = 0.0);
 dart::dynamics::WeldJoint::Properties *MakeWeldJointProperties(const std::string &name, const Eigen::Isometry3d &parent_to_joint = Eigen::Isometry3d::Identity(), const Eigen::Isometry3d &child_to_joint = Eigen::Isometry3d::Identity());
 dart::dynamics::BodyNode *MakeBodyNode(const dart::dynamics::SkeletonPtr &skeleton, dart::dynamics::BodyNode *parent, dart::dynamics::Joint::Properties *joint_properties, const std::string &joint_type, dart::dynamics::Inertia inertia);
-dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaultDamping = 0.4, Eigen::Vector4d color_filter = Eigen::Vector4d(1, 1, 1, 1), bool isContact = true, bool collide_all = false, bool isBVH = false);
+
+// Skeleton loading flags (bit flags)
+enum SkeletonLoadFlags {
+	SKEL_DEFAULT = 0,                      // Default: collision enabled, respects XML
+	SKEL_NO_COLLISION = 1 << 0,            // Disable all collision detection
+	SKEL_COLLIDE_ALL = 1 << 1,             // Force all bodies to collide (self-collision)
+	SKEL_REMOVE_JOINT_LIMIT = 1 << 2       // BVH mode - remove joint limits
+};
+
+dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags = SKEL_DEFAULT);
 
 std::string Trim(std::string str);
 #endif

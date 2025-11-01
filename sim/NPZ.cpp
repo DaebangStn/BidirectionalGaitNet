@@ -2,7 +2,7 @@
 #include "Character.h"
 #include "Environment.h"
 #include "dart/dynamics/FreeJoint.hpp"
-#include "../viewer/Log.h"
+#include "Log.h"
 #include <iostream>
 #include <algorithm>
 

@@ -48,6 +48,10 @@ def log_warn(msg):
     if _LOG_LEVEL >= LOG_LEVEL_WARN:
         print(msg, file=__import__('sys').stderr)
 
+def log_error(msg):
+    """Log error message (always printed to stderr)"""
+    print(msg, file=__import__('sys').stderr)
+
 def print_log_level():
     """Print current log level at startup"""
     print(f"[Log] Python Level: {get_log_level_name()} ({_LOG_LEVEL})")

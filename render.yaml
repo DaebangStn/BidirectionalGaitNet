@@ -6,7 +6,7 @@ geometry:
     height: 1440
     xpos: 0
     ypos: 0
-  control: 250
+  control: 450
   plot: 350
 
 glfwapp:

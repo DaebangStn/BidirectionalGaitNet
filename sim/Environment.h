@@ -3,6 +3,7 @@
 #include "dart/dart.hpp"
 #include "BVH_Parser.h"
 #include "Character.h"
+#include "NoiseInjector.h"
 #include "dart/collision/bullet/bullet.hpp"
 #include "export.h"
 #include <map>
@@ -104,6 +105,8 @@ public:
     Character *getCharacter() { return mCharacter; }
     Motion *getMotion() { return mMotion; }
     void setMotion(Motion* motion) { mMotion = motion; }
+    NoiseInjector* getNoiseInjector() { return mNoiseInjector.get(); }
+    void createNoiseInjector(const std::string& config_path);
 
     void setAction(Eigen::VectorXd _action);
 
@@ -378,6 +381,7 @@ private:
     Character *mCharacter;
     std::vector<dart::dynamics::SkeletonPtr> mObjects;
     Motion *mMotion;
+    std::unique_ptr<NoiseInjector> mNoiseInjector;
 
     // Metadata
     std::string mMetadata;

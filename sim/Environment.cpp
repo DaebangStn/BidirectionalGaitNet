@@ -3,7 +3,7 @@
 #include "CBufferData.h"
 #include "NPZ.h"
 #include "HDF.h"
-#include "../viewer/Log.h"
+#include "Log.h"
 #include <yaml-cpp/yaml.h>
 
 
@@ -566,6 +566,22 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         }
     }
 
+    // === Noise Injection ===
+    if (env["noise_injection"]) {
+        auto ni = env["noise_injection"];
+        if (ni["file"]) {
+            std::string niPath = ni["file"].as<std::string>();
+            std::string resolved = PMuscle::URIResolver::getInstance().resolve(niPath);
+            mNoiseInjector = std::make_unique<NoiseInjector>(resolved, mWorld->getTimeStep());
+            LOG_INFO("[Environment] Loaded noise injection config: " << resolved);
+        }
+    } else {
+        // Create default NoiseInjector (disabled by default)
+        mNoiseInjector = std::make_unique<NoiseInjector>("", mWorld->getTimeStep());
+        mNoiseInjector->setEnabled(false);
+        LOG_VERBOSE("[Environment] Created default NoiseInjector (disabled)");
+    }
+
     // === Learning Std ===
     if (env["advanced"] && env["advanced"]["learning_std"])
         mLearningStd = env["advanced"]["learning_std"].as<bool>(false);
@@ -941,7 +957,7 @@ void Environment::addCharacter(std::string path, double kp, double kv, double da
 
 void Environment::addObject(std::string path)
 {
-    mObjects.push_back(BuildFromFile(path));
+    mObjects.push_back(BuildFromFile(path, SKEL_DEFAULT));
 }
 
 void Environment::setAction(Eigen::VectorXd _action)
@@ -1504,6 +1520,12 @@ void Environment::postMuscleStep()
 void Environment::muscleStep()
 {
     if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower)  calcActivation();
+
+    // Apply noise injection if enabled
+    if (mNoiseInjector) {
+        mNoiseInjector->step(mCharacter);
+    }
+
     mCharacter->step();
     mWorld->step();
     postMuscleStep();
@@ -2243,4 +2265,14 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getSpace(std::string me
     // std::cout <<"[MAX V] : " << maxV.transpose() << std::endl;
 
     return std::make_pair(minV, maxV);
+}
+
+void Environment::createNoiseInjector(const std::string& config_path)
+{
+    if (mNoiseInjector) {
+        LOG_WARN("[Environment] NoiseInjector already exists, recreating with new config");
+    }
+
+    mNoiseInjector = std::make_unique<NoiseInjector>(config_path, mWorld->getTimeStep());
+    LOG_INFO("[Environment] NoiseInjector created" << (config_path.empty() ? " with default parameters" : " from config: " + config_path));
 }

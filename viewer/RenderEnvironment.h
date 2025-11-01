@@ -20,6 +20,8 @@ public:
     // ===== Environment Delegation Methods =====
     // Character access
     Character* getCharacter() { return mEnv->getCharacter(); }
+    NoiseInjector* getNoiseInjector() { return mEnv->getNoiseInjector(); }
+    void createNoiseInjector(const std::string& config_path) { mEnv->createNoiseInjector(config_path); }
 
     // State and action
     Eigen::VectorXd getState() { return mEnv->getState(); }

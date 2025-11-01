@@ -1469,7 +1469,7 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
 
             // PRESERVE: BVH mapping from original XML
             if (metadata.joint_bvh_mappings.count(nodeName)) {
-                ofs << ", bvh: \"" << metadata.joint_bvh_mappings.at(nodeName) << "\"";
+                ofs << ", bvh: " << metadata.joint_bvh_mappings.at(nodeName);
             }
 
             // Add axis for Revolute/Prismatic joints
@@ -1500,7 +1500,7 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
                 }
             }
 
-            // Joint Transformation
+            // Joint Transformation (local: relative to parent body frame)
             Eigen::Isometry3d jointTransform = joint->getTransformFromParentBodyNode();
             ofs << "," << std::endl << "       R: " << formatMatrixYAML(jointTransform.linear())
                 << "," << std::endl << "       t: " << formatVectorYAML(jointTransform.translation()) << "}";

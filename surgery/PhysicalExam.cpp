@@ -75,6 +75,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mShowPostureDebug(false)        // Posture control debug off by default
     , mShowExamTable(false)            // Show examination table by default
     , mShowAnchorPoints(true)         // Anchor point visualization off by default
+    , mDrawOBJ(true)                  // Draw mesh shapes by default
     , mApplyPostureControl(true)
     , mGraphData(nullptr)
     , mEnableInterpolation(false)
@@ -88,6 +89,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mRecordingScriptPath("data/recorded_surgery.yaml")  // Default recording path
     , mLoadScriptPath("data/recorded_surgery.yaml")  // Default load path
     , mShowScriptPreview(false)     // Script preview hidden by default
+    , mUseMuscle(true)              // Default to true for backward compatibility
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
@@ -418,14 +420,28 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     resolver.initialize();
 
     std::string resolved_skel = resolver.resolve(skel_path);
-    std::string resolved_muscle = resolver.resolve(muscle_path);
 
     LOG_INFO("Loading skeleton: " << resolved_skel);
-    LOG_INFO("Loading muscle: " << resolved_muscle);
 
     // Create character
     mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, true);
-    mCharacter->setMuscles(resolved_muscle);
+
+    // Load muscles if path is provided and mUseMuscle is true
+    if (!muscle_path.empty() && mUseMuscle) {
+        std::string resolved_muscle = resolver.resolve(muscle_path);
+        LOG_INFO("Loading muscle: " << resolved_muscle);
+        mCharacter->setMuscles(resolved_muscle);
+
+        // Zero muscle activations
+        if (mCharacter->getMuscles().size() > 0) {
+            mCharacter->setActivations(mCharacter->getActivations().setZero());
+        }
+    } else {
+        LOG_INFO("Skipping muscle loading" << (mUseMuscle ? " (no muscle path provided)" : " (muscles disabled)"));
+        mUseMuscle = false;  // Ensure mUseMuscle is false if no muscles loaded
+    }
+
+    // Set actuator type
     mCharacter->setActuatorType(_actType);
 
     // Add to world
@@ -433,11 +449,6 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
 
     // Set initial pose to supine (laying on back on examination bed)
     setPoseSupine();
-
-    // Zero muscle activations
-    if (mCharacter->getMuscles().size() > 0) {
-        mCharacter->setActivations(mCharacter->getActivations().setZero());
-    }
 
     // Setup posture control targets (must be called after character is loaded)
     setupPostureTargets();
@@ -448,12 +459,14 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     mJointIntegralError.resize(skel->getNumDofs(), 0.0);
     LOG_INFO("Initialized joint PI controller system (" << skel->getNumDofs() << " DOFs)");
 
-    // Initialize muscle selection states - select all muscles by default
+    // Initialize muscle selection states
     auto muscles = mCharacter->getMuscles();
     mMuscleSelectionStates.clear();
-    mMuscleSelectionStates.resize(muscles.size(), true);  // All muscles selected by default
+    if (muscles.size() > 0) {
+        mMuscleSelectionStates.resize(muscles.size(), true);  // All muscles selected by default
+    }
 
-    LOG_INFO("Character loaded successfully in supine position");
+    LOG_INFO("Character loaded successfully in supine position" << (muscle_path.empty() ? " (skeleton only)" : ""));
 }
 
 void PhysicalExam::applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles) {
@@ -570,6 +583,7 @@ std::map<std::string, Eigen::VectorXd> PhysicalExam::recordJointAngles(
 
 double PhysicalExam::computePassiveForce() {
     if (!mCharacter) return 0.0;
+    if (!mUseMuscle) return 0.0;  // Guard: no muscles loaded
 
     double total_force = 0.0;
     auto muscles = mCharacter->getMuscles();
@@ -596,16 +610,21 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     mExamDescription = config["description"] ? config["description"].as<std::string>() : "";
     
     std::string skeleton_path = config["character"]["skeleton"].as<std::string>();
-    std::string muscle_path = config["character"]["muscle"].as<std::string>();
+    std::string muscle_path = config["character"]["muscle"] ? config["character"]["muscle"].as<std::string>() : "";
+    mUseMuscle = config["character"]["use_muscle"] ? config["character"]["use_muscle"].as<bool>() : true;  // Default to true for backward compatibility
     std::string _actTypeString = config["character"]["actuator"].as<std::string>();
     ActuatorType _actType = getActuatorType(_actTypeString);
-    
+
     LOG_INFO("Exam setting: " << mExamName);
     if (!mExamDescription.empty()) {
         LOG_INFO("Description: " << mExamDescription);
     }
-    
-    // Load character
+
+    // Load character (muscle loading controlled by mUseMuscle option)
+    if (!mUseMuscle) {
+        muscle_path = "";  // Clear muscle path if mUseMuscle is false
+        LOG_INFO("Muscle loading disabled by configuration");
+    }
     loadCharacter(skeleton_path, muscle_path, _actType);
     
     // Parse trials
@@ -957,7 +976,9 @@ void PhysicalExam::mainLoop() {
                 joint->setPositions(pos);
 
                 // Update muscle state (recalculate muscle lengths and forces)
-                mCharacter->getMuscleTuple();
+                if (mUseMuscle) {  // Guard: only update muscles if loaded
+                    mCharacter->getMuscleTuple();
+                }
 
                 // Collect muscle data at this angle
                 collectSweepData(angle);
@@ -1264,7 +1285,7 @@ bool PhysicalExam::editAnchorPosition(const std::string& muscle, int anchor_inde
     bool success = SurgeryExecutor::editAnchorPosition(muscle, anchor_index, position);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter) {
+    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -1283,7 +1304,7 @@ bool PhysicalExam::editAnchorWeights(const std::string& muscle, int anchor_index
     bool success = SurgeryExecutor::editAnchorWeights(muscle, anchor_index, weights);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter) {
+    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -1302,7 +1323,7 @@ bool PhysicalExam::addBodyNodeToAnchor(const std::string& muscle, int anchor_ind
     bool success = SurgeryExecutor::addBodyNodeToAnchor(muscle, anchor_index, bodynode_name, weight);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter) {
+    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -1321,7 +1342,7 @@ bool PhysicalExam::removeBodyNodeFromAnchor(const std::string& muscle, int ancho
     bool success = SurgeryExecutor::removeBodyNodeFromAnchor(muscle, anchor_index, bodynode_index);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter) {
+    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -1633,45 +1654,29 @@ void PhysicalExam::drawRelaxPassiveForceSection() {
 void PhysicalExam::drawSaveMuscleConfigSection() {
     ImGui::Indent();
 
-    ImGui::TextWrapped("Save current muscle configuration to an XML file.");
-    ImGui::Spacing();
-
     // Directory prefix display
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: ./data/muscle/");
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: @data/muscle/");
     ImGui::Spacing();
 
-    // Text input for leaf filename only
-    ImGui::Text("Filename:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##save_muscle_filename", mSaveMuscleFilename, sizeof(mSaveMuscleFilename));
-
-    // Construct full path and check if file exists
-    std::string fullPath = std::string("./data/muscle/") + mSaveMuscleFilename;
-    bool fileExists = std::filesystem::exists(fullPath);
-
-    // Show warning if file exists
-    if (fileExists) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "⚠ Warning: File already exists and will be overwritten!");
-    }
-
-    ImGui::Spacing();
+    std::string uriPath = std::string("@data/muscle/") + mSaveMuscleFilename;
+    URIResolver& resolver = URIResolver::getInstance();
+    resolver.initialize();
+    std::string resolvedPath = resolver.resolve(uriPath);
 
     // Save button (with debounce to prevent duplicate saves on double-click)
-    if (ImGui::Button("Save Muscle Config", ImVec2(-1, 30))) {
+    if (ImGui::Button("Save")) {
         if (!mSavingMuscle) {  // Only process if not already saving
             mSavingMuscle = true;
             if (mCharacter) {
                 try {
-                    exportMuscles(fullPath);
+                    exportMuscles(resolvedPath);
 
                     // Record operation if recording
                     if (mRecordingSurgery) {
-                        auto op = std::make_unique<ExportMusclesOp>(fullPath);
+                        auto op = std::make_unique<ExportMusclesOp>(resolvedPath);
                         recordOperation(std::move(op));
                     }
-                    LOG_INFO("[Surgery] Muscle configuration saved to: " << fullPath);
+                    LOG_INFO("[Surgery] Muscle configuration saved to: " << resolvedPath);
                 } catch (const std::exception& e) {
                     LOG_ERROR("[Surgery] Error saving muscle configuration: " << e.what());
                 }
@@ -1682,7 +1687,23 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Save muscle properties to ./data/muscle/%s", mSaveMuscleFilename);
+        ImGui::SetTooltip("Save muscle properties to %s", resolvedPath.c_str());
+    }
+    ImGui::SameLine();
+
+    // Text input for leaf filename only
+    ImGui::Text("Filename:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##save_muscle_filename", mSaveMuscleFilename, sizeof(mSaveMuscleFilename));
+
+    // Check if resolved file exists
+    bool fileExists = std::filesystem::exists(resolvedPath);
+
+    // Show warning if file exists
+    if (fileExists) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Warning: File already exists and will be overwritten!");
     }
 
     ImGui::Unindent();
@@ -1691,44 +1712,28 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
 void PhysicalExam::drawSaveSkeletonConfigSection() {
     ImGui::Indent();
 
-    ImGui::TextWrapped("Save current skeleton configuration to an XML file.");
-    ImGui::Spacing();
-
     // Directory prefix display
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: ./data/skeleton/");
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: @data/skeleton/");
     ImGui::Spacing();
 
-    // Text input for leaf filename only
-    ImGui::Text("Filename:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##save_skeleton_filename", mSaveSkeletonFilename, sizeof(mSaveSkeletonFilename));
-
-    // Construct full path and check if file exists
-    std::string fullPath = std::string("./data/skeleton/") + mSaveSkeletonFilename;
-    bool fileExists = std::filesystem::exists(fullPath);
-
-    // Show warning if file exists
-    if (fileExists) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "⚠ Warning: File already exists and will be overwritten!");
-    }
-
-    ImGui::Spacing();
+    std::string uriPath = std::string("@data/skeleton/") + mSaveSkeletonFilename;
+    URIResolver& resolver = URIResolver::getInstance();
+    resolver.initialize();
+    std::string resolvedPath = resolver.resolve(uriPath);
 
     // Save button (with debounce to prevent duplicate saves on double-click)
-    if (ImGui::Button("Save Skeleton Config", ImVec2(-1, 30))) {
+    if (ImGui::Button("Save")) {
         if (mCharacter) {
             try {
-                exportSkeleton(fullPath);
+                exportSkeleton(resolvedPath);
 
                 // Record operation if recording
                 if (mRecordingSurgery) {
-                    auto op = std::make_unique<ExportSkeletonOp>(fullPath);
+                    auto op = std::make_unique<ExportSkeletonOp>(resolvedPath);
                     recordOperation(std::move(op));
                 }
 
-                LOG_INFO("[Surgery] Skeleton configuration saved to: " << fullPath);
+                LOG_INFO("[Surgery] Skeleton configuration saved to: " << resolvedPath);
             } catch (const std::exception& e) {
                 LOG_ERROR("[Surgery] Error saving skeleton configuration: " << e.what());
             }
@@ -1737,8 +1742,26 @@ void PhysicalExam::drawSaveSkeletonConfigSection() {
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Save skeleton properties to ./data/skeleton/%s", mSaveSkeletonFilename);
+        ImGui::SetTooltip("Save skeleton properties to %s", resolvedPath.c_str());
     }
+    ImGui::SameLine();
+
+    // Text input for leaf filename only
+    ImGui::Text("Filename:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##save_skeleton_filename", mSaveSkeletonFilename, sizeof(mSaveSkeletonFilename));
+
+    // Check if resolved file exists
+    bool fileExists = std::filesystem::exists(resolvedPath);
+
+    // Show warning if file exists
+    if (fileExists) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "⚠ Warning: File already exists and will be overwritten!");
+    }
+
+    ImGui::Spacing();
 
     ImGui::Unindent();
 }
@@ -3063,18 +3086,37 @@ void PhysicalExam::drawShape(const dart::dynamics::Shape* shape, const Eigen::Ve
     glEnable(GL_DEPTH_TEST);
     glColor4d(color[0], color[1], color[2], color[3]);
 
-    // Only draw mesh shapes (equivalent to mDrawOBJ = true in GLFWApp)
-    // This prevents both mesh and collision box from being drawn
-    if (shape->is<dart::dynamics::MeshShape>()) {
-        const auto& mesh = dynamic_cast<const dart::dynamics::MeshShape*>(shape);
-        mShapeRenderer.renderMesh(mesh, false, 0.0, color);
+    if (!mDrawOBJ) {
+        // Draw primitive shapes (simple geometric forms)
+        if (shape->is<dart::dynamics::SphereShape>()) {
+            const auto* sphere = dynamic_cast<const dart::dynamics::SphereShape*>(shape);
+            GUI::DrawSphere(sphere->getRadius());
+        }
+        else if (shape->is<dart::dynamics::BoxShape>()) {
+            const auto* box = dynamic_cast<const dart::dynamics::BoxShape*>(shape);
+            GUI::DrawCube(box->getSize());
+        }
+        else if (shape->is<dart::dynamics::CapsuleShape>()) {
+            const auto* capsule = dynamic_cast<const dart::dynamics::CapsuleShape*>(shape);
+            GUI::DrawCapsule(capsule->getRadius(), capsule->getHeight());
+        }
+        else if (shape->is<dart::dynamics::CylinderShape>()) {
+            const auto* cylinder = dynamic_cast<const dart::dynamics::CylinderShape*>(shape);
+            GUI::DrawCylinder(cylinder->getRadius(), cylinder->getHeight());
+        }
     }
-    // Note: Primitive shapes (Box, Sphere, etc.) are intentionally not drawn
-    // to avoid double-rendering when mesh models are available
+    else {
+        // Draw mesh shapes (OBJ models)
+        if (shape->is<dart::dynamics::MeshShape>()) {
+            const auto& mesh = dynamic_cast<const dart::dynamics::MeshShape*>(shape);
+            mShapeRenderer.renderMesh(mesh, false, 0.0, color);
+        }
+    }
 }
 
 void PhysicalExam::drawMuscles() {
     if (!mCharacter) return;
+    if (!mUseMuscle) return;  // Guard: no muscles loaded
 
     glEnable(GL_LIGHTING);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
@@ -3374,6 +3416,7 @@ void PhysicalExam::drawReferenceAnchor() {
 
 void PhysicalExam::drawJointPassiveForces() {
     if (!mCharacter || !mShowJointPassiveForces) return;
+    if (!mUseMuscle) return;  // Guard: no muscles loaded
 
     // Get muscle tuple to extract passive joint torques
     MuscleTuple mt = mCharacter->getMuscleTuple(false);
@@ -3603,6 +3646,10 @@ void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
     }
     else if (key == GLFW_KEY_R) {
         reset();
+    }
+    else if (key == GLFW_KEY_O) {
+        mDrawOBJ = !mDrawOBJ;  // Toggle mesh vs primitive shape rendering
+        LOG_INFO("Rendering mode: " << (mDrawOBJ ? "Mesh (OBJ)" : "Primitive shapes"));
     }
     else if (key == GLFW_KEY_1) {
         setPoseStanding();
@@ -4416,6 +4463,7 @@ void PhysicalExam::setupSweepMuscles() {
 
     mTrackedMuscles.clear();
     if (!mCharacter) return;
+    if (!mUseMuscle) return;  // Guard: no muscles loaded
 
     auto skel = mCharacter->getSkeleton();
     if (mSweepConfig.joint_index >= skel->getNumJoints()) {
@@ -4494,6 +4542,8 @@ void PhysicalExam::runSweep() {
 
 void PhysicalExam::collectSweepData(double angle) {
     mSweepAngles.push_back(angle);
+
+    if (!mUseMuscle) return;  // Guard: no muscles loaded
 
     auto muscles = mCharacter->getMuscles();
     for (auto muscle : muscles) {
@@ -5254,7 +5304,11 @@ void PhysicalExam::drawCurrentStateSection() {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Character Loaded");
             ImGui::Text("Skeleton DOFs: %zu", mCharacter->getSkeleton()->getNumDofs());
             ImGui::Text("Body Nodes: %zu", mCharacter->getSkeleton()->getNumBodyNodes());
-            ImGui::Text("Muscles: %zu", mCharacter->getMuscles().size());
+            if (mUseMuscle) {  // Guard: only show muscle count if muscles loaded
+                ImGui::Text("Muscles: %zu", mCharacter->getMuscles().size());
+            } else {
+                ImGui::TextDisabled("Muscles: Not loaded");
+            }
             ImGui::Separator();
             ImGui::Text("Simulation Time: %.3f s", mWorld->getTime());
             ImGui::Separator();
@@ -5271,33 +5325,35 @@ void PhysicalExam::drawCurrentStateSection() {
 
             ImGui::Separator();
 
-            // Muscle passive forces
-            ImGui::Text("Muscle Forces:");
-            double total_passive = 0.0;
-            std::vector<std::pair<double, std::string>> muscle_forces;
+            // Muscle passive forces (only if muscles loaded)
+            if (mUseMuscle) {  // Guard: only show muscle forces if muscles loaded
+                ImGui::Text("Muscle Forces:");
+                double total_passive = 0.0;
+                std::vector<std::pair<double, std::string>> muscle_forces;
 
-            auto muscles = mCharacter->getMuscles();
-            for (auto& muscle : muscles) {
-                double f_p = muscle->Getf_p();
-                total_passive += f_p;
-                muscle_forces.push_back({f_p, muscle->GetName()});
+                auto muscles = mCharacter->getMuscles();
+                for (auto& muscle : muscles) {
+                    double f_p = muscle->Getf_p();
+                    total_passive += f_p;
+                    muscle_forces.push_back({f_p, muscle->GetName()});
+                }
+
+                // Sort by passive force (descending)
+                std::sort(muscle_forces.begin(), muscle_forces.end(),
+                         [](const auto& a, const auto& b) { return a.first > b.first; });
+
+                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "  Total Passive: %.2f N", total_passive);
+
+                // Show top 3 muscles with highest passive force
+                ImGui::Text("  Top 3 Passive Forces:");
+                for (int i = 0; i < std::min(3, (int)muscle_forces.size()); i++) {
+                    ImGui::Text("    %d. %s: %.2f N", i+1,
+                               muscle_forces[i].second.c_str(),
+                               muscle_forces[i].first);
+                }
+
+                ImGui::Separator();
             }
-
-            // Sort by passive force (descending)
-            std::sort(muscle_forces.begin(), muscle_forces.end(),
-                     [](const auto& a, const auto& b) { return a.first > b.first; });
-
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "  Total Passive: %.2f N", total_passive);
-
-            // Show top 3 muscles with highest passive force
-            ImGui::Text("  Top 3 Passive Forces:");
-            for (int i = 0; i < std::min(3, (int)muscle_forces.size()); i++) {
-                ImGui::Text("    %d. %s: %.2f N", i+1,
-                           muscle_forces[i].second.c_str(),
-                           muscle_forces[i].first);
-            }
-
-            ImGui::Separator();
 
             // Current joint angles
             ImGui::Text("Joint Angles:");

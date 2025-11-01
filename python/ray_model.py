@@ -7,7 +7,7 @@ import yaml
 from dill import Unpickler
 from io import BytesIO
 from python.dummy import Dummy
-from python.log_config import log_verbose, log_warn, log_info
+from python.log_config import log_verbose, log_warn, log_info, log_error
 from python.uri_resolver import resolve_path
 
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
@@ -440,6 +440,10 @@ def loading_metadata(path):
     # Resolve URI before loading
     resolved_path = resolve_path(path)
 
+    # Check if path exists
+    if not os.path.exists(resolved_path):
+        raise FileNotFoundError(f"Checkpoint path does not exist: {resolved_path}")
+
     # Detect checkpoint format
     checkpoint_format = _detect_checkpoint_format(resolved_path)
 
@@ -468,13 +472,8 @@ def loading_metadata(path):
 
     # Check if metadata is empty, dict type, or should use fallback
     if not metadata or isinstance(metadata, dict):
-        log_warn(f"[Warning] Metadata is empty or dict type in checkpoint at {resolved_path}, loading fallback from data/A_knee.yaml")
-        fallback_path = resolve_path("@data/A_knee.yaml")
-        # Return the YAML file content as string (not dict, not path)
-        with open(fallback_path, 'r') as f:
-            yaml_content = f.read()
-        log_info(f"[Python] Loaded fallback metadata content from {fallback_path}")
-        return yaml_content
+        log_warn(f"[Warning] Metadata is empty or dict type in checkpoint at {resolved_path}, using empty metadata")
+        metadata = None
 
     return metadata
 

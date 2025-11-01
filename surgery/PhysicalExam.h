@@ -201,6 +201,7 @@ private:
     // Loaded file paths
     std::string mSkeletonPath;
     std::string mMusclePath;
+    bool mUseMuscle;  // Flag to control muscle loading and muscle-related operations
 
     // GLFW/ImGui
     GLFWwindow* mWindow;
@@ -324,6 +325,7 @@ private:
     bool mShowPostureDebug;          // Toggle for posture control debug output
     bool mShowExamTable;             // Toggle for examination table visibility
     bool mShowAnchorPoints;          // Toggle for anchor point visualization
+    bool mDrawOBJ;                   // Toggle for mesh vs primitive shape rendering
 
     // Muscle Selection UI
     char mMuscleFilterText[32];

@@ -114,6 +114,11 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mMuscleRenderTypeInt = 2;
     mMuscleResolution = 0.0;
 
+    // Noise Injector UI initialization
+    mDrawNoiseArrows = true;
+    mNoiseMode = 0;  // Default to no noise
+    mPlotActivationNoise = false;  // Default: don't plot noise
+
     // Muscle Selection UI
     std::memset(mMuscleFilterText, 0, sizeof(mMuscleFilterText));
     // Note: mMuscleSelectionStates will be initialized in initEnv when muscles are available
@@ -144,6 +149,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // Register kinematic keys
     // mGraphData->register_key("sway_Torso_X", 500);
+    mGraphData->register_key("sway_Foot_Rx", 1000);
+    mGraphData->register_key("sway_Foot_Lx", 1000);
     mGraphData->register_key("angle_HipR", 1000);
     mGraphData->register_key("angle_HipIRR", 1000);
     mGraphData->register_key("angle_HipAbR", 1000);
@@ -349,8 +356,12 @@ GLFWApp::GLFWApp(int argc, char **argv)
                         LOG_INFO("Checkpoint uses Ray 2.12.0 format with dict metadata (skipping)");
                     }
                 }
+                // Note: Keep path in mNetworkPaths - it's used later for checkpoint name and network loading
             } catch (const py::error_already_set& e) {
-                LOG_WARN("Warning: Failed to load metadata from network path: " << e.what());
+                LOG_ERROR("Error: Failed to load checkpoint from path: " << path);
+                LOG_ERROR("Reason: " << e.what());
+                LOG_ERROR("Please check that the checkpoint path exists and is in a valid format.");
+                std::exit(1);
             }
         }
     }
@@ -1032,6 +1043,8 @@ void GLFWApp::initEnv(std::string metadata)
             const auto& muscle_name = muscle->GetName();
             if(muscle_name.find("R_") != std::string::npos) {
                 std::string key = "act_" + muscle_name;
+                mGraphData->register_key(key, 1000);
+                key = "noise_" + muscle_name;
                 mGraphData->register_key(key, 1000);
             }
         }
@@ -2051,7 +2064,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Knee Loading
-    if (ImGui::CollapsingHeader("Knee Loading", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Knee Loading"))
     {
         // Display current knee loading max value
         ImGui::Text("Max Knee Loading: %.2f kN", mRenderEnv->getCharacter()->getKneeLoadingMax());
@@ -2155,14 +2168,16 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Kinematics
-    if (ImGui::CollapsingHeader("Kinematics", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Kinematics"))
     {
-        static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis
+        static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway
         ImGui::RadioButton("Major##MajorJointsRadio", &angle_selection, 0);
         ImGui::SameLine();
         ImGui::RadioButton("Minor##MinorJointsRadio", &angle_selection, 1);
         ImGui::SameLine();
         ImGui::RadioButton("Pelvis##PelvisJointsRadio", &angle_selection, 2);
+        ImGui::SameLine();
+        ImGui::RadioButton("Sway##SwayRadio", &angle_selection, 3);
 
         if (angle_selection == 0) { // Major joints
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
@@ -2229,6 +2244,27 @@ void GLFWApp::drawSimVisualizationPanel()
             }
         }
 
+        if (angle_selection == 3) { // Foot sway
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImPlot::SetNextAxisLimits(3, -0.2, 0.2);
+
+            std::string title_sway = mPlotTitle ? mCheckpointName : "Foot Sway (m)";
+            if (ImPlot::BeginPlot((title_sway + "##FootSway").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Sway (m)");
+
+                std::vector<std::string> swayKeys = {"sway_Foot_Rx", "sway_Foot_Lx"};
+                plotGraphData(swayKeys, ImAxis_Y1, true, false, "");
+
+                // Overlay phase bars
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+                ImPlot::EndPlot();
+            }
+        }
+
 
         // // Torso Sway Plot
         // ImPlot::SetNextAxisLimits(0, -3, 0);
@@ -2275,10 +2311,13 @@ void GLFWApp::drawSimVisualizationPanel()
             mSelectedActivationKeys.clear();
         }
 
+        // Checkbox to plot activation noise
+        ImGui::Checkbox("Plot NI", &mPlotActivationNoise);
+
         // Search input
         ImGui::Text("Search Muscle:");
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        ImGui::InputText("##ActivationFilter", mActivationFilterText, sizeof(mActivationFilterText));
+        bool enterPressed = ImGui::InputText("##ActivationFilter", mActivationFilterText, sizeof(mActivationFilterText), ImGuiInputTextFlags_EnterReturnsTrue);
 
         // Filter candidates based on search text
         std::vector<std::string> candidates;
@@ -2303,10 +2342,25 @@ void GLFWApp::drawSimVisualizationPanel()
             candidates = all_activation_keys;
         }
 
+        // If Enter pressed, add all candidates
+        if (enterPressed && !candidates.empty())
+        {
+            for (const auto& candidate : candidates)
+            {
+                // Add if not already selected
+                if (std::find(mSelectedActivationKeys.begin(), mSelectedActivationKeys.end(), candidate) == mSelectedActivationKeys.end())
+                {
+                    mSelectedActivationKeys.push_back(candidate);
+                }
+            }
+            // Clear search
+            mActivationFilterText[0] = '\0';
+        }
+
         // Display candidate list in scrollable box
         if (!candidates.empty())
         {
-            ImGui::Text("Available Muscles: %zu", candidates.size());
+            ImGui::Text("Available Muscles: %zu (Enter to add all)", candidates.size());
             if (ImGui::BeginListBox("##ActivationCandidates", ImVec2(-1, 150)))
             {
                 for (const auto& candidate : candidates)
@@ -2357,8 +2411,25 @@ void GLFWApp::drawSimVisualizationPanel()
             {
                 ImPlot::SetupAxes("Time (s)", "Activation (0-1)");
 
-                // Plot all selected activation keys
-                plotGraphData(mSelectedActivationKeys, ImAxis_Y1, true, false, "");
+                // Merge activation keys and noise keys into single vector
+                std::vector<std::string> keysToPlot = mSelectedActivationKeys;
+
+                if (mPlotActivationNoise) {
+                    auto all_keys = mGraphData->get_keys();
+                    for (const auto& actKey : mSelectedActivationKeys) {
+                        // Convert "act_" to "noise_" key
+                        if (actKey.substr(0, 4) == "act_") {
+                            std::string noiseKey = "noise_" + actKey.substr(4);
+                            // Add noise key if it exists
+                            if (std::find(all_keys.begin(), all_keys.end(), noiseKey) != all_keys.end()) {
+                                keysToPlot.push_back(noiseKey);
+                            }
+                        }
+                    }
+                }
+
+                // Plot all keys (activations + noise) in single call
+                plotGraphData(keysToPlot, ImAxis_Y1, true, false, "");
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -3186,9 +3257,9 @@ void GLFWApp::drawSimControlPanel()
 
         ImGui::Separator();
         // Muscle Filtering and Selection
+        ImGui::Indent();
         if (ImGui::CollapsingHeader("Muscle##Rendering"))
         {
-            ImGui::Indent();
             ImGui::SetNextItemWidth(125);
             ImGui::SliderFloat("Resolution", &mMuscleResolution, 0.0, 1000.0);
             ImGui::SetNextItemWidth(125);
@@ -3277,10 +3348,11 @@ void GLFWApp::drawSimControlPanel()
         ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
         ImGui::RadioButton("Weakness", &mMuscleRenderTypeInt, 4);
         mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
-        ImGui::Unindent();
     }
-    
+    ImGui::Unindent();
 
+    // Noise Injection Control Panel
+    drawNoiseControlPanel();
 
     // Network
     if (ImGui::CollapsingHeader("Network"))
@@ -3796,6 +3868,10 @@ void GLFWApp::drawSimFrame()
             if (!mRenderConditions) drawShadow();
             if (mMuscleSelectionStates.size() > 0) drawMuscles(mMuscleRenderType);
         }
+
+        // Draw noise visualizations
+        drawNoiseVisualizations();
+
         if ((mRenderEnv->getRewardType() == gaitnet) && mDrawFootStep) drawFootStep();
         if (mDrawJointSphere)
         {
@@ -4927,6 +5003,18 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
     glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_DEPTH_TEST);
 
+    // Check if activation noise is active
+    bool activationNoiseActive = false;
+    const std::vector<double>* noises = nullptr;
+
+    if (mRenderEnv && mRenderEnv->getNoiseInjector()) {
+        auto* ni = mRenderEnv->getNoiseInjector();
+        activationNoiseActive = ni->isEnabled() && ni->isActivationEnabled();
+        if (activationNoiseActive) {
+            noises = &(ni->getVisualization().activationNoises);
+        }
+    }
+
     auto muscles = mRenderEnv->getCharacter()->getMuscles();
     for (int i = 0; i < muscles.size(); i++)
     {
@@ -4968,6 +5056,18 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
             color.setOnes();
             break;
         }
+
+        // Override color to green with intensity proportional to noise magnitude
+        if (activationNoiseActive && noises && i < noises->size()) {
+            double noise_magnitude = std::abs((*noises)[i]);  // Absolute value of noise
+            double max_amp = mRenderEnv->getNoiseInjector()->getActivationAmplitude();
+            double intensity = std::clamp(noise_magnitude / max_amp, 0.0, 1.0);
+
+            // Green color: darker (0.1) to bright (1.0) based on noise intensity
+            double green_val = 0.1 + 0.9 * intensity;
+            color = Eigen::Vector4d(0.1, green_val, 0.1, mMuscleTransparency + 0.5);
+        }
+
         glColor4dv(color.data());
         mShapeRenderer.renderMuscle(muscle, -1.0);
     }
@@ -4995,6 +5095,328 @@ void GLFWApp::drawFootStep()
     glPushMatrix();
     glTranslated(0, next_foot[1], next_foot[2]);
     GUI::DrawCube(Eigen::Vector3d(1.0, 0.15, 0.15));
+    glPopMatrix();
+}
+
+void GLFWApp::drawNoiseControlPanel()
+{
+    if (!mRenderEnv) return;
+
+    if (ImGui::CollapsingHeader("Noise Injection", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto* ni = mRenderEnv->getNoiseInjector();
+
+        // Noise type selection with radio buttons
+        ImGui::Text("Noise Type:");
+        if (ImGui::RadioButton("None (Disabled)", &mNoiseMode, 0)) {}
+        if (ImGui::RadioButton("Position", &mNoiseMode, 1)) {}
+        if (ImGui::RadioButton("Force", &mNoiseMode, 2)) {}
+        if (ImGui::RadioButton("Activation", &mNoiseMode, 3)) {}
+        if (ImGui::RadioButton("All Types", &mNoiseMode, 4)) {}
+
+        // Apply noise mode selection - enable NoiseInjector if any mode is active
+        bool anyNoiseEnabled = (mNoiseMode > 0);
+        ni->setEnabled(anyNoiseEnabled);
+        ni->setPositionNoiseEnabled(mNoiseMode == 1 || mNoiseMode == 4);
+        ni->setForceNoiseEnabled(mNoiseMode == 2 || mNoiseMode == 4);
+        ni->setActivationNoiseEnabled(mNoiseMode == 3 || mNoiseMode == 4);
+
+        ImGui::Separator();
+
+        // Position Noise Controls
+        if (ImGui::TreeNode("Position Noise")) {
+            float pos_amp = static_cast<float>(ni->getPositionAmplitude());
+            ImGui::SetNextItemWidth(170);
+            if (ImGui::SliderFloat("Amp##PosAmp", &pos_amp, 0.0f, 0.015f, "%.4f")) {
+                ni->setPositionAmplitude(pos_amp);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputFloat("##PosAmpInput", &pos_amp, 0.0f, 0.0f, "%.4f")) {
+                ni->setPositionAmplitude(pos_amp);
+            }
+
+            float pos_freq = static_cast<float>(ni->getPositionFrequency());
+            ImGui::SetNextItemWidth(170);
+            if (ImGui::SliderFloat("Freq##PosFreq", &pos_freq, 0.1f, 1.0f, "%.2f")) {
+                ni->setPositionFrequency(pos_freq);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputFloat("##PosFreqInput", &pos_freq, 0.0f, 0.0f, "%.2f")) {
+                ni->setPositionFrequency(pos_freq);
+            }
+
+            ImGui::Separator();
+
+            // Target nodes management for position
+            ImGui::Text("Affected Body Nodes:");
+            auto posTargetNodes = ni->getPositionTargetNodes();
+            std::vector<std::string> posNodesToRemove;
+
+            for (const auto& node : posTargetNodes) {
+                ImGui::BulletText("%s", node.c_str());
+                ImGui::SameLine();
+                std::string buttonLabel = "Remove##Pos" + node;
+                if (ImGui::SmallButton(buttonLabel.c_str())) {
+                    posNodesToRemove.push_back(node);
+                }
+            }
+
+            // Remove nodes
+            if (!posNodesToRemove.empty()) {
+                std::vector<std::string> newNodes;
+                for (const auto& node : posTargetNodes) {
+                    if (std::find(posNodesToRemove.begin(), posNodesToRemove.end(), node) == posNodesToRemove.end()) {
+                        newNodes.push_back(node);
+                    }
+                }
+                ni->setPositionTargetNodes(newNodes);
+            }
+
+            // Add new node with search
+            ImGui::Spacing();
+            static char posSearchBuffer[64] = "";
+            ImGui::SetNextItemWidth(150);
+            bool posEnterPressed = ImGui::InputText("##PosSearch", posSearchBuffer, sizeof(posSearchBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            ImGui::Text("(Search, Enter to add all)");
+
+            // Show filtered body nodes
+            if (strlen(posSearchBuffer) > 0) {
+                auto skeleton = mRenderEnv->getCharacter()->getSkeleton();
+                std::string searchTerm(posSearchBuffer);
+                std::transform(searchTerm.begin(), searchTerm.end(), searchTerm.begin(), ::tolower);
+
+                // Collect matching nodes
+                std::vector<std::string> matchingNodes;
+                for (size_t i = 0; i < skeleton->getNumBodyNodes(); ++i) {
+                    std::string nodeName = skeleton->getBodyNode(i)->getName();
+                    std::string lowerName = nodeName;
+                    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+
+                    if (lowerName.find(searchTerm) != std::string::npos) {
+                        matchingNodes.push_back(nodeName);
+                    }
+                }
+
+                // If Enter pressed, add all matching nodes
+                if (posEnterPressed && !matchingNodes.empty()) {
+                    auto currentNodes = ni->getPositionTargetNodes();
+                    int addedCount = 0;
+                    for (const auto& nodeName : matchingNodes) {
+                        if (std::find(currentNodes.begin(), currentNodes.end(), nodeName) == currentNodes.end()) {
+                            currentNodes.push_back(nodeName);
+                            addedCount++;
+                        }
+                    }
+                    ni->setPositionTargetNodes(currentNodes);
+                    LOG_INFO("[NoiseInjector] Added " << addedCount << " position target nodes");
+                    posSearchBuffer[0] = '\0';  // Clear search
+                } else {
+                    // Show selectable list
+                    ImGui::BeginChild("##PosNodeList", ImVec2(0, 150), true);
+                    for (const auto& nodeName : matchingNodes) {
+                        if (ImGui::Selectable(nodeName.c_str())) {
+                            // Add to target nodes if not already present
+                            auto currentNodes = ni->getPositionTargetNodes();
+                            if (std::find(currentNodes.begin(), currentNodes.end(), nodeName) == currentNodes.end()) {
+                                currentNodes.push_back(nodeName);
+                                ni->setPositionTargetNodes(currentNodes);
+                                LOG_INFO("[NoiseInjector] Added position target node: " << nodeName);
+                            }
+                            posSearchBuffer[0] = '\0';  // Clear search
+                        }
+                    }
+                    ImGui::EndChild();
+                }
+            }
+
+            ImGui::TreePop();
+        }
+
+        // Force Noise Controls
+        if (ImGui::TreeNode("Force Noise")) {
+            float force_amp = static_cast<float>(ni->getForceAmplitude());
+            ImGui::SetNextItemWidth(170);
+            if (ImGui::SliderFloat("Amp##ForceAmp", &force_amp, 0.0f, 100.0f, "%.1f")) {
+                ni->setForceAmplitude(force_amp);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputFloat("##ForceAmpInput", &force_amp, 0.0f, 0.0f, "%.1f")) {
+                ni->setForceAmplitude(force_amp);
+            }
+
+            float force_freq = static_cast<float>(ni->getForceFrequency());
+            ImGui::SetNextItemWidth(170);
+            if (ImGui::SliderFloat("Freq##ForceFreq", &force_freq, 0.1f, 5.0f, "%.2f")) {
+                ni->setForceFrequency(force_freq);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputFloat("##ForceFreqInput", &force_freq, 0.0f, 0.0f, "%.2f")) {
+                ni->setForceFrequency(force_freq);
+            }
+
+            ImGui::Separator();
+
+            // Target nodes management for force
+            ImGui::Text("Affected Body Nodes:");
+            auto forceTargetNodes = ni->getForceTargetNodes();
+            std::vector<std::string> forceNodesToRemove;
+
+            for (const auto& node : forceTargetNodes) {
+                ImGui::BulletText("%s", node.c_str());
+                ImGui::SameLine();
+                std::string buttonLabel = "Remove##Force" + node;
+                if (ImGui::SmallButton(buttonLabel.c_str())) {
+                    forceNodesToRemove.push_back(node);
+                }
+            }
+
+            // Remove nodes
+            if (!forceNodesToRemove.empty()) {
+                std::vector<std::string> newNodes;
+                for (const auto& node : forceTargetNodes) {
+                    if (std::find(forceNodesToRemove.begin(), forceNodesToRemove.end(), node) == forceNodesToRemove.end()) {
+                        newNodes.push_back(node);
+                    }
+                }
+                ni->setForceTargetNodes(newNodes);
+            }
+
+            // Add new node with search
+            ImGui::Spacing();
+            static char forceSearchBuffer[64] = "";
+            ImGui::SetNextItemWidth(150);
+            bool forceEnterPressed = ImGui::InputText("##ForceSearch", forceSearchBuffer, sizeof(forceSearchBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            ImGui::Text("(Search, Enter to add all)");
+
+            // Show filtered body nodes
+            if (strlen(forceSearchBuffer) > 0) {
+                auto skeleton = mRenderEnv->getCharacter()->getSkeleton();
+                std::string searchTerm(forceSearchBuffer);
+                std::transform(searchTerm.begin(), searchTerm.end(), searchTerm.begin(), ::tolower);
+
+                // Collect matching nodes
+                std::vector<std::string> matchingNodes;
+                for (size_t i = 0; i < skeleton->getNumBodyNodes(); ++i) {
+                    std::string nodeName = skeleton->getBodyNode(i)->getName();
+                    std::string lowerName = nodeName;
+                    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+
+                    if (lowerName.find(searchTerm) != std::string::npos) {
+                        matchingNodes.push_back(nodeName);
+                    }
+                }
+
+                // If Enter pressed, add all matching nodes
+                if (forceEnterPressed && !matchingNodes.empty()) {
+                    auto currentNodes = ni->getForceTargetNodes();
+                    int addedCount = 0;
+                    for (const auto& nodeName : matchingNodes) {
+                        if (std::find(currentNodes.begin(), currentNodes.end(), nodeName) == currentNodes.end()) {
+                            currentNodes.push_back(nodeName);
+                            addedCount++;
+                        }
+                    }
+                    ni->setForceTargetNodes(currentNodes);
+                    LOG_INFO("[NoiseInjector] Added " << addedCount << " force target nodes");
+                    forceSearchBuffer[0] = '\0';  // Clear search
+                } else {
+                    // Show selectable list
+                    ImGui::BeginChild("##ForceNodeList", ImVec2(0, 150), true);
+                    for (const auto& nodeName : matchingNodes) {
+                        if (ImGui::Selectable(nodeName.c_str())) {
+                            // Add to target nodes if not already present
+                            auto currentNodes = ni->getForceTargetNodes();
+                            if (std::find(currentNodes.begin(), currentNodes.end(), nodeName) == currentNodes.end()) {
+                                currentNodes.push_back(nodeName);
+                                ni->setForceTargetNodes(currentNodes);
+                                LOG_INFO("[NoiseInjector] Added force target node: " << nodeName);
+                            }
+                            forceSearchBuffer[0] = '\0';  // Clear search
+                        }
+                    }
+                    ImGui::EndChild();
+                }
+            }
+
+            ImGui::TreePop();
+        }
+
+        // Activation Noise Controls
+        if (ImGui::TreeNode("Activation Noise")) {
+            float act_amp = static_cast<float>(ni->getActivationAmplitude());
+            ImGui::SetNextItemWidth(170);
+            if (ImGui::SliderFloat("Amp##ActAmp", &act_amp, 0.0f, 0.2f, "%.3f")) {
+                ni->setActivationAmplitude(act_amp);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputFloat("##ActAmpInput", &act_amp, 0.0f, 0.0f, "%.3f")) {
+                ni->setActivationAmplitude(act_amp);
+            }
+
+            float act_freq = static_cast<float>(ni->getActivationFrequency());
+            ImGui::SetNextItemWidth(170);
+            if (ImGui::SliderFloat("Freq##ActFreq", &act_freq, 0.0f, 1.0f, "%.2f")) {
+                ni->setActivationFrequency(act_freq);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::InputFloat("##ActFreqInput", &act_freq, 0.0f, 0.0f, "%.2f")) {
+                ni->setActivationFrequency(act_freq);
+            }
+            ImGui::TreePop();
+        }
+
+        ImGui::Separator();
+
+        // Visualization toggle
+        ImGui::Checkbox("Draw Noise Arrows", &mDrawNoiseArrows);
+    }
+}
+
+void GLFWApp::drawNoiseVisualizations()
+{
+    if (!mDrawNoiseArrows || !mRenderEnv) return;
+
+    auto* ni = mRenderEnv->getNoiseInjector();
+    if (!ni || !ni->isEnabled()) return;
+
+    const auto& viz = ni->getVisualization();
+
+    glPushMatrix();
+
+    // Draw force arrows (red)
+    if (ni->isForceEnabled()) {
+        for (const auto& [position, force] : viz.forceArrows) {
+            Eigen::Vector3d direction = force.normalized();
+            double magnitude = force.norm();
+            double length = magnitude / 50.0;  // Scale for visibility
+
+            // Red arrows for external forces
+            Eigen::Vector4d color(1.0, 0.0, 0.0, 0.8);
+            GUI::DrawArrow3D(position, direction, length, 0.01, color);
+        }
+    }
+
+    // Draw position noise indicators (blue arrows at joints)
+    if (ni->isPositionEnabled()) {
+        auto skeleton = mRenderEnv->getCharacter()->getSkeleton();
+        for (const auto& [nodeName, offset] : viz.positionNoises) {
+            // Draw at the actual body node position
+            auto* bn = skeleton->getBodyNode(nodeName);
+            if (bn && offset.norm() > 1e-6) {
+                Eigen::Vector4d color(0.0, 0.0, 1.0, 0.8);
+                Eigen::Vector3d nodePos = bn->getWorldTransform().translation();
+                GUI::DrawArrow3D(nodePos, offset.normalized(), offset.norm() * 250.0, 0.008, color);
+            }
+        }
+    }
+
     glPopMatrix();
 }
 
@@ -5067,7 +5489,7 @@ void GLFWApp::initializeMotionSkeleton()
 
 void GLFWApp::loadNPZMotion()
 {
-	std::string motion_path = "data/npz_motions";
+	std::string motion_path = "data/motion/npz";
 	if (!fs::exists(motion_path) || !fs::is_directory(motion_path)) {
 		std::cerr << "Motion directory not found: " << motion_path << std::endl;
 		return;

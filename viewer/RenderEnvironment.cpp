@@ -58,6 +58,18 @@ void RenderEnvironment::RecordGraphData() {
     // Log kinematic data
     auto skel = mEnv->getCharacter()->getSkeleton();
     
+    if (mGraphData->key_exists("sway_Foot_Rx")) {
+        const double root_x = skel->getRootBodyNode()->getCOM()[0];
+        const double footRx = skel->getBodyNode("TalusR")->getCOM()[0] - root_x;
+        mGraphData->push("sway_Foot_Rx", footRx);
+    }
+
+    if (mGraphData->key_exists("sway_Foot_Lx")) {
+        const double root_x = skel->getRootBodyNode()->getCOM()[0];
+        const double footLx = skel->getBodyNode("TalusL")->getCOM()[0] - root_x;
+        mGraphData->push("sway_Foot_Lx", footLx);
+    }
+
     if (mGraphData->key_exists("sway_Torso_X")) {
         const double root_x = skel->getRootBodyNode()->getCOM()[0];
         const double torsoX = skel->getBodyNode("Torso")->getCOM()[0] - root_x;
@@ -170,12 +182,37 @@ void RenderEnvironment::RecordGraphData() {
         }
     }
 
+    // Record muscle activations
     for (const auto& muscle : character->getMuscles()) {
         const auto& muscle_name = muscle->GetName();
         if(muscle_name.find("R_") != std::string::npos) {
             std::string key = "act_" + muscle_name;
             if (mGraphData->key_exists(key)) {
                 mGraphData->push(key, muscle->GetActivation());
+            }
+        }
+    }
+
+    // Record activation noise from NoiseInjector (or 0 if disabled)
+    auto muscles = character->getMuscles();
+    bool noiseActive = mEnv->getNoiseInjector() &&
+                       mEnv->getNoiseInjector()->isEnabled() &&
+                       mEnv->getNoiseInjector()->isActivationEnabled();
+
+    for (size_t i = 0; i < muscles.size(); i++) {
+        const auto& muscle_name = muscles[i]->GetName();
+        if(muscle_name.find("R_") != std::string::npos) {
+            std::string key = "noise_" + muscle_name;
+            if (mGraphData->key_exists(key)) {
+                double noiseValue = 0.0;
+                if (noiseActive) {
+                    const auto& viz = mEnv->getNoiseInjector()->getVisualization();
+                    const auto& activationNoises = viz.activationNoises;
+                    if (i < activationNoises.size()) {
+                        noiseValue = activationNoises[i];
+                    }
+                }
+                mGraphData->push(key, noiseValue);
             }
         }
     }

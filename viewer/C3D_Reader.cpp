@@ -43,7 +43,7 @@ C3D_Reader::C3D_Reader(std::string skel_path, std::string marker_path, Environme
     mSkelInfos.clear();
     mMarkerSet.clear();
 
-    mVirtSkeleton = BuildFromFile(skel_path, 0.4, Eigen::Vector4d::Ones(), false, true);
+    mVirtSkeleton = BuildFromFile(skel_path, SKEL_COLLIDE_ALL);
 
     for (auto bn : mVirtSkeleton->getBodyNodes())
     {

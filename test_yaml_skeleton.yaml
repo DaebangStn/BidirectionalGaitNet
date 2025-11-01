@@ -1,0 +1,13 @@
+name: "yaml_skeleton_test"
+description: "Test YAML skeleton import"
+
+character:
+  skeleton: "skeleton_exported.yaml"
+  muscle: "@data/muscle/distribute_lower_only.xml"
+  actuator: "mass_lower"
+
+trials:
+  - name: "test_yaml_load"
+    type: "supine"
+    duration: 1.0
+    description: "Test loading YAML skeleton"

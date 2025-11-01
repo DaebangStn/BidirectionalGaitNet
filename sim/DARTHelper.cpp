@@ -1,6 +1,7 @@
 #include "DARTHelper.h"
 #include <tinyxml2.h>
-#include "../viewer/Log.h"
+#include <algorithm>
+#include "Log.h"
 
 std::vector<std::string>
 split_string(const std::string &input)
@@ -257,10 +258,69 @@ Trim(std::string str)
 	return str;
 }
 
-dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaultDamping, Eigen::Vector4d color_filter, bool isContact, bool collide_all, bool isBVH)
+// Forward declaration
+dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags);
+
+// YAML helper functions for skeleton loading
+static Eigen::Vector3d yaml_to_vector3d(const YAML::Node& node) {
+	if (!node.IsSequence() || node.size() != 3) {
+		throw std::runtime_error("Expected 3-element array for Vector3d");
+	}
+	return Eigen::Vector3d(node[0].as<double>(),
+	                       node[1].as<double>(),
+	                       node[2].as<double>());
+}
+
+static Eigen::Matrix3d yaml_to_matrix3d(const YAML::Node& node) {
+	if (!node.IsSequence() || node.size() != 3) {
+		throw std::runtime_error("Expected 3x3 array for Matrix3d");
+	}
+	Eigen::Matrix3d mat;
+	for (int i = 0; i < 3; i++) {
+		if (!node[i].IsSequence() || node[i].size() != 3) {
+			throw std::runtime_error("Expected 3 elements per row in Matrix3d");
+		}
+		for (int j = 0; j < 3; j++) {
+			mat(i, j) = node[i][j].as<double>();
+		}
+	}
+	return mat;
+}
+
+static Eigen::Isometry3d yaml_to_transform(const YAML::Node& R, const YAML::Node& t) {
+	Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
+	T.linear() = yaml_to_matrix3d(R);
+	T.translation() = yaml_to_vector3d(t);
+	return Orthonormalize(T);
+}
+
+dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
 {
-	TiXmlDocument doc;
 	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+
+	// Detect format from file extension
+	std::string ext;
+	size_t dot_pos = resolvedPath.find_last_of('.');
+	if (dot_pos != std::string::npos) {
+		ext = resolvedPath.substr(dot_pos);
+		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+	}
+
+	// Route to appropriate parser
+	if (ext == ".yaml" || ext == ".yml") {
+		return BuildFromYAML(path, flags);
+	}
+
+	// Continue with XML parsing
+	// Hardcoded default damping
+	const double defaultDamping = 0.4;
+
+	// Extract flags
+	bool isContact = (flags & SKEL_NO_COLLISION) == 0;  // Collision enabled unless NO_COLLISION flag set
+	bool collide_all = (flags & SKEL_COLLIDE_ALL) != 0;
+	bool isBVH = (flags & SKEL_REMOVE_JOINT_LIMIT) != 0;
+
+	TiXmlDocument doc;
 	LOG_VERBOSE("[DARTHelper] Building skeleton from file : " << resolvedPath);
 	if (doc.LoadFile(resolvedPath.c_str()))
 	{
@@ -326,7 +386,7 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaul
 
 		Eigen::Vector4d color = Eigen::Vector4d::Constant(0.2);
 		if (body->Attribute("color") != nullptr)
-			color = color_filter.asDiagonal() * string_to_vector4d(body->Attribute("color"));
+			color = string_to_vector4d(body->Attribute("color"));
 
 		dart::dynamics::Inertia inertia = MakeInertia(shape, mass);
 		T_body.linear() = string_to_matrix3d(body->FirstChildElement("Transformation")->Attribute("linear"));
@@ -426,7 +486,7 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaul
 
 		if (obj_file != "None")
 		{
-			std::string obj_uri = "@data/OBJ/" + obj_file;
+			std::string obj_uri = "@data/skeleton/OBJ/" + obj_file;
 			std::string obj_path = PMuscle::URIResolver::getInstance().resolve(obj_uri);
 			const aiScene *scene = MeshShape::loadMesh(std::string(obj_path));
 
@@ -439,6 +499,182 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, double defaul
 			T_obj = T_body.inverse();
 			vsn->setRelativeTransform(T_obj);
 		}
+	}
+
+	// Debug: Print first 5 body nodes with global positions
+	LOG_VERBOSE("[DARTHelper] YAML Skeleton loaded: " << skel->getName() << " (" << skel->getNumBodyNodes() << " body nodes)");
+	int debug_count = std::min(5, (int)skel->getNumBodyNodes());
+	for (int i = 0; i < debug_count; i++) {
+		auto bn = skel->getBodyNode(i);
+		Eigen::Vector3d global_pos = bn->getWorldTransform().translation();
+		LOG_VERBOSE("[DARTHelper]   [" << i << "] " << bn->getName()
+		         << " @ [" << global_pos[0] << ", " << global_pos[1] << ", " << global_pos[2] << "]");
+	}
+
+	return skel;
+}
+
+dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
+{
+	// Hardcoded default damping
+	const double defaultDamping = 0.4;
+
+	// Extract flags
+	bool isContact = (flags & SKEL_NO_COLLISION) == 0;
+	bool collide_all = (flags & SKEL_COLLIDE_ALL) != 0;
+	bool isBVH = (flags & SKEL_REMOVE_JOINT_LIMIT) != 0;
+
+	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+	LOG_VERBOSE("[DARTHelper] Building skeleton from YAML file : " << resolvedPath);
+
+	YAML::Node doc = YAML::LoadFile(resolvedPath);
+
+	YAML::Node skel_node = doc["skeleton"];
+	std::string skel_name = skel_node["name"].as<std::string>();
+	SkeletonPtr skel = Skeleton::create(skel_name);
+
+	YAML::Node nodes = skel_node["nodes"];
+	for (const auto& node : nodes) {
+		std::string name = node["name"].as<std::string>();
+		std::string parent_str = node["parent"].as<std::string>();
+		BodyNode *parent = nullptr;
+		if (parent_str != "None")
+			parent = skel->getBodyNode(parent_str);
+
+		ShapePtr shape;
+		Eigen::Isometry3d T_body = Eigen::Isometry3d::Identity();
+		YAML::Node body = node["body"];
+		std::string type = body["type"].as<std::string>();
+		double mass = body["mass"].as<double>();
+
+		if (type == "Box") {
+			Eigen::Vector3d size = yaml_to_vector3d(body["size"]);
+			shape = MakeBoxShape(size);
+		}
+		else if (type == "Sphere") {
+			double radius = body["radius"].as<double>();
+			shape = MakeSphereShape(radius);
+		}
+		else if (type == "Capsule") {
+			double radius = body["radius"].as<double>();
+			double height = body["height"].as<double>();
+			shape = MakeCapsuleShape(radius, height);
+		}
+		else if (type == "Cylinder") {
+			double radius = body["radius"].as<double>();
+			double height = body["height"].as<double>();
+			shape = MakeCylinderShape(radius, height);
+		}
+
+		bool contact = false;
+		if (body["contact"]) {
+			contact = body["contact"].as<bool>() & isContact;
+		}
+		contact |= collide_all;
+
+		Eigen::Vector4d color = Eigen::Vector4d::Constant(0.2);
+
+		dart::dynamics::Inertia inertia = MakeInertia(shape, mass);
+		T_body = yaml_to_transform(body["R"], body["t"]);
+
+		YAML::Node joint = node["joint"];
+		type = joint["type"].as<std::string>();
+		Joint::Properties *props;
+
+		Eigen::Isometry3d T_joint = yaml_to_transform(joint["R"], joint["t"]);
+
+		// T_joint and T_body are LOCAL transforms (relative to parent)
+		// parent_to_joint: joint transform relative to parent body (already in T_joint)
+		// child_to_joint: joint transform relative to child body
+		// Formula T_body.inverse() * T_joint works for both GLOBAL (XML) and LOCAL (YAML) cases
+		Eigen::Isometry3d parent_to_joint = T_joint;
+		Eigen::Isometry3d child_to_joint = T_body.inverse() * T_joint;
+
+		if (type == "Free") {
+			double damping = defaultDamping;
+			if (joint["kv"]) {
+				damping = joint["kv"][0].as<double>();
+			}
+			props = MakeFreeJointProperties(name, parent_to_joint, child_to_joint, damping);
+		}
+		else if (type == "Planar") {
+			props = MakePlanarJointProperties(name, parent_to_joint, child_to_joint);
+		}
+		else if (type == "Weld") {
+			props = MakeWeldJointProperties(name, parent_to_joint, child_to_joint);
+		}
+		else if (type == "Ball" || (isBVH && name.find("ForeArm") == std::string::npos)) {
+			Eigen::Vector3d lower;
+			Eigen::Vector3d upper;
+			if (isBVH) {
+				lower = Eigen::Vector3d(-3.14, -3.14, -3.14);
+				upper = Eigen::Vector3d(3.14, 3.14, 3.14);
+				type = "Ball";
+			}
+			else {
+				lower = yaml_to_vector3d(joint["lower"]);
+				upper = yaml_to_vector3d(joint["upper"]);
+			}
+			double damping = defaultDamping;
+			double friction = 0;
+			Eigen::Vector3d stiffness = Eigen::Vector3d::Zero(3);
+			if (joint["kv"]) {
+				damping = joint["kv"][0].as<double>();
+			}
+
+			props = MakeBallJointProperties(name, parent_to_joint, child_to_joint, lower, upper, damping, friction, stiffness);
+		}
+		else if (type == "Revolute") {
+			Eigen::Vector1d lower(joint["lower"][0].as<double>());
+			Eigen::Vector1d upper(joint["upper"][0].as<double>());
+			Eigen::Vector3d axis = yaml_to_vector3d(joint["axis"]);
+			double damping = defaultDamping;
+			double friction = 0;
+			double stiffness = 0;
+			if (joint["kv"]) {
+				damping = joint["kv"][0].as<double>();
+			}
+
+			props = MakeRevoluteJointProperties(name, axis, parent_to_joint, child_to_joint, lower, upper, damping, friction, stiffness);
+		}
+
+		auto bn = MakeBodyNode(skel, parent, props, type, inertia);
+		if (contact) bn->createShapeNodeWith<VisualAspect, CollisionAspect, DynamicsAspect>(shape);
+		else bn->createShapeNodeWith<VisualAspect, DynamicsAspect>(shape);
+
+		dart::dynamics::ShapeNode* lastShapeNode = nullptr;
+		bn->eachShapeNodeWith<VisualAspect>([&lastShapeNode](dart::dynamics::ShapeNode* sn) {
+			lastShapeNode = sn;
+			return true;
+		});
+		if (lastShapeNode) lastShapeNode->getVisualAspect()->setColor(color);
+
+		if (body["obj"]) {
+			std::string obj_file = body["obj"].as<std::string>();
+			std::string obj_uri = "@data/skeleton/OBJ/" + obj_file;
+			std::string obj_path = PMuscle::URIResolver::getInstance().resolve(obj_uri);
+			const aiScene *scene = MeshShape::loadMesh(std::string(obj_path));
+
+			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(Eigen::Vector3d(0.01, 0.01, 0.01), scene));
+			visual_shape->setColorMode(MeshShape::ColorMode::SHAPE_COLOR);
+			auto vsn = bn->createShapeNodeWith<VisualAspect>(visual_shape);
+
+			// Visual mesh transform: Identity
+			// Mesh is at body origin, same as collision shape (no additional offset)
+			Eigen::Isometry3d T_obj;
+			T_obj.setIdentity();
+			vsn->setRelativeTransform(T_obj);
+		}
+	}
+
+	// Debug: Print first 5 body nodes with global positions
+	LOG_INFO("[DARTHelper] YAML Skeleton loaded: " << skel->getName() << " (" << skel->getNumBodyNodes() << " body nodes)");
+	int debug_count = std::min(5, (int)skel->getNumBodyNodes());
+	for (int i = 0; i < debug_count; i++) {
+		auto bn = skel->getBodyNode(i);
+		Eigen::Vector3d global_pos = bn->getWorldTransform().translation();
+		LOG_INFO("[DARTHelper]   [" << i << "] " << bn->getName()
+		         << " @ [" << global_pos[0] << ", " << global_pos[1] << ", " << global_pos[2] << "]");
 	}
 
 	return skel;
