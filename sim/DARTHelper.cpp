@@ -294,24 +294,10 @@ static Eigen::Isometry3d yaml_to_transform(const YAML::Node& R, const YAML::Node
 	return Orthonormalize(T);
 }
 
-dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
+dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 {
 	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
-
-	// Detect format from file extension
-	std::string ext;
-	size_t dot_pos = resolvedPath.find_last_of('.');
-	if (dot_pos != std::string::npos) {
-		ext = resolvedPath.substr(dot_pos);
-		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-	}
-
-	// Route to appropriate parser
-	if (ext == ".yaml" || ext == ".yml") {
-		return BuildFromYAML(path, flags);
-	}
-
-	// Continue with XML parsing
+	
 	// Hardcoded default damping
 	const double defaultDamping = 0.4;
 
@@ -498,11 +484,18 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
 			T_obj.setIdentity();
 			T_obj = T_body.inverse();
 			vsn->setRelativeTransform(T_obj);
+
+			// Log visual mesh transform for first 5 body nodes
+			if (skel->getNumBodyNodes() <= 5) {
+				Eigen::Vector3d t = T_obj.translation();
+				LOG_INFO("[BuildFromXML] BodyNode[" << (skel->getNumBodyNodes() - 1) << "] " << name
+				         << " visual mesh T_obj: [" << t[0] << ", " << t[1] << ", " << t[2] << "]");
+			}
 		}
 	}
 
 	// Debug: Print first 5 body nodes with global positions
-	LOG_VERBOSE("[DARTHelper] YAML Skeleton loaded: " << skel->getName() << " (" << skel->getNumBodyNodes() << " body nodes)");
+	LOG_VERBOSE("[DARTHelper] XML Skeleton loaded: " << skel->getName() << " (" << skel->getNumBodyNodes() << " body nodes)");
 	int debug_count = std::min(5, (int)skel->getNumBodyNodes());
 	for (int i = 0; i < debug_count; i++) {
 		auto bn = skel->getBodyNode(i);
@@ -512,6 +505,29 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
 	}
 
 	return skel;
+}
+
+dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
+{
+	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+
+	// Detect format from file extension
+	std::string ext;
+	size_t dot_pos = resolvedPath.find_last_of('.');
+	if (dot_pos != std::string::npos) {
+		ext = resolvedPath.substr(dot_pos);
+		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+	}
+
+	// Route to appropriate parser
+	if (ext == ".yaml" || ext == ".yml") {
+		return BuildFromYAML(path, flags);
+	} else if (ext == ".xml") {
+		return BuildFromXML(path, flags);
+	}
+
+	LOG_ERROR("[DARTHelper] Unsupported file extension: " << ext);
+	return nullptr;
 }
 
 dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
@@ -659,11 +675,19 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 			visual_shape->setColorMode(MeshShape::ColorMode::SHAPE_COLOR);
 			auto vsn = bn->createShapeNodeWith<VisualAspect>(visual_shape);
 
-			// Visual mesh transform: Identity
-			// Mesh is at body origin, same as collision shape (no additional offset)
-			Eigen::Isometry3d T_obj;
-			T_obj.setIdentity();
+			// Visual mesh OBJ files are modeled in zero pose world coordinates
+			// We need to transform from zero pose world to body-local frame
+			// Get body's world transform in zero pose (just computed by DART)
+			Eigen::Isometry3d T_body_world = bn->getWorldTransform();
+			Eigen::Isometry3d T_obj = T_body_world.inverse();
 			vsn->setRelativeTransform(T_obj);
+
+			// Log visual mesh transform for first 5 body nodes
+			if (skel->getNumBodyNodes() <= 5) {
+				Eigen::Vector3d t = T_obj.translation();
+				LOG_INFO("[BuildFromYAML] BodyNode[" << (skel->getNumBodyNodes() - 1) << "] " << name
+				         << " visual mesh T_obj: [" << t[0] << ", " << t[1] << ", " << t[2] << "]");
+			}
 		}
 	}
 

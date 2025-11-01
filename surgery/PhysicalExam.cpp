@@ -424,7 +424,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     LOG_INFO("Loading skeleton: " << resolved_skel);
 
     // Create character
-    mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, true);
+    mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, false);
 
     // Load muscles if path is provided and mUseMuscle is true
     if (!muscle_path.empty() && mUseMuscle) {

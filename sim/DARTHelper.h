@@ -49,6 +49,7 @@ enum SkeletonLoadFlags {
 	SKEL_REMOVE_JOINT_LIMIT = 1 << 2       // BVH mode - remove joint limits
 };
 
+dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags = SKEL_DEFAULT);
 dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags = SKEL_DEFAULT);
 
 std::string Trim(std::string str);

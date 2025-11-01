@@ -1,6 +1,6 @@
 # Training Configuration
 training:
-  max_epoch: 10002
+  max_epoch: 12002
   checkpoint_freq: 1000
 
 environment:
@@ -15,6 +15,10 @@ environment:
   # Ground/World
   ground:
     file: "@data/ground.xml"
+
+  # Noise Injection Configuration
+  noise_injection:
+    file: "@data/env/ni/activation.yaml"
 
   # Motion Reference
   motion:
@@ -101,27 +105,4 @@ environment:
         min: 0.75
         max: 1.25
         default: 1.0
-        sampling: "uniform"
-
-    skeleton:
-      global: {min: 0.85, max: 1.0, sampling: "uniform"}
-      FemurL: {min: 0.9, max: 1.0}
-      FemurR: {min: 0.9, max: 1.0}
-      TibiaL: {min: 0.9, max: 1.0}
-      TibiaR: {min: 0.9, max: 1.0}
-      ArmL: {min: 0.9, max: 1.0}
-      ArmR: {min: 0.9, max: 1.0}
-      ForeArmL: {min: 0.9, max: 1.0}
-      ForeArmR: {min: 0.9, max: 1.0}
-
-    torsion:
-      femur_l:
-        min: -0.55
-        max: 0.55
-        default: 0.0
-        sampling: "uniform"
-      femur_r:
-        min: -0.55
-        max: 0.55
-        default: 0.0
         sampling: "uniform"
