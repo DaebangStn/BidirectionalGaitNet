@@ -939,7 +939,7 @@ void GLFWApp::startLoop()
         {
             // Paused: check if either motion OR marker is in manual mode
             PlaybackNavigationMode navMode = PLAYBACK_SYNC;
-            if (mMotionIdx >= 0 && mMotion != nullptr) {
+            if (mMotion != nullptr) {
                 navMode = mMotionState.navigationMode;
             }
 
@@ -1208,16 +1208,14 @@ void GLFWApp::initEnv(std::string metadata)
             C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[0], params);
             if (c3dMotion) {
                 // Add to motion list
-                // OLD: mMotions.push_back(c3dMotion);
+                setMotion(c3dMotion);
 
                 // Create viewer state
                 PlaybackViewerState state;
                 state.cycleDistance = computeMotionCycleDistance(c3dMotion);
                 state.maxFrameIndex = std::max(0, c3dMotion->getNumFrames() - 1);
-                // OLD: mMotionStates.push_back(state);
 
                 // Set as active motion
-                // REMOVED: mMotionIdx = static_cast<int>(mMotions.size()) - 1;
 
                 // Align to simulation
                 alignMotionToSimulation();
@@ -1417,7 +1415,7 @@ void GLFWApp::drawKinematicsControlPanel()
         // Display motion status
         bool has_motions = mMotion != nullptr;
         if (has_motions) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Motion Loaded (%zu)", mMotions.size());
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Motion Loaded");
         } else {
             ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "No Motion Loaded");
         }
@@ -1440,7 +1438,7 @@ void GLFWApp::drawKinematicsControlPanel()
         bool npz_selected = false;
         bool hdf_selected = false;
         bool bvh_selected = false;
-        if (mMotion != nullptr && mMotion != nullptr) {
+        if (mMotion != nullptr) {
             if (mMotion->getSourceType() == "npz") {
                 npz_selected = true;
             } else if (mMotion->getSourceType() == "hdfRollout" ||
@@ -1464,56 +1462,17 @@ void GLFWApp::drawKinematicsControlPanel()
             // Loaded motions list (NPZ, HDF Single, BVH)
             // Note: hdfRollout motions are loaded via HDF5 Loading Controls, not shown here
             ImGui::Text("Loaded Motions:");
-            if (ImGui::BeginListBox("##AllMotions_List", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
-            {
-                for (int i = 0; i < mMotions.size(); i++)
-                {
-                    // Skip hdfRollout and C3DMotion (loaded via their respective sections)
-                    if (mMotions[i]->getSourceType() == "hdfRollout" ||
-                        mMotions[i]->getSourceType() == "C3DMotion") continue;
+            // Single motion architecture - display current motion info only
+            if (mMotion != nullptr) {
+                std::string prefix;
+                if (mMotion->getSourceType() == "npz") prefix = "[NPZ] ";
+                else if (mMotion->getSourceType() == "hdfSingle") prefix = "[HDF] ";
+                else if (mMotion->getSourceType() == "hdfRollout") prefix = "[HDF Rollout] ";
+                else if (mMotion->getSourceType() == "bvh") prefix = "[BVH] ";
+                else if (mMotion->getSourceType() == "C3DMotion") prefix = "[C3D] ";
 
-                    // Add type prefix for displayed motion types
-                    std::string prefix;
-                    if (mMotions[i]->getSourceType() == "npz") prefix = "[NPZ] ";
-                    else if (mMotions[i]->getSourceType() == "hdfSingle") prefix = "[HDF] ";
-                    else if (mMotions[i]->getSourceType() == "bvh") prefix = "[BVH] ";
-                    std::string display_name = prefix + mMotions[i]->getName();
+                ImGui::Text("Loaded Motion: %s%s", prefix.c_str(), mMotion->getName().c_str());
 
-                    if (ImGui::Selectable(display_name.c_str(), // REMOVED: mMotionIdx == i)) {
-                        // REMOVED: mMotionIdx = i;
-                        PlaybackViewerState& selectedState = mMotionStates[i];
-                        // Clamp manual frame index to valid range (using pre-computed maxFrameIndex)
-                        if (selectedState.manualFrameIndex > selectedState.maxFrameIndex) {
-                            selectedState.manualFrameIndex = selectedState.maxFrameIndex;
-                        }
-
-                        if (mRenderEnv) {
-                            // Apply parameters from motion file (supports HDF, NPZ, HDFRollout)
-                            if (mMotions[i]->hasParameters()) {
-                                bool success = mMotions[i]->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
-                                if (!success) {
-                                    // Count mismatch or error - use defaults
-                                    Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
-                                    mRenderEnv->setParamState(default_params, false, true);
-                                    std::cout << "[" << mMotions[i]->getName() << "] Using default parameters due to mismatch" << std::endl;
-                                }
-                            } else {
-                                // No parameters - use defaults
-                                Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
-                                mRenderEnv->setParamState(default_params, false, true);
-                                std::cout << "[" << mMotions[i]->getName() << "] Warning: No parameters in motion file, using defaults" << std::endl;
-                            }
-                            mLastLoadedHDF5ParamsFile = "";  // Clear HDF5 parameter tracking
-                        }
-
-                        // Align motion with simulated character
-                        alignMotionToSimulation();
-                    }
-
-                    if (// REMOVED: mMotionIdx == i)
-                        ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndListBox();
             }
             ImGui::TreePop();
         }
@@ -1558,16 +1517,14 @@ void GLFWApp::drawKinematicsControlPanel()
                                 C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[mSelectedC3d], params);
                                 if (c3dMotion) {
                                     // Add to motion list
-                                    // OLD: mMotions.push_back(c3dMotion);
+                                    setMotion(c3dMotion);
 
                                     // Create viewer state
                                     PlaybackViewerState state;
                                     state.cycleDistance = computeMotionCycleDistance(c3dMotion);
                                     state.maxFrameIndex = std::max(0, c3dMotion->getNumFrames() - 1);
-                                    // OLD: mMotionStates.push_back(state);
 
                                     // Set as active motion
-                                    // REMOVED: mMotionIdx = static_cast<int>(mMotions.size()) - 1;
 
                                     // Align to simulation
                                     alignMotionToSimulation();
@@ -1652,7 +1609,7 @@ void GLFWApp::drawKinematicsControlPanel()
                             // Find HDFRollout motion matching this file
                             Motion* rollout_motion = nullptr;
                             std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
-                            for (auto* motion : mMotions) {
+                            if (mMotion) { Motion* motion = mMotion; {
                                 if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
                                     rollout_motion = motion;
                                     break;
@@ -1767,7 +1724,7 @@ void GLFWApp::drawKinematicsControlPanel()
                         // Find HDFRollout motion matching this file
                         Motion* rollout_motion = nullptr;
                         std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
-                        for (auto* motion : mMotions) {
+                        if (mMotion) { Motion* motion = mMotion; {
                             if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
                                 rollout_motion = motion;
                                 break;
@@ -1824,7 +1781,7 @@ void GLFWApp::drawKinematicsControlPanel()
         // Motion Navigation Control
         ImGui::Separator();
         PlaybackViewerState* motionStatePtr = nullptr;
-        if (!mMotionStates.empty() && mMotionIdx >= 0 && mMotion != nullptr) {
+        if (!mMotionStates.empty() && mMotion != nullptr) {
             motionStatePtr = &mMotionState;
         }
 
@@ -1835,7 +1792,7 @@ void GLFWApp::drawKinematicsControlPanel()
             // Show additional motion-specific info
             if (motionStatePtr->navigationMode == PLAYBACK_MANUAL_FRAME) {
                 // Show frame time for HDF5/BVH motions with timestamps in manual mode
-                if (mMotion != nullptr && mMotion != nullptr) {
+                if (mMotion != nullptr) {
                     std::vector<double> timestamps = mMotion->getTimestamps();
                     int manualIndex = std::clamp(motionStatePtr->manualFrameIndex, 0, motionStatePtr->maxFrameIndex);
                     if ((mMotion->getSourceType() == "hdfRollout" ||
@@ -1849,7 +1806,7 @@ void GLFWApp::drawKinematicsControlPanel()
                 }
             } else {
                 // Show current auto-computed frame in sync mode
-                if (mMotion != nullptr && mMotion != nullptr) {
+                if (mMotion != nullptr) {
                     double phase = mViewerPhase;
                     if (mRenderEnv) {
                         phase = mViewerTime / (mRenderEnv->getMotion()->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
@@ -1872,7 +1829,7 @@ void GLFWApp::drawKinematicsControlPanel()
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (mMotion != nullptr && mMotion != nullptr) {
+        if (mMotion != nullptr) {
             ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotion->getNumFrames() - 1));
         }
         // TODO: Update for Motion* interface
@@ -1890,7 +1847,7 @@ void GLFWApp::drawKinematicsControlPanel()
         //     if(mRenderEnv) addSimulationMotion();
         // }
 
-        if (mRenderEnv && mMotion != nullptr && mMotion != nullptr && ImGui::Button("Set to Param of motion")) {
+        if (mRenderEnv && mMotion != nullptr && ImGui::Button("Set to Param of motion")) {
             // Apply motion parameters using Motion* interface
             if (mMotion->hasParameters()) {
                 bool success = mMotion->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
@@ -3864,7 +3821,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 void GLFWApp::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
-    if (mMotion == nullptr || mMotionIdx < 0 || mMotionIdx >= mMotions.size() || 
+    if (mMotion == nullptr || 
         mMotionStates.size() <= static_cast<size_t>(mMotionIdx || 
         mMotionState.currentPose.size() == 0) ||
         mMotionState.render == false) return;
@@ -4173,7 +4130,7 @@ void GLFWApp::reset()
     mGraphData->clear_all();
 
     // Reset motion playback tracking for cycle accumulation
-    for (auto& state : mMotionStates) {
+    { autofor (auto& state : mMotionStates) state = mMotionState; {
         state.displayOffset.setZero();
         state.displayOffset[0] = 1.0;  // Initial x offset for visualization
         state.currentPose.setZero();
@@ -4250,7 +4207,7 @@ double GLFWApp::computeFrameFloat(Motion* motion, double phase)
 
 void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
 {
-    if (mMotion == nullptr || motionIdx >= mMotions.size()) {
+    if (mMotions.empty() || motionIdx >= mMotions.size()) {
         std::cerr << "[motionPoseEval] Warning: No motions loaded or invalid index" << std::endl;
         return;
     }
@@ -4392,7 +4349,7 @@ GLFWApp::ViewerClock GLFWApp::updateViewerClock(double dt)
 
 bool GLFWApp::computeMotionPlayback(MotionPlaybackContext& context)
 {
-    if (mMotion == nullptr ||
+    if (mMotions.empty() ||
         mMotionIdx < 0 ||
         mMotionIdx >= static_cast<int>(mMotions.size()) ||
         static_cast<size_t>(mMotionIdx) >= mMotionStates.size())
@@ -4610,10 +4567,29 @@ double GLFWApp::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pos
     return height_offset;
 }
 
+void GLFWApp::setMotion(Motion* motion)
+{
+    // Delete old motion and assign new one
+    delete mMotion;
+    mMotion = motion;
+
+    // Initialize viewer state
+    if (motion) {
+        mMotionState.cycleDistance = computeMotionCycleDistance(motion);
+        mMotionState.maxFrameIndex = std::max(0, motion->getNumFrames() - 1);
+        mMotionState.currentPose.resize(0);
+        mMotionState.displayOffset.setZero();
+        mMotionState.displayOffset[0] = 1.0;
+        mMotionState.navigationMode = PLAYBACK_SYNC;
+        mMotionState.manualFrameIndex = 0;
+        mMotionState.render = true;
+    }
+}
+
 void GLFWApp::alignMotionToSimulation()
 {
     // Safety check: Skip if no motions loaded or invalid index
-    if (mMotion == nullptr || mMotionIdx < 0 || mMotionIdx >= mMotions.size()) {
+    if (mMotion == nullptr) {
         LOG_ERROR("[alignMotionToSimulation] No motions loaded or invalid index");
         return;
     }
@@ -4752,7 +4728,7 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
                 update();  // Advance simulation by one control step
                 double dt = 1.0 / mRenderEnv->getControlHz();
                 updateViewerTime(dt);  // Advance viewer time and motion state
-            } else if (mMotion != nullptr && mMotion != nullptr) {
+            } else if (mMotion != nullptr) {
                 // Step viewer time by single frame duration when no simulation environment
                 Motion* current_motion = mMotion;
                 double frame_duration = 0.0;
@@ -5551,7 +5527,7 @@ void GLFWApp::loadNPZMotion()
 			npz->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 			// Store in new motion architecture
-			// OLD: mMotions.push_back(npz);
+			setMotion(npz);
 
             // Create viewer state
             PlaybackViewerState state;
@@ -5559,7 +5535,6 @@ void GLFWApp::loadNPZMotion()
             state.cycleAccumulation[0] = 1.0;
             state.cycleDistance = computeMotionCycleDistance(npz);
             state.maxFrameIndex = std::max(0, npz->getNumFrames() - 1);
-            // OLD: mMotionStates.push_back(state);
 
 			if (npz->hasParameters()) {
 				LOG_VERBOSE(npz->getLogHeader() << " Loaded " << npz->getName() << " with " << npz->getNumFrames() << " frames (" << npz->getParameterValues().size() << " parameters)");
@@ -5615,7 +5590,7 @@ void GLFWApp::loadHDFRolloutMotion()
 					rollout->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 					// Store in new motion architecture
-					// OLD: mMotions.push_back(rollout);
+					setMotion(rollout);
 
 					// Create viewer state
 					PlaybackViewerState state;
@@ -5625,7 +5600,6 @@ void GLFWApp::loadHDFRolloutMotion()
 					state.cycleAccumulation[0] = 1.0;
 					state.cycleDistance = computeMotionCycleDistance(rollout);
 					state.maxFrameIndex = std::max(0, rollout->getNumFrames() - 1);
-					// OLD: mMotionStates.push_back(state);
 
 					if (rollout->hasParameters()) {
 						LOG_VERBOSE(rollout->getLogHeader() << " Loaded " << rollout->getName()
@@ -5675,7 +5649,7 @@ void GLFWApp::loadBVHMotion()
 				bvh->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 				// Store in new motion architecture
-				// OLD: mMotions.push_back(bvh);
+				setMotion(bvh);
 
 				// Create viewer state
 				PlaybackViewerState state;
@@ -5685,7 +5659,6 @@ void GLFWApp::loadBVHMotion()
 				state.cycleAccumulation[0] = 1.0;
 				state.cycleDistance = computeMotionCycleDistance(bvh);
 				state.maxFrameIndex = std::max(0, bvh->getNumFrames() - 1);
-				// OLD: mMotionStates.push_back(state);
 
 				LOG_VERBOSE(bvh->getLogHeader() << " Loaded " << bvh->getName() << " with " << bvh->getNumFrames() << " frames");
 			// Note: BVH files don't have parameters by design, so no warning needed
@@ -5723,7 +5696,7 @@ void GLFWApp::loadHDFSingleMotion()
 				hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 				// Store in new motion architecture
-				// OLD: mMotions.push_back(hdf);
+				setMotion(hdf);
 
 				// Create viewer state
 				PlaybackViewerState state;
@@ -5731,7 +5704,6 @@ void GLFWApp::loadHDFSingleMotion()
 				state.cycleAccumulation[0] = 1.0;
 				state.cycleDistance = computeMotionCycleDistance(hdf);
 				state.maxFrameIndex = std::max(0, hdf->getNumFrames() - 1);
-				// OLD: mMotionStates.push_back(state);
 
 				if (hdf->hasParameters()) {
 					LOG_VERBOSE(hdf->getLogHeader() << " Loaded " << hdf->getName() << " with " << hdf->getNumFrames() << " frames (" << hdf->getParameterNames().size() << " parameters)");
@@ -5755,7 +5727,7 @@ void GLFWApp::loadMotionFiles()
 	py::gil_scoped_acquire gil;
 
 	// Clear motions (mMotionsNew now used)
-	// REMOVED: mMotionIdx = 0;
+	mMotionIdx = 0;
 
 	// Check motion load mode from config
 	if (mMotionLoadMode == "no") {
@@ -6006,11 +5978,11 @@ void GLFWApp::loadSelectedHDF5Motion()
         }
 
         // Add to motions list
-        // OLD: mMotions.push_back(motion_elem);
-        // REMOVED: mMotionIdx = mMotions.size() - 1;  // Select the newly loaded motion
+        setMotion(motion_elem);
+        mMotionIdx = mMotions.size() - 1;  // Select the newly loaded motion
 
         // Update max frame index for manual navigation
-        if (mMotionIdx >= 0 && mMotion != nullptr) {
+        if (mMotion != nullptr) {
             mMotionState.maxFrameIndex = motion_elem.hdf5_total_timesteps - 1;
             mMotionState.manualFrameIndex = 0;  // Reset to first frame
             mMotionState.navigationMode = PLAYBACK_SYNC;
@@ -6101,7 +6073,7 @@ void GLFWApp::addSimulationMotion()
         else
             current_idx++;
     }
-    // OLD: mMotions.push_back(current_motion);
+    setMotion(current_motion);
     mAddedMotions.push_back(current_motion);
 }
 #endif  // addSimulationMotion
@@ -6112,11 +6084,11 @@ void GLFWApp::unloadMotion()
     for (Motion* motion : mMotions) {
         delete motion;
     }
-    // OLD: mMotions.clear();
-    // OLD: mMotionStates.clear();
+    mMotions.clear();
+    mMotionStates.clear();
 
     // Reset motion playback indices (-1 indicates no motion selected)
-    // REMOVED: mMotionIdx = -1;
+    mMotionIdx = -1;
 
     // Reset HDF5 rollout selection indices
     mSelectedHDF5FileIdx = -1;

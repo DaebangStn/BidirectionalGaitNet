@@ -1,0 +1,101 @@
+#!/bin/bash
+# Single Motion Refactoring Patch for GLFWApp
+# This script applies targeted changes to convert from vector-based to single Motion* architecture
+
+set -e
+
+VIEWER_H="viewer/GLFWApp.h"
+VIEWER_CPP="viewer/GLFWApp.cpp"
+
+echo "=== Single Motion Refactoring Patch ==="
+echo "Backing up files..."
+cp "$VIEWER_H" "$VIEWER_H.pre_patch"
+cp "$VIEWER_CPP" "$VIEWER_CPP.pre_patch"
+
+echo "Step 1: Update header file..."
+# Replace vector declarations with single pointers (already done)
+# Just verify setMotion helper is declared
+grep -q "void setMotion" "$VIEWER_H" && echo "  ✓ setMotion helper declared"
+
+echo "Step 2: Update member variable declarations..."
+# Header changes (already done in previous session)
+sed -i 's/std::vector<Motion\*> mMotions;/Motion* mMotion;  \/\/ Single motion instance/' "$VIEWER_H"
+sed -i 's/std::vector<PlaybackViewerState> mMotionStates;/PlaybackViewerState mMotionState;  \/\/ Single state/' "$VIEWER_H"
+sed -i '/int mMotionIdx;/d' "$VIEWER_H"
+sed -i '/PlaybackNavigationMode mFallbackMotionNavigationMode;/d' "$VIEWER_H"
+sed -i '/int mFallbackManualFrameIndex;/d' "$VIEWER_H"
+
+echo "Step 3: Update constructor..."
+# Initialize mMotion = nullptr
+sed -i '/\/\/ Initialize motion navigation control/,+2d' "$VIEWER_CPP"
+sed -i '/mGVAELoaded = false;/a\    mMotion = nullptr;  \/\/ Single motion architecture' "$VIEWER_CPP"
+
+echo "Step 4: Update destructor..."
+# Replace loop with single delete
+sed -i '/\/\/ Clean up Motion\* pointers/,/mMotions\.clear();/c\    \/\/ Clean up single motion\n    delete mMotion;\n    mMotion = nullptr;' "$VIEWER_CPP"
+
+echo "Step 5: Add setMotion helper implementation..."
+# Insert before alignMotionToSimulation
+sed -i '/^void GLFWApp::alignMotionToSimulation/i\
+void GLFWApp::setMotion(Motion* motion)\
+{\
+    delete mMotion;\
+    mMotion = motion;\
+    if (motion) {\
+        mMotionState.cycleDistance = computeMotionCycleDistance(motion);\
+        mMotionState.maxFrameIndex = std::max(0, motion->getNumFrames() - 1);\
+        mMotionState.currentPose.resize(0);\
+        mMotionState.displayOffset.setZero();\
+        mMotionState.displayOffset[0] = 1.0;\
+        mMotionState.navigationMode = PLAYBACK_SYNC;\
+        mMotionState.manualFrameIndex = 0;\
+        mMotionState.render = true;\
+    }\
+}\
+' "$VIEWER_CPP"
+
+echo "Step 6: Replace core motion/state accessors..."
+# Simple replacements
+sed -i 's/mMotions\[mMotionIdx\]/mMotion/g' "$VIEWER_CPP"
+sed -i 's/mMotionStates\[mMotionIdx\]/mMotionState/g' "$VIEWER_CPP"
+
+echo "Step 7: Replace empty/size checks..."
+sed -i 's/!mMotions\.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions\.size()/mMotion != nullptr/g' "$VIEWER_CPP"
+sed -i 's/mMotionIdx >= 0 && mMotionIdx < mMotions\.size()/mMotion != nullptr/g' "$VIEWER_CPP"
+sed -i 's/!mMotions\.empty()/mMotion != nullptr/g' "$VIEWER_CPP"
+sed -i 's/mMotions\.empty()/mMotion == nullptr/g' "$VIEWER_CPP"
+sed -i 's/mMotionStates\.empty()/mMotion == nullptr/g' "$VIEWER_CPP"
+
+echo "Step 8: Remove motion selection UI..."
+# Comment out the motion selection listbox (lines ~1457-1503)
+sed -i '/ImGui::Text("Available Motions");/,/ImGui::EndListBox();/{
+    s/^/\/\/ REMOVED_MULTI_MOTION: /
+}' "$VIEWER_CPP"
+
+echo "Step 9: Update motion loading calls..."
+# Replace push_back patterns with setMotion
+sed -i 's/mMotions\.push_back(\([^)]*\));/setMotion(\1);/g' "$VIEWER_CPP"
+sed -i 's/mMotionStates\.push_back([^)]*);/\/\/ State initialized in setMotion()/g' "$VIEWER_CPP"
+sed -i 's/mMotionIdx = static_cast<int>(mMotions\.size()) - 1;/\/\/ Single motion - no index needed/g' "$VIEWER_CPP"
+sed -i 's/mMotions\.clear();/\/\/ Single motion architecture/g' "$VIEWER_CPP"
+sed -i 's/mMotionStates\.clear();/\/\/ Single state architecture/g' "$VIEWER_CPP"
+
+echo "Step 10: Fix display text..."
+sed -i 's/"Motion Loaded (%zu)", mMotions\.size()/"Motion Loaded"/' "$VIEWER_CPP"
+
+echo "Step 11: Remove loops over motions..."
+# Comment out loops iterating over mMotions vector
+sed -i '/for.*mMotions\.size/,/^[[:space:]]*}$/{
+    /^[[:space:]]*for.*mMotions\.size/s/^/\/\/ REMOVED_LOOP: /
+}' "$VIEWER_CPP"
+
+echo ""
+echo "=== Patch Applied Successfully ==="
+echo ""
+echo "Manual review required for:"
+echo "  1. Motion selection UI removal (search for REMOVED_MULTI_MOTION)"
+echo "  2. Loop removal completeness (search for REMOVED_LOOP)"
+echo "  3. Any remaining mMotionIdx references"
+echo ""
+echo "To verify: ninja -C build/release"
+echo "To revert: cp $VIEWER_CPP.pre_patch $VIEWER_CPP && cp $VIEWER_H.pre_patch $VIEWER_H"
