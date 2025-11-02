@@ -326,6 +326,7 @@ private:
     int mC3DCount;
 
     C3D_Reader* mC3DReader;
+    std::string mSkeletonPath;  // Skeleton path from simulator metadata
     std::unique_ptr<C3D> mC3DMarkers;
     bool mRenderC3DMarkers;
     MarkerViewerState mMarkerState;

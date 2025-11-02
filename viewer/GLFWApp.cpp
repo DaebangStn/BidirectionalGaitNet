@@ -1057,8 +1057,8 @@ void GLFWApp::initEnv(std::string metadata)
             doc.Parse(metadata.c_str());
             TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
             if (skel_elem) {
-                std::string skeletonPath = Trim(std::string(skel_elem->GetText()));
-                mMotionCharacter = new Character(skeletonPath, 0, 0, 0);
+                mSkeletonPath = Trim(std::string(skel_elem->GetText()));
+                mMotionCharacter = new Character(mSkeletonPath, 0, 0, 0);
             } else {
                 std::cerr << "No skeleton path found in XML metadata" << std::endl;
                 exit(-1);
@@ -1068,13 +1068,21 @@ void GLFWApp::initEnv(std::string metadata)
             YAML::Node config = YAML::Load(metadata);
             if (config["environment"] && config["environment"]["skeleton"]) {
                 std::string skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
-                std::string resolved = PMuscle::URIResolver::getInstance().resolve(skelPath);
-                mMotionCharacter = new Character(resolved, 0, 0, 0);
+                mSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skelPath);
+                mMotionCharacter = new Character(mSkeletonPath, 0, 0, 0);
             } else {
                 std::cerr << "No skeleton path found in YAML metadata" << std::endl;
                 exit(-1);
             }
         }
+
+        // Initialize C3D reader with skeleton from simulator
+        if (mC3DReader) {
+            delete mC3DReader;
+            mC3DReader = nullptr;
+        }
+        mC3DReader = new C3D_Reader(mSkeletonPath, "data/marker_set.xml", mRenderEnv->GetEnvironment());
+        LOG_INFO("[GLFWApp] Initialized C3D reader with skeleton: " << mSkeletonPath);
     }
     
     // Set window title
@@ -1367,86 +1375,6 @@ void GLFWApp::drawKinematicsControlPanel()
         // BVH motions are now integrated into mMotions (loaded via loadMotionFiles())
         // They appear in the NPZ/HDF5 motion lists automatically with source_type="bvh"
 
-        // C3D Motion Files
-        if (ImGui::CollapsingHeader("C3D", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            if (mC3DList.empty())
-            {
-                ImGui::Text("No C3D files found in c3d directory");
-            }
-            else
-            {
-                int idx = 0;
-                for (auto ns : mC3DList)
-                {
-                    if (ImGui::Selectable(ns.c_str(), selected_c3d == idx))
-                        selected_c3d = idx;
-                    if (selected_c3d)
-                        ImGui::SetItemDefaultFocus();
-                    idx++;
-                }
-            }
-            static float femur_torsion_l = 0.0;
-            static float femur_torsion_r = 0.0;
-            static float c3d_scale = 1.0;
-            static float height_offset = 0.0;
-            ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
-            ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
-            ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
-            ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
-
-            if (mRenderEnv && ImGui::Button("Load C3D"))
-            {
-                if (selected_c3d < mC3DList.size() && !mC3DList.empty())
-                {
-                    mRenderC3D = true;
-                    mC3DReader = new C3D_Reader("data/skeleton_gaitnet_narrow_model.xml", "data/marker_set.xml", mRenderEnv->GetEnvironment());
-                    std::cout << "Loading C3D: " << mC3DList[selected_c3d] << std::endl;
-                    mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset);
-                    mC3DCOM = Eigen::Vector3d::Zero();
-                }
-                else
-                {
-                    std::cout << "Error: No C3D files available or invalid selection (selected: " << selected_c3d << ", available: " << mC3DList.size() << ")" << std::endl;
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Load Markers"))
-            {
-                if (selected_c3d >= 0 && selected_c3d < static_cast<int>(mC3DList.size()) && !mC3DList.empty())
-                {
-                    auto markerData = std::make_unique<C3D>();
-                    if (markerData->load(mC3DList[selected_c3d], c3d_scale, height_offset))
-                    {
-                        mC3DMarkers = std::move(markerData);
-                        mRenderC3DMarkers = true;
-                        mMarkerState = MarkerViewerState();
-                        mMarkerState.currentMarkers = mC3DMarkers->getMarkers(0);
-                        alignMarkerToSimulation();
-                        std::cout << "[C3D] Loaded markers: " << mC3DList[selected_c3d] << std::endl;
-                    }
-                    else
-                    {
-                        mC3DMarkers.reset();
-                        mRenderC3DMarkers = false;
-                        mMarkerState = MarkerViewerState();
-                        std::cout << "[C3D] Failed to load markers from " << mC3DList[selected_c3d] << std::endl;
-                    }
-                }
-                else
-                {
-                    std::cout << "Error: No C3D files available or invalid selection (selected: " << selected_c3d << ", available: " << mC3DList.size() << ")" << std::endl;
-                }
-            }
-
-            if (mC3DMarkers)
-            {
-                ImGui::Checkbox("Draw C3D Markers", &mRenderC3DMarkers);
-                int maxFrame = std::max(0, mC3DMarkers->getNumFrames() - 1);
-                PlaybackUtils::drawPlaybackNavigationUI("Frame Nav", mMarkerState, maxFrame);
-            }
-        }
-
         // Check currently selected motion type
         bool npz_selected = false;
         bool hdf_selected = false;
@@ -1462,7 +1390,7 @@ void GLFWApp::drawKinematicsControlPanel()
             }
         }
 
-        // Unified Motion Files collapsing header with color based on selection
+        // 1. Motion clip files
         bool any_motion_selected = npz_selected || hdf_selected || bvh_selected;
         if (any_motion_selected) {
             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
@@ -1470,7 +1398,7 @@ void GLFWApp::drawKinematicsControlPanel()
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
         }
 
-        if (ImGui::CollapsingHeader("Motion Files", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::TreeNode("Motion clip files"))
         {
             // Loaded motions list (NPZ, HDF Single, BVH)
             // Note: hdfRollout motions are loaded via HDF5 Loading Controls, not shown here
@@ -1532,10 +1460,104 @@ void GLFWApp::drawKinematicsControlPanel()
                 }
                 ImGui::EndListBox();
             }
+            ImGui::TreePop();
+        }
 
-            // HDF5 Loading Controls (collapsible sub-section)
-            ImGui::Separator();
-            if (ImGui::TreeNode("Load HDF rollout data"))
+        if (any_motion_selected) {
+            ImGui::PopStyleColor(3);
+        }
+
+        // 2. C3D
+        if (ImGui::TreeNodeEx("C3D", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            if (mC3DList.empty())
+            {
+                ImGui::Text("No C3D files found in c3d directory");
+            }
+            else
+            {
+                int idx = 0;
+                for (auto ns : mC3DList)
+                {
+                    if (ImGui::Selectable(ns.c_str(), selected_c3d == idx))
+                        selected_c3d = idx;
+                    if (selected_c3d)
+                        ImGui::SetItemDefaultFocus();
+                    idx++;
+                }
+            }
+            static float femur_torsion_l = 0.0;
+            static float femur_torsion_r = 0.0;
+            static float c3d_scale = 1.0;
+            static float height_offset = 0.0;
+            ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
+            ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
+            ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
+            ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
+
+            if (mRenderEnv && ImGui::Button("Load C3D"))
+            {
+                if (selected_c3d < mC3DList.size() && !mC3DList.empty())
+                {
+                    mRenderC3D = true;
+                    // C3D reader is already initialized in initEnv with simulator's skeleton
+                    if (!mC3DReader) {
+                        LOG_ERROR("[C3D] C3D reader not initialized. Call initEnv first.");
+                    } else {
+                        LOG_INFO("[C3D] Loading C3D file: " << mC3DList[selected_c3d]);
+                        mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset);
+                        mC3DCOM = Eigen::Vector3d::Zero();
+                    }
+                }
+                else
+                {
+                    LOG_ERROR("[C3D] No C3D files available or invalid selection (selected: "
+                              << selected_c3d << ", available: " << mC3DList.size() << ")");
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load Markers"))
+            {
+                if (selected_c3d >= 0 && selected_c3d < static_cast<int>(mC3DList.size()) && !mC3DList.empty())
+                {
+                    auto markerData = std::make_unique<C3D>();
+                    if (markerData->load(mC3DList[selected_c3d], c3d_scale, height_offset))
+                    {
+                        mC3DMarkers = std::move(markerData);
+                        mRenderC3DMarkers = true;
+                        // Preserve navigation mode settings when loading new markers
+                        auto savedMode = mMarkerState.navigationMode;
+                        auto savedFrameIdx = mMarkerState.manualFrameIndex;
+                        mMarkerState = MarkerViewerState();
+                        mMarkerState.navigationMode = savedMode;
+                        mMarkerState.manualFrameIndex = savedFrameIdx;
+                        mMarkerState.currentMarkers = mC3DMarkers->getMarkers(0);
+                        alignMarkerToSimulation();
+                        std::cout << "[C3D] Loaded markers: " << mC3DList[selected_c3d] << std::endl;
+                    }
+                    else
+                    {
+                        mC3DMarkers.reset();
+                        mRenderC3DMarkers = false;
+                        mMarkerState = MarkerViewerState();
+                        std::cout << "[C3D] Failed to load markers from " << mC3DList[selected_c3d] << std::endl;
+                    }
+                }
+                else
+                {
+                    std::cout << "Error: No C3D files available or invalid selection (selected: " << selected_c3d << ", available: " << mC3DList.size() << ")" << std::endl;
+                }
+            }
+
+            if (mC3DMarkers)
+            {
+                ImGui::Checkbox("Draw C3D Markers", &mRenderC3DMarkers);
+            }
+            ImGui::TreePop();
+        }
+
+        // 3. HDF rollouts
+        if (ImGui::TreeNode("HDF rollouts"))
         {
             // Static tracking variables (moved outside to be accessible from file selection)
             static int last_param_idx = -1;
@@ -1545,37 +1567,152 @@ void GLFWApp::drawKinematicsControlPanel()
 
             // HDF5 Files listbox
             if (ImGui::BeginListBox("##HDF5_Files", ImVec2(-FLT_MIN, 5 * ImGui::GetTextLineHeightWithSpacing())))
-        {
-            for (int i = 0; i < mHDF5Files.size(); i++)
             {
-                if (ImGui::Selectable(mHDF5Files[i].c_str(), mSelectedHDF5FileIdx == i))
+                for (int i = 0; i < mHDF5Files.size(); i++)
                 {
-                    mSelectedHDF5FileIdx = i;
-                    mSelectedHDF5ParamIdx = 0;
-                    mSelectedHDF5CycleIdx = 0;
+                    if (ImGui::Selectable(mHDF5Files[i].c_str(), mSelectedHDF5FileIdx == i))
+                    {
+                        mSelectedHDF5FileIdx = i;
+                        mSelectedHDF5ParamIdx = 0;
+                        mSelectedHDF5CycleIdx = 0;
 
-                    // Scan params in selected file to get max indices
-                    try {
-                        H5::H5File h5file(mHDF5Files[i], H5F_ACC_RDONLY);
-                        hsize_t num_params = h5file.getNumObjs();
-                        mMaxHDF5ParamIdx = 0;
-                        for (hsize_t j = 0; j < num_params; j++) {
-                            std::string param_name = h5file.getObjnameByIdx(j);
-                            if (param_name.find("param_") == 0) {
-                                int param_idx = std::stoi(param_name.substr(6));
-                                if (param_idx > mMaxHDF5ParamIdx) {
-                                    mMaxHDF5ParamIdx = param_idx;
+                        // Scan params in selected file to get max indices
+                        try {
+                            H5::H5File h5file(mHDF5Files[i], H5F_ACC_RDONLY);
+                            hsize_t num_params = h5file.getNumObjs();
+                            mMaxHDF5ParamIdx = 0;
+                            for (hsize_t j = 0; j < num_params; j++) {
+                                std::string param_name = h5file.getObjnameByIdx(j);
+                                if (param_name.find("param_") == 0) {
+                                    int param_idx = std::stoi(param_name.substr(6));
+                                    if (param_idx > mMaxHDF5ParamIdx) {
+                                        mMaxHDF5ParamIdx = param_idx;
+                                    }
                                 }
                             }
+                            h5file.close();
+                            std::cout << "Selected file with max param_idx: " << mMaxHDF5ParamIdx << std::endl;
+                        } catch (const std::exception& e) {
+                            std::cerr << "Error reading params: " << e.what() << std::endl;
+                        }
+
+                        // Load parameters using Motion* interface
+                        if (mRenderEnv) {
+                            // Find HDFRollout motion matching this file
+                            Motion* rollout_motion = nullptr;
+                            std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
+                            for (auto* motion : mMotionsNew) {
+                                if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
+                                    rollout_motion = motion;
+                                    break;
+                                }
+                            }
+
+                            if (rollout_motion && rollout_motion->hasParameters()) {
+                                bool success = rollout_motion->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
+                                if (!success) {
+                                    Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
+                                    mRenderEnv->setParamState(default_params, false, true);
+                                    std::cout << "[" << rollout_motion->getName() << "] Using default parameters due to mismatch" << std::endl;
+                                }
+                            } else if (rollout_motion) {
+                                std::cout << "[" << rollout_motion->getName() << "] Warning: No parameters in motion file" << std::endl;
+                            }
+                        }
+                        // TODO: Update for Motion* interface
+                        // loadSelectedHDF5Motion();
+                        // alignMotionToSimulation();
+
+                        // Update tracking variables to reflect the load
+                        last_file_idx = mSelectedHDF5FileIdx;
+                        last_param_idx = mSelectedHDF5ParamIdx;
+                        last_cycle_idx = mSelectedHDF5CycleIdx;
+                        loading_success = true;
+                    }
+                    if (mSelectedHDF5FileIdx == i)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndListBox();
+            }
+
+            // Param and Cycle sliders (only show if file is selected)
+            if (mSelectedHDF5FileIdx >= 0) {
+
+                // Param slider with status
+                ImGui::SliderInt("Param", &mSelectedHDF5ParamIdx, 0, mMaxHDF5ParamIdx);
+                ImGui::SameLine();
+                ImGui::Text("%d / %d", mSelectedHDF5ParamIdx, mMaxHDF5ParamIdx);
+
+                // When param changes, update max cycle index and build available cycle list
+                if (mSelectedHDF5ParamIdx != last_param_idx) {
+                    try {
+                        H5::H5File h5file(mHDF5Files[mSelectedHDF5FileIdx], H5F_ACC_RDONLY);
+                        std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
+                        if (h5file.nameExists(param_name)) {
+                            H5::Group param_group = h5file.openGroup(param_name);
+                            hsize_t num_cycles = param_group.getNumObjs();
+                            mMaxHDF5CycleIdx = 0;
+
+                            // Find max cycle index by checking all cycle groups
+                            for (hsize_t j = 0; j < num_cycles; j++) {
+                                std::string cycle_name = param_group.getObjnameByIdx(j);
+                                if (cycle_name.find("cycle_") == 0) {
+                                    int cycle_idx = std::stoi(cycle_name.substr(6));
+                                    if (cycle_idx > mMaxHDF5CycleIdx) {
+                                        mMaxHDF5CycleIdx = cycle_idx;
+                                    }
+                                }
+                            }
+                            param_group.close();
+
+                            // Clamp cycle index to valid range
+                            mSelectedHDF5CycleIdx = std::min(mSelectedHDF5CycleIdx, mMaxHDF5CycleIdx);
+
+                            std::cout << "Param " << mSelectedHDF5ParamIdx << " has max cycle index: " << mMaxHDF5CycleIdx << std::endl;
+                        } else {
+                            std::cerr << "Param " << param_name << " does not exist in file" << std::endl;
                         }
                         h5file.close();
-                        std::cout << "Selected file with max param_idx: " << mMaxHDF5ParamIdx << std::endl;
                     } catch (const std::exception& e) {
-                        std::cerr << "Error reading params: " << e.what() << std::endl;
+                        std::cerr << "Error reading cycles: " << e.what() << std::endl;
                     }
+                    // NOTE: Do NOT update last_param_idx here - let auto-load section handle it
+                }
 
+                // Cycle slider with status
+                ImGui::SliderInt("Cycle", &mSelectedHDF5CycleIdx, 0, mMaxHDF5CycleIdx);
+                ImGui::SameLine();
+                ImGui::Text("%d / %d", mSelectedHDF5CycleIdx, mMaxHDF5CycleIdx);
+
+                // Show current file
+                ImGui::Text("File: %s", mHDF5Files[mSelectedHDF5FileIdx].c_str());
+
+                // Verify if selected param/cycle exists before loading
+                bool can_load = false;
+                std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
+                std::string cycle_name = "cycle_" + std::to_string(mSelectedHDF5CycleIdx);
+
+                try {
+                    H5::H5File h5file(mHDF5Files[mSelectedHDF5FileIdx], H5F_ACC_RDONLY);
+                    if (h5file.nameExists(param_name)) {
+                        H5::Group param_group = h5file.openGroup(param_name);
+                        if (param_group.nameExists(cycle_name)) {
+                            can_load = true;
+                        }
+                        param_group.close();
+                    }
+                    h5file.close();
+                } catch (const std::exception& e) {
+                    // Silently ignore, will show "does not exist" status
+                }
+
+                // Auto-load when indices change (only if param/cycle exists)
+                bool param_changed = (mSelectedHDF5ParamIdx != last_param_idx);
+                bool cycle_changed = (mSelectedHDF5CycleIdx != last_cycle_idx);
+
+                if ((param_changed || cycle_changed) && can_load) {
                     // Load parameters using Motion* interface
-                    if (mRenderEnv) {
+                    if (param_changed && mRenderEnv) {
                         // Find HDFRollout motion matching this file
                         Motion* rollout_motion = nullptr;
                         std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
@@ -1597,156 +1734,35 @@ void GLFWApp::drawKinematicsControlPanel()
                             std::cout << "[" << rollout_motion->getName() << "] Warning: No parameters in motion file" << std::endl;
                         }
                     }
+
+                    // Then load motion data
                     // TODO: Update for Motion* interface
                     // loadSelectedHDF5Motion();
                     // alignMotionToSimulation();
-
-                    // Update tracking variables to reflect the load
-                    last_file_idx = mSelectedHDF5FileIdx;
+                    loading_success = true;
                     last_param_idx = mSelectedHDF5ParamIdx;
                     last_cycle_idx = mSelectedHDF5CycleIdx;
-                    loading_success = true;
                 }
-                if (mSelectedHDF5FileIdx == i)
-                    ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndListBox();
-        }
 
-        // Param and Cycle sliders (only show if file is selected)
-        if (mSelectedHDF5FileIdx >= 0) {
-
-            // Param slider with status
-            ImGui::SliderInt("Param", &mSelectedHDF5ParamIdx, 0, mMaxHDF5ParamIdx);
-            ImGui::SameLine();
-            ImGui::Text("%d / %d", mSelectedHDF5ParamIdx, mMaxHDF5ParamIdx);
-
-            // When param changes, update max cycle index and build available cycle list
-            if (mSelectedHDF5ParamIdx != last_param_idx) {
-                try {
-                    H5::H5File h5file(mHDF5Files[mSelectedHDF5FileIdx], H5F_ACC_RDONLY);
-                    std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
-                    if (h5file.nameExists(param_name)) {
-                        H5::Group param_group = h5file.openGroup(param_name);
-                        hsize_t num_cycles = param_group.getNumObjs();
-                        mMaxHDF5CycleIdx = 0;
-
-                        // Find max cycle index by checking all cycle groups
-                        for (hsize_t j = 0; j < num_cycles; j++) {
-                            std::string cycle_name = param_group.getObjnameByIdx(j);
-                            if (cycle_name.find("cycle_") == 0) {
-                                int cycle_idx = std::stoi(cycle_name.substr(6));
-                                if (cycle_idx > mMaxHDF5CycleIdx) {
-                                    mMaxHDF5CycleIdx = cycle_idx;
-                                }
-                            }
-                        }
-                        param_group.close();
-
-                        // Clamp cycle index to valid range
-                        mSelectedHDF5CycleIdx = std::min(mSelectedHDF5CycleIdx, mMaxHDF5CycleIdx);
-
-                        std::cout << "Param " << mSelectedHDF5ParamIdx << " has max cycle index: " << mMaxHDF5CycleIdx << std::endl;
+                // Show loading status
+                if (!mParamFailureMessage.empty()) {
+                    // Show parameter failure error (from rollout)
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", mParamFailureMessage.c_str());
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Previous motion still displayed");
+                } else if (!mMotionLoadError.empty()) {
+                    // Show motion load error (e.g., too short)
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", mMotionLoadError.c_str());
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Previous motion still displayed");
+                } else if (can_load) {
+                    if (loading_success) {
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Status: Loaded %s / %s", param_name.c_str(), cycle_name.c_str());
                     } else {
-                        std::cerr << "Param " << param_name << " does not exist in file" << std::endl;
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Status: Ready to load %s / %s", param_name.c_str(), cycle_name.c_str());
                     }
-                    h5file.close();
-                } catch (const std::exception& e) {
-                    std::cerr << "Error reading cycles: " << e.what() << std::endl;
-                }
-                // NOTE: Do NOT update last_param_idx here - let auto-load section handle it
-            }
-
-            // Cycle slider with status
-            ImGui::SliderInt("Cycle", &mSelectedHDF5CycleIdx, 0, mMaxHDF5CycleIdx);
-            ImGui::SameLine();
-            ImGui::Text("%d / %d", mSelectedHDF5CycleIdx, mMaxHDF5CycleIdx);
-
-            // Show current file
-            ImGui::Text("File: %s", mHDF5Files[mSelectedHDF5FileIdx].c_str());
-
-            // Verify if selected param/cycle exists before loading
-            bool can_load = false;
-            std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
-            std::string cycle_name = "cycle_" + std::to_string(mSelectedHDF5CycleIdx);
-
-            try {
-                H5::H5File h5file(mHDF5Files[mSelectedHDF5FileIdx], H5F_ACC_RDONLY);
-                if (h5file.nameExists(param_name)) {
-                    H5::Group param_group = h5file.openGroup(param_name);
-                    if (param_group.nameExists(cycle_name)) {
-                        can_load = true;
-                    }
-                    param_group.close();
-                }
-                h5file.close();
-            } catch (const std::exception& e) {
-                // Silently ignore, will show "does not exist" status
-            }
-
-            // Auto-load when indices change (only if param/cycle exists)
-            bool param_changed = (mSelectedHDF5ParamIdx != last_param_idx);
-            bool cycle_changed = (mSelectedHDF5CycleIdx != last_cycle_idx);
-
-            if ((param_changed || cycle_changed) && can_load) {
-                // Load parameters using Motion* interface
-                if (param_changed && mRenderEnv) {
-                    // Find HDFRollout motion matching this file
-                    Motion* rollout_motion = nullptr;
-                    std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
-                    for (auto* motion : mMotionsNew) {
-                        if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
-                            rollout_motion = motion;
-                            break;
-                        }
-                    }
-
-                    if (rollout_motion && rollout_motion->hasParameters()) {
-                        bool success = rollout_motion->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
-                        if (!success) {
-                            Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
-                            mRenderEnv->setParamState(default_params, false, true);
-                            std::cout << "[" << rollout_motion->getName() << "] Using default parameters due to mismatch" << std::endl;
-                        }
-                    } else if (rollout_motion) {
-                        std::cout << "[" << rollout_motion->getName() << "] Warning: No parameters in motion file" << std::endl;
-                    }
-                }
-
-                // Then load motion data
-                // TODO: Update for Motion* interface
-                // loadSelectedHDF5Motion();
-                // alignMotionToSimulation();
-                loading_success = true;
-                last_param_idx = mSelectedHDF5ParamIdx;
-                last_cycle_idx = mSelectedHDF5CycleIdx;
-            }
-
-            // Show loading status
-            if (!mParamFailureMessage.empty()) {
-                // Show parameter failure error (from rollout)
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", mParamFailureMessage.c_str());
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Previous motion still displayed");
-            } else if (!mMotionLoadError.empty()) {
-                // Show motion load error (e.g., too short)
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", mMotionLoadError.c_str());
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Previous motion still displayed");
-            } else if (can_load) {
-                if (loading_success) {
-                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Status: Loaded %s / %s", param_name.c_str(), cycle_name.c_str());
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Status: Ready to load %s / %s", param_name.c_str(), cycle_name.c_str());
+                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Status: %s / %s does not exist", param_name.c_str(), cycle_name.c_str());
                 }
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Status: %s / %s does not exist", param_name.c_str(), cycle_name.c_str());
             }
-        }
-            ImGui::TreePop();  // End HDF5 Loading Controls TreeNode
-        }
-        }  // End Motion Files collapsing header
-
-        if (any_motion_selected) {
-            ImGui::PopStyleColor(3);
         }
 
         // Motion Navigation Control
@@ -1756,37 +1772,19 @@ void GLFWApp::drawKinematicsControlPanel()
             motionStatePtr = &mMotionStates[mMotionIdx];
         }
 
-        // Use unified navigation UI (same as markers - proven to work)
+        // Use unified navigation UI for motion playback
         if (motionStatePtr) {
-            // Note: PlaybackUtils includes the slider in manual mode, but we want to show
-            // additional motion-specific info, so we'll handle display separately
-            ImGui::Text("Frame Nav:");
-            ImGui::SameLine();
-            int nav_mode = static_cast<int>(motionStatePtr->navigationMode);
-            if (ImGui::RadioButton("Sync", &nav_mode, PLAYBACK_SYNC)) {
-                motionStatePtr->navigationMode = PLAYBACK_SYNC;
-                nav_mode = static_cast<int>(PLAYBACK_SYNC);  // Sync local variable with state
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Manual", &nav_mode, PLAYBACK_MANUAL_FRAME)) {
-                motionStatePtr->navigationMode = PLAYBACK_MANUAL_FRAME;
-                nav_mode = static_cast<int>(PLAYBACK_MANUAL_FRAME);  // Sync local variable with state
-            }
+            PlaybackUtils::drawPlaybackNavigationUI("Motion Frame Nav", *motionStatePtr, mMaxFrameIndex);
 
-            // Display mode-specific info below
+            // Show additional motion-specific info
             if (motionStatePtr->navigationMode == PLAYBACK_MANUAL_FRAME) {
-                // Manual frame slider with additional timestamp info
+                // Show frame time for HDF5/BVH motions with timestamps in manual mode
                 if (!mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size()) {
-                    int manualIndex = std::clamp(motionStatePtr->manualFrameIndex, 0, mMaxFrameIndex);
-
-                    if (ImGui::SliderInt("Frame Index", &manualIndex, 0, mMaxFrameIndex)) {
-                        motionStatePtr->manualFrameIndex = manualIndex;
-                    }
-                    ImGui::Text("Frame: %d / %d", manualIndex, mMaxFrameIndex);
-
-                    // Show frame time for HDF5/BVH motions with timestamps
                     std::vector<double> timestamps = mMotionsNew[mMotionIdx]->getTimestamps();
-                    if ((mMotionsNew[mMotionIdx]->getSourceType() == "hdfRollout" || mMotionsNew[mMotionIdx]->getSourceType() == "hdfSingle" || mMotionsNew[mMotionIdx]->getSourceType() == "bvh") &&
+                    int manualIndex = std::clamp(motionStatePtr->manualFrameIndex, 0, mMaxFrameIndex);
+                    if ((mMotionsNew[mMotionIdx]->getSourceType() == "hdfRollout" ||
+                         mMotionsNew[mMotionIdx]->getSourceType() == "hdfSingle" ||
+                         mMotionsNew[mMotionIdx]->getSourceType() == "bvh") &&
                         !timestamps.empty() &&
                         manualIndex < static_cast<int>(timestamps.size())) {
                         double frame_time = timestamps[manualIndex];
@@ -1807,7 +1805,17 @@ void GLFWApp::drawKinematicsControlPanel()
                 }
             }
         }
+
+        // Marker Navigation Control (below motion navigation)
         ImGui::Separator();
+        if (mC3DMarkers) {
+            int maxMarkerFrame = std::max(0, mC3DMarkers->getNumFrames() - 1);
+            PlaybackUtils::drawPlaybackNavigationUI("Marker Frame Nav", mMarkerState, maxMarkerFrame);
+        } else {
+            ImGui::TextDisabled("Marker is not loaded");
+        }
+        ImGui::Separator();
+        ImGui::Spacing();
 
         if (!mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size()) {
             ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotionsNew[mMotionIdx]->getNumFrames() - 1));
@@ -4138,7 +4146,12 @@ void GLFWApp::reset()
         state.navigationMode = PLAYBACK_SYNC;
         state.manualFrameIndex = 0;
     }
-    mMarkerState = MarkerViewerState();
+
+    // Reset marker playback tracking (preserve navigation mode to avoid losing manual mode setting)
+    mMarkerState.lastFrameIdx = 0;
+    mMarkerState.cycleAccumulation.setZero();
+    mMarkerState.displayOffset.setZero();
+    // Note: Do NOT reset navigationMode or manualFrameIndex to preserve user's navigation preference
 
     if (mRenderEnv) {
         mRenderEnv->reset(mResetPhase);

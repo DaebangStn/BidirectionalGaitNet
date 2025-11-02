@@ -75,6 +75,8 @@ inline void drawPlaybackNavigationUI(const char* label,
                                      const char* syncLabel = "Sync",
                                      const char* manualLabel = "Manual")
 {
+    ImGui::PushID(label);  // Use label as unique ID scope
+
     ImGui::Text("%s:", label);
     ImGui::SameLine();
 
@@ -92,6 +94,8 @@ inline void drawPlaybackNavigationUI(const char* label,
         clampManualFrameIndex(state.manualFrameIndex, maxFrameIndex);
         ImGui::SliderInt("Frame Index", &state.manualFrameIndex, 0, maxFrameIndex);
     }
+
+    ImGui::PopID();
 }
 
 /**
