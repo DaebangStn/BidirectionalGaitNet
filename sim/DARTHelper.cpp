@@ -484,26 +484,8 @@ dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 			T_obj.setIdentity();
 			T_obj = T_body.inverse();
 			vsn->setRelativeTransform(T_obj);
-
-			// Log visual mesh transform for first 5 body nodes
-			if (skel->getNumBodyNodes() <= 5) {
-				Eigen::Vector3d t = T_obj.translation();
-				LOG_INFO("[BuildFromXML] BodyNode[" << (skel->getNumBodyNodes() - 1) << "] " << name
-				         << " visual mesh T_obj: [" << t[0] << ", " << t[1] << ", " << t[2] << "]");
-			}
 		}
 	}
-
-	// Debug: Print first 5 body nodes with global positions
-	LOG_VERBOSE("[DARTHelper] XML Skeleton loaded: " << skel->getName() << " (" << skel->getNumBodyNodes() << " body nodes)");
-	int debug_count = std::min(5, (int)skel->getNumBodyNodes());
-	for (int i = 0; i < debug_count; i++) {
-		auto bn = skel->getBodyNode(i);
-		Eigen::Vector3d global_pos = bn->getWorldTransform().translation();
-		LOG_VERBOSE("[DARTHelper]   [" << i << "] " << bn->getName()
-		         << " @ [" << global_pos[0] << ", " << global_pos[1] << ", " << global_pos[2] << "]");
-	}
-
 	return skel;
 }
 
@@ -681,25 +663,7 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 			Eigen::Isometry3d T_body_world = bn->getWorldTransform();
 			Eigen::Isometry3d T_obj = T_body_world.inverse();
 			vsn->setRelativeTransform(T_obj);
-
-			// Log visual mesh transform for first 5 body nodes
-			if (skel->getNumBodyNodes() <= 5) {
-				Eigen::Vector3d t = T_obj.translation();
-				LOG_INFO("[BuildFromYAML] BodyNode[" << (skel->getNumBodyNodes() - 1) << "] " << name
-				         << " visual mesh T_obj: [" << t[0] << ", " << t[1] << ", " << t[2] << "]");
-			}
 		}
 	}
-
-	// Debug: Print first 5 body nodes with global positions
-	LOG_INFO("[DARTHelper] YAML Skeleton loaded: " << skel->getName() << " (" << skel->getNumBodyNodes() << " body nodes)");
-	int debug_count = std::min(5, (int)skel->getNumBodyNodes());
-	for (int i = 0; i < debug_count; i++) {
-		auto bn = skel->getBodyNode(i);
-		Eigen::Vector3d global_pos = bn->getWorldTransform().translation();
-		LOG_INFO("[DARTHelper]   [" << i << "] " << bn->getName()
-		         << " @ [" << global_pos[0] << ", " << global_pos[1] << ", " << global_pos[2] << "]");
-	}
-
 	return skel;
 }

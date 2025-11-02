@@ -5,6 +5,8 @@
 #include "Environment.h"
 #include "GLfunctions.h"
 #include "Character.h"
+#include "C3D.h"
+#include <ezc3d/ezc3d_all.h>
 
 // Forward declaration
 class C3DMotion;
@@ -146,6 +148,14 @@ class C3D_Reader
         std::vector<Eigen::VectorXd> mConvertedPos;
 
     private:
+        // Helper methods for loadC3D refactoring
+        C3D* loadMarkerData(const std::string& path);
+        std::vector<Eigen::Vector3d> extractMarkersFromFrame(const ezc3d::c3d& c3d, size_t frameIdx);
+        void initializeSkeletonForIK(const std::vector<Eigen::Vector3d>& firstFrameMarkers,
+                                      const C3DConversionParams& params);
+        std::vector<Eigen::VectorXd> convertFramesToSkeletonPoses(const ezc3d::c3d& c3d, size_t numFrames);
+        void applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion, C3D* markerData);
+
         Environment *mEnv;
         SkeletonPtr mVirtSkeleton;
 

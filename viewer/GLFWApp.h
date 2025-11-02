@@ -113,31 +113,27 @@ enum PlaybackNavigationMode
 };
 
 /**
- * @brief Viewer-specific state for motion display
+ * @brief Unified viewer-specific state for playback display (motion and markers)
  *
- * Separates viewer concerns (positioning, caching) from motion data.
- * Each Motion* instance has a corresponding MotionViewerState.
+ * Separates viewer concerns (positioning, caching, navigation) from data sources.
+ * Used for both Motion* instances and standalone C3D marker data.
+ *
+ * Fields are optional based on data type:
+ * - currentPose: Used for skeleton motion playback
+ * - currentMarkers: Used for C3DMotion or standalone marker playback
  */
-struct MotionViewerState
+struct PlaybackViewerState
 {
-    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        ///< World offset for motion display
-    Eigen::VectorXd currentPose;                                     ///< Last evaluated pose (cached from Motion::getPose())
-    Eigen::Vector3d initialRootPosition = Eigen::Vector3d::Zero();   ///< Initial root position for delta calculations (HDF/BVH)
+    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        ///< World offset for display positioning
+    Eigen::VectorXd currentPose;                                     ///< Last evaluated pose (cached from Motion::getPose(), optional)
+    std::vector<Eigen::Vector3d> currentMarkers;                     ///< Current marker positions (for C3DMotion or standalone markers, optional)
     Eigen::Vector3d cycleAccumulation = Eigen::Vector3d::Zero();     ///< Accumulated root translation across cycles
+    Eigen::Vector3d cycleDistance = Eigen::Vector3d::Zero();         ///< Pre-computed cycle distance (for cycle wrap accumulation)
     int lastFrameIdx = 0;                                            ///< Last evaluated frame index (for wrap detection)
-    PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;           ///< Playback mode for this motion
+    int maxFrameIndex = 0;                                           ///< Maximum frame index for this data
+    bool render = true;                                              ///< Whether to render this data
+    PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;           ///< Playback mode (sync or manual frame selection)
     int manualFrameIndex = 0;                                        ///< Manual frame index when navigationMode == PLAYBACK_MANUAL_FRAME
-    std::vector<Eigen::Vector3d> currentMarkers;                     ///< Current marker positions (for C3DMotion)
-};
-
-struct MarkerViewerState
-{
-    std::vector<Eigen::Vector3d> currentMarkers;
-    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();
-    Eigen::Vector3d cycleAccumulation = Eigen::Vector3d::Zero();
-    int lastFrameIdx = 0;
-    PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;
-    int manualFrameIndex = 0;
 };
 
 class GLFWApp
@@ -150,6 +146,10 @@ public:
 private:
     py::object mns;
     py::object loading_network;
+
+    // Helper functions for pre-computing cycle distances
+    Eigen::Vector3d computeMotionCycleDistance(Motion* motion);
+    Eigen::Vector3d computeMarkerCycleDistance(C3D* markerData);
 
     void writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const bool isPos = false); // Pose Or Hierarchy
     void exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::dynamics::SkeletonPtr &skel);
@@ -319,7 +319,7 @@ private:
     Eigen::Vector3d mFGNRootOffset;
     int selected_fgn;
     int selected_bgn;
-    int selected_c3d;
+    int mSelectedC3d;
     bool mDrawFGNSkeleton;
 
     // Motion Buffer
@@ -331,7 +331,7 @@ private:
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
     std::unique_ptr<C3D> mC3DMarkers;  // For marker-only rendering
     bool mRenderC3DMarkers;
-    MarkerViewerState mMarkerState;
+    PlaybackViewerState mMarkerState;
 
 
     // For GVAE
@@ -341,7 +341,7 @@ private:
 
     // Polymorphic motion architecture
     std::vector<Motion*> mMotions;              ///< Polymorphic motion instances
-    std::vector<MotionViewerState> mMotionStates;  ///< Viewer state per motion
+    std::vector<PlaybackViewerState> mMotionStates;  ///< Viewer state per motion
 
     MotionData mPredictedMotion;
 
@@ -381,7 +381,7 @@ private:
     struct MotionPlaybackContext
     {
         Motion* motion = nullptr;
-        MotionViewerState* state = nullptr;
+        PlaybackViewerState* state = nullptr;
         Character* character = nullptr;
         double phase = 0.0;
         double frameFloat = 0.0;
@@ -394,7 +394,7 @@ private:
     struct MarkerPlaybackContext
     {
         C3D* markers = nullptr;
-        MarkerViewerState* state = nullptr;
+        PlaybackViewerState* state = nullptr;
         double phase = 0.0;
         double frameFloat = 0.0;
         int frameIndex = 0;
@@ -410,9 +410,9 @@ private:
     void evaluateMotionPlayback(const MotionPlaybackContext& context);
 
     double computeMotionPhase();
-    double determineMotionFrame(Motion* motion, MotionViewerState& state, double phase);
+    double determineMotionFrame(Motion* motion, PlaybackViewerState& state, double phase);
     void updateMotionCycleAccumulation(Motion* current_motion,
-                                       MotionViewerState& state,
+                                       PlaybackViewerState& state,
                                        int current_frame_idx,
                                        Character* character,
                                        int value_per_frame);
@@ -490,9 +490,6 @@ private:
     bool mShowTimingPane;            // Toggle for timing information pane
     bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
     bool mShowTitlePanel;            // Toggle for title panel (Ctrl+T)
-
-    // Motion navigation control
-    int mMaxFrameIndex;                           // Maximum frame index for current motion
 
     // For Resizable Plot Pane
     std::vector<ResizablePlot> mResizablePlots;

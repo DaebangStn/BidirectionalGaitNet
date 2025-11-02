@@ -82,7 +82,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mPlotTitleResizablePlotPane = true;
 
     // Initialize motion navigation control
-    mMaxFrameIndex = 0;
     mFallbackMotionNavigationMode = PLAYBACK_SYNC;
     mFallbackManualFrameIndex = 0;
 
@@ -191,11 +190,11 @@ GLFWApp::GLFWApp(int argc, char **argv)
     selected_bgn = 0;
 
     // C3D
-    selected_c3d = 0;
+    mSelectedC3d = 0;
 
     mFocus = 1;
     mRenderC3DMarkers = false;
-    mMarkerState = MarkerViewerState();
+    mMarkerState = PlaybackViewerState();
 
     mTrackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
     mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
@@ -366,6 +365,53 @@ GLFWApp::GLFWApp(int argc, char **argv)
         }
     }
     initEnv(mCachedMetadata);
+}
+
+Eigen::Vector3d GLFWApp::computeMotionCycleDistance(Motion* motion)
+{
+    Eigen::Vector3d cycleDistance = Eigen::Vector3d::Zero();
+
+    if (!motion || motion->getNumFrames() == 0)
+        return cycleDistance;
+
+    // Get raw motion data
+    Eigen::VectorXd raw_motion = motion->getRawMotionData();
+    int value_per_frame = motion->getValuesPerFrame();
+    int frame_per_cycle = motion->getTimestepsPerCycle();
+
+    if (frame_per_cycle <= 1)
+        return cycleDistance;
+
+    // Get first and last frame root positions
+    Eigen::VectorXd first_frame = raw_motion.segment(0, value_per_frame);
+    Eigen::VectorXd last_frame = raw_motion.segment((frame_per_cycle - 1) * value_per_frame, value_per_frame);
+
+    Eigen::Vector3d first_root_pos(first_frame[3], first_frame[4], first_frame[5]);
+    Eigen::Vector3d last_root_pos(last_frame[3], last_frame[4], last_frame[5]);
+
+    // Compute cycle distance with the same formula as runtime calculation
+    cycleDistance[0] = (last_root_pos[0] - first_root_pos[0]) * frame_per_cycle / (frame_per_cycle - 1);
+    cycleDistance[2] = (last_root_pos[2] - first_root_pos[2]) * frame_per_cycle / (frame_per_cycle - 1);
+
+    return cycleDistance;
+}
+
+Eigen::Vector3d GLFWApp::computeMarkerCycleDistance(C3D* markerData)
+{
+    Eigen::Vector3d cycleDistance = Eigen::Vector3d::Zero();
+
+    if (!markerData || markerData->getNumFrames() == 0)
+        return cycleDistance;
+
+    // Compute centroids for first and last frames
+    Eigen::Vector3d firstCentroid, lastCentroid;
+    if (C3D::computeCentroid(markerData->getMarkers(0), firstCentroid) &&
+        C3D::computeCentroid(markerData->getMarkers(markerData->getNumFrames() - 1), lastCentroid))
+    {
+        cycleDistance = lastCentroid - firstCentroid;
+    }
+
+    return cycleDistance;
 }
 
 void GLFWApp::loadRenderConfig()
@@ -1157,20 +1203,50 @@ void GLFWApp::initEnv(std::string metadata)
         }
     }
 
-    // Auto-load first C3D marker file if available
+    // Auto-load first C3D file as both motion and markers
     if (!mC3DList.empty()) {
+        // Load C3DMotion (includes skeleton poses and markers)
+        if (mC3DReader) {
+            C3DConversionParams params;
+            C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[0], params);
+            if (c3dMotion) {
+                // Add to motion list
+                mMotions.push_back(c3dMotion);
+
+                // Create viewer state
+                PlaybackViewerState state;
+                state.cycleDistance = computeMotionCycleDistance(c3dMotion);
+                state.maxFrameIndex = std::max(0, c3dMotion->getNumFrames() - 1);
+                mMotionStates.push_back(state);
+
+                // Set as active motion
+                mMotionIdx = static_cast<int>(mMotions.size()) - 1;
+
+                // Align to simulation
+                alignMotionToSimulation();
+
+                LOG_INFO("[C3D] Auto-loaded C3D motion: " << mC3DList[0]);
+            } else {
+                LOG_ERROR("[C3D] Failed to auto-load C3D motion: " << mC3DList[0]);
+            }
+        }
+
+        // Also load separate markers for legacy marker rendering system
         auto markerData = std::make_unique<C3D>();
         if (markerData->load(mC3DList[0])) {
             mC3DMarkers = std::move(markerData);
             mRenderC3DMarkers = true;
-            mMarkerState = MarkerViewerState();
+            mMarkerState = PlaybackViewerState();
+            mMarkerState.cycleDistance = computeMarkerCycleDistance(mC3DMarkers.get());
+            mMarkerState.maxFrameIndex = std::max(0, mC3DMarkers->getNumFrames() - 1);
             mMarkerState.currentMarkers = mC3DMarkers->getMarkers(0);
-            std::cout << "[C3D] Auto-loaded first marker file: " << mC3DList[0] << std::endl;
+            alignMarkerToSimulation();
+            LOG_INFO("[C3D] Auto-loaded separate markers: " << mC3DList[0]);
         } else {
             mC3DMarkers.reset();
             mRenderC3DMarkers = false;
-            mMarkerState = MarkerViewerState();
-            std::cout << "[C3D] Failed to auto-load markers from " << mC3DList[0] << std::endl;
+            mMarkerState = PlaybackViewerState();
+            LOG_ERROR("[C3D] Failed to auto-load separate markers: " << mC3DList[0]);
         }
     }
 
@@ -1408,17 +1484,10 @@ void GLFWApp::drawKinematicsControlPanel()
 
                     if (ImGui::Selectable(display_name.c_str(), mMotionIdx == i)) {
                         mMotionIdx = i;
-                        MotionViewerState& selectedState = mMotionStates[i];
-                        // Update max frame index for manual navigation
-                        if (mMotions[i]->getSourceType() == "bvh" || mMotions[i]->getSourceType() == "hdfSingle") {
-                            // TODO: Motion* interface doesn't have hdf5_total_timesteps - need to add getTotalTimesteps() method
-                            mMaxFrameIndex = mMotions[i]->getNumFrames() - 1;  // Temporary: using getNumFrames()
-                        } else {
-                            mMaxFrameIndex = mMotions[i]->getNumFrames() - 1;
-                        }
-                        // Clamp manual frame index to valid range
-                        if (selectedState.manualFrameIndex > mMaxFrameIndex) {
-                            selectedState.manualFrameIndex = mMaxFrameIndex;
+                        PlaybackViewerState& selectedState = mMotionStates[i];
+                        // Clamp manual frame index to valid range (using pre-computed maxFrameIndex)
+                        if (selectedState.manualFrameIndex > selectedState.maxFrameIndex) {
+                            selectedState.manualFrameIndex = selectedState.maxFrameIndex;
                         }
 
                         if (mRenderEnv) {
@@ -1480,22 +1549,24 @@ void GLFWApp::drawKinematicsControlPanel()
                 int idx = 0;
                 for (auto ns : mC3DList)
                 {
-                    if (ImGui::Selectable(ns.c_str(), selected_c3d == idx)) {
-                        selected_c3d = idx;
+                    if (ImGui::Selectable(ns.c_str(), mSelectedC3d == idx)) {
+                        mSelectedC3d = idx;
 
                         // Automatically load C3D motion when clicked
-                        if (mRenderEnv && selected_c3d < mC3DList.size()) {
+                        if (mRenderEnv && mSelectedC3d < mC3DList.size()) {
                             if (!mC3DReader) {
                                 LOG_ERROR("[C3D] C3D reader not initialized. Call initEnv first.");
                             } else {
                                 C3DConversionParams params;
-                                C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], params);
+                                C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[mSelectedC3d], params);
                                 if (c3dMotion) {
                                     // Add to motion list
                                     mMotions.push_back(c3dMotion);
 
                                     // Create viewer state
-                                    MotionViewerState state;
+                                    PlaybackViewerState state;
+                                    state.cycleDistance = computeMotionCycleDistance(c3dMotion);
+                                    state.maxFrameIndex = std::max(0, c3dMotion->getNumFrames() - 1);
                                     mMotionStates.push_back(state);
 
                                     // Set as active motion
@@ -1504,14 +1575,14 @@ void GLFWApp::drawKinematicsControlPanel()
                                     // Align to simulation
                                     alignMotionToSimulation();
 
-                                    LOG_INFO("[C3D] Loaded C3D motion and markers: " << mC3DList[selected_c3d]);
+                                    LOG_INFO("[C3D] Loaded C3D motion and markers: " << mC3DList[mSelectedC3d]);
                                 } else {
-                                    LOG_ERROR("[C3D] Failed to load C3D motion: " << mC3DList[selected_c3d]);
+                                    LOG_ERROR("[C3D] Failed to load C3D motion: " << mC3DList[mSelectedC3d]);
                                 }
                             }
                         }
                     }
-                    if (selected_c3d == idx) ImGui::SetItemDefaultFocus();
+                    if (mSelectedC3d == idx) ImGui::SetItemDefaultFocus();
                     idx++;
                 }
             }
@@ -1755,21 +1826,21 @@ void GLFWApp::drawKinematicsControlPanel()
 
         // Motion Navigation Control
         ImGui::Separator();
-        MotionViewerState* motionStatePtr = nullptr;
+        PlaybackViewerState* motionStatePtr = nullptr;
         if (!mMotionStates.empty() && mMotionIdx >= 0 && static_cast<size_t>(mMotionIdx) < mMotionStates.size()) {
             motionStatePtr = &mMotionStates[mMotionIdx];
         }
 
         // Use unified navigation UI for motion playback
         if (motionStatePtr) {
-            PlaybackUtils::drawPlaybackNavigationUI("Motion Frame Nav", *motionStatePtr, mMaxFrameIndex);
+            PlaybackUtils::drawPlaybackNavigationUI("Motion Frame Nav", *motionStatePtr, motionStatePtr->maxFrameIndex);
 
             // Show additional motion-specific info
             if (motionStatePtr->navigationMode == PLAYBACK_MANUAL_FRAME) {
                 // Show frame time for HDF5/BVH motions with timestamps in manual mode
                 if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
                     std::vector<double> timestamps = mMotions[mMotionIdx]->getTimestamps();
-                    int manualIndex = std::clamp(motionStatePtr->manualFrameIndex, 0, mMaxFrameIndex);
+                    int manualIndex = std::clamp(motionStatePtr->manualFrameIndex, 0, motionStatePtr->maxFrameIndex);
                     if ((mMotions[mMotionIdx]->getSourceType() == "hdfRollout" ||
                          mMotions[mMotionIdx]->getSourceType() == "hdfSingle" ||
                          mMotions[mMotionIdx]->getSourceType() == "bvh") &&
@@ -1789,7 +1860,7 @@ void GLFWApp::drawKinematicsControlPanel()
                     }
                     double frame_float = computeFrameFloat(mMotions[mMotionIdx], phase);
                     int current_frame = (int)frame_float;
-                    ImGui::Text("Auto Frame: %d / %d", current_frame, mMaxFrameIndex);
+                    ImGui::Text("Auto Frame: %d / %d", current_frame, motionStatePtr->maxFrameIndex);
                 }
             }
         }
@@ -1797,8 +1868,7 @@ void GLFWApp::drawKinematicsControlPanel()
         // Marker Navigation Control (below motion navigation)
         ImGui::Separator();
         if (mC3DMarkers) {
-            int maxMarkerFrame = std::max(0, mC3DMarkers->getNumFrames() - 1);
-            PlaybackUtils::drawPlaybackNavigationUI("Marker Frame Nav", mMarkerState, maxMarkerFrame);
+            PlaybackUtils::drawPlaybackNavigationUI("Marker Frame Nav", mMarkerState, mMarkerState.maxFrameIndex);
         } else {
             ImGui::TextDisabled("Marker is not loaded");
         }
@@ -3798,22 +3868,17 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 void GLFWApp::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
-    if (mMotions.empty() || mMotionIdx < 0 || mMotionIdx >= mMotions.size()) {
-        return;
-    }
-    if (mMotionStates.size() <= static_cast<size_t>(mMotionIdx)) {
-        return;
-    }
-    if (mMotionStates[mMotionIdx].currentPose.size() == 0) {
-        return;
-    }
+    if (mMotions.empty() || mMotionIdx < 0 || mMotionIdx >= mMotions.size() || 
+        mMotionStates.size() <= static_cast<size_t>(mMotionIdx || 
+        mMotionStates[mMotionIdx].currentPose.size() == 0) ||
+        mMotionStates[mMotionIdx].render == false) return;
 
     // Draw skeleton
     drawSkeleton(mMotionStates[mMotionIdx].currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
 
     // For C3DMotion, also draw markers
     Motion* motion = mMotions[mMotionIdx];
-    MotionViewerState& state = mMotionStates[mMotionIdx];
+    PlaybackViewerState& state = mMotionStates[mMotionIdx];
 
     if (motion->getSourceType() == "C3DMotion") {
         glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
@@ -3849,16 +3914,14 @@ bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std
 void GLFWApp::drawPlayableMarkers()
 {
     // Marker positions are computed in updateViewerTime(), this function only renders
-    if (!mC3DMarkers || !mRenderC3DMarkers || mMarkerState.currentMarkers.empty()) {
-        return;
-    }
+    if (!mC3DMarkers || !mRenderC3DMarkers || mMarkerState.currentMarkers.empty()
+        || mMarkerState.render == false) return;
 
     glColor4f(1.0f, 0.4f, 0.2f, 1.0f);
     Eigen::Vector3d offset = mMarkerState.displayOffset + mMarkerState.cycleAccumulation;
 
     for (const auto& marker : mMarkerState.currentMarkers) {
-        if (!marker.array().isFinite().all())
-            continue;
+        if (!marker.array().isFinite().all()) continue;
         GUI::DrawSphere(marker + offset, 0.0125);
     }
 }
@@ -4206,7 +4269,7 @@ void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
         return;
     }
 
-    MotionViewerState& state = mMotionStates[motionIdx];
+    PlaybackViewerState& state = mMotionStates[motionIdx];
 
     int frames_per_cycle = motion->getValuesPerFrame();
     int total_frames = motion->getTotalTimesteps();
@@ -4268,19 +4331,22 @@ void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
         motion_pos[4] = state.cycleAccumulation[1] + state.displayOffset[1];
         motion_pos[5] = state.cycleAccumulation[2] + state.displayOffset[2];
     } else {
-        // HDF/BVH: Use delta from initial position plus cycle accumulation
-        Eigen::Vector3d current_root_pos(motion_pos[3], motion_pos[4], motion_pos[5]);
-        Eigen::Vector3d delta = current_root_pos - state.initialRootPosition;
-
-        motion_pos[3] = delta[0] + state.cycleAccumulation[0] + state.displayOffset[0];
-        motion_pos[4] = current_root_pos[1] + state.displayOffset[1];
-        motion_pos[5] = delta[2] + state.cycleAccumulation[2] + state.displayOffset[2];
+        motion_pos[3] += state.cycleAccumulation[0] + state.displayOffset[0];
+        motion_pos[4] += state.displayOffset[1];
+        motion_pos[5] += state.cycleAccumulation[2] + state.displayOffset[2];
     }
 
     // 4. Update markers for C3DMotion
     if (motion->getSourceType() == "C3DMotion") {
         C3DMotion* c3dMotion = static_cast<C3DMotion*>(motion);
         state.currentMarkers = c3dMotion->getMarkers(current_frame_idx);
+
+        // Log before applying offsets
+        Eigen::Vector3d pelvisCenterBefore = (state.currentMarkers[10] + state.currentMarkers[11] + state.currentMarkers[12]) / 3.0;
+        // Extract original root position from interpolated_frame (before offsets were applied)
+        Eigen::Vector3d motionRootBefore(interpolated_frame[3], interpolated_frame[4], interpolated_frame[5]);
+
+        // Apply offsets to markers
         for (auto& marker : state.currentMarkers) {
             marker += state.displayOffset + state.cycleAccumulation;
         }
@@ -4304,22 +4370,10 @@ void GLFWApp::markerPoseEval(double frameFloat)
 
     int currentIdx = static_cast<int>(std::floor(wrapped + 1e-8));
     currentIdx = std::clamp(currentIdx, 0, mC3DMarkers->getNumFrames() - 1);
-
-    bool wrappedCycle = currentIdx < mMarkerState.lastFrameIdx;
-
+    
     auto interpolated = mC3DMarkers->getInterpolatedMarkers(wrapped);
-    if (interpolated.empty())
-        return;
-
-    if (wrappedCycle)
-    {
-        Eigen::Vector3d lastCentroid, firstCentroid;
-        if (C3D::computeCentroid(mC3DMarkers->getMarkers(mMarkerState.lastFrameIdx), lastCentroid) &&
-            C3D::computeCentroid(mC3DMarkers->getMarkers(0), firstCentroid))
-        {
-            mMarkerState.cycleAccumulation += (lastCentroid - firstCentroid);
-        }
-    }
+    if (interpolated.empty()) return;
+    if (currentIdx < mMarkerState.lastFrameIdx) mMarkerState.cycleAccumulation += mMarkerState.cycleDistance;
 
     mMarkerState.currentMarkers = std::move(interpolated);
     mMarkerState.lastFrameIdx = currentIdx;
@@ -4392,7 +4446,7 @@ GLFWApp::MarkerPlaybackContext GLFWApp::computeMarkerPlayback(const ViewerClock&
     context.totalFrames = context.markers->getNumFrames();
     context.valid = true;
 
-    MarkerViewerState& markerState = *context.state;
+    PlaybackViewerState& markerState = *context.state;
 
     if (markerState.navigationMode == PLAYBACK_MANUAL_FRAME) {
         int maxFrame = std::max(0, context.totalFrames - 1);
@@ -4403,7 +4457,7 @@ GLFWApp::MarkerPlaybackContext GLFWApp::computeMarkerPlayback(const ViewerClock&
     }
 
     if (motionContext && motionContext->motion) {
-        const MotionViewerState* motionState = motionContext->state;
+        const PlaybackViewerState* motionState = motionContext->state;
         if (motionState && motionState->navigationMode == PLAYBACK_SYNC) {
             context.frameFloat = computeFrameFloat(context.markers, motionContext->phase);
         } else if (motionContext->totalFrames > 0) {
@@ -4436,7 +4490,7 @@ void GLFWApp::evaluateMarkerPlayback(const MarkerPlaybackContext& context)
     if (!context.valid || !context.markers || !context.state)
         return;
 
-    MarkerViewerState& markerState = *context.state;
+    PlaybackViewerState& markerState = *context.state;
 
     if (markerState.navigationMode == PLAYBACK_MANUAL_FRAME) {
         int maxFrame = std::max(0, context.totalFrames - 1);
@@ -4483,7 +4537,7 @@ double GLFWApp::computeMotionPhase()
     return mViewerPhase;
 }
 
-double GLFWApp::determineMotionFrame(Motion* motion, MotionViewerState& state, double phase)
+double GLFWApp::determineMotionFrame(Motion* motion, PlaybackViewerState& state, double phase)
 {
     if (!motion)
         return 0.0;
@@ -4500,7 +4554,7 @@ double GLFWApp::determineMotionFrame(Motion* motion, MotionViewerState& state, d
 }
 
 void GLFWApp::updateMotionCycleAccumulation(Motion* current_motion,
-                                            MotionViewerState& state,
+                                            PlaybackViewerState& state,
                                             int current_frame_idx,
                                             Character* character,
                                             int value_per_frame)
@@ -4518,35 +4572,17 @@ void GLFWApp::updateMotionCycleAccumulation(Motion* current_motion,
 
     std::string source_type = current_motion->getSourceType();
 
-    if (source_type == "hdfRollout" || source_type == "hdfSingle" || source_type == "bvh" || source_type == "C3DMotion") {
-        if (state.navigationMode == PLAYBACK_SYNC &&
-            current_frame_idx < state.lastFrameIdx &&
-            state.lastFrameIdx < total_frames &&
-            raw_motion.size() >= static_cast<Eigen::Index>((state.lastFrameIdx + 1) * value_per_frame))
-        {
-            Eigen::VectorXd last_frame = raw_motion.segment(state.lastFrameIdx * value_per_frame, value_per_frame);
-            Eigen::Vector3d last_root_pos(last_frame[3], last_frame[4], last_frame[5]);
-            const int frame_per_cycle = current_motion->getTimestepsPerCycle();
-            if (frame_per_cycle > 1) {
-                state.cycleAccumulation[0] += (last_root_pos[0] - state.initialRootPosition[0]) * (frame_per_cycle) / (frame_per_cycle - 1);
-                state.cycleAccumulation[2] += (last_root_pos[2] - state.initialRootPosition[2]) * (frame_per_cycle) / (frame_per_cycle - 1);
-            }
-        }
-        state.lastFrameIdx = current_frame_idx;
-    } else {
-        if (!character)
-            return;
-
+    if (state.navigationMode != PLAYBACK_SYNC) return;
+    if (source_type == "npz") {
         Eigen::VectorXd current_frame = raw_motion.segment(current_frame_idx * value_per_frame, value_per_frame);
         Eigen::VectorXd motion_pos = character->sixDofToPos(current_frame);
-
-        if (state.navigationMode == PLAYBACK_SYNC) {
-            state.cycleAccumulation[0] += motion_pos[3] * 0.5;
-            state.cycleAccumulation[1] = motion_pos[4];
-            state.cycleAccumulation[2] += motion_pos[5] * 0.5;
-        }
-        state.lastFrameIdx = current_frame_idx;
+        state.cycleAccumulation[0] += motion_pos[3] * 0.5;
+        state.cycleAccumulation[1] = motion_pos[4];
+        state.cycleAccumulation[2] += motion_pos[5] * 0.5;
+    } else if (current_frame_idx < state.lastFrameIdx){
+        state.cycleAccumulation += state.cycleDistance;
     }
+    state.lastFrameIdx = current_frame_idx;
 }
 
 double GLFWApp::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pose)
@@ -4583,14 +4619,21 @@ void GLFWApp::alignMotionToSimulation()
 {
     // Safety check: Skip if no motions loaded or invalid index
     if (mMotions.empty() || mMotionIdx < 0 || mMotionIdx >= mMotions.size()) {
+        LOG_ERROR("[alignMotionToSimulation] No motions loaded or invalid index");
         return;
     }
 
     if (mMotionStates.size() <= static_cast<size_t>(mMotionIdx)) {
+        LOG_ERROR("[alignMotionToSimulation] Motion state out of range for index " << mMotionIdx);
         return;
     }
 
-    MotionViewerState& state = mMotionStates[mMotionIdx];
+    if (!mRenderEnv) {
+        LOG_ERROR("[alignMotionToSimulation] No render environment loaded");
+        return;
+    }
+
+    PlaybackViewerState& state = mMotionStates[mMotionIdx];
 
     // Temporarily clear displayOffset to evaluate raw motion pose
     state.displayOffset = Eigen::Vector3d::Zero();
@@ -4601,8 +4644,6 @@ void GLFWApp::alignMotionToSimulation()
 
     // Evaluate motion pose at the current time/phase (without displayOffset)
     motionPoseEval(mMotions[mMotionIdx], mMotionIdx, frame_float);
-
-    if (!mRenderEnv || mMotions.empty()) return;
 
     // Get simulated character's current position (from root body node)
     Eigen::Vector3d sim_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
@@ -4942,7 +4983,7 @@ void GLFWApp::setCamera()
             // Calculate current position based on cycle accumulation
             double phase = mViewerPhase;
             Motion* current_motion = mMotions[mMotionIdx];
-            MotionViewerState& state = mMotionStates[mMotionIdx];
+            PlaybackViewerState& state = mMotionStates[mMotionIdx];
 
             double frame_float;
             if (state.navigationMode == PLAYBACK_SYNC) {
@@ -4973,13 +5014,9 @@ void GLFWApp::setCamera()
                 mTrans[1] = -(state.cycleAccumulation[1] + state.displayOffset[1]) - 1;
                 mTrans[2] = -(state.cycleAccumulation[2] + state.displayOffset[2]);
             } else {
-                // HDF: Use delta from initial position plus cycle accumulation
-                Eigen::Vector3d root_pos(current_pos[3], current_pos[4], current_pos[5]);
-                Eigen::Vector3d delta = root_pos - state.initialRootPosition;
-
-                mTrans[0] = -(delta[0] + state.cycleAccumulation[0] + state.displayOffset[0]);
-                mTrans[1] = -(root_pos[1] + state.displayOffset[1]) - 1;
-                mTrans[2] = -(delta[2] + state.cycleAccumulation[2] + state.displayOffset[2]);
+                mTrans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
+                mTrans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
+                mTrans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
             }
         } else {
             mTrans = Eigen::Vector3d::Zero();
@@ -5525,11 +5562,11 @@ void GLFWApp::loadNPZMotion()
 			mMotions.push_back(npz);
 
             // Create viewer state
-            MotionViewerState state;
+            PlaybackViewerState state;
             state.displayOffset = Eigen::Vector3d(1.0, 0, 0);  // Default offset
-            state.initialRootPosition = Eigen::Vector3d::Zero();  // NPZ doesn't use this
-            state.cycleAccumulation.setZero();
             state.cycleAccumulation[0] = 1.0;
+            state.cycleDistance = computeMotionCycleDistance(npz);
+            state.maxFrameIndex = std::max(0, npz->getNumFrames() - 1);
             mMotionStates.push_back(state);
 
 			if (npz->hasParameters()) {
@@ -5589,14 +5626,13 @@ void GLFWApp::loadHDFRolloutMotion()
 					mMotions.push_back(rollout);
 
 					// Create viewer state
-					MotionViewerState state;
+					PlaybackViewerState state;
 					Eigen::VectorXd first_pose = rollout->getPose(0);
 					state.displayOffset = Eigen::Vector3d(1.0, 0, 0);  // Default offset
-					if (first_pose.size() >= 6) {
-						state.initialRootPosition = Eigen::Vector3d(first_pose[3], first_pose[4], first_pose[5]);
-					}
 					state.cycleAccumulation.setZero();
 					state.cycleAccumulation[0] = 1.0;
+					state.cycleDistance = computeMotionCycleDistance(rollout);
+					state.maxFrameIndex = std::max(0, rollout->getNumFrames() - 1);
 					mMotionStates.push_back(state);
 
 					if (rollout->hasParameters()) {
@@ -5650,14 +5686,13 @@ void GLFWApp::loadBVHMotion()
 				mMotions.push_back(bvh);
 
 				// Create viewer state
-				MotionViewerState state;
+				PlaybackViewerState state;
 				Eigen::VectorXd first_pose = bvh->getPose(0);
 				state.displayOffset = Eigen::Vector3d(1.0, 0, 0);  // Default offset
-				if (first_pose.size() >= 6) {
-					state.initialRootPosition = Eigen::Vector3d(first_pose[3], first_pose[4], first_pose[5]);
-				}
 				state.cycleAccumulation.setZero();
 				state.cycleAccumulation[0] = 1.0;
+				state.cycleDistance = computeMotionCycleDistance(bvh);
+				state.maxFrameIndex = std::max(0, bvh->getNumFrames() - 1);
 				mMotionStates.push_back(state);
 
 				LOG_VERBOSE(bvh->getLogHeader() << " Loaded " << bvh->getName() << " with " << bvh->getNumFrames() << " frames");
@@ -5699,14 +5734,11 @@ void GLFWApp::loadHDFSingleMotion()
 				mMotions.push_back(hdf);
 
 				// Create viewer state
-				MotionViewerState state;
+				PlaybackViewerState state;
 				Eigen::VectorXd first_pose = hdf->getPose(0);
-				if (first_pose.size() >= 6) {
-					state.displayOffset = Eigen::Vector3d(1.0, 0, 0);  // Default offset
-					state.initialRootPosition = Eigen::Vector3d(first_pose[3], first_pose[4], first_pose[5]);
-				}
-				state.cycleAccumulation.setZero();
 				state.cycleAccumulation[0] = 1.0;
+				state.cycleDistance = computeMotionCycleDistance(hdf);
+				state.maxFrameIndex = std::max(0, hdf->getNumFrames() - 1);
 				mMotionStates.push_back(state);
 
 				if (hdf->hasParameters()) {
@@ -5986,8 +6018,8 @@ void GLFWApp::loadSelectedHDF5Motion()
         mMotionIdx = mMotions.size() - 1;  // Select the newly loaded motion
 
         // Update max frame index for manual navigation
-        mMaxFrameIndex = motion_elem.hdf5_total_timesteps - 1;
         if (mMotionIdx >= 0 && static_cast<size_t>(mMotionIdx) < mMotionStates.size()) {
+            mMotionStates[mMotionIdx].maxFrameIndex = motion_elem.hdf5_total_timesteps - 1;
             mMotionStates[mMotionIdx].manualFrameIndex = 0;  // Reset to first frame
             mMotionStates[mMotionIdx].navigationMode = PLAYBACK_SYNC;
         }
@@ -6110,9 +6142,6 @@ void GLFWApp::unloadMotion()
     mMotionLoadError.clear();
     mParamFailureMessage.clear();
     mLastLoadedHDF5ParamsFile.clear();
-
-    // Reset manual navigation state
-    mMaxFrameIndex = 0;
 
     // Reset simulation parameters to default from XML metadata
     if (mRenderEnv) {

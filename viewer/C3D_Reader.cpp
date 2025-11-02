@@ -77,57 +77,58 @@ C3D_Reader::~C3D_Reader()
 {
 }
 
-C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& params)
-{
-    LOG_VERBOSE("[C3D_Reader] loadC3D started for: " << path);
+// ============================================================================
+// Helper Methods for loadC3D
+// ============================================================================
 
-    // 1. Create C3D marker data
+C3D* C3D_Reader::loadMarkerData(const std::string& path)
+{
+    LOG_VERBOSE("[C3D_Reader] Loading marker data from: " << path);
+
     C3D* markerData = new C3D(path);
     if (!markerData || markerData->getNumFrames() == 0) {
         LOG_ERROR("[C3D_Reader] Failed to load marker data or no frames found");
         delete markerData;
         return nullptr;
     }
+
     LOG_VERBOSE("[C3D_Reader] Marker data loaded: " << markerData->getNumFrames() << " frames");
+    return markerData;
+}
 
-    // 2. Load C3D file with ezc3d for IK conversion
-    ezc3d::c3d c3d(path);
+std::vector<Eigen::Vector3d> C3D_Reader::extractMarkersFromFrame(const ezc3d::c3d& c3d, size_t frameIdx)
+{
+    const auto& frame = c3d.data().frame(frameIdx);
+    const auto& points = frame.points();
+    const size_t numPoints = points.nbPoints();
 
-    mFrameRate = static_cast<int>(std::lround(c3d.header().frameRate()));
+    std::vector<Eigen::Vector3d> markers;
+    markers.reserve(numPoints);
 
-    const auto& data = c3d.data();
-    const size_t numFrames = data.nbFrames();
-
-    std::vector<Eigen::VectorXd> motion;
-    motion.reserve(numFrames);
-
-    if (numFrames == 0) {
-        delete markerData;
-        return nullptr;
+    for (size_t i = 0; i < numPoints; ++i)
+    {
+        const auto& point = points.point(i);
+        Eigen::Vector3d marker;
+        // Convert from C3D coordinate system (mm) to meters with axis reordering
+        marker[0] = 0.001 * point.y();
+        marker[1] = 0.001 * point.z();
+        marker[2] = 0.001 * point.x();
+        markers.emplace_back(marker);
     }
 
-    auto frameMarkersInMeters = [&](size_t frameIdx) {
-        const auto& frame = data.frame(frameIdx);
-        const auto& points = frame.points();
-        const size_t numPoints = points.nbPoints();
+    return markers;
+}
 
-        std::vector<Eigen::Vector3d> markers;
-        markers.reserve(numPoints);
-        for (size_t i = 0; i < numPoints; ++i)
-        {
-            const auto& point = points.point(i);
-            Eigen::Vector3d marker;
-            marker[0] = 0.001 * point.y();
-            marker[1] = 0.001 * point.z();
-            marker[2] = 0.001 * point.x();
-            markers.emplace_back(marker);
-        }
-        return markers;
-    };
+void C3D_Reader::initializeSkeletonForIK(const std::vector<Eigen::Vector3d>& firstFrameMarkers,
+                                          const C3DConversionParams& params)
+{
+    LOG_VERBOSE("[C3D_Reader] Initializing skeleton pose for IK");
 
+    // Initialize skeleton to zero pose
     Eigen::VectorXd pos = mVirtSkeleton->getPositions();
     pos.setZero();
 
+    // Set initial arm positions (forearms at 90 degrees)
     pos[mVirtSkeleton->getJoint("ForeArmR")->getIndexInSkeleton(0)] = M_PI * 0.5;
     pos[mVirtSkeleton->getJoint("ForeArmL")->getIndexInSkeleton(0)] = M_PI * 0.5;
 
@@ -137,15 +138,10 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
 
     mVirtSkeleton->setPositions(pos);
 
-    std::vector<Eigen::Vector3d> init_markers;
-    init_markers.reserve(mMarkerSet.size());
+    // Fit skeleton to first frame markers
+    fitSkeletonToMarker(firstFrameMarkers, params.femurTorsionL, params.femurTorsionR);
 
-    const auto firstFrameMarkers = frameMarkersInMeters(0);
-    for (const auto& marker : firstFrameMarkers)
-        init_markers.push_back(marker);
-
-    fitSkeletonToMarker(init_markers, params.femurTorsionL, params.femurTorsionR);
-
+    // Store reference markers and transformations
     mRefMarkers.clear();
     for (auto m : mMarkerSet)
         mRefMarkers.push_back(m.getGlobalPos());
@@ -153,34 +149,60 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
     mRefBnTransformation.clear();
     for (auto bn : mVirtSkeleton->getBodyNodes())
         mRefBnTransformation.push_back(bn->getTransform());
+}
 
-    mCurrentMotion.clear();
+std::vector<Eigen::VectorXd> C3D_Reader::convertFramesToSkeletonPoses(const ezc3d::c3d& c3d, size_t numFrames)
+{
+    LOG_VERBOSE("[C3D_Reader] Converting " << numFrames << " frames to skeleton poses");
+
+    std::vector<Eigen::VectorXd> motion;
+    motion.reserve(numFrames);
+
     mOriginalMarkers.clear();
     mOriginalMarkers.reserve(numFrames);
 
-    LOG_VERBOSE("[C3D_Reader] Converting " << numFrames << " frames to skeleton poses");
     for (size_t frameIdx = 0; frameIdx < numFrames; ++frameIdx)
     {
-        std::vector<Eigen::Vector3d> markers = frameMarkersInMeters(frameIdx);
-
+        std::vector<Eigen::Vector3d> markers = extractMarkersFromFrame(c3d, frameIdx);
         Eigen::VectorXd pose = getPoseFromC3D(markers);
+
+        // Log first 3 frames for debugging marker-skeleton alignment (before moving markers)
+        if (frameIdx < 3) {
+            Eigen::Vector3d rootPos(pose[3], pose[4], pose[5]);
+            Eigen::Vector3d pelvisCenter = (markers[10] + markers[11] + markers[12]) / 3.0;
+
+            LOG_VERBOSE("[C3D_Reader] Frame " << frameIdx << ":");
+            LOG_VERBOSE("  - Root position (skeleton): [" << rootPos[0] << ", " << rootPos[1] << ", " << rootPos[2] << "]");
+            LOG_VERBOSE("  - Pelvis center (markers): [" << pelvisCenter[0] << ", " << pelvisCenter[1] << ", " << pelvisCenter[2] << "]");
+            LOG_VERBOSE("  - Difference (root - pelvis): [" << (rootPos[0] - pelvisCenter[0]) << ", "
+                        << (rootPos[1] - pelvisCenter[1]) << ", " << (rootPos[2] - pelvisCenter[2]) << "]");
+        }
+
         motion.push_back(pose);
         mOriginalMarkers.push_back(std::move(markers));
-
-        if (frameIdx == 0) {
-            LOG_VERBOSE("[C3D_Reader] First pose DOF: " << pose.size());
-        }
     }
+
     LOG_VERBOSE("[C3D_Reader] Conversion complete: " << motion.size() << " poses");
+    return motion;
+}
 
+// deprecated: it is required only for give offset to 3/8 of total frames
+void C3D_Reader::applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion, C3D* markerData)
+{
+    LOG_VERBOSE("[C3D_Reader] Applying post-processing to motion and markers");
 
-    // Post Processing - Apply same transformations to both skeleton and markers
+    if (motion.empty()) {
+        LOG_WARN("[C3D_Reader] Empty motion data, skipping post-processing");
+        return;
+    }
+
+    // Calculate frame offset for walking cycle removal (3/8 of total frames)
     int offset = motion.size() * 3 / 8;
 
     // Step 1: Zero skeleton positions relative to frame 0
     Eigen::Vector3d initial_skeleton_offset(motion[0][3], 0.0, motion[0][5]);
 
-    for (int i = 1; i < motion.size(); i++)
+    for (size_t i = 1; i < motion.size(); i++)
     {
         motion[i][3] -= motion[0][3];
         motion[i][5] -= motion[0][5];
@@ -191,18 +213,27 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
 
     // Step 2: Reorder frames (walking offset removal) for both skeleton and markers
     std::vector<Eigen::VectorXd> new_motion;
-    std::vector<std::vector<Eigen::Vector3d>> new_markers;
+    new_motion.reserve(motion.size());
 
-    for (int i = offset; i < motion.size(); i++)
+    std::vector<std::vector<Eigen::Vector3d>> new_markers;
+    new_markers.reserve(motion.size());
+
+    mCurrentMotion.clear();
+    mCurrentMotion.reserve(motion.size());
+
+    // Copy frames from offset to end
+    for (size_t i = offset; i < motion.size(); i++)
     {
         new_motion.push_back(motion[i]);
         new_markers.push_back(mOriginalMarkers[i]);
         mCurrentMotion.push_back(motion[i]);
     }
 
+    // Calculate position offset for continuity
     Eigen::Vector3d offset_pos = new_motion.back().segment(3,3);
     offset_pos[1] = 0.0;
 
+    // Copy frames from start to offset with position adjustment
     for (int i = 0; i < offset; i++)
     {
         motion[i].segment(3,3) += offset_pos;
@@ -211,10 +242,10 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
         mCurrentMotion.push_back(motion[i]);
     }
 
-    // Step 3: Zero positions relative to new frame 0 for both skeleton and markers
+    // Step 3: Zero positions relative to new frame 0
     Eigen::Vector3d final_skeleton_offset(new_motion[0][3], 0.0, new_motion[0][5]);
 
-    for (int i = 1; i < new_motion.size(); i++)
+    for (size_t i = 1; i < new_motion.size(); i++)
     {
         new_motion[i][3] -= new_motion[0][3];
         new_motion[i][5] -= new_motion[0][5];
@@ -222,21 +253,22 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
         mCurrentMotion[i][3] -= mCurrentMotion[0][3];
         mCurrentMotion[i][5] -= mCurrentMotion[0][5];
     }
+
     new_motion[0][3] = 0;
     new_motion[0][5] = 0;
-
     mCurrentMotion[0][3] = 0;
     mCurrentMotion[0][5] = 0;
 
-    // Step 4: Apply same offset to markers that was applied to skeleton
+    // Step 4: Apply same offset to markers for alignment AND reorder them
     Eigen::Vector3d total_marker_offset = initial_skeleton_offset + final_skeleton_offset;
 
-    LOG_VERBOSE("[C3D_Reader] Applying marker offset: X=" << total_marker_offset[0]
-                << " Z=" << total_marker_offset[2]);
+    LOG_VERBOSE("[C3D_Reader] initial_skeleton_offset: [" << initial_skeleton_offset[0] << ", " << initial_skeleton_offset[1] << ", " << initial_skeleton_offset[2] << "]");
+    LOG_VERBOSE("[C3D_Reader] final_skeleton_offset: [" << final_skeleton_offset[0] << ", " << final_skeleton_offset[1] << ", " << final_skeleton_offset[2] << "]");
+    LOG_VERBOSE("[C3D_Reader] total_marker_offset: [" << total_marker_offset[0] << ", " << total_marker_offset[1] << ", " << total_marker_offset[2] << "]");
 
-    // Apply offset to all markers in markerData
-    for (int frameIdx = 0; frameIdx < markerData->getNumFrames(); ++frameIdx) {
-        const auto& original = markerData->getMarkers(frameIdx);
+    // Apply offset to reordered markers and update markerData
+    for (size_t frameIdx = 0; frameIdx < new_markers.size(); ++frameIdx) {
+        const auto& original = new_markers[frameIdx];
         std::vector<Eigen::Vector3d> aligned_markers;
         aligned_markers.reserve(original.size());
 
@@ -247,15 +279,62 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
             aligned_markers.push_back(aligned);
         }
 
-        // Update markerData with aligned markers
-        const_cast<std::vector<Eigen::Vector3d>&>(markerData->getMarkers(frameIdx)) = aligned_markers;
+        // Update markerData with aligned and reordered markers using proper setter
+        markerData->setMarkers(frameIdx, aligned_markers);
+
+        // Log first frame to verify update
+        if (frameIdx == 0) {
+            Eigen::Vector3d pelvisAfterAlign = (aligned_markers[10] + aligned_markers[11] + aligned_markers[12]) / 3.0;
+            LOG_VERBOSE("[C3D_Reader] Frame 0 pelvis center AFTER alignment: [" << pelvisAfterAlign[0] << ", " << pelvisAfterAlign[1] << ", " << pelvisAfterAlign[2] << "]");
+        }
     }
 
-    // 3. Create and return C3DMotion
-    LOG_VERBOSE("[C3D_Reader] Creating C3DMotion with " << new_motion.size() << " frames");
-    LOG_VERBOSE("[C3D_Reader] First frame DOF: " << (new_motion.empty() ? 0 : new_motion[0].size()));
+    // Replace motion with post-processed version
+    motion = std::move(new_motion);
+}
 
-    C3DMotion* result = new C3DMotion(markerData, new_motion, path);
+// ============================================================================
+// Main loadC3D Function
+// ============================================================================
+
+C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& params)
+{
+    LOG_VERBOSE("[C3D_Reader] loadC3D started for: " << path);
+
+    // Step 1: Load marker data from C3D file
+    C3D* markerData = loadMarkerData(path);
+    if (!markerData) {
+        return nullptr;
+    }
+
+    // Step 2: Load ezc3d data and setup
+    ezc3d::c3d c3d(path);
+    mFrameRate = static_cast<int>(std::lround(c3d.header().frameRate()));
+
+    const size_t numFrames = c3d.data().nbFrames();
+    if (numFrames == 0) {
+        LOG_ERROR("[C3D_Reader] No frames found in C3D file");
+        delete markerData;
+        return nullptr;
+    }
+
+    // Step 3: Initialize skeleton pose for IK
+    const std::vector<Eigen::Vector3d> firstFrameMarkers = extractMarkersFromFrame(c3d, 0);
+    initializeSkeletonForIK(firstFrameMarkers, params);
+
+    // Step 4: Convert all frames to skeleton poses via IK
+    mCurrentMotion.clear();
+    std::vector<Eigen::VectorXd> motion = convertFramesToSkeletonPoses(c3d, numFrames);
+
+    // Step 5: Apply post-processing (reordering, zeroing, marker alignment) 
+    // - deprecated: it is required only for give offset to 3/8 of total frames
+    // applyMotionPostProcessing(motion, markerData);
+
+    // Step 6: Create and return C3DMotion object
+    LOG_VERBOSE("[C3D_Reader] Creating C3DMotion with " << motion.size() << " frames");
+    LOG_VERBOSE("[C3D_Reader] First frame DOF: " << (motion.empty() ? 0 : motion[0].size()));
+
+    C3DMotion* result = new C3DMotion(markerData, motion, path);
 
     LOG_VERBOSE("[C3D_Reader] C3DMotion created successfully");
     LOG_VERBOSE("[C3D_Reader] - NumFrames: " << result->getNumFrames());

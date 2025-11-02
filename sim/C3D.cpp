@@ -118,6 +118,13 @@ const std::vector<Eigen::Vector3d>& C3D::getMarkers(int frameIdx) const
     return mMarkers[frameIdx];
 }
 
+void C3D::setMarkers(int frameIdx, const std::vector<Eigen::Vector3d>& markers)
+{
+    if (frameIdx >= 0 && frameIdx < static_cast<int>(mMarkers.size())) {
+        mMarkers[frameIdx] = markers;
+    }
+}
+
 std::vector<Eigen::Vector3d> C3D::getInterpolatedMarkers(double frameFloat) const
 {
     std::vector<Eigen::Vector3d> result;

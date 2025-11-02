@@ -17,6 +17,7 @@ public:
     bool isLoaded() const { return !mMarkers.empty(); }
 
     const std::vector<Eigen::Vector3d>& getMarkers(int frameIdx) const;
+    void setMarkers(int frameIdx, const std::vector<Eigen::Vector3d>& markers);
     std::vector<Eigen::Vector3d> getInterpolatedMarkers(double frameFloat) const;
     Eigen::Vector3d getCentroid(int frameIdx) const;
     Eigen::Vector3d getCentroid(double frameFloat) const;

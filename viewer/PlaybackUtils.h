@@ -89,6 +89,8 @@ inline void drawPlaybackNavigationUI(const char* label,
     if (ImGui::RadioButton(manualLabel, &navMode, PLAYBACK_MANUAL_FRAME)) {
         state.navigationMode = PLAYBACK_MANUAL_FRAME;
     }
+    ImGui::SameLine();
+    ImGui::Checkbox("Render", &state.render);
 
     if (state.navigationMode == PLAYBACK_MANUAL_FRAME) {
         clampManualFrameIndex(state.manualFrameIndex, maxFrameIndex);

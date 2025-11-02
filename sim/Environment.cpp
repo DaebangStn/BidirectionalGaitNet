@@ -1684,18 +1684,18 @@ void Environment::reset(double phase)
 
     // Reset Initial Time
     double time = 0.0;
-    if (phase >= 0.0 && phase <= 1.0) {
-        // Use specified phase (0.0 to 1.0)
-        time = phase * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    }
-    else if (mRewardType == deepmimic) {
-        time = dart::math::Random::uniform(1E-2, mMotion->getMaxTime() - 1E-2);
-    }
-    else if (mRewardType == gaitnet)
-    {
-        time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
-        time *= (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    }    
+    // if (phase >= 0.0 && phase <= 1.0) {
+    //     // Use specified phase (0.0 to 1.0)
+    //     time = phase * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+    // }
+    // else if (mRewardType == deepmimic) {
+    //     time = dart::math::Random::uniform(1E-2, mMotion->getMaxTime() - 1E-2);
+    // }
+    // else if (mRewardType == gaitnet)
+    // {
+    //     time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
+    //     time *= (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+    // }    
     
     // Collision Detector Reset
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
