@@ -1609,10 +1609,10 @@ void GLFWApp::drawKinematicsControlPanel()
                             // Find HDFRollout motion matching this file
                             Motion* rollout_motion = nullptr;
                             std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
-                            if (mMotion) { Motion* motion = mMotion; {
+                            if (mMotion) {
+                                Motion* motion = mMotion;
                                 if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
                                     rollout_motion = motion;
-                                    break;
                                 }
                             }
 
@@ -1724,10 +1724,10 @@ void GLFWApp::drawKinematicsControlPanel()
                         // Find HDFRollout motion matching this file
                         Motion* rollout_motion = nullptr;
                         std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
-                        if (mMotion) { Motion* motion = mMotion; {
+                        if (mMotion) {
+                            Motion* motion = mMotion;
                             if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
                                 rollout_motion = motion;
-                                break;
                             }
                         }
 
@@ -1781,7 +1781,7 @@ void GLFWApp::drawKinematicsControlPanel()
         // Motion Navigation Control
         ImGui::Separator();
         PlaybackViewerState* motionStatePtr = nullptr;
-        if (!mMotionStates.empty() && mMotion != nullptr) {
+        if (mMotion != nullptr) {
             motionStatePtr = &mMotionState;
         }
 
@@ -3821,9 +3821,8 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 void GLFWApp::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
-    if (mMotion == nullptr || 
-        mMotionStates.size() <= static_cast<size_t>(mMotionIdx || 
-        mMotionState.currentPose.size() == 0) ||
+    if (mMotion == nullptr ||
+        mMotionState.currentPose.size() == 0 ||
         mMotionState.render == false) return;
 
     // Draw skeleton
@@ -3844,9 +3843,6 @@ void GLFWApp::drawPlayableMotion()
 
 bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std::string& sourceFile)
 {
-    if (mMotionIdx < 0 || mMotionIdx >= static_cast<int>(mMotions.size()))
-        return false;
-
     Motion* motion = mMotion;
     if (!motion) return false;
 
@@ -4130,13 +4126,13 @@ void GLFWApp::reset()
     mGraphData->clear_all();
 
     // Reset motion playback tracking for cycle accumulation
-    { autofor (auto& state : mMotionStates) state = mMotionState; {
-        state.displayOffset.setZero();
-        state.displayOffset[0] = 1.0;  // Initial x offset for visualization
-        state.currentPose.setZero();
-        state.cycleAccumulation.setZero();
-        state.lastFrameIdx = 0;
-        state.manualFrameIndex = 0;
+    if (mMotion) {
+        mMotionState.displayOffset.setZero();
+        mMotionState.displayOffset[0] = 1.0;  // Initial x offset for visualization
+        mMotionState.currentPose.setZero();
+        mMotionState.cycleAccumulation.setZero();
+        mMotionState.lastFrameIdx = 0;
+        mMotionState.manualFrameIndex = 0;
     }
     // Reset marker playback tracking (preserve navigation mode to avoid losing manual mode setting)
     mMarkerState.lastFrameIdx = 0;
@@ -4207,8 +4203,8 @@ double GLFWApp::computeFrameFloat(Motion* motion, double phase)
 
 void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
 {
-    if (mMotions.empty() || motionIdx >= mMotions.size()) {
-        std::cerr << "[motionPoseEval] Warning: No motions loaded or invalid index" << std::endl;
+    if (mMotion == nullptr) {
+        std::cerr << "[motionPoseEval] Warning: No motion loaded" << std::endl;
         return;
     }
     if (!mMotionCharacter) {
@@ -4216,12 +4212,7 @@ void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
         return;
     }
 
-    if (motionIdx >= mMotionStates.size()) {
-        std::cerr << "[motionPoseEval] Warning: Motion state out of range for index " << motionIdx << std::endl;
-        return;
-    }
-
-    PlaybackViewerState& state = mMotionStates[motionIdx];
+    PlaybackViewerState& state = mMotionState;
 
     int frames_per_cycle = motion->getValuesPerFrame();
     int total_frames = motion->getTotalTimesteps();
@@ -4349,10 +4340,7 @@ GLFWApp::ViewerClock GLFWApp::updateViewerClock(double dt)
 
 bool GLFWApp::computeMotionPlayback(MotionPlaybackContext& context)
 {
-    if (mMotions.empty() ||
-        mMotionIdx < 0 ||
-        mMotionIdx >= static_cast<int>(mMotions.size()) ||
-        static_cast<size_t>(mMotionIdx) >= mMotionStates.size())
+    if (mMotion == nullptr)
     {
         return false;
     }
@@ -4468,7 +4456,7 @@ void GLFWApp::evaluateMotionPlayback(const MotionPlaybackContext& context)
                                   context.character,
                                   context.valuesPerFrame);
 
-    motionPoseEval(context.motion, mMotionIdx, context.wrappedFrameFloat);
+    motionPoseEval(context.motion, 0, context.wrappedFrameFloat);  // motionIdx parameter kept for signature compatibility
 }
 
 double GLFWApp::computeMotionPhase()
@@ -4595,7 +4583,7 @@ void GLFWApp::alignMotionToSimulation()
     }
 
     if (mMotion == nullptr) {
-        LOG_ERROR("[alignMotionToSimulation] Motion state out of range for index " << mMotionIdx);
+        LOG_ERROR("[alignMotionToSimulation] No motion loaded");
         return;
     }
     
@@ -4614,7 +4602,7 @@ void GLFWApp::alignMotionToSimulation()
     double frame_float = computeFrameFloat(mMotion, phase);
 
     // Evaluate motion pose at the current time/phase (without displayOffset)
-    motionPoseEval(mMotion, mMotionIdx, frame_float);
+    motionPoseEval(mMotion, 0, frame_float);  // motionIdx parameter kept for signature compatibility
 
     // Get simulated character's current position (from root body node)
     Eigen::Vector3d sim_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
@@ -4640,7 +4628,7 @@ void GLFWApp::alignMotionToSimulation()
         state.currentMarkers = c3dMotion->getMarkers(frameIdx);
     }
 
-    motionPoseEval(mMotion, mMotionIdx, frame_float);
+    motionPoseEval(mMotion, 0, frame_float);  // motionIdx parameter kept for signature compatibility
 }
 
 double GLFWApp::computeMarkerHeightCalibration(const std::vector<Eigen::Vector3d>& markers)
@@ -4710,7 +4698,7 @@ void GLFWApp::updateViewerTime(double dt)
     evaluateMarkerPlayback(markerContext);
 
     if (!haveMotion) {
-        if (mMotion != nullptr) LOG_WARN("[updateViewerTime] Motion context unavailable for index " << mMotionIdx);
+        if (mMotion != nullptr) LOG_WARN("[updateViewerTime] Motion context unavailable");
         return;
     }
 
@@ -4912,13 +4900,10 @@ void GLFWApp::setCamera()
         }
         else if (mFocus == 3)
         {
-            // Check if any C3DMotion exists in mMotionsNew
+            // Check if any C3DMotion exists
             bool hasC3DMotion = false;
-            for (const auto* motion : mMotions) {
-                if (motion->getSourceType() == "C3DMotion") {
-                    hasC3DMotion = true;
-                    break;
-                }
+            if (mMotion && mMotion->getSourceType() == "C3DMotion") {
+                hasC3DMotion = true;
             }
 
             if (!hasC3DMotion)
@@ -5726,8 +5711,7 @@ void GLFWApp::loadMotionFiles()
 {
 	py::gil_scoped_acquire gil;
 
-	// Clear motions (mMotionsNew now used)
-	mMotionIdx = 0;
+	// Single motion architecture - no index needed
 
 	// Check motion load mode from config
 	if (mMotionLoadMode == "no") {
@@ -5782,12 +5766,12 @@ void GLFWApp::loadParametersFromCurrentMotion()
         return;
     }
 
-    if (mMotionIdx < 0 || mMotionIdx >= mMotions.size()) {
-        std::cerr << "No motion selected or invalid motion index" << std::endl;
+    Motion* motion = mMotion;
+
+    if (!motion) {
+        std::cerr << "No motion loaded" << std::endl;
         return;
     }
-
-    Motion* motion = mMotion;
 
     if (!motion->hasParameters()) {
         std::cerr << "Current motion (" << motion->getName() << ") has no parameters" << std::endl;
@@ -6080,15 +6064,10 @@ void GLFWApp::addSimulationMotion()
 
 void GLFWApp::unloadMotion()
 {
-    // Delete all loaded Motion* instances
-    for (Motion* motion : mMotions) {
-        delete motion;
-    }
-    mMotions.clear();
-    mMotionStates.clear();
-
-    // Reset motion playback indices (-1 indicates no motion selected)
-    mMotionIdx = -1;
+    // Delete single motion
+    delete mMotion;
+    mMotion = nullptr;
+    mMotionState = PlaybackViewerState();  // Reset to default
 
     // Reset HDF5 rollout selection indices
     mSelectedHDF5FileIdx = -1;
