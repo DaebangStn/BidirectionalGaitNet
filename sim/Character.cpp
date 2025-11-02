@@ -701,6 +701,38 @@ void Character::setMusclesXML(std::string path, bool useVelocityForce, bool mesh
     }
 }
 
+// Helper function to compute body node size for normalization
+static Eigen::Vector3d getBodyNodeSize(dart::dynamics::BodyNode* body_node) {
+    if (!body_node || body_node->getNumShapeNodes() == 0) {
+        return Eigen::Vector3d(1.0, 1.0, 1.0);  // Default fallback
+    }
+
+    // Use the first shape node (primary shape)
+    auto shape = body_node->getShapeNode(0)->getShape();
+
+    if (auto box = std::dynamic_pointer_cast<BoxShape>(shape)) {
+        return box->getSize();
+    } else if (auto sphere = std::dynamic_pointer_cast<SphereShape>(shape)) {
+        double radius = sphere->getRadius();
+        return Eigen::Vector3d(radius, radius, radius);
+    } else if (auto capsule = std::dynamic_pointer_cast<CapsuleShape>(shape)) {
+        double radius = capsule->getRadius();
+        double height = capsule->getHeight();
+        return Eigen::Vector3d(radius, height, radius);
+    } else if (auto cylinder = std::dynamic_pointer_cast<CylinderShape>(shape)) {
+        double radius = cylinder->getRadius();
+        double height = cylinder->getHeight();
+        return Eigen::Vector3d(radius, height, radius);
+    } else if (auto mesh = std::dynamic_pointer_cast<MeshShape>(shape)) {
+        Eigen::Vector3d scale = mesh->getScale();
+        // Use scale as a proxy for size (assumes unit mesh)
+        return scale.cwiseAbs().cwiseMax(Eigen::Vector3d(1e-6, 1e-6, 1e-6));
+    }
+
+    // Fallback for unknown shape types
+    return Eigen::Vector3d(1.0, 1.0, 1.0);
+}
+
 void Character::setMusclesYAML(std::string path, bool useVelocityForce)
 {
     try {
@@ -761,13 +793,17 @@ void Character::setMusclesYAML(std::string path, bool useVelocityForce)
                         break;
                     }
 
-                    // Read pre-computed local position
+                    // Read normalized local position from YAML
                     auto p_list = body_node["p"];
-                    Eigen::Vector3d local_pos(
+                    Eigen::Vector3d normalized_pos(
                         p_list[0].as<double>(),
                         p_list[1].as<double>(),
                         p_list[2].as<double>()
                     );
+
+                    // Denormalize position using reference body node size
+                    Eigen::Vector3d ref_bn_size = getBodyNodeSize(ref_body);
+                    Eigen::Vector3d local_pos = normalized_pos.cwiseProduct(ref_bn_size);
 
                     // Read pre-computed LBS weight
                     double weight = body_node["w"].as<double>();

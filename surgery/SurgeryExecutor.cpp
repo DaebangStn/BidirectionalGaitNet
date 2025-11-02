@@ -711,6 +711,38 @@ void SurgeryExecutor::exportMusclesXML(const std::string& path) {
     LOG_INFO("[Surgery] Successfully saved " << muscles.size() << " muscles to " << path);
 }
 
+// Helper function to compute body node size for normalization
+static Eigen::Vector3d getBodyNodeSize(dart::dynamics::BodyNode* body_node) {
+    if (!body_node || body_node->getNumShapeNodes() == 0) {
+        return Eigen::Vector3d(1.0, 1.0, 1.0);  // Default fallback
+    }
+
+    // Use the first shape node (primary shape)
+    auto shape = body_node->getShapeNode(0)->getShape();
+
+    if (auto box = std::dynamic_pointer_cast<dart::dynamics::BoxShape>(shape)) {
+        return box->getSize();
+    } else if (auto sphere = std::dynamic_pointer_cast<dart::dynamics::SphereShape>(shape)) {
+        double radius = sphere->getRadius();
+        return Eigen::Vector3d(radius, radius, radius);
+    } else if (auto capsule = std::dynamic_pointer_cast<dart::dynamics::CapsuleShape>(shape)) {
+        double radius = capsule->getRadius();
+        double height = capsule->getHeight();
+        return Eigen::Vector3d(radius, height, radius);
+    } else if (auto cylinder = std::dynamic_pointer_cast<dart::dynamics::CylinderShape>(shape)) {
+        double radius = cylinder->getRadius();
+        double height = cylinder->getHeight();
+        return Eigen::Vector3d(radius, height, radius);
+    } else if (auto mesh = std::dynamic_pointer_cast<dart::dynamics::MeshShape>(shape)) {
+        Eigen::Vector3d scale = mesh->getScale();
+        // Use scale as a proxy for size (assumes unit mesh)
+        return scale.cwiseAbs().cwiseMax(Eigen::Vector3d(1e-6, 1e-6, 1e-6));
+    }
+
+    // Fallback for unknown shape types
+    return Eigen::Vector3d(1.0, 1.0, 1.0);
+}
+
 void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
     if (!mCharacter) {
         throw std::runtime_error("No character loaded");
@@ -817,19 +849,23 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
                 Eigen::Vector3d local_pos = anchor->local_positions[i];
                 double weight = anchor->weights[i];
 
+                // Normalize local position by body node size
+                Eigen::Vector3d bn_size = getBodyNodeSize(body_node);
+                Eigen::Vector3d normalized_pos = local_pos.cwiseQuotient(bn_size);
+
                 if (i > 0) mfs << ", ";
 
                 // Format body entry in flow style with padded body name
                 mfs << "{body: " << std::left << std::setw(max_body_len) << body_name << ", p: [";
 
-                // Format coordinates with 5 decimals and sign alignment
+                // Format coordinates with 5 decimals and sign alignment (normalized)
                 for (int j = 0; j < 3; ++j) {
                     if (j > 0) mfs << ", ";
                     // Add leading space for positive numbers for alignment
-                    if (local_pos[j] >= 0.0) {
-                        mfs << " " << std::fixed << std::setprecision(5) << local_pos[j];
+                    if (normalized_pos[j] >= 0.0) {
+                        mfs << " " << std::fixed << std::setprecision(5) << normalized_pos[j];
                     } else {
-                        mfs << std::fixed << std::setprecision(5) << local_pos[j];
+                        mfs << std::fixed << std::setprecision(5) << normalized_pos[j];
                     }
                 }
 

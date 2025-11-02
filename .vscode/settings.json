@@ -53,7 +53,8 @@
       "cwctype": "cpp",
       "fstream": "cpp",
       "sstream": "cpp",
-      "cinttypes": "cpp"
+      "cinttypes": "cpp",
+      "stdexcept": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",
