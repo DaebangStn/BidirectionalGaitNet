@@ -326,3 +326,40 @@ bool C3D::computeCentroid(const std::vector<Eigen::Vector3d>& markers, Eigen::Ve
     centroid /= static_cast<double>(valid);
     return true;
 }
+
+bool C3D::detectAndCorrectBackwardWalking(std::vector<std::vector<Eigen::Vector3d>>& allFrameMarkers)
+{
+    if (allFrameMarkers.size() < 2)
+        return false;
+
+    // Compute centroids for first and last frames
+    Eigen::Vector3d firstCentroid, lastCentroid;
+    if (!computeCentroid(allFrameMarkers.front(), firstCentroid) ||
+        !computeCentroid(allFrameMarkers.back(), lastCentroid))
+    {
+        return false;
+    }
+
+    // Detect backward walking: last Z < first Z
+    if (lastCentroid.z() >= firstCentroid.z())
+        return false; // Forward walking, no correction needed
+
+    std::cout << "[C3D] Detected backward walking (last Z < first Z)" << std::endl;
+    std::cout << "[C3D]   First centroid Z: " << firstCentroid.z()
+              << ", Last centroid Z: " << lastCentroid.z() << std::endl;
+    std::cout << "[C3D] Reversing Z-axis and mirroring X-axis to preserve left/right..." << std::endl;
+
+    // Negate both Z and X coordinates to reverse walking direction
+    // while preserving left/right orientation
+    for (auto& frameMarkers : allFrameMarkers)
+    {
+        for (auto& marker : frameMarkers)
+        {
+            marker.z() = -marker.z();  // Reverse forward/backward
+            marker.x() = -marker.x();  // Mirror left/right to compensate
+        }
+    }
+
+    std::cout << "[C3D] Z and X axis reversal complete" << std::endl;
+    return true;
+}

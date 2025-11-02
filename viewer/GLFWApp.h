@@ -339,15 +339,11 @@ private:
     bool mGVAELoaded;
     std::vector<BoneInfo> mSkelInfosForMotions;
 
-    // Polymorphic motion architecture
-    std::vector<Motion*> mMotions;              ///< Polymorphic motion instances
-    std::vector<PlaybackViewerState> mMotionStates;  ///< Viewer state per motion
+    // Single motion architecture (new/delete pattern)
+    Motion* mMotion;                            ///< Single active motion instance
+    PlaybackViewerState mMotionState;           ///< Viewer state for active motion
 
     MotionData mPredictedMotion;
-
-    int mMotionIdx;
-    PlaybackNavigationMode mFallbackMotionNavigationMode;
-    int mFallbackManualFrameIndex;
 
     // HDF5 selection (for selective param/cycle loading)
     std::vector<std::string> mHDF5Files;              // Available HDF5 files

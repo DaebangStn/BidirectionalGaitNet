@@ -26,6 +26,9 @@ public:
     // Static utility for computing centroid from any marker vector
     static bool computeCentroid(const std::vector<Eigen::Vector3d>& markers, Eigen::Vector3d& centroid);
 
+    // Static utility for detecting and correcting backward walking in marker data
+    static bool detectAndCorrectBackwardWalking(std::vector<std::vector<Eigen::Vector3d>>& allFrameMarkers);
+
     double getFrameRate() const { return mFrameRate; }
 
     // Motion interface --------------------------------------------------

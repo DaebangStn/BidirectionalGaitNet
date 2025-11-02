@@ -318,15 +318,50 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
         return nullptr;
     }
 
-    // Step 3: Initialize skeleton pose for IK
-    const std::vector<Eigen::Vector3d> firstFrameMarkers = extractMarkersFromFrame(c3d, 0);
-    initializeSkeletonForIK(firstFrameMarkers, params);
+    // Step 2.5: Extract all markers and apply backward walking correction before IK
+    std::vector<std::vector<Eigen::Vector3d>> allMarkers;
+    allMarkers.reserve(numFrames);
+    for (size_t frameIdx = 0; frameIdx < numFrames; ++frameIdx) {
+        allMarkers.push_back(extractMarkersFromFrame(c3d, frameIdx));
+    }
 
-    // Step 4: Convert all frames to skeleton poses via IK
+    // Detect and correct backward walking (matches sim/C3D.cpp behavior)
+    C3D::detectAndCorrectBackwardWalking(allMarkers);
+
+    // Step 3: Initialize skeleton pose for IK using corrected first frame
+    initializeSkeletonForIK(allMarkers[0], params);
+
+    // Step 4: Convert all frames to skeleton poses via IK using corrected markers
     mCurrentMotion.clear();
-    std::vector<Eigen::VectorXd> motion = convertFramesToSkeletonPoses(c3d, numFrames);
+    std::vector<Eigen::VectorXd> motion;
+    motion.reserve(numFrames);
 
-    // Step 5: Apply post-processing (reordering, zeroing, marker alignment) 
+    mOriginalMarkers.clear();
+    mOriginalMarkers.reserve(numFrames);
+
+    LOG_VERBOSE("[C3D_Reader] Converting " << numFrames << " frames to skeleton poses");
+    for (size_t frameIdx = 0; frameIdx < numFrames; ++frameIdx)
+    {
+        Eigen::VectorXd pose = getPoseFromC3D(allMarkers[frameIdx]);
+
+        // Log first 3 frames for debugging marker-skeleton alignment
+        if (frameIdx < 3) {
+            Eigen::Vector3d rootPos(pose[3], pose[4], pose[5]);
+            Eigen::Vector3d pelvisCenter = (allMarkers[frameIdx][10] + allMarkers[frameIdx][11] + allMarkers[frameIdx][12]) / 3.0;
+
+            LOG_VERBOSE("[C3D_Reader] Frame " << frameIdx << ":");
+            LOG_VERBOSE("  - Root position (skeleton): [" << rootPos[0] << ", " << rootPos[1] << ", " << rootPos[2] << "]");
+            LOG_VERBOSE("  - Pelvis center (markers): [" << pelvisCenter[0] << ", " << pelvisCenter[1] << ", " << pelvisCenter[2] << "]");
+            LOG_VERBOSE("  - Difference (root - pelvis): [" << (rootPos[0] - pelvisCenter[0]) << ", "
+                        << (rootPos[1] - pelvisCenter[1]) << ", " << (rootPos[2] - pelvisCenter[2]) << "]");
+        }
+
+        motion.push_back(pose);
+        mOriginalMarkers.push_back(allMarkers[frameIdx]);
+    }
+    LOG_VERBOSE("[C3D_Reader] Conversion complete: " << motion.size() << " poses");
+
+    // Step 5: Apply post-processing (reordering, zeroing, marker alignment)
     // - deprecated: it is required only for give offset to 3/8 of total frames
     // applyMotionPostProcessing(motion, markerData);
 
