@@ -114,11 +114,9 @@ std::vector<Eigen::VectorXd> C3D_Reader::loadC3D(std::string path, double torsio
     pos[mVirtSkeleton->getJoint("ForeArmR")->getIndexInSkeleton(0)] = M_PI * 0.5;
     pos[mVirtSkeleton->getJoint("ForeArmL")->getIndexInSkeleton(0)] = M_PI * 0.5;
 
-    // For Leg Projection
-    pos[mVirtSkeleton->getJoint("TibiaR")->getIndexInSkeleton(1)] = 0.0;
-    pos[mVirtSkeleton->getJoint("TibiaL")->getIndexInSkeleton(1)] = 0.0;
-    pos[mVirtSkeleton->getJoint("TibiaR")->getIndexInSkeleton(2)] = 0.0;
-    pos[mVirtSkeleton->getJoint("TibiaL")->getIndexInSkeleton(2)] = 0.0;
+    // Initialize knee joints (1-DOF revolute joints)
+    pos[mVirtSkeleton->getJoint("TibiaR")->getIndexInSkeleton(0)] = 0.0;
+    pos[mVirtSkeleton->getJoint("TibiaL")->getIndexInSkeleton(0)] = 0.0;
 
     mVirtSkeleton->setPositions(pos);
 
@@ -421,7 +419,9 @@ Eigen::VectorXd C3D_Reader::getPoseFromC3D(std::vector<Eigen::Vector3d>& _pos)
     T = (current_kneeR * origin_kneeR.transpose());
 
     pT = mVirtSkeleton->getJoint("TibiaR")->getParentBodyNode()->getTransform() * mVirtSkeleton->getJoint("TibiaR")->getTransformFromParentBodyNode();
-    mVirtSkeleton->getJoint("TibiaR")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+    // Extract only the first component for 1-DOF knee joint
+    Eigen::VectorXd kneeR_angles = pT.linear().transpose() * BallJoint::convertToPositions(T);
+    mVirtSkeleton->getJoint("TibiaR")->setPosition(0, kneeR_angles[0]);
     
     // TalusR
     jn_idx = mVirtSkeleton->getJoint("TalusR")->getIndexInSkeleton(0);
@@ -452,8 +452,9 @@ Eigen::VectorXd C3D_Reader::getPoseFromC3D(std::vector<Eigen::Vector3d>& _pos)
     T = current_kneeL * origin_kneeL.transpose();
     pT = mVirtSkeleton->getJoint("TibiaL")->getParentBodyNode()->getTransform() * mVirtSkeleton->getJoint("TibiaL")->getTransformFromParentBodyNode();
 
-    mVirtSkeleton->getJoint("TibiaL")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-    // mBVHSkeleton->getJoint("TibiaL")->setPosition((pT.linear().transpose() * BallJoint::convertToPositions(T))[0], 0);
+    // Extract only the first component for 1-DOF knee joint
+    Eigen::VectorXd kneeL_angles = pT.linear().transpose() * BallJoint::convertToPositions(T);
+    mVirtSkeleton->getJoint("TibiaL")->setPosition(0, kneeL_angles[0]);
 
     // TalusL
     jn_idx = mVirtSkeleton->getJoint("TalusL")->getIndexInSkeleton(0);
