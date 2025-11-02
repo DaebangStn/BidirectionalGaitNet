@@ -15,6 +15,7 @@
 #include "Motion.h"
 #include "NPZ.h"
 #include "HDF.h"
+#include "C3DMotion.h"
 #include "Log.h"
 
 namespace fs = std::filesystem;
@@ -193,7 +194,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
     selected_c3d = 0;
 
     mFocus = 1;
-    mRenderC3D = false;
     mRenderC3DMarkers = false;
     mMarkerState = MarkerViewerState();
 
@@ -461,10 +461,10 @@ void GLFWApp::loadRenderConfig()
 GLFWApp::~GLFWApp()
 {
     // Clean up Motion* pointers in new architecture
-    for (Motion* motion : mMotionsNew) {
+    for (Motion* motion : mMotions) {
         delete motion;
     }
-    mMotionsNew.clear();
+    mMotions.clear();
 
     delete mRenderEnv;
     delete mMotionCharacter;
@@ -614,15 +614,6 @@ void GLFWApp::update(bool _isSave)
         }
     }
 
-    if (mC3dMotion.size() > 0)
-    {
-        if (mC3DCount + (mC3DReader->getFrameRate() / 60) >= mC3dMotion.size())
-        {
-            mC3DCOM += mC3dMotion.back().segment(3, 3); // mC3DReader->getBVHSkeleton()->getPositions().segment(3,3);
-        }
-        mC3DCount += (mC3DReader->getFrameRate() / 60);
-        mC3DCount %= mC3dMotion.size();
-    }
 }
 
 void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
@@ -1158,7 +1149,7 @@ void GLFWApp::initEnv(std::string metadata)
     }
 
     // C3D files
-    path = "c3d";
+    path = "data/motion/c3d";
     mC3DList.clear();
     if (fs::exists(path) && fs::is_directory(path)) {
         for (const auto &entry : fs::directory_iterator(path)) {
@@ -1168,11 +1159,8 @@ void GLFWApp::initEnv(std::string metadata)
 
     // Auto-load first C3D marker file if available
     if (!mC3DList.empty()) {
-        float c3d_scale = 1.0f;  // Default scale
-        float height_offset = 0.0f;  // Default offset
-
         auto markerData = std::make_unique<C3D>();
-        if (markerData->load(mC3DList[0], c3d_scale, height_offset)) {
+        if (markerData->load(mC3DList[0])) {
             mC3DMarkers = std::move(markerData);
             mRenderC3DMarkers = true;
             mMarkerState = MarkerViewerState();
@@ -1354,9 +1342,9 @@ void GLFWApp::drawKinematicsControlPanel()
         static int mMotionPhaseOffset = 0;
 
         // Display motion status
-        bool has_motions = !mMotionsNew.empty();
+        bool has_motions = !mMotions.empty();
         if (has_motions) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Motion Loaded (%zu)", mMotionsNew.size());
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Motion Loaded (%zu)", mMotions.size());
         } else {
             ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "No Motion Loaded");
         }
@@ -1379,13 +1367,13 @@ void GLFWApp::drawKinematicsControlPanel()
         bool npz_selected = false;
         bool hdf_selected = false;
         bool bvh_selected = false;
-        if (!mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size()) {
-            if (mMotionsNew[mMotionIdx]->getSourceType() == "npz") {
+        if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
+            if (mMotions[mMotionIdx]->getSourceType() == "npz") {
                 npz_selected = true;
-            } else if (mMotionsNew[mMotionIdx]->getSourceType() == "hdfRollout" ||
-                       mMotionsNew[mMotionIdx]->getSourceType() == "hdfSingle") {
+            } else if (mMotions[mMotionIdx]->getSourceType() == "hdfRollout" ||
+                       mMotions[mMotionIdx]->getSourceType() == "hdfSingle") {
                 hdf_selected = true;
-            } else if (mMotionsNew[mMotionIdx]->getSourceType() == "bvh") {
+            } else if (mMotions[mMotionIdx]->getSourceType() == "bvh") {
                 bvh_selected = true;
             }
         }
@@ -1405,27 +1393,28 @@ void GLFWApp::drawKinematicsControlPanel()
             ImGui::Text("Loaded Motions:");
             if (ImGui::BeginListBox("##AllMotions_List", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
             {
-                for (int i = 0; i < mMotionsNew.size(); i++)
+                for (int i = 0; i < mMotions.size(); i++)
                 {
-                    // Skip hdfRollout motions (loaded via HDF5 Loading Controls)
-                    if (mMotionsNew[i]->getSourceType() == "hdfRollout") continue;
+                    // Skip hdfRollout and C3DMotion (loaded via their respective sections)
+                    if (mMotions[i]->getSourceType() == "hdfRollout" ||
+                        mMotions[i]->getSourceType() == "C3DMotion") continue;
 
                     // Add type prefix for displayed motion types
                     std::string prefix;
-                    if (mMotionsNew[i]->getSourceType() == "npz") prefix = "[NPZ] ";
-                    else if (mMotionsNew[i]->getSourceType() == "hdfSingle") prefix = "[HDF] ";
-                    else if (mMotionsNew[i]->getSourceType() == "bvh") prefix = "[BVH] ";
-                    std::string display_name = prefix + mMotionsNew[i]->getName();
+                    if (mMotions[i]->getSourceType() == "npz") prefix = "[NPZ] ";
+                    else if (mMotions[i]->getSourceType() == "hdfSingle") prefix = "[HDF] ";
+                    else if (mMotions[i]->getSourceType() == "bvh") prefix = "[BVH] ";
+                    std::string display_name = prefix + mMotions[i]->getName();
 
                     if (ImGui::Selectable(display_name.c_str(), mMotionIdx == i)) {
                         mMotionIdx = i;
                         MotionViewerState& selectedState = mMotionStates[i];
                         // Update max frame index for manual navigation
-                        if (mMotionsNew[i]->getSourceType() == "bvh" || mMotionsNew[i]->getSourceType() == "hdfSingle") {
+                        if (mMotions[i]->getSourceType() == "bvh" || mMotions[i]->getSourceType() == "hdfSingle") {
                             // TODO: Motion* interface doesn't have hdf5_total_timesteps - need to add getTotalTimesteps() method
-                            mMaxFrameIndex = mMotionsNew[i]->getNumFrames() - 1;  // Temporary: using getNumFrames()
+                            mMaxFrameIndex = mMotions[i]->getNumFrames() - 1;  // Temporary: using getNumFrames()
                         } else {
-                            mMaxFrameIndex = mMotionsNew[i]->getNumFrames() - 1;
+                            mMaxFrameIndex = mMotions[i]->getNumFrames() - 1;
                         }
                         // Clamp manual frame index to valid range
                         if (selectedState.manualFrameIndex > mMaxFrameIndex) {
@@ -1434,19 +1423,19 @@ void GLFWApp::drawKinematicsControlPanel()
 
                         if (mRenderEnv) {
                             // Apply parameters from motion file (supports HDF, NPZ, HDFRollout)
-                            if (mMotionsNew[i]->hasParameters()) {
-                                bool success = mMotionsNew[i]->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
+                            if (mMotions[i]->hasParameters()) {
+                                bool success = mMotions[i]->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
                                 if (!success) {
                                     // Count mismatch or error - use defaults
                                     Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
                                     mRenderEnv->setParamState(default_params, false, true);
-                                    std::cout << "[" << mMotionsNew[i]->getName() << "] Using default parameters due to mismatch" << std::endl;
+                                    std::cout << "[" << mMotions[i]->getName() << "] Using default parameters due to mismatch" << std::endl;
                                 }
                             } else {
                                 // No parameters - use defaults
                                 Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
                                 mRenderEnv->setParamState(default_params, false, true);
-                                std::cout << "[" << mMotionsNew[i]->getName() << "] Warning: No parameters in motion file, using defaults" << std::endl;
+                                std::cout << "[" << mMotions[i]->getName() << "] Warning: No parameters in motion file, using defaults" << std::endl;
                             }
                             mLastLoadedHDF5ParamsFile = "";  // Clear HDF5 parameter tracking
                         }
@@ -1468,84 +1457,62 @@ void GLFWApp::drawKinematicsControlPanel()
         }
 
         // 2. C3D
+        bool any_c3d_selected = false;
+        if (mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
+            if (mMotions[mMotionIdx]->getSourceType() == "C3DMotion") {
+                any_c3d_selected = true;
+            }
+        }
+        if (any_c3d_selected) {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
+        }
+
         if (ImGui::TreeNodeEx("C3D", ImGuiTreeNodeFlags_DefaultOpen))
         {
             if (mC3DList.empty())
             {
-                ImGui::Text("No C3D files found in c3d directory");
+                ImGui::Text("No C3D files found in data/motion/c3d");
             }
             else
             {
                 int idx = 0;
                 for (auto ns : mC3DList)
                 {
-                    if (ImGui::Selectable(ns.c_str(), selected_c3d == idx))
+                    if (ImGui::Selectable(ns.c_str(), selected_c3d == idx)) {
                         selected_c3d = idx;
-                    if (selected_c3d)
-                        ImGui::SetItemDefaultFocus();
-                    idx++;
-                }
-            }
-            static float femur_torsion_l = 0.0;
-            static float femur_torsion_r = 0.0;
-            static float c3d_scale = 1.0;
-            static float height_offset = 0.0;
-            ImGui::SliderFloat("Femur Torsion L", &femur_torsion_l, -0.55, 0.55);
-            ImGui::SliderFloat("Femur Torsion R", &femur_torsion_r, -0.55, 0.55);
-            ImGui::SliderFloat("C3D Scale", &c3d_scale, 0.5, 2.0);
-            ImGui::SliderFloat("Height Offset", &height_offset, -0.5, 0.5);
 
-            if (mRenderEnv && ImGui::Button("Load C3D"))
-            {
-                if (selected_c3d < mC3DList.size() && !mC3DList.empty())
-                {
-                    mRenderC3D = true;
-                    // C3D reader is already initialized in initEnv with simulator's skeleton
-                    if (!mC3DReader) {
-                        LOG_ERROR("[C3D] C3D reader not initialized. Call initEnv first.");
-                    } else {
-                        LOG_INFO("[C3D] Loading C3D file: " << mC3DList[selected_c3d]);
-                        mC3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], femur_torsion_l, femur_torsion_r, c3d_scale, height_offset);
-                        mC3DCOM = Eigen::Vector3d::Zero();
+                        // Automatically load C3D motion when clicked
+                        if (mRenderEnv && selected_c3d < mC3DList.size()) {
+                            if (!mC3DReader) {
+                                LOG_ERROR("[C3D] C3D reader not initialized. Call initEnv first.");
+                            } else {
+                                C3DConversionParams params;
+                                C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[selected_c3d], params);
+                                if (c3dMotion) {
+                                    // Add to motion list
+                                    mMotions.push_back(c3dMotion);
+
+                                    // Create viewer state
+                                    MotionViewerState state;
+                                    mMotionStates.push_back(state);
+
+                                    // Set as active motion
+                                    mMotionIdx = static_cast<int>(mMotions.size()) - 1;
+
+                                    // Align to simulation
+                                    alignMotionToSimulation();
+
+                                    LOG_INFO("[C3D] Loaded C3D motion and markers: " << mC3DList[selected_c3d]);
+                                } else {
+                                    LOG_ERROR("[C3D] Failed to load C3D motion: " << mC3DList[selected_c3d]);
+                                }
+                            }
+                        }
                     }
-                }
-                else
-                {
-                    LOG_ERROR("[C3D] No C3D files available or invalid selection (selected: "
-                              << selected_c3d << ", available: " << mC3DList.size() << ")");
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Load Markers"))
-            {
-                if (selected_c3d >= 0 && selected_c3d < static_cast<int>(mC3DList.size()) && !mC3DList.empty())
-                {
-                    auto markerData = std::make_unique<C3D>();
-                    if (markerData->load(mC3DList[selected_c3d], c3d_scale, height_offset))
-                    {
-                        mC3DMarkers = std::move(markerData);
-                        mRenderC3DMarkers = true;
-                        // Preserve navigation mode settings when loading new markers
-                        auto savedMode = mMarkerState.navigationMode;
-                        auto savedFrameIdx = mMarkerState.manualFrameIndex;
-                        mMarkerState = MarkerViewerState();
-                        mMarkerState.navigationMode = savedMode;
-                        mMarkerState.manualFrameIndex = savedFrameIdx;
-                        mMarkerState.currentMarkers = mC3DMarkers->getMarkers(0);
-                        alignMarkerToSimulation();
-                        std::cout << "[C3D] Loaded markers: " << mC3DList[selected_c3d] << std::endl;
-                    }
-                    else
-                    {
-                        mC3DMarkers.reset();
-                        mRenderC3DMarkers = false;
-                        mMarkerState = MarkerViewerState();
-                        std::cout << "[C3D] Failed to load markers from " << mC3DList[selected_c3d] << std::endl;
-                    }
-                }
-                else
-                {
-                    std::cout << "Error: No C3D files available or invalid selection (selected: " << selected_c3d << ", available: " << mC3DList.size() << ")" << std::endl;
+                    if (selected_c3d == idx) ImGui::SetItemDefaultFocus();
+                    idx++;
                 }
             }
 
@@ -1556,7 +1523,23 @@ void GLFWApp::drawKinematicsControlPanel()
             ImGui::TreePop();
         }
 
+        if (any_c3d_selected) {
+            ImGui::PopStyleColor(3);
+        }
+
         // 3. HDF rollouts
+        bool any_hdf_rollout_selected = false;
+        if (mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
+            if (mMotions[mMotionIdx]->getSourceType() == "hdfRollout") {
+                any_hdf_rollout_selected = true;
+            }
+        }
+        if (any_hdf_rollout_selected) {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
+        }
+
         if (ImGui::TreeNode("HDF rollouts"))
         {
             // Static tracking variables (moved outside to be accessible from file selection)
@@ -1601,7 +1584,7 @@ void GLFWApp::drawKinematicsControlPanel()
                             // Find HDFRollout motion matching this file
                             Motion* rollout_motion = nullptr;
                             std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
-                            for (auto* motion : mMotionsNew) {
+                            for (auto* motion : mMotions) {
                                 if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
                                     rollout_motion = motion;
                                     break;
@@ -1716,7 +1699,7 @@ void GLFWApp::drawKinematicsControlPanel()
                         // Find HDFRollout motion matching this file
                         Motion* rollout_motion = nullptr;
                         std::string selected_file = mHDF5Files[mSelectedHDF5FileIdx];
-                        for (auto* motion : mMotionsNew) {
+                        for (auto* motion : mMotions) {
                             if (motion->getSourceType() == "hdfRollout" && motion->getName().find(selected_file) != std::string::npos) {
                                 rollout_motion = motion;
                                 break;
@@ -1763,6 +1746,11 @@ void GLFWApp::drawKinematicsControlPanel()
                     ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Status: %s / %s does not exist", param_name.c_str(), cycle_name.c_str());
                 }
             }
+            ImGui::TreePop();
+        }
+
+        if (any_hdf_rollout_selected) {
+            ImGui::PopStyleColor(3);
         }
 
         // Motion Navigation Control
@@ -1779,12 +1767,12 @@ void GLFWApp::drawKinematicsControlPanel()
             // Show additional motion-specific info
             if (motionStatePtr->navigationMode == PLAYBACK_MANUAL_FRAME) {
                 // Show frame time for HDF5/BVH motions with timestamps in manual mode
-                if (!mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size()) {
-                    std::vector<double> timestamps = mMotionsNew[mMotionIdx]->getTimestamps();
+                if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
+                    std::vector<double> timestamps = mMotions[mMotionIdx]->getTimestamps();
                     int manualIndex = std::clamp(motionStatePtr->manualFrameIndex, 0, mMaxFrameIndex);
-                    if ((mMotionsNew[mMotionIdx]->getSourceType() == "hdfRollout" ||
-                         mMotionsNew[mMotionIdx]->getSourceType() == "hdfSingle" ||
-                         mMotionsNew[mMotionIdx]->getSourceType() == "bvh") &&
+                    if ((mMotions[mMotionIdx]->getSourceType() == "hdfRollout" ||
+                         mMotions[mMotionIdx]->getSourceType() == "hdfSingle" ||
+                         mMotions[mMotionIdx]->getSourceType() == "bvh") &&
                         !timestamps.empty() &&
                         manualIndex < static_cast<int>(timestamps.size())) {
                         double frame_time = timestamps[manualIndex];
@@ -1793,13 +1781,13 @@ void GLFWApp::drawKinematicsControlPanel()
                 }
             } else {
                 // Show current auto-computed frame in sync mode
-                if (!mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size()) {
+                if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
                     double phase = mViewerPhase;
                     if (mRenderEnv) {
                         phase = mViewerTime / (mRenderEnv->getMotion()->getMaxTime() / (mRenderEnv->getCadence() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio())));
                         phase = fmod(phase, 1.0);
                     }
-                    double frame_float = computeFrameFloat(mMotionsNew[mMotionIdx], phase);
+                    double frame_float = computeFrameFloat(mMotions[mMotionIdx], phase);
                     int current_frame = (int)frame_float;
                     ImGui::Text("Auto Frame: %d / %d", current_frame, mMaxFrameIndex);
                 }
@@ -1817,8 +1805,8 @@ void GLFWApp::drawKinematicsControlPanel()
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (!mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size()) {
-            ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotionsNew[mMotionIdx]->getNumFrames() - 1));
+        if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
+            ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotions[mMotionIdx]->getNumFrames() - 1));
         }
         // TODO: Update for Motion* interface
         // if (ImGui::Button("Convert Motion"))
@@ -1835,17 +1823,17 @@ void GLFWApp::drawKinematicsControlPanel()
         //     if(mRenderEnv) addSimulationMotion();
         // }
 
-        if (mRenderEnv && !mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size() && ImGui::Button("Set to Param of motion")) {
+        if (mRenderEnv && !mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size() && ImGui::Button("Set to Param of motion")) {
             // Apply motion parameters using Motion* interface
-            if (mMotionsNew[mMotionIdx]->hasParameters()) {
-                bool success = mMotionsNew[mMotionIdx]->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
+            if (mMotions[mMotionIdx]->hasParameters()) {
+                bool success = mMotions[mMotionIdx]->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
                 if (!success) {
                     Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
                     mRenderEnv->setParamState(default_params, false, true);
-                    std::cout << "[" << mMotionsNew[mMotionIdx]->getName() << "] Using default parameters due to mismatch" << std::endl;
+                    std::cout << "[" << mMotions[mMotionIdx]->getName() << "] Using default parameters due to mismatch" << std::endl;
                 }
             } else {
-                std::cout << "[" << mMotionsNew[mMotionIdx]->getName() << "] Warning: No parameters in motion file" << std::endl;
+                std::cout << "[" << mMotions[mMotionIdx]->getName() << "] Warning: No parameters in motion file" << std::endl;
             }
         }
 
@@ -3261,7 +3249,6 @@ void GLFWApp::drawSimControlPanel()
         ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
         ImGui::Checkbox("Draw Foot Step", &mDrawFootStep);
         ImGui::Checkbox("Draw EOE", &mDrawEOE);
-        ImGui::Checkbox("Draw C3D", &mRenderC3D);
 
         ImGui::Separator();
         // Muscle Filtering and Selection
@@ -3811,7 +3798,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 void GLFWApp::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
-    if (mMotionsNew.empty() || mMotionIdx < 0 || mMotionIdx >= mMotionsNew.size()) {
+    if (mMotions.empty() || mMotionIdx < 0 || mMotionIdx >= mMotions.size()) {
         return;
     }
     if (mMotionStates.size() <= static_cast<size_t>(mMotionIdx)) {
@@ -3820,7 +3807,43 @@ void GLFWApp::drawPlayableMotion()
     if (mMotionStates[mMotionIdx].currentPose.size() == 0) {
         return;
     }
+
+    // Draw skeleton
     drawSkeleton(mMotionStates[mMotionIdx].currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
+
+    // For C3DMotion, also draw markers
+    Motion* motion = mMotions[mMotionIdx];
+    MotionViewerState& state = mMotionStates[mMotionIdx];
+
+    if (motion->getSourceType() == "C3DMotion") {
+        glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
+        for (const auto& marker : state.currentMarkers) {
+            if (!marker.array().isFinite().all()) continue;
+            GUI::DrawSphere(marker, 0.0125);
+        }
+    }
+}
+
+bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std::string& sourceFile)
+{
+    if (mMotionIdx < 0 || mMotionIdx >= static_cast<int>(mMotions.size()))
+        return false;
+
+    Motion* motion = mMotions[mMotionIdx];
+    if (!motion) return false;
+
+    // Check source type
+    if (motion->getSourceType() != sourceType)
+        return false;
+
+    // For C3DMotion, check source file
+    if (sourceType == "C3DMotion") {
+        C3DMotion* c3dMotion = static_cast<C3DMotion*>(motion);
+        return c3dMotion->getSourceFile() == sourceFile;
+    }
+
+    // For other types, check if getName() contains the file
+    return motion->getName().find(sourceFile) != std::string::npos;
 }
 
 void GLFWApp::drawPlayableMarkers()
@@ -3955,52 +3978,6 @@ void GLFWApp::drawSimFrame()
         // Then: drawSkeleton with converted position
     }
 
-    // Draw Marker Network
-    if (mC3dMotion.size() > 0 && !mRenderConditions && mRenderC3D)
-    {
-        auto skel = mC3DReader->getBVHSkeleton();
-        Eigen::VectorXd pos = mC3dMotion[mC3DCount];
-
-        pos[3] += mC3DCOM[0];
-        pos[5] += mC3DCOM[2];
-
-        skel->setPositions(pos);
-
-        // Draw Joint Origin and Axis
-        glColor4f(0.0, 0.0, 1.0, 1.0);
-        for (auto jn : skel->getJoints())
-        {
-            if (jn->getParentBodyNode() == nullptr)
-                continue;
-
-            Eigen::Vector3d p = jn->getParentBodyNode()->getTransform() * jn->getTransformFromParentBodyNode() * Eigen::Vector3d::Zero();
-            Eigen::Vector3d axis_x = jn->getParentBodyNode()->getTransform() * jn->getTransformFromParentBodyNode() * Eigen::Vector3d(0.1, 0.0, 0.0);
-            Eigen::Vector3d axis_y = jn->getParentBodyNode()->getTransform() * jn->getTransformFromParentBodyNode() * Eigen::Vector3d(0.0, 0.1, 0.0);
-            Eigen::Vector3d axis_z = jn->getParentBodyNode()->getTransform() * jn->getTransformFromParentBodyNode() * Eigen::Vector3d(0.0, 0.0, 0.1);
-
-            // GUI::DrawSphere(p, 0.01);
-            // GUI::DrawLine(p, axis_x, Eigen::Vector3d(1.0, 0.0, 0.0));
-            // GUI::DrawLine(p, axis_y, Eigen::Vector3d(0.0, 1.0, 0.0));
-            // GUI::DrawLine(p, axis_z, Eigen::Vector3d(0.0, 0.0, 1.0));
-        }
-
-        for (auto bn : skel->getBodyNodes())
-            drawSingleBodyNode(bn, Eigen::Vector4d(0.1, 0.75, 0.1, 0.25));
-
-        // glColor4f(1.0, 0.0, 0.0, 1.0);
-
-        // for (auto p : mC3DReader->getMarkerPos(mC3DCount))
-        //     GUI::DrawSphere(p, 0.01);
-
-        // Draw Attached Marker
-        glColor4f(1.0, 0.0, 0.0, 1.0);
-        auto ms = mC3DReader->getMarkerSet();
-        for (auto m : ms)
-            GUI::DrawSphere(m.getGlobalPos(), 0.015);
-        // drawThinSkeleton(skel);
-        // drawSkeleton(mTestMotion[mC3DCount % mTestMotion.size()], Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
-        // drawSkeleton(mRenderEnv->getCharacter()->sixDofToPos(mC3DReader->mConvertedPos[mC3DCount % mC3DReader->mConvertedPos.size()]), Eigen::Vector4d(1.0, 0.0, 0.0, 0.5));
-    }
 
     // Draw C3D markers (parallel to drawPlayableMotion for motions)
     drawPlayableMarkers();
@@ -4134,9 +4111,7 @@ void GLFWApp::reset()
     mSimStepDurationAvg = -1.0;
     mViewerTime = 0.0;
     mViewerPhase = 0.0;
-    mC3DCount = 0;
     mGraphData->clear_all();
-    mC3DCOM = Eigen::Vector3d::Zero();
 
     // Reset motion playback tracking for cycle accumulation
     for (auto& state : mMotionStates) {
@@ -4217,7 +4192,7 @@ double GLFWApp::computeFrameFloat(Motion* motion, double phase)
 
 void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
 {
-    if (mMotionsNew.empty() || motionIdx >= mMotionsNew.size()) {
+    if (mMotions.empty() || motionIdx >= mMotions.size()) {
         std::cerr << "[motionPoseEval] Warning: No motions loaded or invalid index" << std::endl;
         return;
     }
@@ -4302,6 +4277,15 @@ void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
         motion_pos[5] = delta[2] + state.cycleAccumulation[2] + state.displayOffset[2];
     }
 
+    // 4. Update markers for C3DMotion
+    if (motion->getSourceType() == "C3DMotion") {
+        C3DMotion* c3dMotion = static_cast<C3DMotion*>(motion);
+        state.currentMarkers = c3dMotion->getMarkers(current_frame_idx);
+        for (auto& marker : state.currentMarkers) {
+            marker += state.displayOffset + state.cycleAccumulation;
+        }
+    }
+
     // Store the computed pose
     state.currentPose = motion_pos;
 }
@@ -4359,15 +4343,15 @@ GLFWApp::ViewerClock GLFWApp::updateViewerClock(double dt)
 
 bool GLFWApp::computeMotionPlayback(MotionPlaybackContext& context)
 {
-    if (mMotionsNew.empty() ||
+    if (mMotions.empty() ||
         mMotionIdx < 0 ||
-        mMotionIdx >= static_cast<int>(mMotionsNew.size()) ||
+        mMotionIdx >= static_cast<int>(mMotions.size()) ||
         static_cast<size_t>(mMotionIdx) >= mMotionStates.size())
     {
         return false;
     }
 
-    context.motion = mMotionsNew[mMotionIdx];
+    context.motion = mMotions[mMotionIdx];
     context.state = &mMotionStates[mMotionIdx];
     context.character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
 
@@ -4534,7 +4518,7 @@ void GLFWApp::updateMotionCycleAccumulation(Motion* current_motion,
 
     std::string source_type = current_motion->getSourceType();
 
-    if (source_type == "hdfRollout" || source_type == "hdfSingle" || source_type == "bvh") {
+    if (source_type == "hdfRollout" || source_type == "hdfSingle" || source_type == "bvh" || source_type == "C3DMotion") {
         if (state.navigationMode == PLAYBACK_SYNC &&
             current_frame_idx < state.lastFrameIdx &&
             state.lastFrameIdx < total_frames &&
@@ -4598,7 +4582,7 @@ double GLFWApp::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pos
 void GLFWApp::alignMotionToSimulation()
 {
     // Safety check: Skip if no motions loaded or invalid index
-    if (mMotionsNew.empty() || mMotionIdx < 0 || mMotionIdx >= mMotionsNew.size()) {
+    if (mMotions.empty() || mMotionIdx < 0 || mMotionIdx >= mMotions.size()) {
         return;
     }
 
@@ -4613,12 +4597,12 @@ void GLFWApp::alignMotionToSimulation()
 
     // Calculate the correct frame based on current phase
     double phase = mViewerPhase;
-    double frame_float = computeFrameFloat(mMotionsNew[mMotionIdx], phase);
+    double frame_float = computeFrameFloat(mMotions[mMotionIdx], phase);
 
     // Evaluate motion pose at the current time/phase (without displayOffset)
-    motionPoseEval(mMotionsNew[mMotionIdx], mMotionIdx, frame_float);
+    motionPoseEval(mMotions[mMotionIdx], mMotionIdx, frame_float);
 
-    if (!mRenderEnv || mMotionsNew.empty()) return;
+    if (!mRenderEnv || mMotions.empty()) return;
 
     // Get simulated character's current position (from root body node)
     Eigen::Vector3d sim_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
@@ -4638,7 +4622,16 @@ void GLFWApp::alignMotionToSimulation()
         // Fallback to default offset if pose evaluation failed
         state.displayOffset[0] = 1.0;
     }
-    motionPoseEval(mMotionsNew[mMotionIdx], mMotionIdx, frame_float);
+
+    // For C3DMotion, also align markers using the same displayOffset
+    Motion* motion = mMotions[mMotionIdx];
+    if (motion->getSourceType() == "C3DMotion") {
+        C3DMotion* c3dMotion = static_cast<C3DMotion*>(motion);
+        int frameIdx = static_cast<int>(std::round(frame_float));
+        state.currentMarkers = c3dMotion->getMarkers(frameIdx);
+    }
+
+    motionPoseEval(mMotions[mMotionIdx], mMotionIdx, frame_float);
 }
 
 double GLFWApp::computeMarkerHeightCalibration(const std::vector<Eigen::Vector3d>& markers)
@@ -4708,7 +4701,7 @@ void GLFWApp::updateViewerTime(double dt)
     evaluateMarkerPlayback(markerContext);
 
     if (!haveMotion) {
-        if (!mMotionsNew.empty()) LOG_WARN("[updateViewerTime] Motion context unavailable for index " << mMotionIdx);
+        if (!mMotions.empty()) LOG_WARN("[updateViewerTime] Motion context unavailable for index " << mMotionIdx);
         return;
     }
 
@@ -4726,9 +4719,9 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
                 update();  // Advance simulation by one control step
                 double dt = 1.0 / mRenderEnv->getControlHz();
                 updateViewerTime(dt);  // Advance viewer time and motion state
-            } else if (!mMotionsNew.empty() && mMotionIdx >= 0 && mMotionIdx < mMotionsNew.size()) {
+            } else if (!mMotions.empty() && mMotionIdx >= 0 && mMotionIdx < mMotions.size()) {
                 // Step viewer time by single frame duration when no simulation environment
-                Motion* current_motion = mMotionsNew[mMotionIdx];
+                Motion* current_motion = mMotions[mMotionIdx];
                 double frame_duration = 0.0;
 
                 // Use timesteps per cycle for all motion types
@@ -4910,7 +4903,16 @@ void GLFWApp::setCamera()
         }
         else if (mFocus == 3)
         {
-            if (mC3dMotion.size() == 0)
+            // Check if any C3DMotion exists in mMotionsNew
+            bool hasC3DMotion = false;
+            for (const auto* motion : mMotions) {
+                if (motion->getSourceType() == "C3DMotion") {
+                    hasC3DMotion = true;
+                    break;
+                }
+            }
+
+            if (!hasC3DMotion)
                 mFocus++;
             else
             {
@@ -4930,7 +4932,7 @@ void GLFWApp::setCamera()
     else
     {
         // Motion-only viewing mode: focus on current motion position
-        if (!mMotionsNew.empty() && mMotionSkeleton) {
+        if (!mMotions.empty() && mMotionSkeleton) {
             if (mMotionStates.size() <= static_cast<size_t>(mMotionIdx)) {
                 mTrans = Eigen::Vector3d::Zero();
                 mTrans[1] = -1;
@@ -4939,7 +4941,7 @@ void GLFWApp::setCamera()
             }
             // Calculate current position based on cycle accumulation
             double phase = mViewerPhase;
-            Motion* current_motion = mMotionsNew[mMotionIdx];
+            Motion* current_motion = mMotions[mMotionIdx];
             MotionViewerState& state = mMotionStates[mMotionIdx];
 
             double frame_float;
@@ -5520,7 +5522,7 @@ void GLFWApp::loadNPZMotion()
 			npz->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 			// Store in new motion architecture
-			mMotionsNew.push_back(npz);
+			mMotions.push_back(npz);
 
             // Create viewer state
             MotionViewerState state;
@@ -5584,7 +5586,7 @@ void GLFWApp::loadHDFRolloutMotion()
 					rollout->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 					// Store in new motion architecture
-					mMotionsNew.push_back(rollout);
+					mMotions.push_back(rollout);
 
 					// Create viewer state
 					MotionViewerState state;
@@ -5645,7 +5647,7 @@ void GLFWApp::loadBVHMotion()
 				bvh->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 				// Store in new motion architecture
-				mMotionsNew.push_back(bvh);
+				mMotions.push_back(bvh);
 
 				// Create viewer state
 				MotionViewerState state;
@@ -5694,7 +5696,7 @@ void GLFWApp::loadHDFSingleMotion()
 				hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
 
 				// Store in new motion architecture
-				mMotionsNew.push_back(hdf);
+				mMotions.push_back(hdf);
 
 				// Create viewer state
 				MotionViewerState state;
@@ -5784,12 +5786,12 @@ void GLFWApp::loadParametersFromCurrentMotion()
         return;
     }
 
-    if (mMotionIdx < 0 || mMotionIdx >= mMotionsNew.size()) {
+    if (mMotionIdx < 0 || mMotionIdx >= mMotions.size()) {
         std::cerr << "No motion selected or invalid motion index" << std::endl;
         return;
     }
 
-    Motion* motion = mMotionsNew[mMotionIdx];
+    Motion* motion = mMotions[mMotionIdx];
 
     if (!motion->hasParameters()) {
         std::cerr << "Current motion (" << motion->getName() << ") has no parameters" << std::endl;
@@ -6083,10 +6085,10 @@ void GLFWApp::addSimulationMotion()
 void GLFWApp::unloadMotion()
 {
     // Delete all loaded Motion* instances
-    for (Motion* motion : mMotionsNew) {
+    for (Motion* motion : mMotions) {
         delete motion;
     }
-    mMotionsNew.clear();
+    mMotions.clear();
     mMotionStates.clear();
 
     // Reset motion playback indices (-1 indicates no motion selected)

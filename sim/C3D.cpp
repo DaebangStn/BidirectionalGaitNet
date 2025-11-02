@@ -14,13 +14,13 @@ C3D::C3D()
 {
 }
 
-C3D::C3D(const std::string& path, double scale, double heightOffset)
+C3D::C3D(const std::string& path)
     : C3D()
 {
-    load(path, scale, heightOffset);
+    load(path);
 }
 
-bool C3D::load(const std::string& path, double scale, double heightOffset)
+bool C3D::load(const std::string& path)
 {
     try
     {
@@ -63,8 +63,6 @@ bool C3D::load(const std::string& path, double scale, double heightOffset)
                 marker[0] = 0.001 * point.y();
                 marker[1] = 0.001 * point.z();
                 marker[2] = 0.001 * point.x();
-                marker *= scale;
-                marker += Eigen::Vector3d::UnitY() * heightOffset;
                 frameMarkers.emplace_back(marker);
             }
 

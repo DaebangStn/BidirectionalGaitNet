@@ -88,3 +88,4 @@ secret.yaml
 results/
 sampled/
 uv.lock
+data/motion/c3d/

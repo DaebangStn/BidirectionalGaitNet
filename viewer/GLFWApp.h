@@ -127,6 +127,7 @@ struct MotionViewerState
     int lastFrameIdx = 0;                                            ///< Last evaluated frame index (for wrap detection)
     PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;           ///< Playback mode for this motion
     int manualFrameIndex = 0;                                        ///< Manual frame index when navigationMode == PLAYBACK_MANUAL_FRAME
+    std::vector<Eigen::Vector3d> currentMarkers;                     ///< Current marker positions (for C3DMotion)
 };
 
 struct MarkerViewerState
@@ -184,6 +185,9 @@ private:
     void drawCameraStatusSection();
     void drawPlayableMotion();
     void drawPlayableMarkers();
+
+    // Helper to check if current motion is from a specific source
+    bool isCurrentMotionFromSource(const std::string& sourceType, const std::string& sourceFile);
 
     void drawFGNControl();
     void drawBGNControl();
@@ -322,12 +326,10 @@ private:
     std::vector<Eigen::VectorXd> mMotionBuffer;
     std::vector<Eigen::Matrix3d> mJointCalibration;
 
-    std::vector<Eigen::VectorXd> mC3dMotion;
-    int mC3DCount;
-
+    // C3D loading and rendering
     C3D_Reader* mC3DReader;
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
-    std::unique_ptr<C3D> mC3DMarkers;
+    std::unique_ptr<C3D> mC3DMarkers;  // For marker-only rendering
     bool mRenderC3DMarkers;
     MarkerViewerState mMarkerState;
 
@@ -338,7 +340,7 @@ private:
     std::vector<BoneInfo> mSkelInfosForMotions;
 
     // Polymorphic motion architecture
-    std::vector<Motion*> mMotionsNew;              ///< Polymorphic motion instances
+    std::vector<Motion*> mMotions;              ///< Polymorphic motion instances
     std::vector<MotionViewerState> mMotionStates;  ///< Viewer state per motion
 
     MotionData mPredictedMotion;
@@ -473,7 +475,6 @@ private:
     std::vector<Eigen::VectorXd> mTestMotion;
     Eigen::Vector3d mC3DCOM;
     bool mRenderConditions;
-    bool mRenderC3D;
 
     // Viewer independent time management
     double mViewerTime;              // Viewer's master time counter

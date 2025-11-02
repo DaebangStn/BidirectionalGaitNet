@@ -6,6 +6,16 @@
 #include "GLfunctions.h"
 #include "Character.h"
 
+// Forward declaration
+class C3DMotion;
+
+// C3D conversion parameters
+struct C3DConversionParams
+{
+    double femurTorsionL = 0.0;
+    double femurTorsionR = 0.0;
+};
+
 // Marker Structure
 struct MocapMarker
 {
@@ -36,9 +46,9 @@ class C3D_Reader
         ~C3D_Reader();
 
         int getFrameRate() { return mFrameRate; }
-        
 
-        std::vector<Eigen::VectorXd> loadC3D(std::string path, double torsionL = 0.0, double torsionR = 0.0, double scale = 1.0, double height = 0.0);
+
+        C3DMotion* loadC3D(const std::string& path, const C3DConversionParams& params);
         Eigen::VectorXd getPoseFromC3D(std::vector<Eigen::Vector3d>& _pos);
         // Eigen::VectorXd getPoseFromC3D_2(std::vector<Eigen::Vector3d> _pos);
         SkeletonPtr getBVHSkeleton() { return mVirtSkeleton; }

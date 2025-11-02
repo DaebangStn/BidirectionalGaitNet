@@ -10,10 +10,10 @@ class C3D : public Motion
 {
 public:
     C3D();
-    explicit C3D(const std::string& path, double scale = 1.0, double heightOffset = 0.0);
+    explicit C3D(const std::string& path);
     ~C3D() override = default;
 
-    bool load(const std::string& path, double scale = 1.0, double heightOffset = 0.0);
+    bool load(const std::string& path);
     bool isLoaded() const { return !mMarkers.empty(); }
 
     const std::vector<Eigen::Vector3d>& getMarkers(int frameIdx) const;
