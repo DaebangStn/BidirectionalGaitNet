@@ -86,19 +86,19 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mSavingMuscle(false)          // Not currently saving
     , mSweepRestorePosition(false)   // Restore position after sweep by default
     , mRecordingSurgery(false)       // Not recording by default
-    , mRecordingScriptPath("data/recorded_surgery.yaml")  // Default recording path
-    , mLoadScriptPath("data/recorded_surgery.yaml")  // Default load path
+    , mRecordingScriptPath("")       // Will be constructed from buffer
+    , mLoadScriptPath("")            // Will be constructed from buffer
     , mShowScriptPreview(false)     // Script preview hidden by default
     , mUseMuscle(true)              // Default to true for backward compatibility
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
     mShowSweepLegend = true;  // Show legend by default
-    
-    // Initialize path buffers
-    strncpy(mRecordingPathBuffer, mRecordingScriptPath.c_str(), sizeof(mRecordingPathBuffer) - 1);
+
+    // Initialize path buffers with simple default names (no path, no extension)
+    strncpy(mRecordingPathBuffer, "recorded_surgery", sizeof(mRecordingPathBuffer) - 1);
     mRecordingPathBuffer[sizeof(mRecordingPathBuffer) - 1] = '\0';
-    strncpy(mLoadPathBuffer, mLoadScriptPath.c_str(), sizeof(mLoadPathBuffer) - 1);
+    strncpy(mLoadPathBuffer, "recorded_surgery", sizeof(mLoadPathBuffer) - 1);
     mLoadPathBuffer[sizeof(mLoadPathBuffer) - 1] = '\0';
 
     // Muscle Selection UI
@@ -109,10 +109,10 @@ PhysicalExam::PhysicalExam(int width, int height)
     mSelectedMuscleInfo = "";  // No muscle selected initially
 
     // Initialize surgery panel filename buffers with default leaf names only
-    std::strncpy(mSaveMuscleFilename, "muscle_modified.xml", sizeof(mSaveMuscleFilename));
+    std::strncpy(mSaveMuscleFilename, "muscle_modified", sizeof(mSaveMuscleFilename));
     mSaveMuscleFilename[sizeof(mSaveMuscleFilename) - 1] = '\0';
 
-    std::strncpy(mSaveSkeletonFilename, "skeleton_modified.xml", sizeof(mSaveSkeletonFilename));
+    std::strncpy(mSaveSkeletonFilename, "skeleton_modified", sizeof(mSaveSkeletonFilename));
     mSaveSkeletonFilename[sizeof(mSaveSkeletonFilename) - 1] = '\0';
 
     // Initialize surgery section filter buffers
@@ -414,6 +414,10 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     // Store file paths for UI display
     mSkeletonPath = skel_path;
     mMusclePath = muscle_path;
+
+    // Store subject skeleton/muscle paths in base class for consistent metadata tracking
+    mSubjectSkeletonPath = skel_path;
+    mSubjectMusclePath = muscle_path;
 
     // Resolve URIs
     URIResolver& resolver = URIResolver::getInstance();
@@ -1174,45 +1178,92 @@ void PhysicalExam::drawSurgeryPanel() {
     // Recording Section
     if (ImGui::CollapsingHeader("Load & Record Surgery Script")) {
         ImGui::Indent();
-        
+
+        // Directory prefix display
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: @data/surgery/");
+        ImGui::Spacing();
+
         if (!mRecordingSurgery) {
-            if (ImGui::Button("Start Recording", ImVec2(150, 30))) {
+            if (ImGui::Button("Start Rec##Surgery")) {
                 startRecording();
             }
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-            if (ImGui::Button("Stop Recording", ImVec2(150, 30))) {
+            if (ImGui::Button("Stop Rec##Surgery")) {
                 stopRecording();
             }
             ImGui::PopStyleColor();
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "● RECORDING");
         }
-        
+
         if (!mRecordedOperations.empty()) {
             ImGui::Text("Recorded operations: %zu", mRecordedOperations.size());
-            
-            ImGui::Text("Export to:");
+            ImGui::Spacing();
+
+            // Construct full filename with .yaml extension for export
+            std::string recordingFilenameWithExt = std::string(mRecordingPathBuffer);
+            // Remove existing extension if present
+            size_t recordingLastDot = recordingFilenameWithExt.find_last_of('.');
+            if (recordingLastDot != std::string::npos) {
+                recordingFilenameWithExt = recordingFilenameWithExt.substr(0, recordingLastDot);
+            }
+            recordingFilenameWithExt += ".yaml";
+
+            // Construct URI path and resolve it for export
+            std::string recordingUriPath = std::string("@data/surgery/") + recordingFilenameWithExt;
+            URIResolver& recordingResolver = URIResolver::getInstance();
+            recordingResolver.initialize();
+            std::string recordingResolvedPath = recordingResolver.resolve(recordingUriPath);
+
+            // Export button
+            if (ImGui::Button("Export##Surgery")) {
+                exportRecording(recordingResolvedPath);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Export to %s", recordingResolvedPath.c_str());
+            }
+            ImGui::SameLine();
+
+            // Filename input
+            ImGui::Text("Filename:");
+            ImGui::SameLine();
             ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputText("##RecordingPath", mRecordingPathBuffer, sizeof(mRecordingPathBuffer))) {
-                mRecordingScriptPath = mRecordingPathBuffer;
-            }
-            
-            if (ImGui::Button("Export Recording", ImVec2(-1, 30))) {
-                exportRecording(mRecordingScriptPath);
-            }
+            ImGui::InputText("##RecordingPath", mRecordingPathBuffer, sizeof(mRecordingPathBuffer));
+
+            ImGui::Spacing();
         }
-                
-        ImGui::Text("Script path:");
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##LoadPath", mLoadPathBuffer, sizeof(mLoadPathBuffer))) {
-            mLoadScriptPath = mLoadPathBuffer;
+
+        // Construct full filename with .yaml extension for loading
+        std::string loadFilenameWithExt = std::string(mLoadPathBuffer);
+        // Remove existing extension if present
+        size_t loadLastDot = loadFilenameWithExt.find_last_of('.');
+        if (loadLastDot != std::string::npos) {
+            loadFilenameWithExt = loadFilenameWithExt.substr(0, loadLastDot);
         }
-        
-        if (ImGui::Button("Load and Preview", ImVec2(-1, 30))) {
+        loadFilenameWithExt += ".yaml";
+
+        // Construct URI path and resolve it for loading
+        std::string loadUriPath = std::string("@data/surgery/") + loadFilenameWithExt;
+        URIResolver& loadResolver = URIResolver::getInstance();
+        loadResolver.initialize();
+        std::string loadResolvedPath = loadResolver.resolve(loadUriPath);
+
+        // Load button
+        if (ImGui::Button("Load##Surgery")) {
             loadSurgeryScript();
         }
-        
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Load from %s", loadResolvedPath.c_str());
+        }
+        ImGui::SameLine();
+
+        // Filename input
+        ImGui::Text("Filename:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##LoadPath", mLoadPathBuffer, sizeof(mLoadPathBuffer));
+
         ImGui::Unindent();
     }
     
@@ -1260,15 +1311,15 @@ void PhysicalExam::drawSurgeryPanel() {
     }
 
     ImGui::Spacing();
-    // 8. Save Muscle Config (CollapsingHeader)
-    if (ImGui::CollapsingHeader("Save Muscle Config", ImGuiTreeNodeFlags_DefaultOpen)) {
-        drawSaveMuscleConfigSection();
-    }
-    ImGui::Spacing();
-
     // 9. Save Skeleton Config (CollapsingHeader)
     if (ImGui::CollapsingHeader("Save Skeleton Config", ImGuiTreeNodeFlags_DefaultOpen)) {
         drawSaveSkeletonConfigSection();
+    }
+    ImGui::Spacing();
+
+    // 8. Save Muscle Config (CollapsingHeader)
+    if (ImGui::CollapsingHeader("Save Muscle Config", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawSaveMuscleConfigSection();
     }
     ImGui::Spacing();
 
@@ -1654,17 +1705,38 @@ void PhysicalExam::drawRelaxPassiveForceSection() {
 void PhysicalExam::drawSaveMuscleConfigSection() {
     ImGui::Indent();
 
-    // Directory prefix display
+    // Format selection (static to persist across calls)
+    static int saveFormat = 0;  // 0 = YAML (default), 1 = XML
+
+    // Directory prefix display with format radio buttons
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: @data/muscle/");
+    ImGui::SameLine();
+    ImGui::RadioButton("YAML##MuscleFormat", &saveFormat, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("XML##MuscleFormat", &saveFormat, 1);
     ImGui::Spacing();
 
-    std::string uriPath = std::string("@data/muscle/") + mSaveMuscleFilename;
+    // Determine file extension based on format
+    const char* extension = (saveFormat == 0) ? ".yaml" : ".xml";
+
+    // Construct full filename with extension
+    std::string filenameWithExt = std::string(mSaveMuscleFilename);
+    // Remove existing extension if present
+    size_t lastDot = filenameWithExt.find_last_of('.');
+    if (lastDot != std::string::npos) {
+        filenameWithExt = filenameWithExt.substr(0, lastDot);
+    }
+    filenameWithExt += extension;
+
+    std::string uriPath = std::string("@data/muscle/") + filenameWithExt;
     URIResolver& resolver = URIResolver::getInstance();
     resolver.initialize();
     std::string resolvedPath = resolver.resolve(uriPath);
 
     // Save button (with debounce to prevent duplicate saves on double-click)
-    if (ImGui::Button("Save")) {
+    if (ImGui::Button("Save##Muscle")) {
+        LOG_INFO("[Surgery] Muscle Save button clicked! Resolved path: " << resolvedPath);
+
         if (!mSavingMuscle) {  // Only process if not already saving
             mSavingMuscle = true;
             if (mCharacter) {
@@ -1672,9 +1744,13 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
                     exportMuscles(resolvedPath);
 
                     // Record operation if recording
+                    // Use skeleton base name for consistent naming across skeleton/muscle
                     if (mRecordingSurgery) {
-                        auto op = std::make_unique<ExportMusclesOp>(resolvedPath);
+                        std::string skelBaseName = getSkeletonBaseName();
+                        std::string recordUriPath = std::string("@data/muscle/") + skelBaseName + extension;
+                        auto op = std::make_unique<ExportMusclesOp>(recordUriPath);
                         recordOperation(std::move(op));
+                        LOG_INFO("[Surgery] Recorded muscle export with name: " << recordUriPath);
                     }
                     LOG_INFO("[Surgery] Muscle configuration saved to: " << resolvedPath);
                 } catch (const std::exception& e) {
@@ -1712,28 +1788,64 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
 void PhysicalExam::drawSaveSkeletonConfigSection() {
     ImGui::Indent();
 
-    // Directory prefix display
+    // Format selection (static to persist across calls)
+    static int saveFormat = 0;  // 0 = YAML (default), 1 = XML
+
+    // Directory prefix display with format radio buttons
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Directory: @data/skeleton/");
+    ImGui::SameLine();
+    ImGui::RadioButton("YAML##SkeletonFormat", &saveFormat, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("XML##SkeletonFormat", &saveFormat, 1);
     ImGui::Spacing();
 
-    std::string uriPath = std::string("@data/skeleton/") + mSaveSkeletonFilename;
+    // Determine file extension based on format
+    const char* extension = (saveFormat == 0) ? ".yaml" : ".xml";
+
+    // Construct full filename with extension
+    std::string filenameWithExt = std::string(mSaveSkeletonFilename);
+    // Remove existing extension if present
+    size_t lastDot = filenameWithExt.find_last_of('.');
+    if (lastDot != std::string::npos) {
+        filenameWithExt = filenameWithExt.substr(0, lastDot);
+    }
+    filenameWithExt += extension;
+
+    std::string uriPath = std::string("@data/skeleton/") + filenameWithExt;
     URIResolver& resolver = URIResolver::getInstance();
     resolver.initialize();
     std::string resolvedPath = resolver.resolve(uriPath);
 
     // Save button (with debounce to prevent duplicate saves on double-click)
-    if (ImGui::Button("Save")) {
+    if (ImGui::Button("Save##Skeleton")) {
+        LOG_INFO("[Surgery] Skeleton Save button clicked! Resolved path: " << resolvedPath);
+
         if (mCharacter) {
             try {
                 exportSkeleton(resolvedPath);
 
+                // Update muscle filename to match the skeleton filename (without extension)
+                // This keeps skeleton and muscle configs in sync
+                std::string skelNameWithoutExt = std::string(mSaveSkeletonFilename);
+                size_t skelDot = skelNameWithoutExt.find_last_of('.');
+                if (skelDot != std::string::npos) {
+                    skelNameWithoutExt = skelNameWithoutExt.substr(0, skelDot);
+                }
+                strncpy(mSaveMuscleFilename, skelNameWithoutExt.c_str(), sizeof(mSaveMuscleFilename) - 1);
+                mSaveMuscleFilename[sizeof(mSaveMuscleFilename) - 1] = '\0';
+
                 // Record operation if recording
+                // Use subject skeleton base name for consistent naming
                 if (mRecordingSurgery) {
-                    auto op = std::make_unique<ExportSkeletonOp>(resolvedPath);
+                    std::string skelBaseName = getSkeletonBaseName();
+                    std::string recordUriPath = std::string("@data/skeleton/") + skelBaseName + extension;
+                    auto op = std::make_unique<ExportSkeletonOp>(recordUriPath);
                     recordOperation(std::move(op));
+                    LOG_INFO("[Surgery] Recorded skeleton export with name: " << recordUriPath);
                 }
 
                 LOG_INFO("[Surgery] Skeleton configuration saved to: " << resolvedPath);
+                LOG_INFO("[Surgery] Muscle filename updated to match: " << mSaveMuscleFilename);
             } catch (const std::exception& e) {
                 LOG_ERROR("[Surgery] Error saving skeleton configuration: " << e.what());
             }
@@ -5752,19 +5864,34 @@ void PhysicalExam::recordOperation(std::unique_ptr<SurgeryOperation> op) {
 
 void PhysicalExam::loadSurgeryScript() {
     try {
-        mLoadedScript = SurgeryScript::loadFromFile(mLoadScriptPath);
-        
+        // Construct full filename with .yaml extension
+        std::string loadFilenameWithExt = std::string(mLoadPathBuffer);
+        // Remove existing extension if present
+        size_t loadLastDot = loadFilenameWithExt.find_last_of('.');
+        if (loadLastDot != std::string::npos) {
+            loadFilenameWithExt = loadFilenameWithExt.substr(0, loadLastDot);
+        }
+        loadFilenameWithExt += ".yaml";
+
+        // Construct URI path and resolve it
+        std::string loadUriPath = std::string("@data/surgery/") + loadFilenameWithExt;
+        URIResolver& resolver = URIResolver::getInstance();
+        resolver.initialize();
+        std::string loadResolvedPath = resolver.resolve(loadUriPath);
+
+        mLoadedScript = SurgeryScript::loadFromFile(loadResolvedPath);
+
         if (mLoadedScript.empty()) {
-            LOG_ERROR("[Surgery Script] No operations loaded from " << mLoadScriptPath);
+            LOG_ERROR("[Surgery Script] No operations loaded from " << loadResolvedPath);
             return;
         }
-        
-        LOG_INFO("[Surgery Script] Loaded " << mLoadedScript.size() 
-                  << " operation(s) from " << mLoadScriptPath);
-        
+
+        LOG_INFO("[Surgery Script] Loaded " << mLoadedScript.size()
+                  << " operation(s) from " << loadResolvedPath);
+
         // Show preview
         mShowScriptPreview = true;
-        
+
     } catch (const std::exception& e) {
         LOG_ERROR("[Surgery Script] Failed to load: " << e.what());
     }

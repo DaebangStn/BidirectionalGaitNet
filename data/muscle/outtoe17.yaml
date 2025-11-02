@@ -1,11 +1,11 @@
 metadata:
-  generator: "surgery-tool: muscle_export.yaml"
-  timestamp: "2025-11-02 09:50:49"
+  generator: "surgery-tool: outtoe17.yaml"
+  timestamp: "2025-11-02 11:05:25"
   version: v1
-  skeleton: "base.xml"
+  skeleton: "outtoe17.yaml"
   muscle_from: "distribute_lower_only.xml"
-  git_commit: "2ca99afeb4d86820f13871ea9ce5210e7e825796"
-  git_message: "bugfix: scattered visual mesh"
+  git_commit: "11119ec6e816a33dfe4eb35ce495929b107c83d6"
+  git_message: "bugfix: path resolve for the surgery expoprt"
 
 muscles:
   - {name: L_Adductor_Brevis, f0: 151.85, lm: 0.95, lt: 0.20,

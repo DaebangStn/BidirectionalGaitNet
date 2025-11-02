@@ -21,9 +21,9 @@ SurgeryExecutor::~SurgeryExecutor() {
 
 void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::string& muscle_path,
                                    ActuatorType actuator_type) {
-    // Cache original paths for metadata preservation
-    mOriginalSkeletonPath = skel_path;
-    mOriginalMusclePath = muscle_path;
+    // Store subject skeleton/muscle paths
+    mSubjectSkeletonPath = skel_path;
+    mSubjectMusclePath = muscle_path;
 
     // Resolve URIs
     URIResolver& resolver = URIResolver::getInstance();
@@ -608,16 +608,39 @@ Eigen::Isometry3d SurgeryExecutor::getBodyNodeZeroPoseTransform(dart::dynamics::
 }
 
 void SurgeryExecutor::exportMuscles(const std::string& path) {
-    // Auto-detect format from file extension
-    size_t len = path.length();
-    bool is_yaml = (len >= 5 && path.substr(len - 5) == ".yaml") ||
-                   (len >= 4 && path.substr(len - 4) == ".yml");
-
-    if (is_yaml) {
-        exportMusclesYAML(path);
-    } else {
-        exportMusclesXML(path);  // Default to XML for backward compatibility
+    if (!mCharacter) {
+        throw std::runtime_error("No character loaded");
     }
+
+    auto muscles = mCharacter->getMuscles();
+    if (muscles.empty()) {
+        throw std::runtime_error("No muscles found in character");
+    }
+
+    // Resolve URI path if needed
+    URIResolver& resolver = URIResolver::getInstance();
+    resolver.initialize();
+    std::string resolved_path = resolver.resolve(path);
+
+    // Auto-detect format from file extension
+    std::string ext;
+    size_t dot_pos = resolved_path.find_last_of('.');
+    if (dot_pos != std::string::npos) {
+        ext = resolved_path.substr(dot_pos);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    }
+
+    LOG_INFO("[Surgery] Saving muscle configuration to: " << resolved_path);
+
+    if (ext == ".yaml" || ext == ".yml") {
+        exportMusclesYAML(resolved_path);
+    } else {
+        exportMusclesXML(resolved_path);  // Default to XML for backward compatibility
+    }
+
+    // Update subject muscle path to the exported file (use original URI path, not resolved)
+    mSubjectMusclePath = path;
+    LOG_INFO("[Surgery] Updated subject muscle path to: " << mSubjectMusclePath);
 }
 
 void SurgeryExecutor::exportMusclesXML(const std::string& path) {
@@ -1210,23 +1233,32 @@ void SurgeryExecutor::exportSkeleton(const std::string& path) {
         throw std::runtime_error("No skeleton found in character");
     }
 
+    // Resolve URI path if needed
+    URIResolver& resolver = URIResolver::getInstance();
+    resolver.initialize();
+    std::string resolved_path = resolver.resolve(path);
+
     // Detect format from file extension
     std::string ext;
-    size_t dot_pos = path.find_last_of('.');
+    size_t dot_pos = resolved_path.find_last_of('.');
     if (dot_pos != std::string::npos) {
-        ext = path.substr(dot_pos);
+        ext = resolved_path.substr(dot_pos);
         // Convert to lowercase for comparison
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     }
 
-    LOG_INFO("[Surgery] Saving skeleton configuration to: " << path);
+    LOG_INFO("[Surgery] Saving skeleton configuration to: " << resolved_path);
 
     if (ext == ".yaml" || ext == ".yml") {
-        exportSkeletonYAML(path);
+        exportSkeletonYAML(resolved_path);
     } else {
         // Default to XML for .xml or unrecognized extensions
-        exportSkeletonXML(path);
+        exportSkeletonXML(resolved_path);
     }
+
+    // Update subject skeleton path to the exported file (use original URI path, not resolved)
+    mSubjectSkeletonPath = path;
+    LOG_INFO("[Surgery] Updated subject skeleton path to: " << mSubjectSkeletonPath);
 }
 
 void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
@@ -1245,7 +1277,7 @@ void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
     skel->setPositions(zero_positions);
 
     // Parse original XML for metadata preservation
-    SkeletonMetadata metadata = parseOriginalSkeletonMetadata(mOriginalSkeletonPath);
+    SkeletonMetadata metadata = parseOriginalSkeletonMetadata(mSubjectSkeletonPath);
 
     // Write XML header
     ofs << "<!-- Exported skeleton configuration -->" << std::endl;
@@ -1414,7 +1446,7 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
     skel->setPositions(zero_positions);
 
     // Parse original XML for metadata preservation
-    SkeletonMetadata metadata = parseOriginalSkeletonMetadata(mOriginalSkeletonPath);
+    SkeletonMetadata metadata = parseOriginalSkeletonMetadata(mSubjectSkeletonPath);
 
     // Write metadata section
     auto [git_hash, git_message] = getGitInfo();
@@ -2094,31 +2126,55 @@ std::string SurgeryExecutor::getCurrentTimestamp() const {
 }
 
 std::string SurgeryExecutor::getSkeletonName() const {
-    if (mOriginalSkeletonPath.empty()) {
+    if (mSubjectSkeletonPath.empty()) {
         return "unknown";
     }
 
     // Extract filename from path (handle both / and \ separators)
-    size_t lastSlash = mOriginalSkeletonPath.find_last_of("/\\");
+    size_t lastSlash = mSubjectSkeletonPath.find_last_of("/\\");
     if (lastSlash != std::string::npos) {
-        return mOriginalSkeletonPath.substr(lastSlash + 1);
+        return mSubjectSkeletonPath.substr(lastSlash + 1);
     }
 
-    return mOriginalSkeletonPath;
+    return mSubjectSkeletonPath;
 }
 
 std::string SurgeryExecutor::getMuscleName() const {
-    if (mOriginalMusclePath.empty()) {
+    if (mSubjectMusclePath.empty()) {
         return "unknown";
     }
 
     // Extract filename from path (handle both / and \ separators)
-    size_t lastSlash = mOriginalMusclePath.find_last_of("/\\");
+    size_t lastSlash = mSubjectMusclePath.find_last_of("/\\");
     if (lastSlash != std::string::npos) {
-        return mOriginalMusclePath.substr(lastSlash + 1);
+        return mSubjectMusclePath.substr(lastSlash + 1);
     }
 
-    return mOriginalMusclePath;
+    return mSubjectMusclePath;
+}
+
+std::string SurgeryExecutor::getSkeletonBaseName() const {
+    std::string filename = getSkeletonName();
+
+    // Remove extension
+    size_t lastDot = filename.find_last_of('.');
+    if (lastDot != std::string::npos) {
+        return filename.substr(0, lastDot);
+    }
+
+    return filename;
+}
+
+std::string SurgeryExecutor::getMuscleBaseName() const {
+    std::string filename = getMuscleName();
+
+    // Remove extension
+    size_t lastDot = filename.find_last_of('.');
+    if (lastDot != std::string::npos) {
+        return filename.substr(0, lastDot);
+    }
+
+    return filename;
 }
 
 } // namespace PMuscle

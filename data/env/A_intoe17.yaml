@@ -1,17 +1,16 @@
 # Training Configuration
 training:
-  max_epoch: 100002
+  max_epoch: 12002
   checkpoint_freq: 1000
 
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@data/skeleton/intoe15.xml"
+    file: "@data/skeleton/intoe17.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
     damping: 0.1
-    self_collide: false
 
   # Ground/World
   ground:
@@ -28,7 +27,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@data/muscle/intoe15.yaml"
+    file: "@data/muscle/intoe17.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true

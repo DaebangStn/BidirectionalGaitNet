@@ -1,0 +1,23 @@
+version: 1.0
+description: Recorded surgery operations
+operations:
+  - type: rotate_joint_offset
+    joint_name: FemurR
+    axis:
+      - 0
+      - 1
+      - 0
+    angle: -0.29670597283903605
+    preserve_position: true
+  - type: rotate_joint_offset
+    joint_name: FemurL
+    axis:
+      - 0
+      - 1
+      - 0
+    angle: 0.29670597283903605
+    preserve_position: true
+  - type: export_skeleton
+    filepath: "@data/skeleton/outtoe17.yaml"
+  - type: export_muscles
+    filepath: "@data/muscle/outtoe17.yaml"

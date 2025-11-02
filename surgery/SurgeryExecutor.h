@@ -80,6 +80,10 @@ public:
     std::string getSkeletonName() const;
     std::string getMuscleName() const;
 
+    // Filename helpers - get base filename without path or extension
+    std::string getSkeletonBaseName() const;
+    std::string getMuscleBaseName() const;
+
 private:
     // Muscle export helper functions
     void exportMusclesXML(const std::string& path);
@@ -107,9 +111,9 @@ private:
 
 protected:
     Character* mCharacter;
-    std::string mOriginalSkeletonPath;  // Cached for metadata preservation
-    std::string mOriginalMusclePath;    // Cached for future reference
-    std::string mGeneratorContext;      // "physical_exam" or "surgery-tool: script.yaml"
+    std::string mSubjectSkeletonPath;  // Subject skeleton being operated on
+    std::string mSubjectMusclePath;    // Subject muscle being operated on
+    std::string mGeneratorContext;     // "physical_exam" or "surgery-tool: script.yaml"
 };
 
 } // namespace PMuscle
