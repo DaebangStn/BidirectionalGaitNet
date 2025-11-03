@@ -100,25 +100,19 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mUseCascading = true;
 
     // Skeleton Loading
-    if (doc.FirstChildElement("skeleton") != NULL)
+    if (TiXmlElement* skeletonElem = doc.FirstChildElement("skeleton"))
     {
-        double defaultKp = std::stod(doc.FirstChildElement("skeleton")->Attribute("defaultKp"));
-        double defaultKv = std::stod(doc.FirstChildElement("skeleton")->Attribute("defaultKv"));
-        double defaultDamping = 0.4;
-        if (doc.FirstChildElement("skeleton")->Attribute("damping") != NULL)
-            defaultDamping = std::stod(doc.FirstChildElement("skeleton")->Attribute("damping"));
-
-        std::string skeletonPath = Trim(std::string(doc.FirstChildElement("skeleton")->GetText()));
+        std::string skeletonPath = Trim(std::string(skeletonElem->GetText()));
         std::string resolvedSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skeletonPath);
-        addCharacter(resolvedSkeletonPath, defaultKp, defaultKv, defaultDamping, false);
+        addCharacter(resolvedSkeletonPath, false);
 
         std::string _actTypeString;
-        if (doc.FirstChildElement("skeleton")->Attribute("actuator") != NULL) _actTypeString = Trim(doc.FirstChildElement("skeleton")->Attribute("actuator"));
-        else if (doc.FirstChildElement("skeleton")->Attribute("actuactor") != NULL) _actTypeString = Trim(doc.FirstChildElement("skeleton")->Attribute("actuactor"));
+        if (skeletonElem->Attribute("actuator") != NULL) _actTypeString = Trim(skeletonElem->Attribute("actuator"));
+        else if (skeletonElem->Attribute("actuactor") != NULL) _actTypeString = Trim(skeletonElem->Attribute("actuactor"));
         ActuatorType _actType = getActuatorType(_actTypeString);
         mCharacter->setActuatorType(_actType);
 
-        mTargetPositions = mCharacter->getSkeleton()->getPositions();
+        mRefPose = mCharacter->getSkeleton()->getPositions();
         mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
     }
 
@@ -529,19 +523,12 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         std::string skelPath = skel["file"].as<std::string>();
         std::string resolved = PMuscle::URIResolver::getInstance().resolve(skelPath);
         bool selfCollide = skel["self_collide"].as<bool>(false);  // NEW: default to false
-        
-        addCharacter(
-            resolved,
-            skel["kp"].as<double>(),
-            skel["kv"].as<double>(),
-            skel["damping"].as<double>(0.4),
-            selfCollide  // NEW: pass self_collide parameter
-        );
+        addCharacter(resolved, selfCollide);
 
         std::string actType = skel["actuator"].as<std::string>();
         mCharacter->setActuatorType(getActuatorType(actType));
 
-        mTargetPositions = mCharacter->getSkeleton()->getPositions();
+        mRefPose = mCharacter->getSkeleton()->getPositions();
         mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
     }
 
@@ -726,6 +713,15 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     // === Reward parameters ===
     if (env["advanced"] && env["advanced"]["use_normalized_param_state"])
         mUseNormalizedParamState = env["advanced"]["use_normalized_param_state"].as<bool>(false);
+
+    // === Reward clipping ===
+    if (env["reward"] && env["reward"]["clip"]) {
+        auto clip = env["reward"]["clip"];
+        if (clip["step"])
+            mRewardConfig.clip_step = clip["step"].as<int>(mRewardConfig.clip_step);
+        if (clip["value"])
+            mRewardConfig.clip_value = std::abs(clip["value"].as<double>(mRewardConfig.clip_value));
+    }
 
     // === Locomotion rewards ===
     if (env["reward"] && env["reward"]["locomotion"]) {
@@ -949,9 +945,9 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     }
 }
 
-void Environment::addCharacter(std::string path, double kp, double kv, double damping, bool collide_all)
+void Environment::addCharacter(std::string path, bool collide_all)
 {
-    mCharacter = new Character(path, kp, kv, damping, collide_all);
+    mCharacter = new Character(path, collide_all);
     // std::cout << "Skeleton Added " << mCharacter->getSkeleton()->getName() << " Degree Of Freedom : " << mCharacter->getSkeleton()->getNumDofs() << std::endl;
 }
 
@@ -1063,7 +1059,7 @@ void Environment::setAction(Eigen::VectorXd _action)
         Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
         action.tail(actuatorAction.rows()) = actuatorAction;
         if (isMirror()) action = mCharacter->getMirrorPosition(action);
-        if (mIsResidual) action = mCharacter->addPositions(mTargetPositions, action);
+        if (mIsResidual) action = mCharacter->addPositions(mRefPose, action);
         mCharacter->setPDTarget(action);
     }
     else if (mCharacter->getActuatorType() == tor)
@@ -1089,9 +1085,9 @@ void Environment::updateTargetPosAndVel(bool isInit)
     double dPhase = dTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     double ofsPhase = (isInit ? 0.0 : dPhase) + getLocalPhase();
     
-    mTargetPositions = mMotion->getTargetPose(ofsPhase);
+    mRefPose = mMotion->getTargetPose(ofsPhase);
     const auto nextPose = mMotion->getTargetPose(ofsPhase + dPhase);
-    mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mTargetPositions) / dTime;
+    mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mRefPose) / dTime;
 }
 
 void Environment::checkTerminated()
@@ -1143,7 +1139,7 @@ double Environment::calcReward()
         Eigen::VectorXd pos = skel->getPositions();
         Eigen::VectorXd vel = skel->getVelocities();
 
-        Eigen::VectorXd pos_diff = skel->getPositionDifferences(mTargetPositions, pos);
+        Eigen::VectorXd pos_diff = skel->getPositionDifferences(mRefPose, pos);
         Eigen::VectorXd vel_diff = skel->getVelocityDifferences(mTargetVelocities, vel);
 
         auto ees = mCharacter->getEndEffectors();
@@ -1155,7 +1151,7 @@ double Environment::calcReward()
             ee_diff.segment(i * 3, 3) = -ee->getCOM(skel->getRootBodyNode());
         }
         com_diff = -skel->getCOM();
-        skel->setPositions(mTargetPositions);
+        skel->setPositions(mRefPose);
         for (int i = 0; i < ees.size(); i++)
         {
             auto ee = ees[i];
@@ -1228,6 +1224,16 @@ double Environment::calcReward()
     }
 
     if (mCharacter->getActuatorType() == mus) r = 1.0;
+
+    if (mRewardConfig.clip_step > 0 && mSimulationStep < mRewardConfig.clip_step) {
+        double clip_bound = mRewardConfig.clip_value;
+        if (clip_bound == 0.0) {
+            r = 0.0;
+        } else {
+            if (r > clip_bound) r = clip_bound;
+            else if (r < -clip_bound) r = -clip_bound;
+        }
+    }
 
     // Always store total reward
     mInfoMap.insert(std::make_pair("r", r));
@@ -1684,18 +1690,18 @@ void Environment::reset(double phase)
 
     // Reset Initial Time
     double time = 0.0;
-    // if (phase >= 0.0 && phase <= 1.0) {
-    //     // Use specified phase (0.0 to 1.0)
-    //     time = phase * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    // }
-    // else if (mRewardType == deepmimic) {
-    //     time = dart::math::Random::uniform(1E-2, mMotion->getMaxTime() - 1E-2);
-    // }
-    // else if (mRewardType == gaitnet)
-    // {
-    //     time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
-    //     time *= (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    // }    
+    if (phase >= 0.0 && phase <= 1.0) {
+        // Use specified phase (0.0 to 1.0)
+        time = phase * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+    }
+    else if (mRewardType == deepmimic) {
+        time = dart::math::Random::uniform(1E-2, mMotion->getMaxTime() - 1E-2);
+    }
+    else if (mRewardType == gaitnet)
+    {
+        time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
+        time *= (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+    }    
     
     // Collision Detector Reset
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
@@ -1724,7 +1730,7 @@ void Environment::reset(double phase)
         mTargetVelocities.head(24) *= (mStride * (mCharacter->getGlobalRatio()));
     }
     
-    mCharacter->getSkeleton()->setPositions(mTargetPositions);
+    mCharacter->getSkeleton()->setPositions(mRefPose);
     mCharacter->getSkeleton()->setVelocities(mTargetVelocities);
 
     updateTargetPosAndVel();
@@ -1740,7 +1746,7 @@ void Environment::reset(double phase)
         Eigen::Vector3d ref_initial_vel = mTargetVelocities.segment(3, 3);
         ref_initial_vel = 
             FreeJoint::convertToTransform(mCharacter->getSkeleton()->getRootJoint()->getPositions()).linear().transpose() * 
-            (FreeJoint::convertToTransform(mTargetPositions.head(6)).linear() * ref_initial_vel);
+            (FreeJoint::convertToTransform(mRefPose.head(6)).linear() * ref_initial_vel);
         Eigen::Vector6d vel = mCharacter->getSkeleton()->getRootJoint()->getVelocities();
         vel.segment(3, 3) = ref_initial_vel;
         mCharacter->getSkeleton()->getRootJoint()->setVelocities(vel);
@@ -1756,7 +1762,7 @@ void Environment::reset(double phase)
     cur_pos = cur_pos.cwiseMax(rom_min).cwiseMin(rom_max);
     mCharacter->getSkeleton()->setPositions(cur_pos);
 
-    mCharacter->setPDTarget(mTargetPositions);
+    mCharacter->setPDTarget(mRefPose);
     mCharacter->setTorque(mCharacter->getTorque().setZero());
     if (mUseMuscle) {
         mCharacter->setActivations(mCharacter->getActivations().setZero());
@@ -2149,11 +2155,8 @@ Eigen::Vector2i Environment::getIsContact()
     const auto results = mWorld->getConstraintSolver()->getLastCollisionResult();
     for (auto bn : results.getCollidingBodyNodes())
     {
-        if (bn->getName() == "TalusL" || ((bn->getName() == "FootPinkyL" || bn->getName() == "FootThumbL")))
-            result[0] = 1;
-
-        if (bn->getName() == "TalusR" || ((bn->getName() == "FootPinkyR" || bn->getName() == "FootThumbR")))
-            result[1] = 1;
+        if (bn->getName() == "TalusL" || ((bn->getName() == "FootPinkyL" || bn->getName() == "FootThumbL"))) result[0] = 1;
+        if (bn->getName() == "TalusR" || ((bn->getName() == "FootPinkyR" || bn->getName() == "FootThumbR"))) result[1] = 1;
     }
     return result;
 }

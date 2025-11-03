@@ -1,6 +1,8 @@
 #include "DARTHelper.h"
 #include <tinyxml2.h>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 #include "Log.h"
 
 std::vector<std::string>
@@ -258,6 +260,72 @@ Trim(std::string str)
 	return str;
 }
 
+template <typename Derived>
+static std::string formatVector(const Eigen::MatrixBase<Derived> &vec)
+{
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(6) << "[";
+	for (int i = 0; i < vec.size(); ++i)
+	{
+		if (i > 0)
+			oss << ", ";
+		oss << vec(i);
+	}
+	oss << "]";
+	return oss.str();
+}
+
+static std::string formatMatrix3(const Eigen::Matrix3d &mat)
+{
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(6) << "[";
+	for (int r = 0; r < 3; ++r)
+	{
+		if (r > 0)
+			oss << "; ";
+		oss << "[";
+		for (int c = 0; c < 3; ++c)
+		{
+			if (c > 0)
+				oss << ", ";
+			oss << mat(r, c);
+		}
+		oss << "]";
+	}
+	oss << "]";
+	return oss.str();
+}
+
+static std::string formatIsometry(const Eigen::Isometry3d &T)
+{
+	std::ostringstream oss;
+	oss << "{t=" << formatVector(T.translation()) << ", R=" << formatMatrix3(T.linear()) << "}";
+	return oss.str();
+}
+
+static void logBodyNodeConfiguration(const dart::dynamics::BodyNode *bn)
+{
+	if (bn == nullptr)
+		return;
+
+	const auto *joint = bn->getParentJoint();
+	Eigen::Isometry3d world = bn->getWorldTransform();
+	std::string message = "[DARTHelper] Node '" + bn->getName() + "' world=" + formatIsometry(world);
+
+	if (joint != nullptr)
+	{
+		message += " parent_to_joint=" + formatIsometry(joint->getTransformFromParentBodyNode());
+		message += " child_to_joint=" + formatIsometry(joint->getTransformFromChildBodyNode());
+		message += " q=" + formatVector(joint->getPositions());
+	}
+	else
+	{
+		message += " (no parent joint)";
+	}
+
+	LOG_INFO(message);
+}
+
 // Forward declaration
 dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags);
 
@@ -485,6 +553,8 @@ dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 			T_obj = T_body.inverse();
 			vsn->setRelativeTransform(T_obj);
 		}
+
+		// logBodyNodeConfiguration(bn);
 	}
 	return skel;
 }
@@ -616,8 +686,8 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 			double damping = defaultDamping;
 			double friction = 0;
 			Eigen::Vector3d stiffness = Eigen::Vector3d::Zero(3);
-			if (joint["kv"]) {
-				damping = joint["kv"][0].as<double>();
+			if (joint["damping"]) {
+				damping = joint["damping"][0].as<double>();
 			}
 
 			props = MakeBallJointProperties(name, parent_to_joint, child_to_joint, lower, upper, damping, friction, stiffness);
@@ -629,8 +699,8 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 			double damping = defaultDamping;
 			double friction = 0;
 			double stiffness = 0;
-			if (joint["kv"]) {
-				damping = joint["kv"][0].as<double>();
+			if (joint["damping"]) {
+				damping = joint["damping"][0].as<double>();
 			}
 
 			props = MakeRevoluteJointProperties(name, axis, parent_to_joint, child_to_joint, lower, upper, damping, friction, stiffness);
@@ -664,6 +734,8 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 			Eigen::Isometry3d T_obj = T_body_world.inverse();
 			vsn->setRelativeTransform(T_obj);
 		}
+
+		// logBodyNodeConfiguration(bn);
 	}
 	return skel;
 }

@@ -208,6 +208,9 @@ public:
     std::string getDescription() const override;
     std::string getType() const override { return "export_muscles"; }
 
+    // Allow overriding filepath (e.g., from CLI)
+    void setFilepath(const std::string& filepath) { mFilepath = filepath; }
+
     static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
 
 private:
@@ -224,6 +227,9 @@ public:
     YAML::Node toYAML() const override;
     std::string getDescription() const override;
     std::string getType() const override { return "export_skeleton"; }
+
+    // Allow overriding filepath (e.g., from CLI)
+    void setFilepath(const std::string& filepath) { mFilepath = filepath; }
 
     static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
 

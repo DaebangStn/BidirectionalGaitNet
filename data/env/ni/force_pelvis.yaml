@@ -1,0 +1,27 @@
+# Noise Injection Configuration
+# This file defines disturbance parameters for training robust policies
+
+noise_injection:
+  # Master enable/disable
+  enabled: false
+
+  # Position Noise: Perturbs joint angles (additive)
+  position:
+    enabled: false
+    amplitude: 0.005  # radians - amount of angular perturbation per joint
+    frequency: 0.25   # Hz - Perlin noise frequency (higher = more rapid changes)
+    target_nodes: ["TalusR", "TalusL"]
+
+  # Force Noise: Applies external forces to body nodes
+  force:
+    enabled: true
+    amplitude: 50.0  # Newtons - magnitude of applied forces
+    frequency: 0.5   # Hz - Perlin noise frequency for force variation
+    target_nodes: ["Pelvis"]
+
+
+  # Activation Noise: Perturbs muscle activation levels
+  activation:
+    enabled: false
+    amplitude: 0.1   # 0-1 range - amount of activation perturbation (10% of full range)
+    frequency: 2.0   # Hz - Perlin noise frequency for activation variation

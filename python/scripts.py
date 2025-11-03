@@ -34,16 +34,17 @@ def viewer():
         print("Please build the project first with: ninja -C build/release", file=sys.stderr)
         sys.exit(1)
 
-    # Get checkpoint path from arguments, default to base checkpoint
+    # Get checkpoint path and additional arguments
     if len(sys.argv) > 1:
-        ckpt_path = sys.argv[1]
+        # Pass all arguments to the binary (checkpoint + any flags like -s, -m)
+        viewer_args = sys.argv[1:]
     else:
-        ckpt_path = "data/trained_nn/base_0928"
-        print(f"No checkpoint path provided, using default: {ckpt_path}")
+        viewer_args = ["data/trained_nn/base_0928"]
+        print(f"No checkpoint path provided, using default: {viewer_args[0]}")
 
     # Run the binary with micromamba environment (required for pybind11 dependencies)
     micromamba = get_micromamba_path()
-    cmd = [micromamba, "run", "-n", "bidir", str(binary_path), ckpt_path]
+    cmd = [micromamba, "run", "-n", "bidir", str(binary_path)] + viewer_args
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:

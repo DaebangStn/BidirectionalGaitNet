@@ -11,7 +11,7 @@ geometry:
 
 glfwapp:
   rollout:
-    count: 8
+    count: 15
   plot:
     title: true
     x_min: -3.3

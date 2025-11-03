@@ -8,6 +8,7 @@ find_package(GLUT REQUIRED)
 find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS gui)
 find_package(ezc3d CONFIG REQUIRED)
+find_package(Boost REQUIRED COMPONENTS program_options)
 
 add_executable(viewer
     "main.cpp"
@@ -30,4 +31,5 @@ target_link_libraries(viewer
         dart-gui
         ${HDF5_CXX_LIBRARIES}
         ezc3d
+        Boost::program_options
 )

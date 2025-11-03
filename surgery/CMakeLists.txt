@@ -2,6 +2,7 @@ add_compile_options(-fvisibility=hidden)
 
 find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS gui)
+find_package(Boost REQUIRED COMPONENTS program_options)
 
 # Surgery library - shared by physical_exam and surgery_tool
 add_library(surgery STATIC
@@ -42,6 +43,7 @@ target_link_libraries(surgery_tool
     sim
     dart
     yaml-cpp
+    Boost::program_options
 )
 
 # Physical Examination executable (standalone, no GLFWApp dependency)

@@ -12,8 +12,8 @@ struct Anchor
 
 	dart::dynamics::BodyNode *explicit_bodynode;
 
-	Anchor(std::vector<dart::dynamics::BodyNode *> bns, std::vector<Eigen::Vector3d> lps, std::vector<double> ws);
-	Eigen::Vector3d GetPoint();
+		Anchor(std::vector<dart::dynamics::BodyNode *> bns, std::vector<Eigen::Vector3d> lps, std::vector<double> ws);
+		Eigen::Vector3d GetPoint() const;
 };
 
 // Reference to a specific anchor in a specific muscle

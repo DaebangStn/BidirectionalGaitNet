@@ -1,0 +1,79 @@
+[Log] Level: INFO (3)
+[Override] Skeleton config: data/skeleton/test_exported.yaml
+Overriding skeleton config: data/skeleton/test_exported.yaml
+[DARTHelper] Ball Joint: FemurR Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusR Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurL Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusL Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Spine Lower: -0.25 -0.25 -0.25 Upper: 0.25 0.25 0.25 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Torso Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Neck Lower:  -0.1  -0.6 -0.05 Upper:  0.6  0.6 0.05 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Head Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderR Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmR Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandR Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderL Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmL Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandL Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurR Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusR Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurL Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusL Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Spine Lower: -0.25 -0.25 -0.25 Upper: 0.25 0.25 0.25 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Torso Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Neck Lower:  -0.1  -0.6 -0.05 Upper:  0.6  0.6 0.05 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Head Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderR Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmR Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandR Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderL Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmL Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandL Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurR Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusR Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurL Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusL Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Spine Lower: -0.25 -0.25 -0.25 Upper: 0.25 0.25 0.25 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Torso Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Neck Lower:  -0.1  -0.6 -0.05 Upper:  0.6  0.6 0.05 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Head Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderR Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmR Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandR Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderL Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmL Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandL Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurR Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusR Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurL Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusL Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Spine Lower: -0.25 -0.25 -0.25 Upper: 0.25 0.25 0.25 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Torso Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Neck Lower:  -0.1  -0.6 -0.05 Upper:  0.6  0.6 0.05 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Head Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderR Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmR Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandR Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderL Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmL Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandL Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurR Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusR Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: FemurL Lower: -1.6 -1.6 -1.6 Upper: 1.6 1.6 1.6 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: TalusL Lower: -0.8 -0.4 -0.4 Upper: 0.8 0.4 0.4 Damping: 10 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Spine Lower: -0.25 -0.25 -0.25 Upper: 0.25 0.25 0.25 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Torso Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 20 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Neck Lower:  -0.1  -0.6 -0.05 Upper:  0.6  0.6 0.05 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: Head Lower: -0.6 -0.6 -0.6 Upper: 0.6 0.6 0.6 Damping: 40 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderR Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmR Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandR Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ShoulderL Lower: -0.15 -0.05 -0.05 Upper: 0.15 0.05 0.05 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: ArmL Lower: -2 -2 -2 Upper: 2 2 2 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[DARTHelper] Ball Joint: HandL Lower: -0.7 -0.7 -0.7 Upper: 0.7 0.7 0.7 Damping: 1 Friction: 0 Stiffness: 0 0 0
+[GLFWApp] Initialized C3D reader with skeleton: data/skeleton/test_exported.yaml
+[C3D] Auto-loaded C3D motion: data/motion/c3d/Trimmed_walk11-Dynamic.c3d
+[C3D] Auto-loaded separate markers: data/motion/c3d/Trimmed_walk11-Dynamic.c3d
+[HDF Single] Loading 2 extracted HDF5 files...
+[BVH] Loading 2 BVH files into mMotions...
+[Motion] Found 2 HDF5 rollout files

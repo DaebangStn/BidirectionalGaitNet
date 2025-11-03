@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <cstring>
+#include <boost/program_options.hpp>
 #include "SurgeryExecutor.h"
 #include "SurgeryScript.h"
 #include "SurgeryOperation.h"
@@ -15,13 +16,13 @@ void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [options]" << std::endl;
     LOG_INFO("");
     std::cout << "Options:" << std::endl;
-    std::cout << "  --skeleton PATH    Path to skeleton XML file" << std::endl;
-    std::cout << "                     (default: " << DEFAULT_SKELETON << ")" << std::endl;
-    std::cout << "  --muscle PATH      Path to muscle XML file" << std::endl;
-    std::cout << "                     (default: " << DEFAULT_MUSCLE << ")" << std::endl;
-    std::cout << "  --script PATH      Path to surgery script YAML file" << std::endl;
-    std::cout << "                     (default: " << DEFAULT_SCRIPT << ")" << std::endl;
-    std::cout << "  --help, -h         Show this help message" << std::endl;
+    std::cout << "  --skeleton, -s PATH    Path to skeleton XML file" << std::endl;
+    std::cout << "                         (default: " << DEFAULT_SKELETON << ")" << std::endl;
+    std::cout << "  --muscle, -m PATH      Path to muscle XML file" << std::endl;
+    std::cout << "                         (default: " << DEFAULT_MUSCLE << ")" << std::endl;
+    std::cout << "  --script PATH          Path to surgery script YAML file" << std::endl;
+    std::cout << "                         (default: " << DEFAULT_SCRIPT << ")" << std::endl;
+    std::cout << "  --help, -h             Show this help message" << std::endl;
     LOG_INFO("");
     std::cout << "Examples:" << std::endl;
     std::cout << "  # Use all defaults" << std::endl;
@@ -57,40 +58,42 @@ int main(int argc, char** argv) {
     std::string muscle_path = DEFAULT_MUSCLE;
     std::string script_path = DEFAULT_SCRIPT;
 
-    // Parse command-line arguments
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        
-        if (arg == "--help" || arg == "-h") {
+    // Parse command-line arguments using Boost.Program_options
+    namespace po = boost::program_options;
+
+    po::options_description desc("Surgery Tool Options");
+    desc.add_options()
+        ("help,h", "Show this help message")
+        ("skeleton,s", po::value<std::string>(), "Path to skeleton XML file")
+        ("muscle,m", po::value<std::string>(), "Path to muscle XML file")
+        ("script", po::value<std::string>(), "Path to surgery script YAML file");
+
+    po::variables_map vm;
+    try {
+        po::store(po::parse_command_line(argc, argv, desc), vm);
+        po::notify(vm);
+
+        // Handle help
+        if (vm.count("help")) {
             printUsage(argv[0]);
             return 0;
-        } else if (arg == "--skeleton") {
-            if (i + 1 < argc) {
-                skeleton_path = argv[++i];
-            } else {
-                LOG_ERROR("Error: --skeleton requires a path argument");
-                return 1;
-            }
-        } else if (arg == "--muscle") {
-            if (i + 1 < argc) {
-                muscle_path = argv[++i];
-            } else {
-                LOG_ERROR("Error: --muscle requires a path argument");
-                return 1;
-            }
-        } else if (arg == "--script") {
-            if (i + 1 < argc) {
-                script_path = argv[++i];
-            } else {
-                LOG_ERROR("Error: --script requires a path argument");
-                return 1;
-            }
-        } else {
-            LOG_ERROR("Error: Unknown argument: " << arg);
-            LOG_INFO("");
-            printUsage(argv[0]);
-            return 1;
         }
+
+        // Get option values
+        if (vm.count("skeleton")) {
+            skeleton_path = vm["skeleton"].as<std::string>();
+        }
+        if (vm.count("muscle")) {
+            muscle_path = vm["muscle"].as<std::string>();
+        }
+        if (vm.count("script")) {
+            script_path = vm["script"].as<std::string>();
+        }
+
+    } catch (const po::error& e) {
+        LOG_ERROR("Argument parsing error: " << e.what());
+        std::cerr << desc << std::endl;
+        return 1;
     }
     
     // Convert relative data/ paths to @data/ format for URIResolver

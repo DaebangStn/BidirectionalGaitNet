@@ -57,7 +57,7 @@ Resets accumulation variables to 0. Also called by `clearLogs()`.
 
 ```cpp
 // Initialize character
-Character* character = new Character(skeleton_path, kp, kv, damping);
+Character* character = new Character(skeleton_path);
 character->setMuscles(muscle_path);
 character->cacheMuscleMass();  // Cache muscle masses
 

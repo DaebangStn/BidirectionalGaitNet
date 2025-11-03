@@ -428,7 +428,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     LOG_INFO("Loading skeleton: " << resolved_skel);
 
     // Create character
-    mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, false);
+    mCharacter = new Character(resolved_skel);
 
     // Load muscles if path is provided and mUseMuscle is true
     if (!muscle_path.empty() && mUseMuscle) {
@@ -4488,7 +4488,8 @@ void PhysicalExam::loadCameraPreset(int index) {
 const char* CAMERA_PRESET_DEFINITIONS[] = {
     "PRESET|Initial view|0,0.992519,2.97756|0,1,0|0.0119052,-0.723115,0.108916|1|0.823427,0.0367708,0.561259,0.0748684",
     "PRESET|Front Thigh view|0,0.431401,1.2942|0,1,0|-0.0612152,-0.655993,-0.0328963|1|0.81416,0.580639,0.0,0.0",
-    "PRESET|Back Thigh view|0,0.256203,0.768607|0,1,0|0.123724,-1.05037,-0.222596|1|0.0,0.0,0.593647,-0.803454",
+    // "PRESET|Back Thigh view|0,0.256203,0.768607|0,1,0|0.123724,-1.05037,-0.222596|1|0.0,0.0,0.593647,-0.803454",
+    "PRESET|Foot side view|0,0.564545,1.69364|0,1,0|-0.382306,-0.960299,-0.632363|1|0.767598,0.0,0.630236,0.11053",
 };
 
 void PhysicalExam::initializeCameraPresets() {

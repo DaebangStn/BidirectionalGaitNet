@@ -3,7 +3,15 @@
 #include "Log.h"
 #include <limits>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 #include <yaml-cpp/yaml.h>
+
+namespace {
+constexpr double kDefaultKp = 200.0;
+constexpr double kDefaultKv = 40.0;
+[[maybe_unused]] constexpr double kDefaultDamping = 0.1;
+}
 
 static std::map<std::string, int> skeletonAxis = {
     {"Pelvis", 1},
@@ -51,14 +59,184 @@ ActuatorType getActuatorType(std::string type) {
 
 static std::tuple<Eigen::Vector3d, double, double> UnfoldModifyInfo(const ModifyInfo &info)
 {
-    return std::make_tuple(Eigen::Vector3d(info[0], info[1], info[2]), info[3], info[4]);
+	return std::make_tuple(Eigen::Vector3d(info[0], info[1], info[2]), info[3], info[4]);
+}
+
+static std::string formatVector3d(const Eigen::Vector3d &vec)
+{
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(6)
+	    << "[" << vec[0] << ", " << vec[1] << ", " << vec[2] << "]";
+	return oss.str();
+}
+
+static std::string formatIndexVector(const std::vector<int> &indices)
+{
+	std::ostringstream oss;
+	oss << "[";
+	for (size_t i = 0; i < indices.size(); ++i)
+	{
+		if (i > 0)
+			oss << ", ";
+		oss << indices[i];
+	}
+	oss << "]";
+	return oss.str();
+}
+
+static std::string formatMuscleProperties(const Muscle *muscle)
+{
+	std::ostringstream oss;
+	oss << std::fixed << std::setprecision(6);
+	double muscleLength = muscle->lm_rel * muscle->lmt_ref;
+	double tendonLength = muscle->lt_rel * muscle->lmt_ref;
+	oss << "f0=" << muscle->f0
+	    << ", lmt=" << muscle->lmt
+	    << ", lm=" << muscleLength
+	    << ", lt=" << tendonLength
+	    << ", dofs=" << formatIndexVector(muscle->related_dof_indices);
+	return oss.str();
+}
+
+static void logMuscleProperties(const std::vector<Muscle *> &muscles, const std::string &label, bool sortByName)
+{
+	LOG_INFO("[Character] Muscle properties (" << label << ")");
+	if (muscles.empty())
+	{
+		LOG_INFO("  (no muscles)");
+		return;
+	}
+
+	std::vector<const Muscle *> ordered;
+	ordered.reserve(muscles.size());
+	for (const Muscle *muscle : muscles)
+	{
+		if (muscle != nullptr)
+			ordered.push_back(muscle);
+	}
+
+	if (sortByName)
+	{
+		std::sort(ordered.begin(), ordered.end(), [](const Muscle *a, const Muscle *b) {
+			return a->name < b->name;
+		});
+	}
+
+	for (const Muscle *muscle : ordered)
+	{
+		LOG_INFO("  " << muscle->name << ": " << formatMuscleProperties(muscle));
+	}
+}
+
+static void logMuscleAnchorsLocal(const std::vector<Muscle *> &muscles, const std::string &label, bool sortByName)
+{
+	LOG_INFO("[Character] Muscle anchor local positions (" << label << ")");
+	if (muscles.empty())
+	{
+		LOG_INFO("  (no muscles)");
+		return;
+	}
+
+	std::vector<const Muscle *> ordered;
+	ordered.reserve(muscles.size());
+	for (const Muscle *muscle : muscles)
+	{
+		if (muscle != nullptr)
+			ordered.push_back(muscle);
+	}
+
+	if (sortByName)
+	{
+		std::sort(ordered.begin(), ordered.end(), [](const Muscle *a, const Muscle *b) {
+			return a->name < b->name;
+		});
+	}
+
+	for (const Muscle *muscle : ordered)
+	{
+		std::ostringstream oss;
+			oss << "  " << muscle->name << ": ";
+
+			bool anyAnchor = false;
+			for (const Anchor *anchor : muscle->GetAnchors())
+			{
+			if (anchor == nullptr)
+				continue;
+			if (anyAnchor)
+				oss << " | ";
+			anyAnchor = true;
+			oss << "{";
+				for (size_t i = 0; i < anchor->local_positions.size(); ++i)
+				{
+					if (i > 0)
+						oss << ", ";
+					const dart::dynamics::BodyNode *bn = (i < anchor->bodynodes.size() ? anchor->bodynodes[i] : nullptr);
+					double weight = (i < anchor->weights.size() ? anchor->weights[i] : 0.0);
+					oss << (bn ? bn->getName() : "null") << ":" << formatVector3d(anchor->local_positions[i]) << " (w=" << weight << ")";
+				}
+				oss << "}";
+		}
+
+		if (!anyAnchor)
+			oss << "(no anchors)";
+
+		LOG_INFO(oss.str());
+	}
+}
+
+static void logMuscleAnchorsGlobal(const std::vector<Muscle *> &muscles, const std::string &label, bool sortByName)
+{
+	LOG_INFO("[Character] Muscle anchor global positions (" << label << ")");
+	if (muscles.empty())
+	{
+		LOG_INFO("  (no muscles)");
+		return;
+	}
+
+	std::vector<const Muscle *> ordered;
+	ordered.reserve(muscles.size());
+	for (const Muscle *muscle : muscles)
+	{
+		if (muscle != nullptr)
+			ordered.push_back(muscle);
+	}
+
+	if (sortByName)
+	{
+		std::sort(ordered.begin(), ordered.end(), [](const Muscle *a, const Muscle *b) {
+			return a->name < b->name;
+		});
+	}
+
+	for (const Muscle *muscle : ordered)
+	{
+		std::ostringstream oss;
+		oss << "  " << muscle->name << ": ";
+
+		bool anyAnchor = false;
+		for (const Anchor *anchor : muscle->GetAnchors())
+		{
+			if (anchor == nullptr)
+				continue;
+			if (anyAnchor)
+				oss << " | ";
+			anyAnchor = true;
+			Eigen::Vector3d point = anchor->GetPoint();
+			oss << formatVector3d(point);
+		}
+
+		if (!anyAnchor)
+			oss << "(no anchors)";
+
+		LOG_INFO(oss.str());
+	}
 }
 
 static Eigen::Isometry3d modifyIsometry3d(const Eigen::Isometry3d &iso, const ModifyInfo &info, int axis, bool rotate = true)
 {
-    Eigen::Vector3d l;
-    double s, t;
-    std::tie(l, s, t) = UnfoldModifyInfo(info);
+	Eigen::Vector3d l;
+	double s, t;
+	std::tie(l, s, t) = UnfoldModifyInfo(info);
     Eigen::Vector3d translation = iso.translation();
     translation = translation.cwiseProduct(l);
     translation *= s;
@@ -132,7 +310,7 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
     rtgBody->setInertia(inertia);
 }
 
-Character::Character(std::string path, double defaultKp, double defaultKv, double defaultDamping, bool collide_all)
+Character::Character(std::string path, bool collide_all)
 {
     mActuatorType = tor;
 
@@ -167,6 +345,7 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
     mTorqueWeight = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
 
     mActivations = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
+    mSortMuscleLogs = true;
 
     // Check if this is a YAML file (skip XML metadata parsing for YAML)
     bool isYAML = false;
@@ -177,58 +356,8 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
         isYAML = (ext == ".yaml" || ext == ".yml");
     }
 
-    if (!isYAML) {
-        TiXmlDocument doc;
-        doc.LoadFile(resolvedPath.c_str());
-        TiXmlElement *skel_elem = doc.FirstChildElement("Skeleton");
-
-        if (skel_elem == nullptr) {
-            LOG_ERROR("[Character] ERROR: Failed to parse XML skeleton file: " << resolvedPath);
-            throw std::runtime_error("Failed to parse XML skeleton file");
-        }
-
-        for (TiXmlElement *node = skel_elem->FirstChildElement("Node"); node != nullptr; node = node->NextSiblingElement("Node"))
-    {
-        if (node->Attribute("endeffector") != nullptr)
-        {
-            if (std::string(node->Attribute("endeffector")) == "True")
-                mEndEffectors.push_back(mSkeleton->getBodyNode(std::string(node->Attribute("name"))));
-        }
-        TiXmlElement *joint_elem = node->FirstChildElement("Joint");
-        int dof = mSkeleton->getJoint(node->Attribute("name"))->getNumDofs();
-
-        if (joint_elem->Attribute("bvh") != nullptr)
-        {
-            std::string bvh_str = joint_elem->Attribute("bvh");
-            auto bvh_list = split_string(bvh_str);
-            mBVHMap.insert(std::make_pair(node->Attribute("name"), bvh_list));
-        }
-        if (dof == 0) continue;
-
-        int idx = mSkeleton->getJoint(node->Attribute("name"))->getIndexInSkeleton(0);
-
-        // Set PD Parameter
-        if (joint_elem->Attribute("kp") != nullptr)
-        {
-            mKp.segment(idx, dof) = string_to_vectorXd(joint_elem->Attribute("kp"), dof);
-            if (joint_elem->Attribute("kv") != nullptr)
-                mKv.segment(idx, dof) = string_to_vectorXd(joint_elem->Attribute("kv"), dof);
-            else
-                for (int i = 0; i < dof; i++)
-                    // mKv[i] = sqrt(2 * mKp[i]);
-                    mKv[idx + i] = sqrt(2 * mKp[idx + i]);
-        }
-        else
-        {
-            mKp.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * defaultKp;
-            mKv.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * defaultKv;
-        }
-
-        // Set Torque Weight Parameters
-        if (joint_elem->Attribute("weight") != nullptr)
-            mTorqueWeight.segment(idx, dof) = string_to_vectorXd(joint_elem->Attribute("weight"), dof);
-    }
-    }  // end of else block for XML parsing
+    if (isYAML) parseSkeletonMetadataFromYAML(resolvedPath);
+    else parseSkeletonMetadataFromXML(resolvedPath);
 
     mKp.head(6).setZero();
     mKv.head(6).setZero();
@@ -299,6 +428,184 @@ Character::Character(std::string path, double defaultKp, double defaultKv, doubl
         modifyLog[bodynode] = ModifyInfo();
 
     mIncludeJtPinSPD = false;
+}
+
+void Character::parseSkeletonMetadataFromYAML(const std::string& resolvedPath)
+{
+    YAML::Node yaml_doc = YAML::LoadFile(resolvedPath);
+
+    if (!yaml_doc["skeleton"] || !yaml_doc["skeleton"]["nodes"]) {
+        return;
+    }
+
+    const YAML::Node& nodes = yaml_doc["skeleton"]["nodes"];
+    for (size_t i = 0; i < nodes.size(); i++) {
+        const YAML::Node& node = nodes[i];
+
+        if (!node["name"]) {
+            continue;
+        }
+        std::string node_name = node["name"].as<std::string>();
+
+        if (node["ee"] && node["ee"].as<bool>()) {
+            auto bn = mSkeleton->getBodyNode(node_name);
+            if (bn) {
+                mEndEffectors.push_back(bn);
+            }
+        }
+
+        if (node["body"]) {
+            const YAML::Node& body = node["body"];
+
+            if (body["contact"]) {
+                bool contact = body["contact"].as<bool>();
+                mContactFlags[node_name] = contact ? "On" : "Off";
+            }
+            if (body["obj"]) {
+                mObjFileLabels[node_name] = body["obj"].as<std::string>();
+            }
+        }
+
+        if (!node["joint"]) {
+            continue;
+        }
+
+        const YAML::Node& joint = node["joint"];
+
+        if (joint["bvh"]) {
+            if (joint["bvh"].IsSequence()) {
+                std::vector<std::string> bvh_list;
+                for (size_t j = 0; j < joint["bvh"].size(); j++) {
+                    bvh_list.push_back(joint["bvh"][j].as<std::string>());
+                }
+                mBVHMap[node_name] = bvh_list;
+            } else {
+                std::vector<std::string> bvh_list;
+                bvh_list.push_back(joint["bvh"].as<std::string>());
+                mBVHMap[node_name] = bvh_list;
+            }
+        }
+
+        auto jnt = mSkeleton->getJoint(node_name);
+        if (!jnt) {
+            continue;
+        }
+
+        int dof = jnt->getNumDofs();
+        if (dof <= 0) {
+            continue;
+        }
+
+        int idx = jnt->getIndexInSkeleton(0);
+
+        if (joint["kp"]) {
+            if (joint["kp"].IsSequence()) {
+                for (int d = 0; d < dof && d < static_cast<int>(joint["kp"].size()); d++) {
+                    mKp[idx + d] = joint["kp"][d].as<double>();
+                }
+            } else {
+                double kp_val = joint["kp"].as<double>();
+                mKp.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * kp_val;
+            }
+
+            if (joint["kv"]) {
+                if (joint["kv"].IsSequence()) {
+                    for (int d = 0; d < dof && d < static_cast<int>(joint["kv"].size()); d++) {
+                        mKv[idx + d] = joint["kv"][d].as<double>();
+                    }
+                } else {
+                    double kv_val = joint["kv"].as<double>();
+                    mKv.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * kv_val;
+                }
+            } else {
+                for (int d = 0; d < dof; d++) {
+                    mKv[idx + d] = sqrt(2 * mKp[idx + d]);
+                }
+            }
+        } else {
+            mKp.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * kDefaultKp;
+            mKv.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * kDefaultKv;
+        }
+
+        if (joint["weight"]) {
+            if (joint["weight"].IsSequence()) {
+                for (int d = 0; d < dof && d < static_cast<int>(joint["weight"].size()); d++) {
+                    mTorqueWeight[idx + d] = joint["weight"][d].as<double>();
+                }
+            } else {
+                double weight_val = joint["weight"].as<double>();
+                mTorqueWeight.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * weight_val;
+            }
+        }
+    }
+}
+
+void Character::parseSkeletonMetadataFromXML(const std::string& resolvedPath)
+{
+    TiXmlDocument doc;
+    doc.LoadFile(resolvedPath.c_str());
+    TiXmlElement *skel_elem = doc.FirstChildElement("Skeleton");
+
+    if (skel_elem == nullptr) {
+        LOG_ERROR("[Character] ERROR: Failed to parse XML skeleton file: " << resolvedPath);
+        throw std::runtime_error("Failed to parse XML skeleton file");
+    }
+
+    for (TiXmlElement *node = skel_elem->FirstChildElement("Node"); node != nullptr; node = node->NextSiblingElement("Node")) {
+        if (node->Attribute("endeffector") != nullptr) {
+            if (std::string(node->Attribute("endeffector")) == "True") {
+                mEndEffectors.push_back(mSkeleton->getBodyNode(std::string(node->Attribute("name"))));
+            }
+        }
+
+        TiXmlElement *body_elem = node->FirstChildElement("Body");
+        if (body_elem != nullptr) {
+            std::string node_name = std::string(node->Attribute("name"));
+
+            if (body_elem->Attribute("contact") != nullptr) {
+                mContactFlags[node_name] = std::string(body_elem->Attribute("contact"));
+            }
+            if (body_elem->Attribute("obj") != nullptr) {
+                mObjFileLabels[node_name] = std::string(body_elem->Attribute("obj"));
+            }
+        }
+
+        TiXmlElement *joint_elem = node->FirstChildElement("Joint");
+        if (!joint_elem) {
+            continue;
+        }
+
+        int dof = mSkeleton->getJoint(node->Attribute("name"))->getNumDofs();
+
+        if (joint_elem->Attribute("bvh") != nullptr) {
+            std::string bvh_str = joint_elem->Attribute("bvh");
+            auto bvh_list = split_string(bvh_str);
+            mBVHMap.insert(std::make_pair(node->Attribute("name"), bvh_list));
+        }
+        if (dof == 0) {
+            continue;
+        }
+
+        int idx = mSkeleton->getJoint(node->Attribute("name"))->getIndexInSkeleton(0);
+
+        if (joint_elem->Attribute("kp") != nullptr) {
+            mKp.segment(idx, dof) = string_to_vectorXd(joint_elem->Attribute("kp"), dof);
+            if (joint_elem->Attribute("kv") != nullptr) {
+                mKv.segment(idx, dof) = string_to_vectorXd(joint_elem->Attribute("kv"), dof);
+            } else {
+                for (int i = 0; i < dof; i++) {
+                    mKv[idx + i] = sqrt(2 * mKp[idx + i]);
+                }
+            }
+        } else {
+            mKp.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * kDefaultKp;
+            mKv.segment(idx, dof) = Eigen::VectorXd::Ones(dof) * kDefaultKv;
+        }
+
+        if (joint_elem->Attribute("weight") != nullptr) {
+            mTorqueWeight.segment(idx, dof) = string_to_vectorXd(joint_elem->Attribute("weight"), dof);
+        }
+    }
 }
 
 Character::~Character()
@@ -420,6 +727,8 @@ void Character::step()
             mMuscles[i]->UpdateGeometry();
             mMuscles[i]->ApplyForceToBody();
         }
+    	// logMuscleAnchorsGlobal(mMuscles, "XML", mSortMuscleLogs);
+
         muscleTorque = mSkeleton->getExternalForces() - muscleTorque;
         mMuscleTorqueLogs.push_back(muscleTorque);
 
@@ -694,11 +1003,15 @@ void Character::setMusclesXML(std::string path, bool useVelocityForce, bool mesh
 
     mActivations = Eigen::VectorXd::Zero(mMuscles.size());
 
-    // Build muscle name cache for fast lookup
-    mMuscleNameCache.clear();
-    for (auto muscle : mMuscles) {
-        mMuscleNameCache[muscle->name] = muscle;
-    }
+	// Build muscle name cache for fast lookup
+	mMuscleNameCache.clear();
+	for (auto muscle : mMuscles) {
+		mMuscleNameCache[muscle->name] = muscle;
+	}
+
+	// logMuscleProperties(mMuscles, "XML", mSortMuscleLogs);
+	// logMuscleAnchorsLocal(mMuscles, "XML", mSortMuscleLogs);
+	// logMuscleAnchorsGlobal(mMuscles, "XML", mSortMuscleLogs);
 }
 
 // Helper function to compute body node size for normalization
@@ -866,7 +1179,9 @@ void Character::setMusclesYAML(std::string path, bool useVelocityForce)
             mMuscleNameCache[muscle->name] = muscle;
         }
 
-        LOG_INFO("[Character] Loaded " << mMuscles.size() << " muscles from YAML: " << path);
+        // logMuscleProperties(mMuscles, "YAML", mSortMuscleLogs);
+        // logMuscleAnchorsLocal(mMuscles, "YAML", mSortMuscleLogs);
+        // logMuscleAnchorsGlobal(mMuscles, "YAML", mSortMuscleLogs);
 
     } catch (const YAML::Exception& e) {
         LOG_ERROR("[Character] YAML parsing error: " << e.what());

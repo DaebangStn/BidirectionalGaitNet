@@ -3,3 +3,5 @@ description: Test skeleton export - load base skeleton and export to verify roun
 operations:
   - type: export_skeleton
     filepath: data/skeleton/test_exported.xml
+  - type: export_muscles
+    filepath: data/muscle/test_exported.xml

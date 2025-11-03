@@ -131,7 +131,7 @@ struct PlaybackViewerState
     Eigen::Vector3d cycleDistance = Eigen::Vector3d::Zero();         ///< Pre-computed cycle distance (for cycle wrap accumulation)
     int lastFrameIdx = 0;                                            ///< Last evaluated frame index (for wrap detection)
     int maxFrameIndex = 0;                                           ///< Maximum frame index for this data
-    bool render = true;                                              ///< Whether to render this data
+    bool render = false;                                              ///< Whether to render this data
     PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;           ///< Playback mode (sync or manual frame selection)
     int manualFrameIndex = 0;                                        ///< Manual frame index when navigationMode == PLAYBACK_MANUAL_FRAME
 };
@@ -278,7 +278,6 @@ private:
     RolloutStatus mRolloutStatus;
 
     // Rendering Option
-    bool mDrawReferenceSkeleton;
     bool mDrawCharacter;
     bool mDrawPDTarget;
     bool mDrawJointSphere;
@@ -521,6 +520,10 @@ private:
 
     // Cached metadata path
     std::string mCachedMetadata;
+
+    // Override paths for skeleton and muscle config
+    std::string mSkeletonOverride;
+    std::string mMuscleOverride;
 
     // Helper methods for initEnv
     void loadNetworkFromPath(const std::string& path);

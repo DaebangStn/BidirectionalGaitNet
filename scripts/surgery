@@ -2,12 +2,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 cd "$PROJECT_ROOT"
 
-exec python -c "
-import sys
-sys.argv = ['surgery'] + sys.argv[1:]
-from python.scripts import surgery_tool
-surgery_tool()
-" "$@"
+# Call the surgery_tool binary directly using current shell environment
+exec build/release/surgery/surgery_tool "$@"

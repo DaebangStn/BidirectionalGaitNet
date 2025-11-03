@@ -75,7 +75,7 @@ public:
     // Motion reference
     Motion* getMotion() { return mEnv->getMotion(); }
     void setMotion(Motion* motion) { mEnv->setMotion(motion); }
-    Eigen::VectorXd getTargetPositions() { return mEnv->getTargetPositions(); }
+    Eigen::VectorXd getRefPose() { return mEnv->getRefPose(); }
 
     // Velocity and COM
     double getTargetCOMVelocity() { return mEnv->getTargetCOMVelocity(); }

@@ -1,11 +1,11 @@
 metadata:
   generator: "surgery-tool: intoe5.yaml"
-  timestamp: "2025-11-02 22:11:39"
+  timestamp: "2025-11-03 23:55:32"
   version: v1
   skeleton: "intoe5.yaml"
   muscle_from: "distribute_lower_only.xml"
-  git_commit: "92b27b8df51e237e1809f502bcf9f05b09d47365"
-  git_message: "dev: before single mMotion"
+  git_commit: "4d91e0b50c692e9865866ee9e427eaebe8cf4baf"
+  git_message: "bugfix: muscle yaml parsing error"
 
 muscles:
   - {name: L_Adductor_Brevis, f0: 151.85, lm: 0.95, lt: 0.20,

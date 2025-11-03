@@ -36,7 +36,7 @@ void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::str
     LOG_INFO("Loading muscle: " << resolved_muscle);
 
     // Create character
-    mCharacter = new Character(resolved_skel, 300.0, 40.0, 5.0, true);
+    mCharacter = new Character(resolved_skel, true);
 
     // Load muscles
     mCharacter->setMuscles(resolved_muscle);
@@ -1040,13 +1040,28 @@ std::string SurgeryExecutor::formatJointParams(dart::dynamics::Joint* joint, con
     oss << std::fixed << std::setprecision(1);
 
     size_t numDofs = joint->getNumDofs();
+    const Eigen::VectorXd* gains = nullptr;
+    if (mCharacter) {
+        if (param == "kp") {
+            gains = &mCharacter->getKpVector();
+        } else if (param == "kv") {
+            gains = &mCharacter->getKvVector();
+        }
+    }
+    Eigen::Index baseIndex =
+        (numDofs > 0 && joint->getSkeleton()) ? static_cast<Eigen::Index>(joint->getIndexInSkeleton(0)) : 0;
     for (size_t i = 0; i < numDofs; ++i) {
         if (i > 0) oss << " ";
-        if (param == "kp") {
-            oss << joint->getSpringStiffness(i);
+        double value = 0.0;
+        Eigen::Index gainIndex = baseIndex + static_cast<Eigen::Index>(i);
+        if (gains && gainIndex < gains->size()) {
+            value = (*gains)[gainIndex];
+        } else if (param == "kp") {
+            value = joint->getSpringStiffness(i);
         } else if (param == "kv") {
-            oss << joint->getDampingCoefficient(i);
+            value = joint->getDampingCoefficient(i);
         }
+        oss << value;
     }
     return oss.str();
 }
@@ -1057,14 +1072,29 @@ std::string SurgeryExecutor::formatJointParamsYAML(dart::dynamics::Joint* joint,
     oss << "[";
 
     size_t numDofs = joint->getNumDofs();
+    const Eigen::VectorXd* gains = nullptr;
+    if (mCharacter) {
+        if (param == "kp") {
+            gains = &mCharacter->getKpVector();
+        } else if (param == "kv") {
+            gains = &mCharacter->getKvVector();
+        }
+    }
+    Eigen::Index baseIndex =
+        (numDofs > 0 && joint->getSkeleton()) ? static_cast<Eigen::Index>(joint->getIndexInSkeleton(0)) : 0;
     for (size_t i = 0; i < numDofs; ++i) {
         if (i > 0) oss << ", ";
         oss << std::setw(5);
-        if (param == "kp") {
-            oss << joint->getSpringStiffness(i);
+        double value = 0.0;
+        Eigen::Index gainIndex = baseIndex + static_cast<Eigen::Index>(i);
+        if (gains && gainIndex < gains->size()) {
+            value = (*gains)[gainIndex];
+        } else if (param == "kp") {
+            value = joint->getSpringStiffness(i);
         } else if (param == "kv") {
-            oss << joint->getDampingCoefficient(i);
+            value = joint->getDampingCoefficient(i);
         }
+        oss << value;
     }
     oss << "]";
     return oss.str();
@@ -1109,119 +1139,6 @@ std::string SurgeryExecutor::formatVectorXdYAML(const Eigen::VectorXd& vec) {
     return oss.str();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Skeleton Metadata Preservation
-// ═══════════════════════════════════════════════════════════════════════════
-
-struct SkeletonMetadata {
-    std::map<std::string, std::string> joint_bvh_mappings;     // joint_name → bvh attribute
-    std::map<std::string, std::string> node_endeffector_flags; // node_name → "True"/"False"
-    std::map<std::string, Eigen::VectorXd> joint_kp_original;  // joint_name → kp values
-    std::map<std::string, Eigen::VectorXd> joint_kv_original;  // joint_name → kv values
-    std::map<std::string, std::string> body_contact_labels;    // node_name → "On"/"Off"
-    std::map<std::string, std::string> body_obj_files;         // node_name → "Pelvis.obj"
-};
-
-static SkeletonMetadata parseOriginalSkeletonMetadata(const std::string& xml_path) {
-    SkeletonMetadata metadata;
-
-    if (xml_path.empty()) {
-        return metadata;  // Empty metadata if no path
-    }
-
-    // Resolve URI before loading
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-    std::string resolved_path = resolver.resolve(xml_path);
-
-    // Parse XML with TinyXML2
-    TiXmlDocument doc;
-    if (doc.LoadFile(resolved_path.c_str()) != tinyxml2::XML_SUCCESS) {
-        LOG_WARN("[Surgery] Failed to load original skeleton XML for metadata: " << resolved_path);
-        return metadata;
-    }
-
-    TiXmlElement* skeleton_elem = doc.FirstChildElement("Skeleton");
-    if (!skeleton_elem) {
-        LOG_WARN("[Surgery] No <Skeleton> element found in: " << resolved_path);
-        return metadata;
-    }
-
-    // Iterate through all <Node> elements
-    for (TiXmlElement* node = skeleton_elem->FirstChildElement("Node");
-         node;
-         node = node->NextSiblingElement("Node")) {
-
-        const char* node_name = node->Attribute("name");
-        if (!node_name) continue;
-
-        // 1. Parse endeffector flag
-        const char* endeffector = node->Attribute("endeffector");
-        if (endeffector) {
-            metadata.node_endeffector_flags[node_name] = endeffector;
-        }
-
-        // 2. Parse Body metadata
-        TiXmlElement* body = node->FirstChildElement("Body");
-        if (body) {
-            const char* contact = body->Attribute("contact");
-            if (contact) {
-                metadata.body_contact_labels[node_name] = contact;
-            }
-
-            const char* obj = body->Attribute("obj");
-            if (obj) {
-                metadata.body_obj_files[node_name] = obj;
-            }
-        }
-
-        // 3. Parse Joint metadata
-        TiXmlElement* joint = node->FirstChildElement("Joint");
-        if (joint) {
-            const char* bvh = joint->Attribute("bvh");
-            if (bvh) {
-                metadata.joint_bvh_mappings[node_name] = bvh;
-            }
-
-            const char* kp_str = joint->Attribute("kp");
-            if (kp_str) {
-                std::istringstream iss(kp_str);
-                std::vector<double> kp_vals;
-                double val;
-                while (iss >> val) {
-                    kp_vals.push_back(val);
-                }
-                Eigen::VectorXd kp_vec(kp_vals.size());
-                for (size_t i = 0; i < kp_vals.size(); ++i) {
-                    kp_vec[i] = kp_vals[i];
-                }
-                metadata.joint_kp_original[node_name] = kp_vec;
-            }
-
-            const char* kv_str = joint->Attribute("kv");
-            if (kv_str) {
-                std::istringstream iss(kv_str);
-                std::vector<double> kv_vals;
-                double val;
-                while (iss >> val) {
-                    kv_vals.push_back(val);
-                }
-                Eigen::VectorXd kv_vec(kv_vals.size());
-                for (size_t i = 0; i < kv_vals.size(); ++i) {
-                    kv_vec[i] = kv_vals[i];
-                }
-                metadata.joint_kv_original[node_name] = kv_vec;
-            }
-        }
-    }
-
-    LOG_INFO("[Surgery] Loaded metadata from original skeleton XML: "
-             << metadata.joint_bvh_mappings.size() << " BVH mappings, "
-             << metadata.node_endeffector_flags.size() << " endeffector flags, "
-             << metadata.joint_kp_original.size() << " kp/kv values");
-
-    return metadata;
-}
 
 void SurgeryExecutor::exportSkeleton(const std::string& path) {
     if (!mCharacter) {
@@ -1276,8 +1193,11 @@ void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
     Eigen::VectorXd zero_positions = Eigen::VectorXd::Zero(skel->getNumDofs());
     skel->setPositions(zero_positions);
 
-    // Parse original XML for metadata preservation
-    SkeletonMetadata metadata = parseOriginalSkeletonMetadata(mSubjectSkeletonPath);
+    // Get metadata from Character instance (parsed during construction)
+    const auto& contactFlags = mCharacter->getContactFlags();
+    const auto& objFileLabels = mCharacter->getObjFileLabels();
+    const auto& bvhMap = mCharacter->getBVHMap();
+    const auto& endEffectors = mCharacter->getEndEffectors();
 
     // Write XML header
     ofs << "<!-- Exported skeleton configuration -->" << std::endl;
@@ -1294,8 +1214,9 @@ void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
         ofs << "    <Node name=\"" << nodeName << "\" parent=\"" << parentName << "\"";
 
         // PRESERVE: Endeffector flag from original XML
-        if (metadata.node_endeffector_flags.count(nodeName)) {
-            ofs << " endeffector=\"" << metadata.node_endeffector_flags.at(nodeName) << "\"";
+        bool isEndEffector = std::find(endEffectors.begin(), endEffectors.end(), bn) != endEffectors.end();
+        if (isEndEffector) {
+            ofs << " endeffector=\"True\"";
         }
 
         ofs << " >" << std::endl;
@@ -1324,15 +1245,15 @@ void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
 
             // PRESERVE: Contact label from original XML (not DART's default)
             std::string contact_label = "On";  // default
-            if (metadata.body_contact_labels.count(nodeName)) {
-                contact_label = metadata.body_contact_labels.at(nodeName);
+            if (contactFlags.count(nodeName)) {
+                contact_label = contactFlags.at(nodeName);
             }
             ofs << contact_label << "\" color=\""
                 << color[0] << " " << color[1] << " " << color[2] << " " << color[3] << "\"";
 
             // PRESERVE: obj filename from original XML
-            if (metadata.body_obj_files.count(nodeName)) {
-                ofs << " obj=\"" << metadata.body_obj_files.at(nodeName) << "\"";
+            if (objFileLabels.count(nodeName)) {
+                ofs << " obj=\"" << objFileLabels.at(nodeName) << "\"";
             } else if (auto meshShape = std::dynamic_pointer_cast<dart::dynamics::MeshShape>(shape)) {
                 // Fallback: try to get mesh URI from DART
                 std::string meshPath = meshShape->getMeshUri();
@@ -1363,8 +1284,14 @@ void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
             ofs << "        <Joint type=\"" << jointType << "\"";
 
             // PRESERVE: BVH mapping from original XML
-            if (metadata.joint_bvh_mappings.count(nodeName)) {
-                ofs << " bvh=\"" << metadata.joint_bvh_mappings.at(nodeName) << "\"";
+            if (bvhMap.count(nodeName)) {
+                const auto& bvhList = bvhMap.at(nodeName);
+                ofs << " bvh=\"";
+                for (size_t i = 0; i < bvhList.size(); ++i) {
+                    ofs << bvhList[i];
+                    if (i < bvhList.size() - 1) ofs << " ";
+                }
+                ofs << "\"";
             }
 
             // Add axis for Revolute/Prismatic joints
@@ -1381,28 +1308,29 @@ void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
                 ofs << " lower=\"" << formatJointLimits(joint, true) << "\"";
                 ofs << " upper=\"" << formatJointLimits(joint, false) << "\"";
 
-                // PRESERVE: Original kp/kv from XML (not DART's 0.0/5.0 defaults)
-                if (metadata.joint_kp_original.count(nodeName)) {
-                    ofs << " kp=\"" << formatVectorXd(metadata.joint_kp_original.at(nodeName)) << "\"";
-                } else {
-                    ofs << " kp=\"" << formatJointParams(joint, "kp") << "\"";
-                }
-
-                if (metadata.joint_kv_original.count(nodeName)) {
-                    ofs << " kv=\"" << formatVectorXd(metadata.joint_kv_original.at(nodeName)) << "\"";
-                } else {
-                    ofs << " kv=\"" << formatJointParams(joint, "kv") << "\"";
-                }
+                // Export kp/kv from DART (may differ from original XML if modified)
+                ofs << " kp=\"" << formatJointParams(joint, "kp") << "\"";
+                ofs << " kv=\"" << formatJointParams(joint, "kv") << "\"";
             }
 
             ofs << ">" << std::endl;
 
             // Joint Transformation
-            Eigen::Isometry3d jointTransform = joint->getTransformFromParentBodyNode();
+            // Get local transform from parent body frame
+            Eigen::Isometry3d localTransform = joint->getTransformFromParentBodyNode();
+
+            // Compute global transform by combining with parent body's global transform
+            Eigen::Isometry3d globalTransform = localTransform;
+            if (parent) {
+                // Multiply parent body's global transform with joint's local transform
+                Eigen::Isometry3d parentGlobalTransform = parent->getWorldTransform();
+                globalTransform = parentGlobalTransform * localTransform;
+            }
+
             ofs << "            <Transformation linear=\""
-                << formatRotationMatrix(jointTransform.linear())
+                << formatRotationMatrix(globalTransform.linear())
                 << "\" translation=\""
-                << formatVector3d(jointTransform.translation()) << "\"/>" << std::endl;
+                << formatVector3d(globalTransform.translation()) << "\"/>" << std::endl;
 
             ofs << "        </Joint>" << std::endl;
         }
@@ -1445,8 +1373,11 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
     Eigen::VectorXd zero_positions = Eigen::VectorXd::Zero(skel->getNumDofs());
     skel->setPositions(zero_positions);
 
-    // Parse original XML for metadata preservation
-    SkeletonMetadata metadata = parseOriginalSkeletonMetadata(mSubjectSkeletonPath);
+    // Get metadata from Character instance (parsed during construction)
+    const auto& contactFlags = mCharacter->getContactFlags();
+    const auto& objFileLabels = mCharacter->getObjFileLabels();
+    const auto& bvhMap = mCharacter->getBVHMap();
+    const auto& endEffectors = mCharacter->getEndEffectors();
 
     // Write metadata section
     auto [git_hash, git_message] = getGitInfo();
@@ -1479,8 +1410,9 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
         ofs << "    - {name: " << nodeName << ", parent: " << parentName;
 
         // PRESERVE: Endeffector flag from original XML
-        if (metadata.node_endeffector_flags.count(nodeName)) {
-            ofs << ", ee: " << metadata.node_endeffector_flags.at(nodeName);
+        bool isEndEffector = std::find(endEffectors.begin(), endEffectors.end(), bn) != endEffectors.end();
+        if (isEndEffector) {
+            ofs << ", ee: True";
         } else {
             ofs << ", ee: false";
         }
@@ -1501,8 +1433,8 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
 
             // PRESERVE: Contact label from original XML
             std::string contact_label = "On";
-            if (metadata.body_contact_labels.count(nodeName)) {
-                contact_label = metadata.body_contact_labels.at(nodeName);
+            if (contactFlags.count(nodeName)) {
+                contact_label = contactFlags.at(nodeName);
             }
             bool contact_bool = (contact_label != "Off");
 
@@ -1512,8 +1444,8 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
                 << ", contact: " << (contact_bool ? "true" : "false");
 
             // PRESERVE: obj filename from original XML
-            if (metadata.body_obj_files.count(nodeName)) {
-                ofs << ", obj: \"" << metadata.body_obj_files.at(nodeName) << "\"";
+            if (objFileLabels.count(nodeName)) {
+                ofs << ", obj: \"" << objFileLabels.at(nodeName) << "\"";
             } else if (auto meshShape = std::dynamic_pointer_cast<dart::dynamics::MeshShape>(shape)) {
                 std::string meshPath = meshShape->getMeshUri();
                 if (!meshPath.empty()) {
@@ -1536,8 +1468,13 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
             ofs << ", " << std::endl << std::endl << "       joint: {type: " << jointType;
 
             // PRESERVE: BVH mapping from original XML
-            if (metadata.joint_bvh_mappings.count(nodeName)) {
-                ofs << ", bvh: " << metadata.joint_bvh_mappings.at(nodeName);
+            if (bvhMap.count(nodeName)) {
+                const auto& bvhList = bvhMap.at(nodeName);
+                ofs << ", bvh: ";
+                for (size_t i = 0; i < bvhList.size(); ++i) {
+                    ofs << bvhList[i];
+                    if (i < bvhList.size() - 1) ofs << " ";
+                }
             }
 
             // Add axis for Revolute/Prismatic joints
@@ -1552,20 +1489,11 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
             // Add joint limits for non-Free joints
             if (jointType != "Free" && joint->getNumDofs() > 0) {
                 ofs << ", " << std::endl << "       lower: " << formatJointLimitsYAML(joint, true);
-                ofs << ", upper: " << formatJointLimitsYAML(joint, false);
+                ofs << "," << " upper: " << formatJointLimitsYAML(joint, false);
 
-                // PRESERVE: Original kp/kv from XML
-                if (metadata.joint_kp_original.count(nodeName)) {
-                    ofs << ", kp: " << formatVectorXdYAML(metadata.joint_kp_original.at(nodeName));
-                } else {
-                    ofs << ", kp: " << formatJointParamsYAML(joint, "kp");
-                }
-
-                if (metadata.joint_kv_original.count(nodeName)) {
-                    ofs << ", kv: " << formatVectorXdYAML(metadata.joint_kv_original.at(nodeName));
-                } else {
-                    ofs << ", kv: " << formatJointParamsYAML(joint, "kv");
-                }
+                // Export kp/kv from DART (may differ from original XML if modified)
+                ofs << "," << std::endl << "       kp: " << formatJointParamsYAML(joint, "kp");
+                ofs << "," << " kv: " << formatJointParamsYAML(joint, "kv");
             }
 
             // Joint Transformation (local: relative to parent body frame)
@@ -2178,4 +2106,3 @@ std::string SurgeryExecutor::getMuscleBaseName() const {
 }
 
 } // namespace PMuscle
-

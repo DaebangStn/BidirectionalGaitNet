@@ -70,6 +70,16 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("sway_Foot_Lx", footLx);
     }
 
+    if (mGraphData->key_exists("sway_Toe_Ry")) {
+        const double toeRy = skel->getBodyNode("FootThumbR")->getCOM()[1];
+        mGraphData->push("sway_Toe_Ry", toeRy);
+    }
+
+    if (mGraphData->key_exists("sway_Toe_Ly")) {
+        const double toeLy = skel->getBodyNode("FootThumbL")->getCOM()[1];
+        mGraphData->push("sway_Toe_Ly", toeLy);
+    }
+
     if (mGraphData->key_exists("sway_Torso_X")) {
         const double root_x = skel->getRootBodyNode()->getCOM()[0];
         const double torsoX = skel->getBodyNode("Torso")->getCOM()[0] - root_x;

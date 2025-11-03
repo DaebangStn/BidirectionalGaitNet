@@ -58,11 +58,15 @@ struct MuscleTuple
 class Character
 {
 public:
-    Character(std::string path, double defaultKp, double defaultKv, double defaultDamping, bool collide_all = false);
+    Character(std::string path, bool collide_all = false);
     ~Character();
 
     dart::dynamics::SkeletonPtr getSkeleton() { return mSkeleton; }
     std::map<std::string, std::vector<std::string>> getBVHMap() { return mBVHMap; }
+
+    // Skeleton metadata accessors (for export)
+    const std::map<std::string, std::string>& getContactFlags() const { return mContactFlags; }
+    const std::map<std::string, std::string>& getObjFileLabels() const { return mObjFileLabels; }
 
     // For Mirror Function
 
@@ -89,12 +93,15 @@ public:
     ActuatorType getActuatorType() { return mActuatorType; }
 
     std::vector<dart::dynamics::BodyNode *> getEndEffectors() { return mEndEffectors; }
+    const Eigen::VectorXd& getKpVector() const { return mKp; }
+    const Eigen::VectorXd& getKvVector() const { return mKv; }
 
     Eigen::VectorXd heightCalibration(dart::simulation::WorldPtr _world);
     std::vector<Eigen::Matrix3d> getBodyNodeTransform() { return mBodyNodeTransform; }
     void setMuscles(std::string path, bool useVelocityForce = false, bool meshLbsWeight = false);
     void setMusclesXML(std::string path, bool useVelocityForce, bool meshLbsWeight);
     void setMusclesYAML(std::string path, bool useVelocityForce);
+    void setSortMuscleLogging(bool enable) { mSortMuscleLogs = enable; }
     void clearMuscles();
     const std::vector<Muscle *> &getMuscles() { return mMuscles; }
     Muscle* getMuscleByName(const std::string& name) const;
@@ -188,6 +195,9 @@ private:
     double calculateKneeLoadingStep(bool isLeft = false);
     bool mTorqueClipping;
 
+    void parseSkeletonMetadataFromYAML(const std::string& resolvedPath);
+    void parseSkeletonMetadataFromXML(const std::string& resolvedPath);
+
     dart::dynamics::SkeletonPtr mSkeleton;
     dart::dynamics::SkeletonPtr mRefSkeleton;
 
@@ -197,6 +207,11 @@ private:
 
     std::vector<dart::dynamics::BodyNode *> mEndEffectors;
     std::map<std::string, std::vector<std::string>> mBVHMap;
+
+    // Skeleton metadata (parsed once during construction, immutable)
+    std::map<std::string, std::string> mContactFlags;   // body_node → "On"/"Off"
+    std::map<std::string, std::string> mObjFileLabels;  // body_node → "mesh.obj"
+
     std::vector<std::pair<Joint *, Joint *>> mPairs;
     std::vector<Eigen::Matrix3d> mBodyNodeTransform;
 
@@ -213,6 +228,7 @@ private:
 
     int mNumMuscleRelatedDof;
     Eigen::VectorXd mActivations;
+    bool mSortMuscleLogs;
 
     // Step-Based Metrics Tracking System
     double mStepDivisor;            // Unified divisor for all step-based metrics

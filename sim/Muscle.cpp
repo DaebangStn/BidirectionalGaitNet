@@ -16,7 +16,7 @@ Anchor::Anchor(std::vector<BodyNode *> bns, std::vector<Eigen::Vector3d> lps, st
 {
 }
 
-Eigen::Vector3d Anchor::GetPoint()
+Eigen::Vector3d Anchor::GetPoint() const
 {
     Eigen::Vector3d p;
     p.setZero();

@@ -1,11 +1,11 @@
 metadata:
   generator: "surgery-tool: intoe17.yaml"
-  timestamp: "2025-11-02 11:04:30"
+  timestamp: "2025-11-03 23:57:33"
   version: v1
   skeleton: "intoe17.yaml"
   muscle_from: "distribute_lower_only.xml"
-  git_commit: "11119ec6e816a33dfe4eb35ce495929b107c83d6"
-  git_message: "bugfix: path resolve for the surgery expoprt"
+  git_commit: "b86e4063e54d5545ab1916137d142cb759c1a995"
+  git_message: "config"
 
 muscles:
   - {name: L_Adductor_Brevis, f0: 151.85, lm: 0.95, lt: 0.20,

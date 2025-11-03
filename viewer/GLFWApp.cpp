@@ -17,6 +17,7 @@
 #include "HDF.h"
 #include "C3DMotion.h"
 #include "Log.h"
+#include <boost/program_options.hpp>
 
 namespace fs = std::filesystem;
 
@@ -101,7 +102,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mDrawOBJ = true;
 
     // Rendering Option
-    mDrawReferenceSkeleton = false;
     mDrawCharacter = true;
     mDrawPDTarget = false;
     mDrawJointSphere = false;
@@ -150,6 +150,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // mGraphData->register_key("sway_Torso_X", 500);
     mGraphData->register_key("sway_Foot_Rx", 1000);
     mGraphData->register_key("sway_Foot_Lx", 1000);
+    mGraphData->register_key("sway_Toe_Ry", 1000);
+    mGraphData->register_key("sway_Toe_Ly", 1000);
     mGraphData->register_key("angle_HipR", 1000);
     mGraphData->register_key("angle_HipIRR", 1000);
     mGraphData->register_key("angle_HipAbR", 1000);
@@ -205,10 +207,53 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Initialize motion load mode with default value
     mMotionLoadMode = "hdf5";  // Default: load both NPZ and HDF5
 
-    if (argc > 1)
-    {
-        std::string path = std::string(argv[1]);
-        mNetworkPaths.push_back(path);
+    // Parse command-line arguments using Boost.Program_options
+    namespace po = boost::program_options;
+
+    po::options_description desc("Viewer Options");
+    desc.add_options()
+        ("skeleton,s", po::value<std::string>(), "Override skeleton config path")
+        ("muscle,m", po::value<std::string>(), "Override muscle config path")
+        ("checkpoint", po::value<std::string>(), "Checkpoint or metadata path");
+
+    po::variables_map vm;
+    try {
+        // Parse known args, allow positional for checkpoint
+        po::positional_options_description p;
+        p.add("checkpoint", 1);
+
+        po::store(po::command_line_parser(argc, argv)
+                     .options(desc)
+                     .positional(p)
+                     .allow_unregistered()
+                     .run(), vm);
+        po::notify(vm);
+
+        // Store override paths
+        if (vm.count("skeleton")) {
+            mSkeletonOverride = vm["skeleton"].as<std::string>();
+            LOG_INFO("[Override] Skeleton config: " << mSkeletonOverride);
+        }
+        if (vm.count("muscle")) {
+            mMuscleOverride = vm["muscle"].as<std::string>();
+            LOG_INFO("[Override] Muscle config: " << mMuscleOverride);
+        }
+
+        // Store checkpoint/metadata path
+        if (vm.count("checkpoint")) {
+            std::string path = vm["checkpoint"].as<std::string>();
+            mNetworkPaths.push_back(path);
+        } else if (argc > 1) {
+            // Fallback: treat first arg as checkpoint if not parsed
+            std::string path = std::string(argv[1]);
+            if (path != "--skeleton" && path != "--muscle") {
+                mNetworkPaths.push_back(path);
+            }
+        }
+    } catch (const po::error& e) {
+        LOG_ERROR("Argument parsing error: " << e.what());
+        std::cerr << desc << std::endl;
+        exit(EXIT_FAILURE);
     }
 
     // GLFW Initialization
@@ -1069,8 +1114,62 @@ void GLFWApp::initEnv(std::string metadata)
         delete mRenderEnv;
         mRenderEnv = nullptr;
     }
-    // Create RenderEnvironment wrapper
-    mRenderEnv = new RenderEnvironment(metadata, mGraphData);
+
+    // Apply skeleton and muscle overrides if specified
+    std::string modified_metadata = metadata;
+    if (!mSkeletonOverride.empty() || !mMuscleOverride.empty()) {
+        // Detect format
+        size_t start = metadata.find_first_not_of(" \t\n\r");
+        if (start != std::string::npos && metadata[start] == '<') {
+            // XML format - modify the skeleton/muscle paths using tinyxml2
+            TiXmlDocument doc;
+            doc.Parse(metadata.c_str());
+
+            if (!mSkeletonOverride.empty()) {
+                TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
+                if (skel_elem) {
+                    skel_elem->SetText(mSkeletonOverride.c_str());
+                    LOG_INFO("Overriding skeleton config: " << mSkeletonOverride);
+                }
+            }
+
+            if (!mMuscleOverride.empty()) {
+                TiXmlElement* muscle_elem = doc.FirstChildElement("muscle");
+                if (muscle_elem) {
+                    muscle_elem->SetText(mMuscleOverride.c_str());
+                    LOG_INFO("Overriding muscle config: " << mMuscleOverride);
+                }
+            }
+
+            tinyxml2::XMLPrinter printer;
+            doc.Print(&printer);
+            modified_metadata = printer.CStr();
+        } else {
+            // YAML format - modify the skeleton/muscle paths
+            YAML::Node config = YAML::Load(metadata);
+
+            if (!mSkeletonOverride.empty()) {
+                if (!config["environment"]) config["environment"] = YAML::Node();
+                if (!config["environment"]["skeleton"]) config["environment"]["skeleton"] = YAML::Node();
+                config["environment"]["skeleton"]["file"] = mSkeletonOverride;
+                LOG_INFO("Overriding skeleton config: " << mSkeletonOverride);
+            }
+
+            if (!mMuscleOverride.empty()) {
+                if (!config["environment"]) config["environment"] = YAML::Node();
+                if (!config["environment"]["muscle"]) config["environment"]["muscle"] = YAML::Node();
+                config["environment"]["muscle"]["file"] = mMuscleOverride;
+                LOG_INFO("Overriding muscle config: " << mMuscleOverride);
+            }
+
+            YAML::Emitter emitter;
+            emitter << config;
+            modified_metadata = emitter.c_str();
+        }
+    }
+
+    // Create RenderEnvironment wrapper with potentially modified metadata
+    mRenderEnv = new RenderEnvironment(modified_metadata, mGraphData);
     if (!mMotionCharacter)
     {
         for (const auto& muscle: mRenderEnv->getCharacter()->getMuscles()) {
@@ -1083,27 +1182,28 @@ void GLFWApp::initEnv(std::string metadata)
             }
         }
 
+        // Use modified_metadata (with overrides) to extract skeleton path
         // Detect format by examining first non-whitespace character
-        size_t start = metadata.find_first_not_of(" \t\n\r");
-        if (start != std::string::npos && metadata[start] == '<') {
+        size_t start = modified_metadata.find_first_not_of(" \t\n\r");
+        if (start != std::string::npos && modified_metadata[start] == '<') {
             // XML format - extract skeleton path
             TiXmlDocument doc;
-            doc.Parse(metadata.c_str());
+            doc.Parse(modified_metadata.c_str());
             TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
             if (skel_elem) {
                 mSkeletonPath = Trim(std::string(skel_elem->GetText()));
-                mMotionCharacter = new Character(mSkeletonPath, 0, 0, 0);
+                mMotionCharacter = new Character(mSkeletonPath);
             } else {
                 std::cerr << "No skeleton path found in XML metadata" << std::endl;
                 exit(-1);
             }
         } else {
             // YAML format - extract skeleton path
-            YAML::Node config = YAML::Load(metadata);
+            YAML::Node config = YAML::Load(modified_metadata);
             if (config["environment"] && config["environment"]["skeleton"]) {
                 std::string skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
                 mSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skelPath);
-                mMotionCharacter = new Character(mSkeletonPath, 0, 0, 0);
+                mMotionCharacter = new Character(mSkeletonPath);
             } else {
                 std::cerr << "No skeleton path found in YAML metadata" << std::endl;
                 exit(-1);
@@ -2191,6 +2291,9 @@ void GLFWApp::drawSimVisualizationPanel()
     if (ImGui::CollapsingHeader("Kinematics"))
     {
         static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway
+        static bool stats = true;
+        ImGui::Checkbox("Stats##KinematicsStats", &stats);
+
         ImGui::RadioButton("Major##MajorJointsRadio", &angle_selection, 0);
         ImGui::SameLine();
         ImGui::RadioButton("Minor##MinorJointsRadio", &angle_selection, 1);
@@ -2210,7 +2313,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> jointKeys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
-                plotGraphData(jointKeys, ImAxis_Y1, true, false, "");
+                plotGraphData(jointKeys, ImAxis_Y1, true, false, "", stats);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2233,7 +2336,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> jointKeys = {"angle_HipIRR", "angle_HipAbR"};
-                plotGraphData(jointKeys, ImAxis_Y1, true, false, "");
+                plotGraphData(jointKeys, ImAxis_Y1, true, false, "", stats);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2254,7 +2357,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
-                plotGraphData(pelvisKeys, ImAxis_Y1, true, false, "");
+                plotGraphData(pelvisKeys, ImAxis_Y1, true, false, "", stats);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2265,6 +2368,13 @@ void GLFWApp::drawSimVisualizationPanel()
         }
 
         if (angle_selection == 3) { // Foot sway
+            static int sway_side_selection = 2; // 0=Right, 1=Left, 2=Both
+            ImGui::RadioButton("Right##FootSwayRight", &sway_side_selection, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Left##FootSwayLeft", &sway_side_selection, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("Both##FootSwayBoth", &sway_side_selection, 2);
+
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(0, -1.5, 0);
             ImPlot::SetNextAxisLimits(3, -0.2, 0.2);
@@ -2274,8 +2384,11 @@ void GLFWApp::drawSimVisualizationPanel()
             {
                 ImPlot::SetupAxes("Time (s)", "Sway (m)");
 
-                std::vector<std::string> swayKeys = {"sway_Foot_Rx", "sway_Foot_Lx"};
-                plotGraphData(swayKeys, ImAxis_Y1, true, false, "");
+                std::vector<std::string> swayKeys;
+                if (sway_side_selection == 0) swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry"};
+                else if (sway_side_selection == 1) swayKeys = {"sway_Foot_Lx", "sway_Toe_Ly"};
+                else swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry", "sway_Foot_Lx", "sway_Toe_Ly"};
+                plotGraphData(swayKeys, ImAxis_Y1, true, false, "", stats);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -3211,8 +3324,6 @@ void GLFWApp::drawSimControlPanel()
             ImGuiFileDialog::Instance()->OpenDialog("ChooseRefMotionDlgKey", "Choose Reference Motion File",
                 ".*", config);
         }
-        ImGui::Checkbox("Draw Reference Motion", &mDrawReferenceSkeleton);
-            
         // File dialog display and handling
         if (ImGuiFileDialog::Instance()->Display("ChooseRefMotionDlgKey"))
         {
@@ -3268,7 +3379,7 @@ void GLFWApp::drawSimControlPanel()
             ImGuiFileDialog::Instance()->Close();
         }
 
-        ImGui::Checkbox("Draw PD Target Motion", &mDrawPDTarget);
+        ImGui::Checkbox("Use PD Target Motion", &mDrawPDTarget);
         ImGui::Checkbox("Draw Joint Sphere", &mDrawJointSphere);
         ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
         ImGui::Checkbox("Draw Foot Step", &mDrawFootStep);
@@ -3927,9 +4038,12 @@ void GLFWApp::drawSimFrame()
                 GUI::DrawSphere(jn_pos, 0.1);
             }
         }
-        if (mDrawReferenceSkeleton && !mRenderConditions)
+        if (!mRenderConditions && mDrawPDTarget)
         {
-            Eigen::VectorXd pos = (mDrawPDTarget ? mRenderEnv->getCharacter()->getPDTarget() : mRenderEnv->getTargetPositions());
+            const auto& character = mRenderEnv->getCharacter();
+            Eigen::VectorXd pos = character->getPDTarget();
+            pos.head(6) = character->getSkeleton()->getPositions().head(6);
+            pos[5] += 1.0;
             drawSkeleton(pos, Eigen::Vector4d(1.0, 0.35, 0.35, 1.0));
         }
         if (mDrawEOE)
@@ -4554,7 +4668,7 @@ double GLFWApp::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pos
 
     return height_offset;
 }
-
+ 
 void GLFWApp::setMotion(Motion* motion)
 {
     // Delete old motion and assign new one
@@ -4568,9 +4682,7 @@ void GLFWApp::setMotion(Motion* motion)
         mMotionState.currentPose.resize(0);
         mMotionState.displayOffset.setZero();
         mMotionState.displayOffset[0] = 1.0;
-        mMotionState.navigationMode = PLAYBACK_SYNC;
         mMotionState.manualFrameIndex = 0;
-        mMotionState.render = true;
     }
 }
 
@@ -4894,7 +5006,7 @@ void GLFWApp::setCamera()
         }
         else if (mFocus == 2)
         {
-            mTrans = -mRenderEnv->getTargetPositions().segment(3, 3); //-mRenderEnv->getCharacter()->getSkeleton()->getCOM();
+            mTrans = -mRenderEnv->getRefPose().segment(3, 3);
             mTrans[1] = -1;
             mTrans *= 1000;
         }

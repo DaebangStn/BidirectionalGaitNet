@@ -79,6 +79,10 @@ struct RewardConfig
     double head_rot_weight = 4.0;
     double step_weight = 2.0;
     double avg_vel_weight = 6.0;
+
+    // Reward clipping for initial simulation steps
+    int clip_step = 0;
+    double clip_value = 0.0;
 };
 
 enum EOEType
@@ -99,7 +103,7 @@ public:
     void initialize_xml(std::string xml_content);  // Backward compatibility: XML content
 
     // Simulation environment configuration
-    void addCharacter(std::string path, double kp, double kv, double damping, bool collide_all = false);
+    void addCharacter(std::string path, bool collide_all = false);
     void addObject(std::string path = nullptr);
 
     Character *getCharacter() { return mCharacter; }
@@ -127,7 +131,7 @@ public:
 
     void updateTargetPosAndVel(bool isInit = false);
 
-    Eigen::VectorXd getTargetPositions() { return mTargetPositions; }
+    Eigen::VectorXd getRefPose() { return mRefPose; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }
 
     double getLocalPhase(bool mod_one = false, int character_idx = 0) { return (mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
@@ -362,7 +366,7 @@ private:
     void checkTerminated();
     void checkTruncated();
 
-    Eigen::VectorXd mTargetPositions;
+    Eigen::VectorXd mRefPose;
     Eigen::VectorXd mTargetVelocities;
     double mActionScale;
 
