@@ -1,10 +1,10 @@
 metadata:
-  generator: "surgery-tool: skeleton_export.yaml"
-  timestamp: "2025-10-31 17:43:53"
+  generator: "surgery-tool: both_export.yaml"
+  timestamp: "2025-11-03 10:17:51"
   version: v1
   skeleton_from: "base.xml"
-  git_commit: "0329b05b066c4c588c436b53cf8e9e169b7df318"
-  git_message: "feat: export skeleton in yaml"
+  git_commit: "79939bd79db164f32f0f083a5dd2cf68694bf141"
+  git_message: "dev: motion list"
 
 skeleton:
   name: "Human"

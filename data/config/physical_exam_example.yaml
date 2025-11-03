@@ -6,9 +6,9 @@ description: "Example exam showing inline and referenced trial definitions"
 
 character:
   # skeleton: "@data/skeleton/base.xml"
-  skeleton: "@data/skeleton/intoe17.yaml"
+  skeleton: "@data/skeleton/intoe5.yaml"
   # muscle: "@data/muscle/distribute_lower_only.xml"
-  muscle: "@data/muscle/intoe17.yaml"
+  muscle: "@data/muscle/intoe5.yaml"
   use_muscle: true
   actuator: "mass_lower"
 
