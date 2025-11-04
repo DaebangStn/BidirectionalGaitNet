@@ -54,7 +54,8 @@
       "fstream": "cpp",
       "sstream": "cpp",
       "cinttypes": "cpp",
-      "stdexcept": "cpp"
+      "stdexcept": "cpp",
+      "complex": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",

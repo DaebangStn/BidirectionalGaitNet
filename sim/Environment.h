@@ -79,6 +79,11 @@ struct RewardConfig
     double head_rot_weight = 4.0;
     double step_weight = 2.0;
     double avg_vel_weight = 6.0;
+    double avg_vel_window_mult = 1.0;
+    bool avg_vel_consider_x = true;
+    bool drag_x = false;
+    double drag_weight = 1.0;
+    double drag_x_threshold = 0.0;
 
     // Reward clipping for initial simulation steps
     int clip_step = 0;
@@ -226,8 +231,11 @@ public:
     double getKneeLoadingMaxCycle() const { return mKneeLoadingMaxCycle; }
     double getStepReward();
     double getAvgVelReward();
-    double getLocoReward();
+    double getHeadLinearAccReward();
+    double getHeadRotReward();
+    double getDragXReward();
     Eigen::Vector3d getAvgVelocity();
+    int getAvgVelocityHorizonSteps() const;
     double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))); }
     double getNormalizedPhase() { return mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
     double getWorldPhase() { return mWorldTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mWorldTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
@@ -306,6 +314,16 @@ public:
     void setMetabolicWeight(double weight) { mRewardConfig.metabolic_weight = weight; }
     double getScaleMetabolic() { return mRewardConfig.metabolic_scale; }
     void setScaleMetabolic(double scale) { mRewardConfig.metabolic_scale = scale; }
+    double getAvgVelWindowMult() const { return mRewardConfig.avg_vel_window_mult; }
+    void setAvgVelWindowMult(double mult) { mRewardConfig.avg_vel_window_mult = (mult < 0.0 ? 0.0 : mult); }
+    bool getAvgVelConsiderX() const { return mRewardConfig.avg_vel_consider_x; }
+    void setAvgVelConsiderX(bool consider) { mRewardConfig.avg_vel_consider_x = consider; }
+    bool getDragX() const { return mRewardConfig.drag_x; }
+    void setDragX(bool drag) { mRewardConfig.drag_x = drag; }
+    double getDragWeight() const { return mRewardConfig.drag_weight; }
+    void setDragWeight(double weight) { mRewardConfig.drag_weight = (weight < 0.0 ? 0.0 : weight); }
+    double getDragXThreshold() const { return mRewardConfig.drag_x_threshold; }
+    void setDragXThreshold(double threshold) { mRewardConfig.drag_x_threshold = (threshold < 0.0 ? 0.0 : threshold); }
     bool getSeparateTorqueEnergy() { return mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY; }
     void setSeparateTorqueEnergy(bool separate) { mRewardConfig.flags |= REWARD_SEP_TORQUE_ENERGY; }
     double getKneePainWeight() { return mRewardConfig.knee_pain_weight; }
@@ -453,6 +471,7 @@ private:
     // Gait Analysis
     Eigen::Vector2i mPrevContact; // Previous contact state for heel strike detection
     double mKneeLoadingMaxCycle;  // Maximum knee loading for current gait cycle
+    double mDragStartX;
 
     // nFor Cascading
     bool mUseCascading;

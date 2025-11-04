@@ -135,9 +135,12 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("r_torque", 500);
     mGraphData->register_key("r_energy", 500);
     mGraphData->register_key("r_knee_pain", 500);
+    mGraphData->register_key("r_head_linear_acc", 500);
+    mGraphData->register_key("r_head_rot_diff", 500);
     mGraphData->register_key("r_loco", 500);
     mGraphData->register_key("r_avg", 500);
     mGraphData->register_key("r_step", 500);
+    mGraphData->register_key("r_drag_x", 500);
 
     // Register contact keys
     mGraphData->register_key("contact_left", 500);
@@ -2116,7 +2119,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetupAxes("Time (s)", "Reward");
 
             // Plot reward data using common plotting function
-            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_energy", "r_knee_pain", "r_loco", "r_avg", "r_step"};
+            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_energy", "r_knee_pain", "r_loco", "r_head_linear_acc", "r_head_rot_diff", "r_avg", "r_step", "r_drag_x"};
             if (mRenderEnv->getSeparateTorqueEnergy()) {
                 rewardKeys.push_back("r_torque");
                 rewardKeys.push_back("r_metabolic");
@@ -3189,8 +3192,9 @@ void GLFWApp::drawSimControlPanel()
     }
 
     // Metabolic Energy Control
-    if (ImGui::CollapsingHeader("Metabolic Energy", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Reward#control", ImGuiTreeNodeFlags_DefaultOpen))
     {
+        ImGui::Text("Metabolic Energy");
         // Get current metabolic type
         MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
         constexpr int typeOffset = static_cast<int>(MetabolicType::A);
@@ -3299,6 +3303,59 @@ void GLFWApp::drawSimControlPanel()
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("When enabled, knee pain multiplies with main gait term (scale not used)");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Locomotion Terms");
+
+        float avgWindowMult = static_cast<float>(mRenderEnv->getAvgVelWindowMult());
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Avg Vel Window Mult", &avgWindowMult, 0.0f, 0.0f, "%.3f"))
+        {
+            avgWindowMult = std::max(0.0f, avgWindowMult);
+            mRenderEnv->setAvgVelWindowMult(static_cast<double>(avgWindowMult));
+        }
+
+        bool considerX = mRenderEnv->getAvgVelConsiderX();
+        if (ImGui::Checkbox("Avg Vel Consider X", &considerX))
+        {
+            mRenderEnv->setAvgVelConsiderX(considerX);
+        }
+
+        bool dragX = mRenderEnv->getDragX();
+        if (ImGui::Checkbox("Enable Drag X", &dragX))
+        {
+            mRenderEnv->setDragX(dragX);
+        }
+        dragX = mRenderEnv->getDragX();
+
+        bool disableDragControls = !dragX;
+        if (disableDragControls)
+        {
+            ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+        }
+
+        float dragWeight = static_cast<float>(mRenderEnv->getDragWeight());
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Drag Weight", &dragWeight, 0.0f, 0.0f, "%.3f"))
+        {
+            dragWeight = std::max(0.0f, dragWeight);
+            mRenderEnv->setDragWeight(static_cast<double>(dragWeight));
+        }
+
+        float dragThreshold = static_cast<float>(mRenderEnv->getDragXThreshold());
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Drag Threshold", &dragThreshold, 0.0f, 0.0f, "%.3f"))
+        {
+            dragThreshold = std::max(0.0f, dragThreshold);
+            mRenderEnv->setDragXThreshold(static_cast<double>(dragThreshold));
+        }
+
+        if (disableDragControls)
+        {
+            ImGui::PopStyleVar();
+            ImGui::PopItemFlag();
         }
     }
 
@@ -3428,9 +3485,15 @@ void GLFWApp::drawSimControlPanel()
         if (ImGui::CollapsingHeader("Muscle##Rendering"))
         {
             ImGui::SetNextItemWidth(125);
-            ImGui::SliderFloat("Resolution", &mMuscleResolution, 0.0, 1000.0);
+            ImGui::SliderFloat("Resolution", &mMuscleResolution, 0.0, 10.0);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(50); 
+            ImGui::InputFloat("##MuscleResInput", &mMuscleResolution, 0.0f, 0.0f, "%.2f");
             ImGui::SetNextItemWidth(125);
             ImGui::SliderFloat("Transparency", &mMuscleTransparency, 0.1, 1.0);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(50);
+            ImGui::InputFloat("##MuscleTransInput", &mMuscleTransparency, 0.0f, 0.0f, "%.2f");
 
             ImGui::Separator();
 

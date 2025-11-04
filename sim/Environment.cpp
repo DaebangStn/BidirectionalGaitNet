@@ -5,6 +5,8 @@
 #include "HDF.h"
 #include "Log.h"
 #include <yaml-cpp/yaml.h>
+#include <algorithm>
+#include <cmath>
 
 
 Environment::Environment()
@@ -50,6 +52,7 @@ Environment::Environment()
     mKneeLoadingMaxCycle = 0.0;
     mGlobalTime = 0.0;
     mWorldTime = 0.0;
+    mDragStartX = 0.0;
 
     mMusclePoseOptimization = false;
 
@@ -323,6 +326,21 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
 
     if (doc.FirstChildElement("AvgVelWeight") != NULL)
         mRewardConfig.avg_vel_weight = doc.FirstChildElement("AvgVelWeight")->DoubleText();
+
+    if (doc.FirstChildElement("AvgVelWindowMult") != NULL)
+        mRewardConfig.avg_vel_window_mult = doc.FirstChildElement("AvgVelWindowMult")->DoubleText();
+
+    if (doc.FirstChildElement("AvgVelConsiderX") != NULL)
+        mRewardConfig.avg_vel_consider_x = doc.FirstChildElement("AvgVelConsiderX")->BoolText();
+
+    if (doc.FirstChildElement("DragX") != NULL)
+        mRewardConfig.drag_x = doc.FirstChildElement("DragX")->BoolText();
+
+    if (doc.FirstChildElement("DragWeight") != NULL)
+        mRewardConfig.drag_weight = doc.FirstChildElement("DragWeight")->DoubleText();
+
+    if (doc.FirstChildElement("DragXThreshold") != NULL)
+        mRewardConfig.drag_x_threshold = doc.FirstChildElement("DragXThreshold")->DoubleText();
 
     if (doc.FirstChildElement("ScaleMetabolic") != NULL)
         mRewardConfig.metabolic_scale = doc.FirstChildElement("ScaleMetabolic")->DoubleText();
@@ -734,6 +752,16 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mRewardConfig.step_weight = loco["step_weight"].as<double>(2.0);
         if (loco["avg_vel_weight"])
             mRewardConfig.avg_vel_weight = loco["avg_vel_weight"].as<double>(6.0);
+        if (loco["avg_vel_window_mult"])
+            mRewardConfig.avg_vel_window_mult = loco["avg_vel_window_mult"].as<double>(1.0);
+        if (loco["avg_vel_consider_x"])
+            mRewardConfig.avg_vel_consider_x = loco["avg_vel_consider_x"].as<bool>(true);
+        if (loco["drag_x"])
+            mRewardConfig.drag_x = loco["drag_x"].as<bool>(false);
+        if (loco["drag_weight"])
+            mRewardConfig.drag_weight = loco["drag_weight"].as<double>(1.0);
+        if (loco["drag_x_threshold"])
+            mRewardConfig.drag_x_threshold = loco["drag_x_threshold"].as<double>(0.0);
     }
 
     // === Metabolic (always active) ===
@@ -1174,12 +1202,15 @@ double Environment::calcReward()
     }
     else if (mRewardType == gaitnet)
     {
-        double r_loco = getLocoReward();
+        double r_head_linear_acc = getHeadLinearAccReward();
+        double r_head_rot_diff = getHeadRotReward();
+        double r_loco = r_head_linear_acc * r_head_rot_diff;
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
+        double r_drag_x = getDragXReward();
 
         // Build multiplicative and additive components separately using bitflags
-        double multiplicative_part = r_loco * r_avg * r_step;
+        double multiplicative_part = r_loco * r_avg * r_step * r_drag_x;
         double additive_part = 0.0;
 
         // Apply energy reward (always active, multiplicative or additive)
@@ -1218,9 +1249,12 @@ double Environment::calcReward()
         r = multiplicative_part + additive_part;
 
         // Populate reward map for gaitnet
+        mInfoMap.insert(std::make_pair("r_head_linear_acc", r_head_linear_acc));
+        mInfoMap.insert(std::make_pair("r_head_rot_diff", r_head_rot_diff));
         mInfoMap.insert(std::make_pair("r_loco", r_loco));
         mInfoMap.insert(std::make_pair("r_avg", r_avg));
         mInfoMap.insert(std::make_pair("r_step", r_step));
+        mInfoMap.insert(std::make_pair("r_drag_x", r_drag_x));
     }
 
     if (mCharacter->getActuatorType() == mus) r = 1.0;
@@ -1772,6 +1806,8 @@ void Environment::reset(double phase)
     mCharacter->clearLogs();
     mDesiredTorqueLogs.clear();
 
+    mDragStartX = mCharacter->getSkeleton()->getCOM()[0];
+
     if (mRewardType == gaitnet) updateFootStep(true);
 
     mCharacter->getSkeleton()->clearInternalForces();
@@ -1832,22 +1868,39 @@ double Environment::getKneePainMaxReward()
     return r_knee_max;
 }
 
-double Environment::getLocoReward()
+double Environment::getHeadLinearAccReward()
 {
-    const std::vector<Eigen::Vector3d> &headVels = mCharacter->getHeadVelLogs();
-    if (headVels.size() == 0) return 1.0;
+    const std::vector<Eigen::Vector3d>& headVels = mCharacter->getHeadVelLogs();
+    if (mNumSubSteps <= 0 || headVels.size() < static_cast<size_t>(mNumSubSteps)) return 1.0;
 
-    Eigen::Vector3d headLinearAcc = headVels.back() - headVels[headVels.size() - mNumSubSteps];
+    const Eigen::Vector3d& currentVel = headVels.back();
+    const Eigen::Vector3d& previousVel = headVels[headVels.size() - static_cast<size_t>(mNumSubSteps)];
+    Eigen::Vector3d headLinearAcc = currentVel - previousVel;
 
-    double headRotDiff = Eigen::AngleAxisd(mCharacter->getSkeleton()->getBodyNode("Head")->getTransform().linear()).angle();
-    double r_head_linear_acc = exp(-mRewardConfig.head_linear_acc_weight * headLinearAcc.squaredNorm() / headLinearAcc.rows());
-    double r_head_rot_diff = exp(-mRewardConfig.head_rot_weight * headRotDiff * headRotDiff);
-    double r_loco = r_head_linear_acc * r_head_rot_diff;
-
-    return r_loco;
+    return exp(-mRewardConfig.head_linear_acc_weight * headLinearAcc.squaredNorm() / headLinearAcc.rows());
 }
 
-double Environment:: getStepReward()
+double Environment::getHeadRotReward()
+{
+    auto headNode = mCharacter->getSkeleton()->getBodyNode("Head");
+    if (!headNode) return 1.0;
+
+    double headRotDiff = Eigen::AngleAxisd(headNode->getTransform().linear()).angle();
+    return exp(-mRewardConfig.head_rot_weight * headRotDiff * headRotDiff);
+}
+
+double Environment::getDragXReward()
+{
+    if (!mRewardConfig.drag_x || mSimulationStep < getAvgVelocityHorizonSteps()) return 1.0;
+
+    double currentX = mCharacter->getSkeleton()->getCOM()[0];
+    double diff = std::max(0.0, std::abs(currentX - mDragStartX) - mRewardConfig.drag_x_threshold);
+    if (diff < mRewardConfig.drag_x_threshold) return 1.0;
+    double r = exp(-mRewardConfig.drag_weight * diff);
+    return r;
+}
+
+double Environment::getStepReward()
 {
     Eigen::Vector3d foot_diff = mCurrentFoot - mCurrentTargetFoot;
     foot_diff[0] = 0; // Ignore X axis difference
@@ -1861,19 +1914,30 @@ double Environment:: getStepReward()
     return r;
 }
 
+int Environment::getAvgVelocityHorizonSteps() const
+{
+    double stride_duration = mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()));
+    double window_seconds = stride_duration * mRewardConfig.avg_vel_window_mult;
+    double min_window = 1.0 / static_cast<double>(mSimulationHz);
+    window_seconds = std::max(window_seconds, min_window);
+    return std::max(1, static_cast<int>(window_seconds * mSimulationHz));
+}
+
 Eigen::Vector3d Environment::getAvgVelocity()
 {
     Eigen::Vector3d avg_vel = Eigen::Vector3d::Zero();
     const std::vector<Eigen::Vector3d> &coms = mCharacter->getCOMLogs();
-    int horizon = (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) * mSimulationHz;
-    if (coms.size() > horizon)
+    int horizon = getAvgVelocityHorizonSteps();
+    double window_seconds = static_cast<double>(horizon) / static_cast<double>(mSimulationHz);
+    if (coms.size() > static_cast<size_t>(horizon))
     {
         Eigen::Vector3d cur_com = coms.back();
         Eigen::Vector3d prev_com = coms[coms.size() - horizon];
-        avg_vel = (cur_com - prev_com) / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+        avg_vel = (cur_com - prev_com) / window_seconds;
     }
-    else
-        avg_vel[2] = getTargetCOMVelocity();
+    else avg_vel[2] = getTargetCOMVelocity();
+
+    if (!mRewardConfig.avg_vel_consider_x) avg_vel[0] = 0.0;
 
     return avg_vel;
 }
@@ -1884,6 +1948,7 @@ double Environment::getAvgVelReward()
     double targetCOMVel = getTargetCOMVelocity();
 
     Eigen::Vector3d vel_diff = curAvgVel - Eigen::Vector3d(0, 0, targetCOMVel);
+    if (!mRewardConfig.avg_vel_consider_x) vel_diff[0] = 0;
     double vel_reward = exp(-mRewardConfig.avg_vel_weight * vel_diff.squaredNorm());
     return vel_reward;
 }

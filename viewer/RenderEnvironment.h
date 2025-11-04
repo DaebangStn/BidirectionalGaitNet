@@ -108,6 +108,16 @@ public:
     void setScaleKneePain(double scale) { mEnv->setScaleKneePain(scale); }
     bool getUseMultiplicativeKneePain() { return mEnv->getUseMultiplicativeKneePain(); }
     void setUseMultiplicativeKneePain(bool use) { mEnv->setUseMultiplicativeKneePain(use); }
+    double getAvgVelWindowMult() { return mEnv->getAvgVelWindowMult(); }
+    void setAvgVelWindowMult(double mult) { mEnv->setAvgVelWindowMult(mult); }
+    bool getAvgVelConsiderX() { return mEnv->getAvgVelConsiderX(); }
+    void setAvgVelConsiderX(bool consider) { mEnv->setAvgVelConsiderX(consider); }
+    bool getDragX() { return mEnv->getDragX(); }
+    void setDragX(bool drag) { mEnv->setDragX(drag); }
+    double getDragWeight() { return mEnv->getDragWeight(); }
+    void setDragWeight(double weight) { mEnv->setDragWeight(weight); }
+    double getDragXThreshold() { return mEnv->getDragXThreshold(); }
+    void setDragXThreshold(double threshold) { mEnv->setDragXThreshold(threshold); }
 
     // Logging and debugging
     const std::vector<Eigen::VectorXd>& getDesiredTorqueLogs() { return mEnv->getDesiredTorqueLogs(); }
@@ -126,4 +136,3 @@ private:
 };
 
 #endif // RENDER_ENVIRONMENT_H
-
