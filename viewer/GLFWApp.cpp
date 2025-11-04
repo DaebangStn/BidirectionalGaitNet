@@ -152,6 +152,10 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("sway_Foot_Lx", 1000);
     mGraphData->register_key("sway_Toe_Ry", 1000);
     mGraphData->register_key("sway_Toe_Ly", 1000);
+    mGraphData->register_key("sway_FPAr", 1000);
+    mGraphData->register_key("sway_FPAl", 1000);
+    mGraphData->register_key("sway_AnteversionR", 1000);
+    // mGraphData->register_key("sway_AnteversionL", 1000);
     mGraphData->register_key("angle_HipR", 1000);
     mGraphData->register_key("angle_HipIRR", 1000);
     mGraphData->register_key("angle_HipAbR", 1000);
@@ -705,8 +709,7 @@ void GLFWApp::update(bool _isSave)
 }
 
 void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
-                            bool show_phase, bool plot_avg_copy, std::string postfix,
-                            bool show_stat)
+                            std::string postfix, bool show_stat, int color_ofs)
 {
     if (keys.empty() || !mGraphData) return;
 
@@ -723,6 +726,7 @@ void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
     // Get colormap size for stable color assignment
     int colormapSize = ImPlot::GetColormapSize();
     int keyIndex = 0;
+    const double timeStep = (mRenderEnv ? mRenderEnv->getWorld()->getTimeStep() : 1.0);
 
     for (const auto &key : keys)
     {
@@ -743,9 +747,7 @@ void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
         std::vector<float> x(bufferSize);
         for (int i = 0; i < bufferSize; ++i)
         {
-            x[i] = -(bufferSize - 1 - i);  // Most recent at 0, oldest at -N
-            if (show_phase && mRenderEnv)
-                x[i] *= mRenderEnv->getWorld()->getTimeStep();
+            x[i] = static_cast<float>(-(bufferSize - 1 - i) * timeStep);  // Most recent at 0, oldest at -N
         }
 
         // Create y-axis data
@@ -783,7 +785,11 @@ void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
 
         // Assign stable color based on key index in the vector
         // This ensures each key always gets the same color regardless of stats changes
-        ImVec4 lineColor = ImPlot::GetColormapColor(keyIndex % colormapSize);
+        int colorIndex = keyIndex + color_ofs;
+        colorIndex %= colormapSize;
+        if (colorIndex < 0)
+            colorIndex += colormapSize;
+        ImVec4 lineColor = ImPlot::GetColormapColor(colorIndex);
         ImPlot::PushStyleColor(ImPlotCol_Line, lineColor);
 
         // Plot the line
@@ -2115,7 +2121,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 rewardKeys.push_back("r_torque");
                 rewardKeys.push_back("r_metabolic");
             }
-            plotGraphData(rewardKeys, ImAxis_Y1, true, false, "");
+            plotGraphData(rewardKeys, ImAxis_Y1);
             ImPlot::EndPlot();
         }
     }
@@ -2176,7 +2182,7 @@ void GLFWApp::drawSimVisualizationPanel()
                         metabolicKeys.push_back("energy_torque_step");
                     }
                 }
-                plotGraphData(metabolicKeys, ImAxis_Y1, true, false, "");
+                plotGraphData(metabolicKeys, ImAxis_Y1);
 
                 ImPlot::EndPlot();
             }
@@ -2205,7 +2211,7 @@ void GLFWApp::drawSimVisualizationPanel()
 
             // Plot max knee loading
             std::vector<std::string> kneeKeys = {"knee_loading_max"};
-            plotGraphData(kneeKeys, ImAxis_Y1, true, false, "", show_knee_stats);
+            plotGraphData(kneeKeys, ImAxis_Y1, "", show_knee_stats);
 
             ImPlot::EndPlot();
         }
@@ -2254,7 +2260,7 @@ void GLFWApp::drawSimVisualizationPanel()
                         selected_prefix + "_force_mag"
                     };
                 }
-                plotGraphData(forceKeys, ImAxis_Y1, true, false, "");
+                plotGraphData(forceKeys, ImAxis_Y1);
                 ImPlotRect limits = ImPlot::GetPlotLimits();
                 plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
                 ImPlot::EndPlot();
@@ -2279,7 +2285,7 @@ void GLFWApp::drawSimVisualizationPanel()
                         selected_prefix + "_torque_mag"
                     };
                 }
-                plotGraphData(torqueKeys, ImAxis_Y1, true, false, "");
+                plotGraphData(torqueKeys, ImAxis_Y1);
                 ImPlotRect limits = ImPlot::GetPlotLimits();
                 plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
                 ImPlot::EndPlot();
@@ -2290,7 +2296,7 @@ void GLFWApp::drawSimVisualizationPanel()
     // Kinematics
     if (ImGui::CollapsingHeader("Kinematics"))
     {
-        static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway
+        static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway, 4=Anteversion
         static bool stats = true;
         ImGui::Checkbox("Stats##KinematicsStats", &stats);
 
@@ -2301,6 +2307,8 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::RadioButton("Pelvis##PelvisJointsRadio", &angle_selection, 2);
         ImGui::SameLine();
         ImGui::RadioButton("Sway##SwayRadio", &angle_selection, 3);
+        ImGui::SameLine();
+        ImGui::RadioButton("Anteversion##AnteversionRadio", &angle_selection, 4);
 
         if (angle_selection == 0) { // Major joints
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
@@ -2313,7 +2321,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> jointKeys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
-                plotGraphData(jointKeys, ImAxis_Y1, true, false, "", stats);
+                plotGraphData(jointKeys, ImAxis_Y1, "", stats);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2336,7 +2344,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> jointKeys = {"angle_HipIRR", "angle_HipAbR"};
-                plotGraphData(jointKeys, ImAxis_Y1, true, false, "", stats);
+                plotGraphData(jointKeys, ImAxis_Y1, "", stats);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2357,7 +2365,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
-                plotGraphData(pelvisKeys, ImAxis_Y1, true, false, "", stats);
+                plotGraphData(pelvisKeys, ImAxis_Y1, "", stats);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2368,27 +2376,36 @@ void GLFWApp::drawSimVisualizationPanel()
         }
 
         if (angle_selection == 3) { // Foot sway
-            static int sway_side_selection = 2; // 0=Right, 1=Left, 2=Both
+            static int sway_side_selection = 0; // 0=Right, 1=Left, 2=Both
             ImGui::RadioButton("Right##FootSwayRight", &sway_side_selection, 0);
             ImGui::SameLine();
             ImGui::RadioButton("Left##FootSwayLeft", &sway_side_selection, 1);
             ImGui::SameLine();
             ImGui::RadioButton("Both##FootSwayBoth", &sway_side_selection, 2);
 
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
-            ImPlot::SetNextAxisLimits(3, -0.2, 0.2);
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0.0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0.0);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, -0.2, 0.2);
+            ImPlot::SetNextAxisLimits(ImAxis_Y2, -60.0, 60.0, ImGuiCond_Once);
 
             std::string title_sway = mPlotTitle ? mCheckpointName : "Foot Sway (m)";
             if (ImPlot::BeginPlot((title_sway + "##FootSway").c_str()))
             {
                 ImPlot::SetupAxes("Time (s)", "Sway (m)");
+                ImPlot::SetupAxis(ImAxis_Y2, "out - FPA (°) - in", ImPlotAxisFlags_AuxDefault);
 
                 std::vector<std::string> swayKeys;
                 if (sway_side_selection == 0) swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry"};
                 else if (sway_side_selection == 1) swayKeys = {"sway_Foot_Lx", "sway_Toe_Ly"};
                 else swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry", "sway_Foot_Lx", "sway_Toe_Ly"};
-                plotGraphData(swayKeys, ImAxis_Y1, true, false, "", stats);
+                plotGraphData(swayKeys, ImAxis_Y1, "", stats);
+
+                std::vector<std::string> swayKeys1;
+                if (sway_side_selection == 0) swayKeys1 = {"sway_FPAr"};
+                else if (sway_side_selection == 1) swayKeys1 = {"sway_FPAl"};
+                else swayKeys1 = {"sway_FPAr", "sway_FPAl"};
+                int colorOffset = static_cast<int>(swayKeys.size());
+                plotGraphData(swayKeys1, ImAxis_Y2, "", stats, colorOffset);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2398,6 +2415,26 @@ void GLFWApp::drawSimVisualizationPanel()
             }
         }
 
+        if (angle_selection == 4) { // Anteversion
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImPlot::SetNextAxisLimits(3, -10, 10);
+
+            std::string title_anteversion = mPlotTitle ? mCheckpointName : "Anteversion (deg)";
+            if (ImPlot::BeginPlot((title_anteversion + "##Anteversion").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Anteversion (deg)");
+
+                std::vector<std::string> anteversionKeys = {"sway_AnteversionR"};
+                plotGraphData(anteversionKeys, ImAxis_Y1, "", stats);
+
+                // Overlay phase bars
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+                ImPlot::EndPlot();
+            }
+        }
 
         // // Torso Sway Plot
         // ImPlot::SetNextAxisLimits(0, -3, 0);
@@ -2407,7 +2444,7 @@ void GLFWApp::drawSimVisualizationPanel()
         //     ImPlot::SetupAxes("Time (s)", "Sway (m)");
 
         //     std::vector<std::string> swayKeys = {"sway_Torso_X"};
-        //     plotGraphData(swayKeys, ImAxis_Y1, true, false, "");
+        //     plotGraphData(swayKeys, ImAxis_Y1);
 
         //     // Overlay phase bars
         //     ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -2562,7 +2599,7 @@ void GLFWApp::drawSimVisualizationPanel()
                 }
 
                 // Plot all keys (activations + noise) in single call
-                plotGraphData(keysToPlot, ImAxis_Y1, true, false, "");
+                plotGraphData(keysToPlot, ImAxis_Y1);
 
                 // Overlay phase bars
                 ImPlotRect limits = ImPlot::GetPlotLimits();
@@ -3735,7 +3772,7 @@ void GLFWApp::drawResizablePlotPane()
         }
         if (ImPlot::BeginPlot(("##Plot" + std::to_string(i)).c_str(), ImVec2(-1, -1))) {
             ImPlot::SetupAxes("Time (s)", "Value");
-            plotGraphData(mResizablePlots[i].keys, ImAxis_Y1, true, false, "", resizable_plot_show_stat);
+            plotGraphData(mResizablePlots[i].keys, ImAxis_Y1, "", resizable_plot_show_stat);
 
             ImPlotRect limits = ImPlot::GetPlotLimits();
             plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);

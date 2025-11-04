@@ -1,4 +1,5 @@
 #include "RenderEnvironment.h"
+#include <Eigen/Geometry>
 #include <cmath>
 
 RenderEnvironment::RenderEnvironment(std::string metadata, CBufferData<double>* graph_data)
@@ -79,6 +80,47 @@ void RenderEnvironment::RecordGraphData() {
         const double toeLy = skel->getBodyNode("FootThumbL")->getCOM()[1];
         mGraphData->push("sway_Toe_Ly", toeLy);
     }
+
+    if (mGraphData->key_exists("sway_FPAr")) {
+        const Eigen::Isometry3d& footTransform = skel->getBodyNode("TalusR")->getWorldTransform();
+        Eigen::Vector3d footForward = footTransform.linear() * Eigen::Vector3d::UnitZ();
+        Eigen::Vector2d footForwardXZ(footForward[0], footForward[2]);
+
+        double fpAr = 0.0;
+        const double normXZ = footForwardXZ.norm();
+        if (normXZ > 1e-8) {
+            footForwardXZ /= normXZ;
+            fpAr = std::atan2(footForwardXZ[0], footForwardXZ[1]) * 180.0 / M_PI;
+        }
+        mGraphData->push("sway_FPAr", fpAr);
+
+        if (mGraphData->key_exists("sway_AnteversionR")) {
+            const double jointIRR = (skel->getJoint("FemurR")->getPosition(1) + skel->getJoint("TalusR")->getPosition(1)) * 180.0 / M_PI;
+            const double anteversionR = jointIRR - fpAr;
+            mGraphData->push("sway_AnteversionR", anteversionR);
+        }
+    }
+
+    if (mGraphData->key_exists("sway_FPAl")) {
+        const Eigen::Isometry3d& footTransform = skel->getBodyNode("TalusL")->getWorldTransform();
+        Eigen::Vector3d footForward = footTransform.linear() * Eigen::Vector3d::UnitZ();
+        Eigen::Vector2d footForwardXZ(footForward[0], footForward[2]);
+
+        double fpAl = 0.0;
+        const double normXZ = footForwardXZ.norm();
+        if (normXZ > 1e-8) {
+            footForwardXZ /= normXZ;
+            fpAl = std::atan2(footForwardXZ[0], footForwardXZ[1]) * 180.0 / M_PI;
+        }
+        mGraphData->push("sway_FPAl", fpAl);
+        if (mGraphData->key_exists("sway_AnteversionL")) {
+            const double jointIRL = (skel->getJoint("FemurL")->getPosition(1) + skel->getJoint("TalusL")->getPosition(1)) * 180.0 / M_PI;
+            const double anteversionL = jointIRL - fpAl;
+            mGraphData->push("sway_AnteversionL", anteversionL);
+        }
+    }
+
+        
 
     if (mGraphData->key_exists("sway_Torso_X")) {
         const double root_x = skel->getRootBodyNode()->getCOM()[0];
@@ -227,4 +269,3 @@ void RenderEnvironment::RecordGraphData() {
         }
     }
 }
-

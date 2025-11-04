@@ -1847,7 +1847,7 @@ double Environment::getLocoReward()
     return r_loco;
 }
 
-double Environment::getStepReward()
+double Environment:: getStepReward()
 {
     Eigen::Vector3d foot_diff = mCurrentFoot - mCurrentTargetFoot;
     foot_diff[0] = 0; // Ignore X axis difference
