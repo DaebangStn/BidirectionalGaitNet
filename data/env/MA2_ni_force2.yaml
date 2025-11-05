@@ -16,6 +16,10 @@ environment:
   ground:
     file: "@data/ground.xml"
 
+  # Noise Injection Configuration
+  noise_injection:
+    file: "@data/env/ni/force_pelvis.yaml"
+
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
@@ -65,12 +69,12 @@ environment:
 
     # Metabolic configuration
     metabolic:
-      type: "A2"  # A, A2, MA, MA2
-      weight: 0.001
+      type: "MA2"  # A, A2, MA, MA2
+      weight: 0.03
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
-        coeff: 2.0
+        coeff: 0.1
         separate: true
 
     # Locomotion rewards (for gaitnet)

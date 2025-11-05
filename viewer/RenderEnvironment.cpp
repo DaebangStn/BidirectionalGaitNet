@@ -92,6 +92,11 @@ void RenderEnvironment::RecordGraphData() {
             footForwardXZ /= normXZ;
             fpAr = std::atan2(footForwardXZ[0], footForwardXZ[1]) * 180.0 / M_PI;
         }
+
+        // gaitnet_narrow_model.xml has reversed direction in right foot
+        if (fpAr > 90.0) fpAr -= 180.0;
+        else if (fpAr < -90.0) fpAr += 180.0;
+
         mGraphData->push("sway_FPAr", fpAr);
 
         if (mGraphData->key_exists("sway_AnteversionR")) {

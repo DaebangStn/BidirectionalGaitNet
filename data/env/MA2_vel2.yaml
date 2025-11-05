@@ -1,3 +1,6 @@
+# 1. clip velocity reward
+# 2. use phase reward
+
 # Training Configuration
 training:
   max_epoch: 12002
@@ -65,12 +68,12 @@ environment:
 
     # Metabolic configuration
     metabolic:
-      type: "A2"  # A, A2, MA, MA2
-      weight: 0.001
+      type: "MA2"  # A, A2, MA, MA2
+      weight: 0.03
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
-        coeff: 2.0
+        coeff: 0.1
         separate: true
 
     # Locomotion rewards (for gaitnet)
@@ -78,7 +81,18 @@ environment:
       head_linear_acc_weight: 4.0
       head_rot_weight: 4.0
       step_weight: 2.0
-      avg_vel_weight: 6.0
+      avg_vel:
+        weight: 6.0
+        window_mult: 1.0
+        clip: 0.3  # clip velocity difference magnitude
+        consider_x: false
+      dragX:
+        use: true
+        weight: 1.0
+        threshold: 0.2
+      phase:
+        use: false
+        weight: 1.0
 
     # Penalty/auxiliary rewards
     knee_pain:

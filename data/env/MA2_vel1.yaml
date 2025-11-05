@@ -6,7 +6,7 @@ training:
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@data/skeleton/gaitnet_narrow_model.xml"
+    file: "@data/skeleton/base.xml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40

@@ -330,11 +330,19 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     if (doc.FirstChildElement("AvgVelWindowMult") != NULL)
         mRewardConfig.avg_vel_window_mult = doc.FirstChildElement("AvgVelWindowMult")->DoubleText();
 
-    if (doc.FirstChildElement("AvgVelConsiderX") != NULL)
-        mRewardConfig.avg_vel_consider_x = doc.FirstChildElement("AvgVelConsiderX")->BoolText();
+    if (doc.FirstChildElement("AvgVelConsiderX") != NULL) {
+        if (doc.FirstChildElement("AvgVelConsiderX")->BoolText())
+            mRewardConfig.flags |= REWARD_AVG_VEL_CONSIDER_X;
+        else
+            mRewardConfig.flags &= ~REWARD_AVG_VEL_CONSIDER_X;
+    }
 
-    if (doc.FirstChildElement("DragX") != NULL)
-        mRewardConfig.drag_x = doc.FirstChildElement("DragX")->BoolText();
+    if (doc.FirstChildElement("DragX") != NULL) {
+        if (doc.FirstChildElement("DragX")->BoolText())
+            mRewardConfig.flags |= REWARD_DRAG_X;
+        else
+            mRewardConfig.flags &= ~REWARD_DRAG_X;
+    }
 
     if (doc.FirstChildElement("DragWeight") != NULL)
         mRewardConfig.drag_weight = doc.FirstChildElement("DragWeight")->DoubleText();
@@ -750,18 +758,99 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mRewardConfig.head_rot_weight = loco["head_rot_weight"].as<double>(4.0);
         if (loco["step_weight"])
             mRewardConfig.step_weight = loco["step_weight"].as<double>(2.0);
-        if (loco["avg_vel_weight"])
-            mRewardConfig.avg_vel_weight = loco["avg_vel_weight"].as<double>(6.0);
-        if (loco["avg_vel_window_mult"])
-            mRewardConfig.avg_vel_window_mult = loco["avg_vel_window_mult"].as<double>(1.0);
-        if (loco["avg_vel_consider_x"])
-            mRewardConfig.avg_vel_consider_x = loco["avg_vel_consider_x"].as<bool>(true);
-        if (loco["drag_x"])
-            mRewardConfig.drag_x = loco["drag_x"].as<bool>(false);
-        if (loco["drag_weight"])
-            mRewardConfig.drag_weight = loco["drag_weight"].as<double>(1.0);
-        if (loco["drag_x_threshold"])
-            mRewardConfig.drag_x_threshold = loco["drag_x_threshold"].as<double>(0.0);
+
+        // Parse avg_vel configuration (hierarchical or flat for backward compatibility)
+        if (loco["avg_vel"]) {
+            // New hierarchical structure
+            auto avg_vel = loco["avg_vel"];
+            if (avg_vel["weight"])
+                mRewardConfig.avg_vel_weight = avg_vel["weight"].as<double>(6.0);
+            if (avg_vel["window_mult"])
+                mRewardConfig.avg_vel_window_mult = avg_vel["window_mult"].as<double>(1.0);
+            if (avg_vel["clip"])
+                mRewardConfig.avg_vel_clip = avg_vel["clip"].as<double>(-1.0);
+            if (avg_vel["consider_x"]) {
+                if (avg_vel["consider_x"].as<bool>(true))
+                    mRewardConfig.flags |= REWARD_AVG_VEL_CONSIDER_X;
+                else
+                    mRewardConfig.flags &= ~REWARD_AVG_VEL_CONSIDER_X;
+            }
+        } else {
+            // Backward compatibility: flat structure (deprecated)
+            bool found_flat = false;
+            if (loco["avg_vel_weight"]) {
+                mRewardConfig.avg_vel_weight = loco["avg_vel_weight"].as<double>(6.0);
+                found_flat = true;
+            }
+            if (loco["avg_vel_window_mult"]) {
+                mRewardConfig.avg_vel_window_mult = loco["avg_vel_window_mult"].as<double>(1.0);
+                found_flat = true;
+            }
+            if (loco["avg_vel_consider_x"]) {
+                if (loco["avg_vel_consider_x"].as<bool>(true))
+                    mRewardConfig.flags |= REWARD_AVG_VEL_CONSIDER_X;
+                else
+                    mRewardConfig.flags &= ~REWARD_AVG_VEL_CONSIDER_X;
+                found_flat = true;
+            }
+            if (found_flat) {
+                std::cout << "[WARNING] Flat avg_vel_* configuration is deprecated. "
+                          << "Please use hierarchical avg_vel: { weight, window_mult, clip, consider_x } structure."
+                          << std::endl;
+            }
+        }
+
+        // Parse dragX configuration (hierarchical or flat for backward compatibility)
+        if (loco["dragX"]) {
+            // New hierarchical structure
+            auto dragX = loco["dragX"];
+            if (dragX["use"]) {
+                if (dragX["use"].as<bool>(false))
+                    mRewardConfig.flags |= REWARD_DRAG_X;
+                else
+                    mRewardConfig.flags &= ~REWARD_DRAG_X;
+            }
+            if (dragX["weight"])
+                mRewardConfig.drag_weight = dragX["weight"].as<double>(1.0);
+            if (dragX["threshold"])
+                mRewardConfig.drag_x_threshold = dragX["threshold"].as<double>(0.0);
+        } else {
+            // Backward compatibility: flat structure (deprecated)
+            bool found_flat = false;
+            if (loco["drag_x"]) {
+                if (loco["drag_x"].as<bool>(false))
+                    mRewardConfig.flags |= REWARD_DRAG_X;
+                else
+                    mRewardConfig.flags &= ~REWARD_DRAG_X;
+                found_flat = true;
+            }
+            if (loco["drag_weight"]) {
+                mRewardConfig.drag_weight = loco["drag_weight"].as<double>(1.0);
+                found_flat = true;
+            }
+            if (loco["drag_x_threshold"]) {
+                mRewardConfig.drag_x_threshold = loco["drag_x_threshold"].as<double>(0.0);
+                found_flat = true;
+            }
+            if (found_flat) {
+                std::cout << "[WARNING] Flat drag_* configuration is deprecated. "
+                          << "Please use hierarchical dragX: { use, weight, threshold } structure."
+                          << std::endl;
+            }
+        }
+
+        // Parse phase configuration
+        if (loco["phase"]) {
+            auto phase = loco["phase"];
+            if (phase["use"]) {
+                if (phase["use"].as<bool>(false))
+                    mRewardConfig.flags |= REWARD_PHASE;
+                else
+                    mRewardConfig.flags &= ~REWARD_PHASE;
+            }
+            if (phase["weight"])
+                mRewardConfig.phase_weight = phase["weight"].as<double>(1.0);
+        }
     }
 
     // === Metabolic (always active) ===
@@ -1891,13 +1980,19 @@ double Environment::getHeadRotReward()
 
 double Environment::getDragXReward()
 {
-    if (!mRewardConfig.drag_x || mSimulationStep < getAvgVelocityHorizonSteps()) return 1.0;
+    if (!(mRewardConfig.flags & REWARD_DRAG_X) || mSimulationStep < getAvgVelocityHorizonSteps()) return 1.0;
 
     double currentX = mCharacter->getSkeleton()->getCOM()[0];
     double diff = std::max(0.0, std::abs(currentX - mDragStartX) - mRewardConfig.drag_x_threshold);
     if (diff < mRewardConfig.drag_x_threshold) return 1.0;
     double r = exp(-mRewardConfig.drag_weight * diff);
     return r;
+}
+
+double Environment::getPhaseReward()
+{
+    // Empty implementation - to be filled with phase reward logic
+    return 1.0;
 }
 
 double Environment::getStepReward()
@@ -1937,7 +2032,7 @@ Eigen::Vector3d Environment::getAvgVelocity()
     }
     else avg_vel[2] = getTargetCOMVelocity();
 
-    if (!mRewardConfig.avg_vel_consider_x) avg_vel[0] = 0.0;
+    if (!(mRewardConfig.flags & REWARD_AVG_VEL_CONSIDER_X)) avg_vel[0] = 0.0;
 
     return avg_vel;
 }
@@ -1948,7 +2043,16 @@ double Environment::getAvgVelReward()
     double targetCOMVel = getTargetCOMVelocity();
 
     Eigen::Vector3d vel_diff = curAvgVel - Eigen::Vector3d(0, 0, targetCOMVel);
-    if (!mRewardConfig.avg_vel_consider_x) vel_diff[0] = 0;
+    if (!(mRewardConfig.flags & REWARD_AVG_VEL_CONSIDER_X)) vel_diff[0] = 0;
+
+    // Apply velocity clipping if configured
+    if (mRewardConfig.avg_vel_clip > 0.0) {
+        double vel_diff_norm = vel_diff.norm();
+        if (vel_diff_norm > mRewardConfig.avg_vel_clip) {
+            vel_diff = vel_diff * (mRewardConfig.avg_vel_clip / vel_diff_norm);
+        }
+    }
+
     double vel_reward = exp(-mRewardConfig.avg_vel_weight * vel_diff.squaredNorm());
     return vel_reward;
 }
@@ -1977,7 +2081,6 @@ Eigen::VectorXd Environment::getJointState(bool isMirror)
 
 void Environment::updateFootStep(bool isInit)
 {
-
     double phase = getLocalPhase(true);
     if (0.33 < phase && phase <= 0.83)
     {
@@ -2009,7 +2112,6 @@ void Environment::updateFootStep(bool isInit)
             }
 
         mIsLeftLegStance = true;
-
         mCurrentFoot = mCharacter->getSkeleton()->getBodyNode("TalusL")->getCOM();
 
         if (isInit)
@@ -2216,7 +2318,7 @@ Eigen::VectorXd Environment::getParamSample()
 
 Eigen::Vector2i Environment::getIsContact()
 {
-    Eigen::Vector2i result = Eigen::Vector2i(0, 0);
+    Eigen::Vector2i result = Eigen::Vector2i(0, 0); // contact state (left, right)
     const auto results = mWorld->getConstraintSolver()->getLastCollisionResult();
     for (auto bn : results.getCollidingBodyNodes())
     {

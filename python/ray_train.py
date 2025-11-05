@@ -348,10 +348,15 @@ class MyTrainer(PPO):
 
     def load_checkpoint(self, checkpoint_path):
         print(f'Loading checkpoint at path {checkpoint_path}')
-        checkpoint_file = list(Path(checkpoint_path).glob("checkpoint-*"))
-        if len(checkpoint_file) == 0:
-            raise RuntimeError("Missing checkpoint file!")
-        PPO.load_checkpoint(self, checkpoint_file[0])
+        checkpoint_path = Path(checkpoint_path)
+
+        # Ray 2.9+ stores Algorithm checkpoints directly in the provided directory.
+        if not (checkpoint_path / "rllib_checkpoint.json").exists():
+            raise RuntimeError(
+                "Missing checkpoint file! Expected Ray checkpoint directory with rllib_checkpoint.json."
+            )
+
+        PPO.load_checkpoint(self, str(checkpoint_path))
 
 
 def get_config_from_file(filename: str, config: str):

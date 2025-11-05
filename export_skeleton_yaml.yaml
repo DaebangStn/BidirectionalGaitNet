@@ -1,6 +1,0 @@
-version: "1.0"
-description: "Export skeleton configuration in YAML format"
-
-operations:
-  - type: export_skeleton
-    filepath: "./skeleton_exported.yaml"

@@ -317,7 +317,7 @@ Character::Character(std::string path, bool collide_all)
     // If path is empty, use default
     if (path.empty()) {
         LOG_VERBOSE("[Character] Using default skeleton path");
-        path = "@data/skeleton/gaitnet_narrow_model.xml";
+        path = "@data/skeleton/base.xml";
     }
 
     // Always resolve paths through UriResolver for backwards compatibility

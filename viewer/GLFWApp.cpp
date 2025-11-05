@@ -3998,7 +3998,9 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
         const double indicator_size = mHeight * 0.03;  // Size of the indicator squares
         const double spacing = indicator_size * 2.8;  // Space between indicators
 
-        bool isLeftLegStance = mRenderEnv->getIsLeftLegStance();
+        const Eigen::Vector2i isContact = mRenderEnv->getIsContact();
+        const bool isLeftLegStance = isContact[0] == 1;
+        const bool isRightLegStance = isContact[1] == 1;
 
         // Left foot indicator (slightly to the left of center)
         // Active (stance) when isLeftLegStance is true
@@ -4012,7 +4014,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 
         // Right foot indicator (slightly to the right of center)
         // Active (stance) when isLeftLegStance is false
-        glColor4f(1.0f, 0.0f, 0.0f, !isLeftLegStance ? 1.0f : 0.2f);
+        glColor4f(1.0f, 0.0f, 0.0f, isRightLegStance ? 1.0f : 0.2f);
         glBegin(GL_QUADS);
         glVertex2d(spacing - indicator_size, -indicator_size * 0.5);
         glVertex2d(spacing, -indicator_size * 0.5);

@@ -56,6 +56,9 @@ enum RewardFlags
     REWARD_KNEE_PAIN_MAX = 1 << 2,  // 0x04
     REWARD_SEP_TORQUE_ENERGY = 1 << 3,  // 0x08
     TERM_KNEE_PAIN = 1 << 4,  // 0x10
+    REWARD_AVG_VEL_CONSIDER_X = 1 << 5,  // 0x20
+    REWARD_DRAG_X = 1 << 6,  // 0x40
+    REWARD_PHASE = 1 << 7,  // 0x80
 };
 
 // Centralized reward configuration
@@ -80,10 +83,10 @@ struct RewardConfig
     double step_weight = 2.0;
     double avg_vel_weight = 6.0;
     double avg_vel_window_mult = 1.0;
-    bool avg_vel_consider_x = true;
-    bool drag_x = false;
+    double avg_vel_clip = -1.0;  // -1 means no clipping
     double drag_weight = 1.0;
     double drag_x_threshold = 0.0;
+    double phase_weight = 1.0;
 
     // Reward clipping for initial simulation steps
     int clip_step = 0;
@@ -234,6 +237,7 @@ public:
     double getHeadLinearAccReward();
     double getHeadRotReward();
     double getDragXReward();
+    double getPhaseReward();
     Eigen::Vector3d getAvgVelocity();
     int getAvgVelocityHorizonSteps() const;
     double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))); }
@@ -316,10 +320,10 @@ public:
     void setScaleMetabolic(double scale) { mRewardConfig.metabolic_scale = scale; }
     double getAvgVelWindowMult() const { return mRewardConfig.avg_vel_window_mult; }
     void setAvgVelWindowMult(double mult) { mRewardConfig.avg_vel_window_mult = (mult < 0.0 ? 0.0 : mult); }
-    bool getAvgVelConsiderX() const { return mRewardConfig.avg_vel_consider_x; }
-    void setAvgVelConsiderX(bool consider) { mRewardConfig.avg_vel_consider_x = consider; }
-    bool getDragX() const { return mRewardConfig.drag_x; }
-    void setDragX(bool drag) { mRewardConfig.drag_x = drag; }
+    bool getAvgVelConsiderX() const { return mRewardConfig.flags & REWARD_AVG_VEL_CONSIDER_X; }
+    void setAvgVelConsiderX(bool consider) { if (consider) mRewardConfig.flags |= REWARD_AVG_VEL_CONSIDER_X; else mRewardConfig.flags &= ~REWARD_AVG_VEL_CONSIDER_X; }
+    bool getDragX() const { return mRewardConfig.flags & REWARD_DRAG_X; }
+    void setDragX(bool drag) { if (drag) mRewardConfig.flags |= REWARD_DRAG_X; else mRewardConfig.flags &= ~REWARD_DRAG_X; }
     double getDragWeight() const { return mRewardConfig.drag_weight; }
     void setDragWeight(double weight) { mRewardConfig.drag_weight = (weight < 0.0 ? 0.0 : weight); }
     double getDragXThreshold() const { return mRewardConfig.drag_x_threshold; }

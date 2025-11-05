@@ -15,7 +15,7 @@ When exporting muscles:
 ### Skeleton File Mismatch
 
 1. **PhysicalExam** loads: `@data/skeleton/base.xml`
-2. **Surgery-cli** loads: `@data/skeleton/gaitnet_narrow_model.xml`
+2. **Surgery-cli** loads: `@data/skeleton/base.xml`
 
 ### Critical Difference: Asymmetric Body Transformations
 
