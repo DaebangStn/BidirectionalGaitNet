@@ -3894,6 +3894,7 @@ void GLFWApp::drawTimingPane()
     if (mRenderEnv) {
         ImGui::Text("Simulation Time: %.3f s", mRenderEnv->getWorld()->getTime());
         ImGui::Text("Sim Step Count : %d", mRenderEnv->GetEnvironment()->getSimulationStep());
+        ImGui::Text("Sim Local Phase : %.3f", mRenderEnv->getLocalPhase(true));
     }
     
     ImGui::Separator();

@@ -122,7 +122,7 @@ public:
 
     void setAction(Eigen::VectorXd _action);
 
-    void step();
+    virtual void step();
     void reset(double phase = -1.0);  // phase: 0.0-1.0 for specific phase, -1.0 for randomized
     double getReward() { return mReward; }
     const std::map<std::string, double>& getInfoMap() const { return mInfoMap; }
@@ -142,7 +142,7 @@ public:
     Eigen::VectorXd getRefPose() { return mRefPose; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }
 
-    double getLocalPhase(bool mod_one = false, int character_idx = 0) { return (mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
+    double getLocalPhase(bool mod_one = false) { return (mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
 
     Eigen::VectorXd getState();
     std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
@@ -157,7 +157,7 @@ public:
     int getSimulationStep() const { return mSimulationStep; }
     std::string getMetadata() { return mMetadata; }
 
-    bool isMirror(int character_idx = 0) { return mEnforceSymmetry && ((mHardPhaseClipping) ? (getNormalizedPhase() > 0.5) : (getLocalPhase(true) > 0.5)); }
+    bool isMirror() { return mEnforceSymmetry && ((mHardPhaseClipping) ? (getNormalizedPhase() > 0.5) : (getLocalPhase(true) > 0.5)); }
 
     bool isFall();
     dart::simulation::WorldPtr getWorld() { return mWorld; }

@@ -3,25 +3,23 @@
 #include <cmath>
 
 RenderEnvironment::RenderEnvironment(std::string metadata, CBufferData<double>* graph_data)
-    : mGraphData(graph_data) 
+    : Environment(), mGraphData(graph_data)
 {
-    mEnv = new Environment();
-    mEnv->initialize(metadata);
-    mEnv->reset();
+    initialize(metadata);
+    reset();
 }
 
-RenderEnvironment::~RenderEnvironment() 
+RenderEnvironment::~RenderEnvironment()
 {
-    delete mEnv;
 }
 
 void RenderEnvironment::step() {
 
-    for (int i = 0; i < mEnv->getNumSubSteps(); i++) {
-        mEnv->muscleStep();
+    for (int i = 0; i < getNumSubSteps(); i++) {
+        muscleStep();
         RecordGraphData();
     }
-    mEnv->postStep();
+    postStep();
 
     // Record info data after step completion
     RecordInfoData();
@@ -29,7 +27,7 @@ void RenderEnvironment::step() {
 
 void RenderEnvironment::RecordInfoData() {
     // Get info map from environment and log to graph data
-    const std::map<std::string, double>& infoMap = mEnv->getInfoMap();
+    const std::map<std::string, double>& infoMap = getInfoMap();
     for (const auto& pair : infoMap) {
         if (mGraphData->key_exists(pair.first)) {
             mGraphData->push(pair.first, pair.second);
@@ -39,9 +37,9 @@ void RenderEnvironment::RecordInfoData() {
 
 void RenderEnvironment::RecordGraphData() {
     // Extract contact and GRF data
-    Eigen::Vector2i contact = mEnv->getIsContact();
-    Eigen::Vector2d grf = mEnv->getFootGRF();
-    
+    Eigen::Vector2i contact = getIsContact();
+    Eigen::Vector2d grf = getFootGRF();
+
     // Log contact data
     if (mGraphData->key_exists("contact_left"))
         mGraphData->push("contact_left", static_cast<double>(contact[0]));
@@ -49,15 +47,15 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("contact_right", static_cast<double>(contact[1]));
     if (mGraphData->key_exists("contact_phaseR"))
         mGraphData->push("contact_phaseR", static_cast<double>(contact[1]));
-    
+
     // Log GRF data
     if (mGraphData->key_exists("grf_left"))
         mGraphData->push("grf_left", grf[0]);
     if (mGraphData->key_exists("grf_right"))
         mGraphData->push("grf_right", grf[1]);
-    
+
     // Log kinematic data
-    auto skel = mEnv->getCharacter()->getSkeleton();
+    auto skel = getCharacter()->getSkeleton();
     
     if (mGraphData->key_exists("sway_Foot_Rx")) {
         const double root_x = skel->getRootBodyNode()->getCOM()[0];
@@ -173,7 +171,7 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("angle_Tilt", angleTilt);
     }
 
-    const auto character = mEnv->getCharacter();
+    const auto character = getCharacter();
     // Log metabolic energy
     if (mGraphData->key_exists("energy_metabolic_step")) {
         const double metabolicStepEnergy = character->getMetabolicStepEnergy();
@@ -252,9 +250,9 @@ void RenderEnvironment::RecordGraphData() {
 
     // Record activation noise from NoiseInjector (or 0 if disabled)
     auto muscles = character->getMuscles();
-    bool noiseActive = mEnv->getNoiseInjector() &&
-                       mEnv->getNoiseInjector()->isEnabled() &&
-                       mEnv->getNoiseInjector()->isActivationEnabled();
+    bool noiseActive = getNoiseInjector() &&
+                       getNoiseInjector()->isEnabled() &&
+                       getNoiseInjector()->isActivationEnabled();
 
     for (size_t i = 0; i < muscles.size(); i++) {
         const auto& muscle_name = muscles[i]->GetName();
@@ -263,7 +261,7 @@ void RenderEnvironment::RecordGraphData() {
             if (mGraphData->key_exists(key)) {
                 double noiseValue = 0.0;
                 if (noiseActive) {
-                    const auto& viz = mEnv->getNoiseInjector()->getVisualization();
+                    const auto& viz = getNoiseInjector()->getVisualization();
                     const auto& activationNoises = viz.activationNoises;
                     if (i < activationNoises.size()) {
                         noiseValue = activationNoises[i];
