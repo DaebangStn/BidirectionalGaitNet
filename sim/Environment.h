@@ -3,6 +3,7 @@
 #include "dart/dart.hpp"
 #include "BVH_Parser.h"
 #include "Character.h"
+#include "GaitPhase.h"
 #include "NoiseInjector.h"
 #include "dart/collision/bullet/bullet.hpp"
 #include "export.h"
@@ -81,6 +82,7 @@ struct RewardConfig
     double head_linear_acc_weight = 4.0;
     double head_rot_weight = 4.0;
     double step_weight = 2.0;
+    double step_clip = 0.075;  // Z-axis step clipping value
     double avg_vel_weight = 6.0;
     double avg_vel_window_mult = 1.0;
     double avg_vel_clip = -1.0;  // -1 means no clipping
@@ -220,11 +222,13 @@ public:
     bool isTwoLevelController() { return mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower; }
 
     // get Reward Term
-    void updateFootStep(bool isInit = false);
-    Eigen::Vector3d getCurrentFootStep() { return mCurrentFoot; }
-    Eigen::Vector3d getCurrentTargetFootStep() { return mCurrentTargetFoot; }
-    Eigen::Vector3d getNextTargetFootStep() { return mNextTargetFoot; }
-    bool getIsLeftLegStance() { return mIsLeftLegStance; }
+    Eigen::Vector3d getCurrentFootStep() { return mGaitPhase->getCurrentFoot(); }
+    Eigen::Vector3d getCurrentTargetFootStep() { return mGaitPhase->getCurrentTargetFoot(); }
+    Eigen::Vector3d getNextTargetFootStep() { return mGaitPhase->getNextTargetFoot(); }
+    bool getIsLeftLegStance() { return mGaitPhase->isLeftLegStance(); }
+
+    // GaitPhase accessor
+    GaitPhase* getGaitPhase() { return mGaitPhase.get(); }
 
     RewardType getRewardType() { return mRewardType; }
 
@@ -246,7 +250,6 @@ public:
     
     // Time and cycle getters for rollout
     double getWorldTime() const { return mWorldTime; }
-    int getWorldPhaseCount() const { return mWorldPhaseCount; }
     int getSimulationCount() const { return mSimulationCount; }
 
     // For Parameterization
@@ -300,8 +303,9 @@ public:
     void setLearningStd(bool learningStd) { mLearningStd = learningStd; }
     void poseOptimization(int iter = 100);
 
+    // Contact detection (delegated to GaitPhase if available)
     Eigen::Vector2i getIsContact();
-    Eigen::Vector2d getFootGRF(); // Get normalized GRF for left and right foot
+    Eigen::Vector2d getFootGRF();
 
     // For Cascading
     Network loadPrevNetworks(std::string path, bool isFirst); // Neot
@@ -328,6 +332,21 @@ public:
     void setDragWeight(double weight) { mRewardConfig.drag_weight = (weight < 0.0 ? 0.0 : weight); }
     double getDragXThreshold() const { return mRewardConfig.drag_x_threshold; }
     void setDragXThreshold(double threshold) { mRewardConfig.drag_x_threshold = (threshold < 0.0 ? 0.0 : threshold); }
+
+    double getStepWeight() const { return mRewardConfig.step_weight; }
+    void setStepWeight(double weight) { mRewardConfig.step_weight = (weight < 0.0 ? 0.0 : weight); }
+
+    double getStepClip() const { return mRewardConfig.step_clip; }
+    void setStepClip(double clip) { mRewardConfig.step_clip = (clip < 0.0 ? 0.0 : clip); }
+    double getAvgVelWeight() const { return mRewardConfig.avg_vel_weight; }
+    void setAvgVelWeight(double weight) { mRewardConfig.avg_vel_weight = (weight < 0.0 ? 0.0 : weight); }
+    double getAvgVelClip() const { return mRewardConfig.avg_vel_clip; }
+    void setAvgVelClip(double clip) { mRewardConfig.avg_vel_clip = clip; }  // -1 means no clipping
+
+    bool getPhaseRewardEnabled() const { return mRewardConfig.flags & REWARD_PHASE; }
+    void setPhaseRewardEnabled(bool enabled) { if (enabled) mRewardConfig.flags |= REWARD_PHASE; else mRewardConfig.flags &= ~REWARD_PHASE; }
+    double getPhaseWeight() const { return mRewardConfig.phase_weight; }
+    void setPhaseWeight(double weight) { mRewardConfig.phase_weight = (weight < 0.0 ? 0.0 : weight); }
     bool getSeparateTorqueEnergy() { return mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY; }
     void setSeparateTorqueEnergy(bool separate) { mRewardConfig.flags |= REWARD_SEP_TORQUE_ENERGY; }
     double getKneePainWeight() { return mRewardConfig.knee_pain_weight; }
@@ -370,6 +389,7 @@ public:
 
     // Gait cycle completion detection
     bool isGaitCycleComplete();
+    void clearGaitCycleComplete();  // Clear the PD-level completion flag
     int getGaitCycleCount() const { return mWorldPhaseCount; }
 
     void muscleStep();
@@ -442,8 +462,7 @@ private:
     // GaitNet
     double mRefStride;
     double mStride, mCadence;  // Ratio of Foot stride & time displacement [default = 1]
-    bool mIsLeftLegStance;
-    Eigen::Vector3d mNextTargetFoot, mCurrentTargetFoot, mCurrentFoot;
+    std::unique_ptr<GaitPhase> mGaitPhase;  // Gait phase tracking (stores update mode internally)
     double mPhaseDisplacement, mPhaseDisplacementScale;
     int mNumActuatorAction;
 
@@ -464,7 +483,7 @@ private:
 
     // Simulation Setting
     bool mSoftPhaseClipping, mHardPhaseClipping;
-    int mPhaseCount, mWorldPhaseCount, mPrevWorldPhaseCount;
+    int mPhaseCount, mWorldPhaseCount;
     EOEType mEOEType;
     double mGlobalTime, mWorldTime;
 
@@ -473,7 +492,6 @@ private:
     int mPoseOptimizationMode;
 
     // Gait Analysis
-    Eigen::Vector2i mPrevContact; // Previous contact state for heel strike detection
     double mKneeLoadingMaxCycle;  // Maximum knee loading for current gait cycle
     double mDragStartX;
 

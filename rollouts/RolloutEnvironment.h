@@ -28,6 +28,7 @@ public:
 
     // Rollout status
     int GetCycleCount();
+    int getGaitCycleCount();
     bool isTerminated() { return mEnv.isTerminated(); }
     
     // Record configuration
@@ -48,7 +49,6 @@ public:
     int GetControlHz();
     double GetWorldTime();
     double GetNormalizedPhase();
-    int GetWorldPhaseCount();
 
     // Motion interpolation
     Eigen::VectorXd InterpolatePose(const Eigen::VectorXd& pose1,

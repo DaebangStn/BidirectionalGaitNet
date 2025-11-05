@@ -47,8 +47,6 @@ Environment::Environment()
     mHardPhaseClipping = false;
     mPhaseCount = 0;
     mWorldPhaseCount = 0;
-    mPrevWorldPhaseCount = 0;
-    mPrevContact = Eigen::Vector2i(0, 0);
     mKneeLoadingMaxCycle = 0.0;
     mGlobalTime = 0.0;
     mWorldTime = 0.0;
@@ -532,12 +530,18 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
             mNumKnownParam++;
     }
     // std::cout << "Num Known Param : " << mNumKnownParam << std::endl;
+
+    // Initialize GaitPhase after all configuration is loaded (default to PHASE mode)
+    mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, GaitPhase::PHASE);
 }
 
 void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 {
     YAML::Node config = YAML::Load(yaml_content);
     YAML::Node env = config["environment"];
+
+    // Local variable to track gait phase mode during parsing
+    std::string gaitUpdateMode = "phase";  // Default to phase-based mode
 
     // === Cascading ===
     if (config["cascading"])
@@ -604,6 +608,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         auto action = env["action"];
         if (action["time_warping"])
             mPhaseDisplacementScale = action["time_warping"].as<double>(-1.0);
+        if (action["gait_phase_mode"])
+            gaitUpdateMode = action["gait_phase_mode"].as<std::string>("phase");
     }
 
     // === mAction sizing ===
@@ -756,8 +762,19 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mRewardConfig.head_linear_acc_weight = loco["head_linear_acc_weight"].as<double>(4.0);
         if (loco["head_rot_weight"])
             mRewardConfig.head_rot_weight = loco["head_rot_weight"].as<double>(4.0);
-        if (loco["step_weight"])
+
+        // Parse step configuration (hierarchical or flat for backward compatibility)
+        if (loco["step"]) {
+            // New hierarchical structure
+            auto step = loco["step"];
+            if (step["weight"])
+                mRewardConfig.step_weight = step["weight"].as<double>(2.0);
+            if (step["clip"])
+                mRewardConfig.step_clip = step["clip"].as<double>(0.075);
+        } else if (loco["step_weight"]) {
+            // Backward compatibility: flat structure (deprecated)
             mRewardConfig.step_weight = loco["step_weight"].as<double>(2.0);
+        }
 
         // Parse avg_vel configuration (hierarchical or flat for backward compatibility)
         if (loco["avg_vel"]) {
@@ -1060,6 +1077,10 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mParamName[i].find("torsion") != std::string::npos)
             mNumKnownParam++;
     }
+
+    // Initialize GaitPhase after all configuration is loaded
+    GaitPhase::UpdateMode mode = (gaitUpdateMode == "contact") ? GaitPhase::CONTACT : GaitPhase::PHASE;
+    mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, mode);
 }
 
 void Environment::addCharacter(std::string path, bool collide_all)
@@ -1297,9 +1318,10 @@ double Environment::calcReward()
         double r_avg = getAvgVelReward();
         double r_step = getStepReward();
         double r_drag_x = getDragXReward();
+        double r_phase = getPhaseReward();
 
         // Build multiplicative and additive components separately using bitflags
-        double multiplicative_part = r_loco * r_avg * r_step * r_drag_x;
+        double multiplicative_part = r_loco * r_avg * r_step * r_drag_x * r_phase;
         double additive_part = 0.0;
 
         // Apply energy reward (always active, multiplicative or additive)
@@ -1344,8 +1366,8 @@ double Environment::calcReward()
         mInfoMap.insert(std::make_pair("r_avg", r_avg));
         mInfoMap.insert(std::make_pair("r_step", r_step));
         mInfoMap.insert(std::make_pair("r_drag_x", r_drag_x));
+        mInfoMap.insert(std::make_pair("r_phase", r_phase));
     }
-
     if (mCharacter->getActuatorType() == mus) r = 1.0;
 
     if (mRewardConfig.clip_step > 0 && mSimulationStep < mRewardConfig.clip_step) {
@@ -1483,7 +1505,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
     if (mRewardType == gaitnet)
     {
         step_state.resize(1);
-        step_state[0] = mNextTargetFoot[2] - mCharacter->getSkeleton()->getCOM()[2];
+        step_state[0] = getNextTargetFootStep()[2] - mCharacter->getSkeleton()->getCOM()[2];
     }
 
     // Muscle State
@@ -1605,15 +1627,11 @@ void Environment::postMuscleStep()
     mWorldTime += 1.0 / mSimulationHz;
     mCharacter->updateLocalTime((1.0 + mPhaseDisplacement * mControlHz) / mSimulationHz);
 
-    // Contact-based gait cycle detection: detect right foot heel strike (swing→stance transition)
-    // This replaces time-based mWorldPhaseCount update for more accurate cycle tracking
-    // GRF threshold (0.2 * body weight) ensures the foot is actually bearing weight
-    Eigen::Vector2i contact = getIsContact();
-    Eigen::Vector2d grf = getFootGRF();
+    // Update gait phase tracking
+    mGaitPhase->step();
 
-    const double grf_threshold = 0.2;  // 20% of body weight
-    if (mPrevContact[1] == 0 && contact[1] == 1 && grf[1] > grf_threshold)  // Right foot: swing→stance with weight
-    {
+    // Check for gait cycle completion (muscle-step level check)
+    if (mGaitPhase->isGaitCycleComplete()) {
         mWorldPhaseCount++;
         mWorldTime = mCharacter->getLocalTime();
 
@@ -1622,8 +1640,9 @@ void Environment::postMuscleStep()
 
         // Reset the character's knee loading max for the new cycle
         mCharacter->resetKneeLoadingMax();
+
+        // Note: Flag will persist for PD-level check, don't clear here
     }
-    mPrevContact = contact;
 
     if (mHardPhaseClipping)
     {
@@ -1650,11 +1669,7 @@ void Environment::muscleStep()
 {
     if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower)  calcActivation();
 
-    // Apply noise injection if enabled
-    if (mNoiseInjector) {
-        mNoiseInjector->step(mCharacter);
-    }
-
+    if (mNoiseInjector) mNoiseInjector->step(mCharacter);
     mCharacter->step();
     mWorld->step();
     postMuscleStep();
@@ -1670,7 +1685,6 @@ void Environment::postStep()
 {
     mInfoMap.clear();
     mCharacter->evalStep();
-    if (mRewardType == gaitnet) updateFootStep();
     mKneeLoadingMaxCycle = std::max(mKneeLoadingMaxCycle, mCharacter->getKneeLoadingMax());
     mReward = calcReward();
 
@@ -1718,62 +1732,59 @@ void Environment::poseOptimization(int iter)
     }
 
     double phase = getLocalPhase(true);
-    mIsLeftLegStance = !((0.33 < phase) && (phase <= 0.83));
+    // Note: mIsLeftLegStance removed - use GaitPhase instead if needed
+    // For pose optimization, we just need to set the phase state
+    bool isLeftLegStance = !((0.33 < phase) && (phase <= 0.83));
 
     // Stance Leg Hip anlge Change
-    if (true)
+    double angle_threshold = 1;
+    auto femur_joint = skel->getJoint((isLeftLegStance ? "FemurL" : "FemurR"));
+    auto foot_bn = skel->getBodyNode((isLeftLegStance ? "TalusL" : "TalusR"));
+    Eigen::VectorXd prev_angle = femur_joint->getPositions();
+    Eigen::VectorXd cur_angle = femur_joint->getPositions();
+    
+    Eigen::VectorXd initial_JtP = mCharacter->getMuscleTuple(false).JtP;
+
+    while (true)
     {
-        double angle_threshold = 1;
-        auto femur_joint = skel->getJoint((mIsLeftLegStance ? "FemurL" : "FemurR"));
-        auto foot_bn = skel->getBodyNode((mIsLeftLegStance ? "TalusL" : "TalusR"));
-        Eigen::VectorXd prev_angle = femur_joint->getPositions();
-        Eigen::VectorXd cur_angle = femur_joint->getPositions();
-        
-        Eigen::VectorXd initial_JtP = mCharacter->getMuscleTuple(false).JtP;
+        prev_angle = cur_angle;
+        Eigen::Vector3d root_com = skel->getRootBodyNode()->getCOM();
+        Eigen::Vector3d foot_com = foot_bn->getCOM() - root_com;
+        Eigen::Vector3d target_com = skel->getBodyNode("Head")->getCOM() - root_com;
+        target_com[1] *= -1;
+        target_com[2] *= -1;
 
-        while (true)
+        double angle_diff = atan2(target_com[1], target_com[2]) - atan2(foot_com[1], foot_com[2]);
+        // std::cout << "Angle Diff " << angle_diff << std::endl;
+        if (abs(angle_diff) < M_PI * 10 / 180.0) break;
+
+        double step = (angle_diff > 0 ? -1.0 : 1.0) * M_PI / 180.0;
+        cur_angle[0] += step;
+        femur_joint->setPositions(cur_angle);
+        Eigen::VectorXd current_Jtp = mCharacter->getMuscleTuple(false).JtP;
+        bool isDone = false;
+        for (int i = 0; i < current_Jtp.rows(); i++)
         {
-            prev_angle = cur_angle;
-            Eigen::Vector3d root_com = skel->getRootBodyNode()->getCOM();
-            Eigen::Vector3d foot_com = foot_bn->getCOM() - root_com;
-            Eigen::Vector3d target_com = skel->getBodyNode("Head")->getCOM() - root_com;
-            target_com[1] *= -1;
-            target_com[2] *= -1;
-
-            double angle_diff = atan2(target_com[1], target_com[2]) - atan2(foot_com[1], foot_com[2]);
-            // std::cout << "Angle Diff " << angle_diff << std::endl;
-            if (abs(angle_diff) < M_PI * 10 / 180.0)
-                break;
-
-            double step = (angle_diff > 0 ? -1.0 : 1.0) * M_PI / 180.0;
-            cur_angle[0] += step;
-            femur_joint->setPositions(cur_angle);
-            Eigen::VectorXd current_Jtp = mCharacter->getMuscleTuple(false).JtP;
-            bool isDone = false;
-            for (int i = 0; i < current_Jtp.rows(); i++)
+            if (abs(current_Jtp[i]) > abs(initial_JtP[i]) + 1)
             {
-                if (abs(current_Jtp[i]) > abs(initial_JtP[i]) + 1)
-                {
-                    // std::cout << i << "-th Joint " << abs(current_Jtp[i]) - abs(initial_JtP[i]) << std::endl;
-                    femur_joint->setPositions(prev_angle);
-                    isDone = true;
-                    break;
-                }
-            }
-            if (isDone)
+                // std::cout << i << "-th Joint " << abs(current_Jtp[i]) - abs(initial_JtP[i]) << std::endl;
+                femur_joint->setPositions(prev_angle);
+                isDone = true;
                 break;
+            }
         }
+        if (isDone) break;
     }
 
     // Rotation Change
     Eigen::Vector3d com = skel->getCOM(skel->getRootBodyNode());
     Eigen::Vector3d foot;
     if (mPoseOptimizationMode == 0)
-        foot = skel->getBodyNode(mIsLeftLegStance ? "TalusL" : "TalusR")->getCOM(skel->getRootBodyNode());
+        foot = skel->getBodyNode(isLeftLegStance ? "TalusL" : "TalusR")->getCOM(skel->getRootBodyNode());
     else if (mPoseOptimizationMode == 1)
         foot = (skel->getBodyNode("TalusL")->getCOM(skel->getRootBodyNode()) + skel->getBodyNode("TalusR")->getCOM(skel->getRootBodyNode())) * 0.5;
     // is it stance boundary?
-    double global_diff = (skel->getCOM() - skel->getBodyNode(mIsLeftLegStance ? "TalusL" : "TalusR")->getCOM())[2];
+    double global_diff = (skel->getCOM() - skel->getBodyNode(isLeftLegStance ? "TalusL" : "TalusR")->getCOM())[2];
     if (-0.07 < global_diff && global_diff < 0.1)
         return;
 
@@ -1806,9 +1817,7 @@ void Environment::reset(double phase)
     mSimulationStep = 0;
     mPhaseCount = 0;
     mWorldPhaseCount = 0;
-    mPrevWorldPhaseCount = 0;
     mSimulationCount = 0;
-    mPrevContact = Eigen::Vector2i(0, 0); // Initialize contact state
     mKneeLoadingMaxCycle = 0.0;
 
     // Reset Initial Time
@@ -1897,7 +1906,8 @@ void Environment::reset(double phase)
 
     mDragStartX = mCharacter->getSkeleton()->getCOM()[0];
 
-    if (mRewardType == gaitnet) updateFootStep(true);
+    // Reset GaitPhase (already initialized in parseEnvConfig)
+    mGaitPhase->reset();
 
     mCharacter->getSkeleton()->clearInternalForces();
     mCharacter->getSkeleton()->clearExternalForces();
@@ -1991,22 +2001,31 @@ double Environment::getDragXReward()
 
 double Environment::getPhaseReward()
 {
-    // Empty implementation - to be filled with phase reward logic
-    return 1.0;
+    if (!(mRewardConfig.flags & REWARD_PHASE)) return 1.0;
+
+    // Get phase total times for both feet from GaitPhase
+    double phaseTotalL = mGaitPhase->getPhaseTotalL();
+    double phaseTotalR = mGaitPhase->getPhaseTotalR();
+
+    // Get reference cycle time from motion
+    double motionMaxTime = mGaitPhase->getMotionCycleTime();
+
+    // Calculate phase errors for both feet
+    double phaseErrorL = std::abs(phaseTotalL - motionMaxTime);
+    double phaseErrorR = std::abs(phaseTotalR - motionMaxTime);
+
+    // Calculate exponential reward based on average phase error
+    double reward = std::exp(-mRewardConfig.phase_weight * (phaseErrorL + phaseErrorR));
+
+    return reward;
 }
 
 double Environment::getStepReward()
 {
-    Eigen::Vector3d foot_diff = mCurrentFoot - mCurrentTargetFoot;
-    foot_diff[0] = 0; // Ignore X axis difference
-
-    Eigen::Vector3d clipped_foot_diff = foot_diff.cwiseMax(-0.075).cwiseMin(0.075);
-    foot_diff -= clipped_foot_diff;
-    Eigen::Vector2i is_contact = getIsContact();
-    if ((mIsLeftLegStance && is_contact[0] == 1) || (!mIsLeftLegStance && is_contact[1] == 1)) foot_diff[1] = 0;
-    foot_diff *= 8;
-    double r = exp(-mRewardConfig.step_weight * foot_diff.squaredNorm() / foot_diff.rows());
-    return r;
+    // Only Z position (forward progression) matters for step reward
+    double foot_diff_z = std::abs(getCurrentFootStep()[2] - getCurrentTargetFootStep()[2]);
+    if (foot_diff_z > mRewardConfig.step_clip) return exp(-mRewardConfig.step_weight * foot_diff_z);
+    else return 1.0;
 }
 
 int Environment::getAvgVelocityHorizonSteps() const
@@ -2031,9 +2050,6 @@ Eigen::Vector3d Environment::getAvgVelocity()
         avg_vel = (cur_com - prev_com) / window_seconds;
     }
     else avg_vel[2] = getTargetCOMVelocity();
-
-    if (!(mRewardConfig.flags & REWARD_AVG_VEL_CONSIDER_X)) avg_vel[0] = 0.0;
-
     return avg_vel;
 }
 
@@ -2044,17 +2060,9 @@ double Environment::getAvgVelReward()
 
     Eigen::Vector3d vel_diff = curAvgVel - Eigen::Vector3d(0, 0, targetCOMVel);
     if (!(mRewardConfig.flags & REWARD_AVG_VEL_CONSIDER_X)) vel_diff[0] = 0;
-
-    // Apply velocity clipping if configured
-    if (mRewardConfig.avg_vel_clip > 0.0) {
-        double vel_diff_norm = vel_diff.norm();
-        if (vel_diff_norm > mRewardConfig.avg_vel_clip) {
-            vel_diff = vel_diff * (mRewardConfig.avg_vel_clip / vel_diff_norm);
-        }
-    }
-
-    double vel_reward = exp(-mRewardConfig.avg_vel_weight * vel_diff.squaredNorm());
-    return vel_reward;
+    const double vel_diff_norm = vel_diff.norm();
+    if (vel_diff_norm > mRewardConfig.avg_vel_clip) return exp(-mRewardConfig.avg_vel_weight * vel_diff_norm);
+    else return 1.0;
 }
 
 Eigen::VectorXd Environment::getJointState(bool isMirror)
@@ -2077,51 +2085,6 @@ Eigen::VectorXd Environment::getJointState(bool isMirror)
     }
     joint_state << 0.5 * min_tau, 0.5 * max_tau, 1.0 * mt.JtP;
     return joint_state;
-}
-
-void Environment::updateFootStep(bool isInit)
-{
-    double phase = getLocalPhase(true);
-    if (0.33 < phase && phase <= 0.83)
-    {
-        // Transition Timing
-        if (!isInit)
-            if (mIsLeftLegStance)
-            {
-                mCurrentTargetFoot = mNextTargetFoot;
-                mNextTargetFoot = mCurrentFoot + Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
-            }
-
-        mIsLeftLegStance = false;
-        mCurrentFoot = mCharacter->getSkeleton()->getBodyNode("TalusR")->getCOM();
-
-        if (isInit)
-        {
-            mCurrentTargetFoot = mCurrentFoot;
-            mNextTargetFoot = mCurrentFoot + 0.5 * Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
-        }
-    }
-    else
-    {
-        // Transition Timing
-        if (!isInit)
-            if (!mIsLeftLegStance)
-            {
-                mCurrentTargetFoot = mNextTargetFoot;
-                mNextTargetFoot = mCurrentFoot + Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
-            }
-
-        mIsLeftLegStance = true;
-        mCurrentFoot = mCharacter->getSkeleton()->getBodyNode("TalusL")->getCOM();
-
-        if (isInit)
-        {
-            mCurrentTargetFoot = mCurrentFoot;
-            mNextTargetFoot = mCurrentFoot + 0.5 * Eigen::Vector3d::UnitZ() * mRefStride * mStride * mCharacter->getGlobalRatio();
-        }
-    }
-    mCurrentTargetFoot[1] = 0.0;
-    mNextTargetFoot[1] = 0.0;
 }
 
 void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
@@ -2149,6 +2112,12 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
             idx++;
         }
         mCharacter->setSkelParam(skel_info, doOptimization);
+
+        // Sync stride and cadence to GaitPhase (only if initialized)
+        if (mGaitPhase) {
+            mGaitPhase->setStride(mStride);
+            mGaitPhase->setCadence(mCadence);
+        }
     }
 
     idx = 0;
@@ -2184,6 +2153,12 @@ void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onl
             idx++;
         }
         mCharacter->setSkelParam(skel_info, doOptimization);
+
+        // Sync stride and cadence to GaitPhase (only if initialized)
+        if (mGaitPhase) {
+            mGaitPhase->setStride(mStride);
+            mGaitPhase->setCadence(mCadence);
+        }
     }
 
     idx = 0;
@@ -2316,59 +2291,29 @@ Eigen::VectorXd Environment::getParamSample()
     return sampled_param;
 }
 
+// Contact detection helpers (kept for backward compatibility with Rollout/Viewer)
 Eigen::Vector2i Environment::getIsContact()
 {
-    Eigen::Vector2i result = Eigen::Vector2i(0, 0); // contact state (left, right)
-    const auto results = mWorld->getConstraintSolver()->getLastCollisionResult();
-    for (auto bn : results.getCollidingBodyNodes())
-    {
-        if (bn->getName() == "TalusL" || ((bn->getName() == "FootPinkyL" || bn->getName() == "FootThumbL"))) result[0] = 1;
-        if (bn->getName() == "TalusR" || ((bn->getName() == "FootPinkyR" || bn->getName() == "FootThumbR"))) result[1] = 1;
-    }
-    return result;
+    // Delegate to GaitPhase - returns cached contact state
+    return mGaitPhase->getContactState();
 }
 
 Eigen::Vector2d Environment::getFootGRF()
 {
-    Eigen::Vector2d grf = Eigen::Vector2d::Zero();
-    const auto results = mWorld->getConstraintSolver()->getLastCollisionResult();
-    const double mass = mCharacter->getSkeleton()->getMass();
-    const double g = 9.81;
-
-    for (std::size_t i = 0; i < results.getNumContacts(); ++i)
-    {
-        const auto& contact = results.getContact(i);
-        const std::string name1 = contact.collisionObject1->getShapeFrame()->getName();
-        const std::string name2 = contact.collisionObject2->getShapeFrame()->getName();
-
-        // Check left foot contact
-        if (name1.find("TalusL") != std::string::npos || name1.find("FootPinkyL") != std::string::npos || name1.find("FootThumbL") != std::string::npos ||
-            name2.find("TalusL") != std::string::npos || name2.find("FootPinkyL") != std::string::npos || name2.find("FootThumbL") != std::string::npos)
-        {
-            grf[0] += contact.force.norm();
-        }
-
-        // Check right foot contact
-        if (name1.find("TalusR") != std::string::npos || name1.find("FootPinkyR") != std::string::npos || name1.find("FootThumbR") != std::string::npos ||
-            name2.find("TalusR") != std::string::npos || name2.find("FootPinkyR") != std::string::npos || name2.find("FootThumbR") != std::string::npos)
-        {
-            grf[1] += contact.force.norm();
-        }
-    }
-
-    // Normalize by body weight (mass * g)
-    grf /= (mass * g);
-
-    return grf;
+    // Delegate to GaitPhase - returns cached normalized GRF
+    return mGaitPhase->getNormalizedGRF();
 }
 
 bool Environment::isGaitCycleComplete()
 {
-    if (mWorldPhaseCount > mPrevWorldPhaseCount){
-        mPrevWorldPhaseCount = mWorldPhaseCount;
-        return true;
-    }
-    return false;
+    // Delegate to GaitPhase - returns PD-level persistent flag
+    return mGaitPhase->isGaitCycleComplete();
+}
+
+void Environment::clearGaitCycleComplete()
+{
+    // Clear the PD-level completion flag after consumption
+    mGaitPhase->clearGaitCycleComplete();
 }
 
 Network Environment::loadPrevNetworks(std::string path, bool isFirst)

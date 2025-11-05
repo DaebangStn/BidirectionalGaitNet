@@ -3,7 +3,9 @@
 #include <cmath>
 
 RenderEnvironment::RenderEnvironment(std::string metadata, CBufferData<double>* graph_data)
-    : Environment(), mGraphData(graph_data)
+    : Environment(), mGraphData(graph_data),
+      mVelocityX_Estimator(1000), mVelocityZ_Estimator(1000),
+      mXZ_Regression(1000), mVelocityMethod(0)
 {
     initialize(metadata);
     reset();
@@ -201,6 +203,57 @@ void RenderEnvironment::RecordGraphData() {
         const double kneeLoading = character->getKneeLoadingMax();
         mGraphData->push("knee_loading_max", kneeLoading);
     }
+
+    // Log COM position
+    Eigen::Vector3d com = skel->getCOM();
+    // Eigen::Vector3d com = skel->getBodyNode("Head")->getCOM();
+    if (mGraphData->key_exists("com_x")) mGraphData->push("com_x", com[0]);
+    if (mGraphData->key_exists("com_z")) mGraphData->push("com_z", com[2]);
+    // Calculate COM velocity based on selected method
+    double vel_x = 0.0, vel_z = 0.0;
+
+    if (mVelocityMethod == 0) {
+        // Method 0: Least Squares Regression
+        double globalTime = getGlobalTime();
+        mVelocityX_Estimator.update(globalTime, com[0]);
+        mVelocityZ_Estimator.update(globalTime, com[2]);
+        vel_x = mVelocityX_Estimator.getSlope();
+        vel_z = mVelocityZ_Estimator.getSlope();
+    } else {
+        // Method 1: Average over Horizon Steps
+        Eigen::Vector3d avgVel = getAvgVelocity();
+        vel_x = avgVel[0];
+        vel_z = avgVel[2];
+    }
+
+    // Log COM velocity
+    if (mGraphData->key_exists("com_vel_x")) mGraphData->push("com_vel_x", vel_x);
+    if (mGraphData->key_exists("com_vel_z")) mGraphData->push("com_vel_z", vel_z);
+
+    // Calculate X-Z regression (lateral deviation): X = f(Z)
+    mXZ_Regression.update(com[2], com[0]);  // Z as independent, X as dependent
+
+    // Calculate mean regression error over all buffered data
+    double mean_error = 0.0;
+    const std::vector<Eigen::Vector3d>& comLogs = getCharacter()->getCOMLogs();
+
+    if (mXZ_Regression.size() >= 2 && !comLogs.empty()) {
+        double slope = mXZ_Regression.getSlope();
+        double intercept = mXZ_Regression.getIntercept();
+
+        // Calculate error for each point in the buffer
+        size_t buffer_size = std::min(static_cast<size_t>(mXZ_Regression.size()), comLogs.size());
+        for (size_t i = comLogs.size() - buffer_size; i < comLogs.size(); i++) {
+            double z = comLogs[i][2];
+            double x = comLogs[i][0];
+            double predicted_x = slope * z + intercept;
+            mean_error += std::abs(x - predicted_x);
+        }
+        mean_error /= buffer_size;
+    }
+
+    // Log mean regression error
+    if (mGraphData->key_exists("com_deviation")) mGraphData->push("com_deviation", mean_error * 1000.0);
 
     // Log joint loading (joint constraint forces) for hip, knee, and ankle
     std::vector<std::pair<std::string, std::string>> joints = {

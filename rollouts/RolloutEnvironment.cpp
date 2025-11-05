@@ -77,7 +77,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     data["step"] = mEnv.getSimulationCount();
     data["time"] = mEnv.getWorldTime();
     data["phase"] = mEnv.getNormalizedPhase();
-    data["cycle"] = mEnv.getWorldPhaseCount();
+    data["cycle"] = mEnv.getGaitCycleCount();
 
     auto skel = mEnv.getCharacter()->getSkeleton();
 
@@ -175,10 +175,6 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     record->add(mEnv.getSimulationCount() - 1, data);
 }
 
-int RolloutEnvironment::GetCycleCount() {
-    return mEnv.getWorldPhaseCount();
-}
-
 std::vector<std::string> RolloutEnvironment::GetRecordFields() const {
     int skeleton_dof = const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
     return RolloutRecord::FieldsFromConfig(mRecordConfig, skeleton_dof);
@@ -208,8 +204,8 @@ double RolloutEnvironment::GetNormalizedPhase() {
     return mEnv.getNormalizedPhase();
 }
 
-int RolloutEnvironment::GetWorldPhaseCount() {
-    return mEnv.getWorldPhaseCount();
+int RolloutEnvironment::getGaitCycleCount() {
+    return mEnv.getGaitCycleCount();
 }
 
 Eigen::VectorXd RolloutEnvironment::InterpolatePose(const Eigen::VectorXd& pose1,

@@ -141,6 +141,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("r_avg", 500);
     mGraphData->register_key("r_step", 500);
     mGraphData->register_key("r_drag_x", 500);
+    mGraphData->register_key("r_phase", 500);
 
     // Register contact keys
     mGraphData->register_key("contact_left", 500);
@@ -176,6 +177,17 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // Register knee loading key (max value only)
     mGraphData->register_key("knee_loading_max", 1000);
+
+    // Register COM keys
+    mGraphData->register_key("com_x", 1000);
+    mGraphData->register_key("com_z", 1000);
+
+    // Register COM velocity keys
+    mGraphData->register_key("com_vel_x", 1000);
+    mGraphData->register_key("com_vel_z", 1000);
+
+    // Register COM regression error key
+    mGraphData->register_key("com_deviation", 1000);
 
     // Register joint loading keys (hip, knee, ankle)
     std::vector<std::string> joints = {"hip", "knee", "ankle"};
@@ -698,10 +710,11 @@ void GLFWApp::update(bool _isSave)
     }
     else mRenderEnv->step();
 
-    // Check for gait cycle completion AFTER step (when phase counters are updated)
+    // Check for gait cycle completion AFTER step (PD-level check)
     if (mRenderEnv->isGaitCycleComplete())
     {
         mRolloutStatus.step();
+        mRenderEnv->clearGaitCycleComplete();  // Clear flag after consuming
         if (mRolloutStatus.cycle == 0)
         {
             mRolloutStatus.pause = true; // Pause simulation when rollout completes
@@ -2051,8 +2064,7 @@ void GLFWApp::drawKinematicsControlPanel()
 }
 
 void GLFWApp::drawSimVisualizationPanel()
-{
-    
+{   
     ImGui::SetNextWindowPos(ImVec2(mWidth - mPlotPanelWidth - 10, 10), ImGuiCond_Once);
     if (!mRenderEnv)
     {
@@ -2077,6 +2089,37 @@ void GLFWApp::drawSimVisualizationPanel()
         // Character position
         Eigen::Vector3d char_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
         ImGui::Text("Character Pos   : (%.3f, %.3f, %.3f)", char_pos[0], char_pos[1], char_pos[2]);
+
+        ImGui::Separator();
+
+        // Gait Phase State
+        auto gaitPhase = mRenderEnv->getGaitPhase();
+
+        // Display current state with color coding
+        const char* stateNames[] = {"RIGHT_STANCE", "LEFT_TAKEOFF", "LEFT_STANCE", "RIGHT_TAKEOFF"};
+        ImVec4 stateColors[] = {
+            ImVec4(0.0f, 1.0f, 0.0f, 1.0f),  // RIGHT_STANCE - green
+            ImVec4(1.0f, 1.0f, 0.0f, 1.0f),  // LEFT_TAKEOFF - yellow
+            ImVec4(0.0f, 0.5f, 1.0f, 1.0f),  // LEFT_STANCE - blue
+            ImVec4(1.0f, 0.5f, 0.0f, 1.0f)   // RIGHT_TAKEOFF - orange
+        };
+
+        int currentState = static_cast<int>(gaitPhase->getCurrentState());
+        ImGui::Text("Gait State      : ");
+        ImGui::SameLine();
+        ImGui::TextColored(stateColors[currentState], "%s", stateNames[currentState]);
+
+        // Display stance ratios
+        double stanceRatioR = gaitPhase->getStanceRatioR();
+        double stanceRatioL = gaitPhase->getStanceRatioL();
+
+        ImGui::Text("Stance Ratio R  : %.3f", stanceRatioR);
+        ImGui::SameLine();
+        ImGui::ProgressBar(stanceRatioR, ImVec2(100, 0));
+
+        ImGui::Text("Stance Ratio L  : %.3f", stanceRatioL);
+        ImGui::SameLine();
+        ImGui::ProgressBar(stanceRatioL, ImVec2(100, 0));
 
         ImGui::Separator();
         
@@ -2110,6 +2153,136 @@ void GLFWApp::drawSimVisualizationPanel()
     ImGui::SameLine();
     ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
+    // Center of Mass Trajectory
+    if (ImGui::CollapsingHeader("COM Trajectory"))
+    {
+        // Plot selection controls
+        static int plotSelection = 2;  // 0 = Trajectory, 1 = Velocity, 2 = Deviation
+        static bool showStats = true;
+
+        // Checkbox for stats
+        ImGui::Checkbox("Stats", &showStats);
+
+        // Radio buttons for plot selection
+        ImGui::RadioButton("Trajectory", &plotSelection, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Velocity", &plotSelection, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Deviation", &plotSelection, 2);
+
+        ImGui::Separator();
+
+        // Static variables for width and height
+        static double comPlotWidth = 4.0;   // Z-axis range (forward/backward)
+        static double comPlotHeight = 0.2;  // X-axis range (left/right)
+
+        // Width and height controls (only for trajectory plot)
+        if (plotSelection == 0) {
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputDouble("Width", &comPlotWidth, 0.1, 1.0, "%.2f");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputDouble("Height", &comPlotHeight, 0.1, 1.0, "%.2f");
+
+            // Minimum values
+            if (comPlotWidth < 0.1) comPlotWidth = 0.1;
+            if (comPlotHeight < 0.1) comPlotHeight = 0.1;
+        }
+        // Trajectory plot (plotSelection == 0)
+        if (plotSelection == 0) {
+            double half_width = comPlotWidth / 2.0;
+            double half_height = comPlotHeight / 2.0;
+
+            // Get COM data from GraphData first to calculate limits
+            double mean_x = 0.0, mean_z = 0.0;
+
+            if (mGraphData->key_exists("com_x") && mGraphData->key_exists("com_z"))
+            {
+                auto com_x_data = mGraphData->get("com_x");
+                auto com_z_data = mGraphData->get("com_z");
+
+                if (!com_x_data.empty() && !com_z_data.empty())
+                {
+                    // Calculate mean of X and Z
+                    size_t count = std::min(com_x_data.size(), com_z_data.size());
+                    for (size_t i = 0; i < count; i++) {
+                        mean_x += com_x_data[i];
+                        mean_z += com_z_data[i];
+                    }
+                    mean_x /= count;
+                    mean_z /= count;
+                }
+            }
+            ImPlot::SetNextAxisLimits(ImAxis_X1, mean_z - half_width, mean_z + half_width, ImPlotCond_Always);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, mean_x - half_height, mean_x + half_height, ImPlotCond_Always);
+            std::string title_com = mPlotTitle ? mCheckpointName : "COM Trajectory";
+            if (ImPlot::BeginPlot((title_com + "##COMTraj").c_str()))
+            {
+                // Setup axes with limits BEFORE plotting
+                ImPlot::SetupAxes("Z Position (m)", "X Position (m)");
+
+                // Now plot the data
+                if (mGraphData->key_exists("com_x") && mGraphData->key_exists("com_z"))
+                {
+                    auto com_x_data = mGraphData->get("com_x");
+                    auto com_z_data = mGraphData->get("com_z");
+                    size_t count = std::min(com_x_data.size(), com_z_data.size());
+
+                    ImPlot::PlotLine("COM Path",
+                                   com_z_data.data(),  // X-axis: Z position
+                                   com_x_data.data(),  // Y-axis: X position
+                                   count);
+                }
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        // Velocity plot (plotSelection == 1)
+        if (plotSelection == 1) {
+            // Velocity method selection
+            static int velocityMethod = 1;  // 0 = Least Squares, 1 = Avg Horizon
+            ImGui::RadioButton("Least Squares", &velocityMethod, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Avg Horizon", &velocityMethod, 1);
+
+            // Update RenderEnvironment with selected method
+            mRenderEnv->setVelocityMethod(velocityMethod);
+
+            // Velocity plot
+            std::string title_vel = mPlotTitle ? mCheckpointName : "COM Velocity (m/s)";
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.1, 1.3, ImPlotCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y2, -0.05, 0.05, ImPlotCond_Once);
+            if (ImPlot::BeginPlot((title_vel + "##COMVel").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Z Velocity (m/s)");
+                ImPlot::SetupAxis(ImAxis_Y2, "X Velocity (m/s)", ImPlotAxisFlags_AuxDefault);
+
+                // Plot velocity data using common plotting function
+                plotGraphData({"com_vel_z"}, ImAxis_Y1, "", showStats);
+                plotGraphData({"com_vel_x"}, ImAxis_Y2, "", showStats, 1);
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        // Deviation plot (plotSelection == 2)
+        if (plotSelection == 2) {
+            std::string title_err = mPlotTitle ? mCheckpointName : "Lateral Deviation Error (m)";
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0, 10, ImPlotCond_Once);
+            if (ImPlot::BeginPlot((title_err + "##COMRegErr").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Mean Error (mm)");
+
+                // Plot regression error
+                std::vector<std::string> errKeys = {"com_deviation"};
+                plotGraphData(errKeys, ImAxis_Y1, "", showStats);
+
+                ImPlot::EndPlot();
+            }
+        }
+    }
+
     // Rewards
     if (ImGui::CollapsingHeader("Rewards"))
     {
@@ -2119,7 +2292,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetupAxes("Time (s)", "Reward");
 
             // Plot reward data using common plotting function
-            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_energy", "r_knee_pain", "r_loco", "r_head_linear_acc", "r_head_rot_diff", "r_avg", "r_step", "r_drag_x"};
+            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_energy", "r_knee_pain", "r_loco", "r_head_linear_acc", "r_head_rot_diff", "r_avg", "r_step", "r_drag_x", "r_phase"};
             if (mRenderEnv->getSeparateTorqueEnergy()) {
                 rewardKeys.push_back("r_torque");
                 rewardKeys.push_back("r_metabolic");
@@ -2215,6 +2388,36 @@ void GLFWApp::drawSimVisualizationPanel()
             // Plot max knee loading
             std::vector<std::string> kneeKeys = {"knee_loading_max"};
             plotGraphData(kneeKeys, ImAxis_Y1, "", show_knee_stats);
+
+            ImPlot::EndPlot();
+        }
+    }
+
+    // Ground Reaction Force (GRF)
+    if (ImGui::CollapsingHeader("Ground Reaction Force"))
+    {
+        // Checkbox for statistics
+        static bool show_grf_stats = false;
+        ImGui::Checkbox("Stats##GRFStats", &show_grf_stats);
+
+        std::string title_grf = mPlotTitle ? mCheckpointName : "Ground Reaction Force";
+        if (std::abs(mXmin) > 1e-6)
+            ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+        else
+            ImPlot::SetNextAxisLimits(0, -1.5, 0);
+        ImPlot::SetNextAxisLimits(3, 0, 3);  // 0-3x body weight typical range
+
+        if (ImPlot::BeginPlot((title_grf + "##GRF").c_str()))
+        {
+            ImPlot::SetupAxes("Time (s)", "GRF (Body Weight)");
+
+            // Plot both feet
+            std::vector<std::string> grfKeys = {"grf_left", "grf_right"};
+            plotGraphData(grfKeys, ImAxis_Y1, "", show_grf_stats);
+
+            // Optional: Overlay phase bars for gait cycle visualization
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
 
             ImPlot::EndPlot();
         }
@@ -3191,171 +3394,262 @@ void GLFWApp::drawSimControlPanel()
         return;
     }
 
-    // Metabolic Energy Control
-    if (ImGui::CollapsingHeader("Reward#control", ImGuiTreeNodeFlags_DefaultOpen))
+    // Reward Control with TreeNode categories
+    if (ImGui::CollapsingHeader("Reward##control", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::Text("Metabolic Energy");
-        // Get current metabolic type
-        MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
-        constexpr int typeOffset = static_cast<int>(MetabolicType::A);
-        const char* metabolicTypes[] = {"A", "A2", "MA", "MA2"};
+        // Metabolic Energy Category
+        if (ImGui::TreeNodeEx("Metabolic Energy##metabolic", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Indent();
 
-        // Map enum to combo index, default to first entry when legacy is active
-        int currentTypeInt = 0;
-        if (currentType >= MetabolicType::A && currentType <= MetabolicType::MA2) {
-            currentTypeInt = static_cast<int>(currentType) - typeOffset;
+            // Get current metabolic type
+            MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
+            constexpr int typeOffset = static_cast<int>(MetabolicType::A);
+            const char* metabolicTypes[] = {"A", "A2", "MA", "MA2"};
+
+            // Map enum to combo index, default to first entry when legacy is active
+            int currentTypeInt = 0;
+            if (currentType >= MetabolicType::A && currentType <= MetabolicType::MA2) {
+                currentTypeInt = static_cast<int>(currentType) - typeOffset;
+            }
+
+            // Dropdown for metabolic type selection (legacy is read-only in combo)
+            ImGui::SetNextItemWidth(50);
+            if (ImGui::Combo("Type", &currentTypeInt, metabolicTypes, IM_ARRAYSIZE(metabolicTypes)))
+            {
+                // Clamp index and convert back to enum before applying
+                int maxIndex = static_cast<int>(IM_ARRAYSIZE(metabolicTypes)) - 1;
+                int clampedIdx = std::max(0, std::min(currentTypeInt, maxIndex));
+                MetabolicType newType = static_cast<MetabolicType>(clampedIdx + typeOffset);
+                mRenderEnv->getCharacter()->setMetabolicType(newType);
+                currentType = newType;
+            }
+            ImGui::SameLine();
+            // Button to reset step-based metrics (metabolic, torque, knee loading)
+            if (ImGui::Button("Reset"))
+            {
+                mRenderEnv->getCharacter()->resetStep();
+            }
+
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("LEGACY: No metabolic computation");
+                ImGui::Text("A: Sum of absolute activations");
+                ImGui::Text("A2: Sum of squared activations");
+                ImGui::Text("MA: Mass-weighted absolute activations");
+                ImGui::Text("MA2: Mass-weighted squared activations");
+                ImGui::Separator();
+                ImGui::Text("Note: Call cacheMuscleMass() before using MA/MA2 modes");
+                ImGui::EndTooltip();
+            }
+
+            // Metabolic weight slider
+            float metabolicWeight = static_cast<float>(mRenderEnv->getMetabolicWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Weight", &metabolicWeight, 0.0f, 0.0f, "%.3f"))
+            {
+                mRenderEnv->setMetabolicWeight(static_cast<double>(metabolicWeight));
+            }
+
+            // Torque energy coefficient input
+            float torqueCoeff = static_cast<float>(mRenderEnv->getCharacter()->getTorqueEnergyCoeff());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Torque Coeff", &torqueCoeff, 0.0f, 0.0f, "%.3f"))
+            {
+                mRenderEnv->getCharacter()->setTorqueEnergyCoeff(static_cast<double>(torqueCoeff));
+            }
+
+            // Separate torque energy checkbox
+            bool separateTorque = mRenderEnv->getSeparateTorqueEnergy();
+            if (ImGui::Checkbox("Separate Torque", &separateTorque))
+            {
+                mRenderEnv->setSeparateTorqueEnergy(separateTorque);
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("When enabled:");
+                ImGui::Text("- r_energy uses only metabolic energy");
+                ImGui::Text("- r_torque calculated separately");
+                ImGui::Text("- Logs: r_energy, r_metabolic, r_torque");
+                ImGui::Separator();
+                ImGui::Text("When disabled:");
+                ImGui::Text("- r_energy uses combined energy");
+                ImGui::Text("- Logs: r_energy only");
+                ImGui::EndTooltip();
+            }
+
+            ImGui::Unindent();
+            ImGui::TreePop();
         }
 
-        // Dropdown for metabolic type selection (legacy is read-only in combo)
-        ImGui::SetNextItemWidth(50);
-        if (ImGui::Combo("Type", &currentTypeInt, metabolicTypes, IM_ARRAYSIZE(metabolicTypes)))
+        // Knee Pain Penalty Category
+        if (ImGui::TreeNodeEx("Knee Pain Penalty##kneepain", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            // Clamp index and convert back to enum before applying
-            int maxIndex = static_cast<int>(IM_ARRAYSIZE(metabolicTypes)) - 1;
-            int clampedIdx = std::max(0, std::min(currentTypeInt, maxIndex));
-            MetabolicType newType = static_cast<MetabolicType>(clampedIdx + typeOffset);
-            mRenderEnv->getCharacter()->setMetabolicType(newType);
-            currentType = newType;
-        }
-        ImGui::SameLine();
-        // Button to reset step-based metrics (metabolic, torque, knee loading)
-        if (ImGui::Button("Reset"))
-        {
-            mRenderEnv->getCharacter()->resetStep();
+            ImGui::Indent();
+
+            // Knee pain weight slider
+            float kneePainWeight = static_cast<float>(mRenderEnv->getKneePainWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Knee Weight", &kneePainWeight, 0.0f, 0.0f, "%.3f"))
+            {
+                mRenderEnv->setKneePainWeight(static_cast<double>(kneePainWeight));
+            }
+
+            // Scale knee pain slider
+            float scaleKneePain = static_cast<float>(mRenderEnv->getScaleKneePain());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Knee Scale", &scaleKneePain, 0.0f, 0.0f, "%.3f"))
+            {
+                mRenderEnv->setScaleKneePain(static_cast<double>(scaleKneePain));
+            }
+
+            // Multiplicative knee pain checkbox
+            bool useMultiplicative = mRenderEnv->getUseMultiplicativeKneePain();
+            if (ImGui::Checkbox("Multiplicative Mode", &useMultiplicative))
+            {
+                mRenderEnv->setUseMultiplicativeKneePain(useMultiplicative);
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("When enabled, knee pain multiplies with main gait term (scale not used)");
+            }
+
+            ImGui::Unindent();
+            ImGui::TreePop();
         }
 
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered())
+        // Locomotion Terms Category
+        if (ImGui::TreeNodeEx("Locomotion Terms##locomotion", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::BeginTooltip();
-            ImGui::Text("LEGACY: No metabolic computation");
-            ImGui::Text("A: Sum of absolute activations");
-            ImGui::Text("A2: Sum of squared activations");
-            ImGui::Text("MA: Mass-weighted absolute activations");
-            ImGui::Text("MA2: Mass-weighted squared activations");
-            ImGui::Separator();
-            ImGui::Text("Note: Call cacheMuscleMass() before using MA/MA2 modes");
-            ImGui::EndTooltip();
-        }
+            ImGui::Indent();
 
-        // Metabolic weight slider
-        float metabolicWeight = static_cast<float>(mRenderEnv->getMetabolicWeight());
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputFloat("Weight", &metabolicWeight, 0.0f, 0.0f, "%.3f"))
-        {
-            mRenderEnv->setMetabolicWeight(static_cast<double>(metabolicWeight));
-        }
+            float stepWeight = static_cast<float>(mRenderEnv->getStepWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Step Weight", &stepWeight, 0.0f, 0.0f, "%.3f"))
+            {
+                stepWeight = std::max(0.0f, stepWeight);
+                mRenderEnv->setStepWeight(static_cast<double>(stepWeight));
+            }
 
-        // Torque energy coefficient input
-        float torqueCoeff = static_cast<float>(mRenderEnv->getCharacter()->getTorqueEnergyCoeff());
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputFloat("Torque Coeff", &torqueCoeff, 0.0f, 0.0f, "%.3f"))
-        {
-            mRenderEnv->getCharacter()->setTorqueEnergyCoeff(static_cast<double>(torqueCoeff));
-        }
+            float stepClip = static_cast<float>(mRenderEnv->getStepClip());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Step Clip", &stepClip, 0.0f, 0.0f, "%.3f"))
+            {
+                stepClip = std::max(0.0f, stepClip);
+                mRenderEnv->setStepClip(static_cast<double>(stepClip));
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Z-axis step clipping value (default: 0.075)");
+            }
 
-        // Separate torque energy checkbox
-        bool separateTorque = mRenderEnv->getSeparateTorqueEnergy();
-        if (ImGui::Checkbox("Separate Torque", &separateTorque))
-        {
-            mRenderEnv->setSeparateTorqueEnergy(separateTorque);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::BeginTooltip();
-            ImGui::Text("When enabled:");
-            ImGui::Text("- r_energy uses only metabolic energy");
-            ImGui::Text("- r_torque calculated separately");
-            ImGui::Text("- Logs: r_energy, r_metabolic, r_torque");
-            ImGui::Separator();
-            ImGui::Text("When disabled:");
-            ImGui::Text("- r_energy uses combined energy");
-            ImGui::Text("- Logs: r_energy only");
-            ImGui::EndTooltip();
-        }
+            float avgVelWeight = static_cast<float>(mRenderEnv->getAvgVelWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Avg Vel Weight", &avgVelWeight, 0.0f, 0.0f, "%.3f"))
+            {
+                avgVelWeight = std::max(0.0f, avgVelWeight);
+                mRenderEnv->setAvgVelWeight(static_cast<double>(avgVelWeight));
+            }
 
-        ImGui::Separator();
-        ImGui::Text("Knee Pain Penalty");
+            float avgVelClip = static_cast<float>(mRenderEnv->getAvgVelClip());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Avg Vel Clip", &avgVelClip, 0.0f, 0.0f, "%.3f"))
+            {
+                mRenderEnv->setAvgVelClip(static_cast<double>(avgVelClip));
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Average velocity clipping (-1 = no clipping)");
+            }
 
-        // Knee pain weight slider
-        float kneePainWeight = static_cast<float>(mRenderEnv->getKneePainWeight());
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputFloat("Knee Weight", &kneePainWeight, 0.0f, 0.0f, "%.3f"))
-        {
-            mRenderEnv->setKneePainWeight(static_cast<double>(kneePainWeight));
-        }
+            float avgWindowMult = static_cast<float>(mRenderEnv->getAvgVelWindowMult());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Avg Vel Window Mult", &avgWindowMult, 0.0f, 0.0f, "%.3f"))
+            {
+                avgWindowMult = std::max(0.0f, avgWindowMult);
+                mRenderEnv->setAvgVelWindowMult(static_cast<double>(avgWindowMult));
+            }
 
-        // Scale knee pain slider
-        float scaleKneePain = static_cast<float>(mRenderEnv->getScaleKneePain());
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputFloat("Knee Scale", &scaleKneePain, 0.0f, 0.0f, "%.3f"))
-        {
-            mRenderEnv->setScaleKneePain(static_cast<double>(scaleKneePain));
-        }
+            bool considerX = mRenderEnv->getAvgVelConsiderX();
+            if (ImGui::Checkbox("Avg Vel Consider X", &considerX))
+            {
+                mRenderEnv->setAvgVelConsiderX(considerX);
+            }
 
-        // Multiplicative knee pain checkbox
-        bool useMultiplicative = mRenderEnv->getUseMultiplicativeKneePain();
-        if (ImGui::Checkbox("Multiplicative Mode", &useMultiplicative))
-        {
-            mRenderEnv->setUseMultiplicativeKneePain(useMultiplicative);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("When enabled, knee pain multiplies with main gait term (scale not used)");
-        }
+            bool dragX = mRenderEnv->getDragX();
+            if (ImGui::Checkbox("Enable Drag X", &dragX))
+            {
+                mRenderEnv->setDragX(dragX);
+            }
+            dragX = mRenderEnv->getDragX();
 
-        ImGui::Separator();
-        ImGui::Text("Locomotion Terms");
+            bool disableDragControls = !dragX;
+            if (disableDragControls)
+            {
+                ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+            }
 
-        float avgWindowMult = static_cast<float>(mRenderEnv->getAvgVelWindowMult());
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputFloat("Avg Vel Window Mult", &avgWindowMult, 0.0f, 0.0f, "%.3f"))
-        {
-            avgWindowMult = std::max(0.0f, avgWindowMult);
-            mRenderEnv->setAvgVelWindowMult(static_cast<double>(avgWindowMult));
-        }
+            float dragWeight = static_cast<float>(mRenderEnv->getDragWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Drag Weight", &dragWeight, 0.0f, 0.0f, "%.3f"))
+            {
+                dragWeight = std::max(0.0f, dragWeight);
+                mRenderEnv->setDragWeight(static_cast<double>(dragWeight));
+            }
 
-        bool considerX = mRenderEnv->getAvgVelConsiderX();
-        if (ImGui::Checkbox("Avg Vel Consider X", &considerX))
-        {
-            mRenderEnv->setAvgVelConsiderX(considerX);
-        }
+            float dragThreshold = static_cast<float>(mRenderEnv->getDragXThreshold());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Drag Threshold", &dragThreshold, 0.0f, 0.0f, "%.3f"))
+            {
+                dragThreshold = std::max(0.0f, dragThreshold);
+                mRenderEnv->setDragXThreshold(static_cast<double>(dragThreshold));
+            }
 
-        bool dragX = mRenderEnv->getDragX();
-        if (ImGui::Checkbox("Enable Drag X", &dragX))
-        {
-            mRenderEnv->setDragX(dragX);
-        }
-        dragX = mRenderEnv->getDragX();
+            if (disableDragControls)
+            {
+                ImGui::PopStyleVar();
+                ImGui::PopItemFlag();
+            }
 
-        bool disableDragControls = !dragX;
-        if (disableDragControls)
-        {
-            ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
-        }
+            bool phaseReward = mRenderEnv->getPhaseRewardEnabled();
+            if (ImGui::Checkbox("Enable Phase Reward", &phaseReward))
+            {
+                mRenderEnv->setPhaseRewardEnabled(phaseReward);
+            }
+            phaseReward = mRenderEnv->getPhaseRewardEnabled();
 
-        float dragWeight = static_cast<float>(mRenderEnv->getDragWeight());
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputFloat("Drag Weight", &dragWeight, 0.0f, 0.0f, "%.3f"))
-        {
-            dragWeight = std::max(0.0f, dragWeight);
-            mRenderEnv->setDragWeight(static_cast<double>(dragWeight));
-        }
+            bool disablePhaseControls = !phaseReward;
+            if (disablePhaseControls)
+            {
+                ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+            }
 
-        float dragThreshold = static_cast<float>(mRenderEnv->getDragXThreshold());
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputFloat("Drag Threshold", &dragThreshold, 0.0f, 0.0f, "%.3f"))
-        {
-            dragThreshold = std::max(0.0f, dragThreshold);
-            mRenderEnv->setDragXThreshold(static_cast<double>(dragThreshold));
-        }
+            float phaseWeight = static_cast<float>(mRenderEnv->getPhaseWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Phase Weight", &phaseWeight, 0.0f, 0.0f, "%.3f"))
+            {
+                phaseWeight = std::max(0.0f, phaseWeight);
+                mRenderEnv->setPhaseWeight(static_cast<double>(phaseWeight));
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Phase reward weight (default: 1.0)");
+            }
 
-        if (disableDragControls)
-        {
-            ImGui::PopStyleVar();
-            ImGui::PopItemFlag();
+            if (disablePhaseControls)
+            {
+                ImGui::PopStyleVar();
+                ImGui::PopItemFlag();
+            }
+
+            ImGui::Unindent();
+            ImGui::TreePop();
         }
     }
 
@@ -3406,6 +3700,47 @@ void GLFWApp::drawSimControlPanel()
         }
         mRenderEnv->setGroupParam(group_v.cast<double>());
         mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
+    }
+
+    // Gait Phase Control
+    if (mRenderEnv && ImGui::CollapsingHeader("Gait Phase##control", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        auto gaitPhase = mRenderEnv->getGaitPhase();
+
+        // Update Mode selection
+        int updateMode = static_cast<int>(gaitPhase->getUpdateMode());
+        ImGui::Text("Update Mode: ");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("CONTACT", &updateMode, 0)) {
+            gaitPhase->setUpdateMode(GaitPhase::CONTACT);
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("PHASE", &updateMode, 1)) {
+            gaitPhase->setUpdateMode(GaitPhase::PHASE);
+        }
+
+        ImGui::Separator();
+
+        // Step Min Ratio control
+        static float stepMinRatio = 0.5f;
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::InputFloat("Step Min Ratio", &stepMinRatio, 0.0f, 0.0f, "%.2f")) {
+            stepMinRatio = std::max(0.1f, std::min(stepMinRatio, 1.0f));
+            gaitPhase->setStepMinRatio(stepMinRatio);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Minimum step progression ratio for heel strike detection (0.1-1.0)");
+        }
+
+        // GRF Threshold control
+        static float grfThreshold = 0.2f;
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::SliderFloat("GRF Threshold", &grfThreshold, 0.05f, 0.5f, "%.2f")) {
+            gaitPhase->setGRFThreshold(grfThreshold);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Normalized GRF threshold for contact confirmation");
+        }
     }
 
     // Rendering
@@ -3473,7 +3808,7 @@ void GLFWApp::drawSimControlPanel()
             ImGuiFileDialog::Instance()->Close();
         }
 
-        ImGui::Checkbox("Use PD Target Motion", &mDrawPDTarget);
+        ImGui::Checkbox("Draw PD Target Motion", &mDrawPDTarget);
         ImGui::Checkbox("Draw Joint Sphere", &mDrawJointSphere);
         ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
         ImGui::Checkbox("Draw Foot Step", &mDrawFootStep);
@@ -3578,8 +3913,8 @@ void GLFWApp::drawSimControlPanel()
         ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
         ImGui::RadioButton("Weakness", &mMuscleRenderTypeInt, 4);
         mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
+        ImGui::Unindent();
     }
-    ImGui::Unindent();
 
     // Noise Injection Control Panel
     drawNoiseControlPanel();
@@ -3888,43 +4223,160 @@ void GLFWApp::drawTimingPane()
     // Use fixed-width font for better alignment
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
 
-    // Display timing metrics in a compact table format
-    ImGui::Text("Viewer Time    : %.3f s", mViewerTime);
-    ImGui::Text("Phase          : %.3f", mViewerPhase);
-    if (mRenderEnv) {
-        ImGui::Text("Simulation Time: %.3f s", mRenderEnv->getWorld()->getTime());
-        ImGui::Text("Sim Step Count : %d", mRenderEnv->GetEnvironment()->getSimulationStep());
-        ImGui::Text("Sim Local Phase : %.3f", mRenderEnv->getLocalPhase(true));
-    }
-    
-    ImGui::Separator();
+    // Define colors for visual hierarchy
+    ImVec4 headerColor(0.4f, 0.7f, 1.0f, 1.0f);      // Light blue for headers
+    ImVec4 labelColor(0.7f, 0.7f, 0.7f, 1.0f);       // Gray for labels
+    ImVec4 valueColor(0.95f, 0.95f, 0.95f, 1.0f);    // White for values
+    ImVec4 accentColor(0.3f, 0.9f, 0.5f, 1.0f);      // Green for accents
 
-    ImGui::SetNextItemWidth(100);
-    ImGui::InputDouble("Cycle Duration", &mViewerCycleDuration, 0.1, 0.5, "%.3f");
+    // Viewer Timing Section
+    ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
+    ImGui::Text("VIEWER");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+
+    if (ImGui::BeginTable("ViewerTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Time");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%.3f s", mViewerTime);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Phase");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(accentColor, "%.3f", mViewerPhase);
+
+        ImGui::EndTable();
+    }
+
+    // Simulation Timing Section
+    if (mRenderEnv) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
+        ImGui::Text("SIMULATION");
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+
+        if (ImGui::BeginTable("SimTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(labelColor, "Time");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(valueColor, "%.3f s", mRenderEnv->getWorld()->getTime());
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(labelColor, "Step Count");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(valueColor, "%d", mRenderEnv->GetEnvironment()->getSimulationStep());
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(labelColor, "Local Phase");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(accentColor, "%.3f", mRenderEnv->getLocalPhase(true));
+
+            ImGui::EndTable();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Playback Controls Section
+    ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
+    ImGui::Text("PLAYBACK CONTROLS");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+
+    ImGui::TextColored(labelColor, "Cycle Duration");
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputDouble("##CycleDuration", &mViewerCycleDuration, 0.1, 0.5, "%.3f s");
     if (mViewerCycleDuration < 0.1) mViewerCycleDuration = 0.1;
 
-    if(ImGui::Button("0.5x")) mViewerPlaybackSpeed = 0.5;
-    ImGui::SameLine();
-    if(ImGui::Button("1x")) mViewerPlaybackSpeed = 1.0;
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
-    ImGui::SliderFloat("Playback Speed", &mViewerPlaybackSpeed, 0.1, 2.5, "%.2f");
+    ImGui::Spacing();
+    ImGui::TextColored(labelColor, "Speed Presets");
 
+    // Styled speed preset buttons
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.4f, 0.6f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.5f, 0.7f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.3f, 0.5f, 1.0f));
+
+    if(ImGui::Button("0.5x", ImVec2(50, 0))) mViewerPlaybackSpeed = 0.5;
+    ImGui::SameLine();
+    if(ImGui::Button("1.0x", ImVec2(50, 0))) mViewerPlaybackSpeed = 1.0;
+    ImGui::SameLine();
+    if(ImGui::Button("2.0x", ImVec2(50, 0))) mViewerPlaybackSpeed = 2.0;
+
+    ImGui::PopStyleColor(3);
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(180);
+    ImGui::SliderFloat("##PlaybackSpeed", &mViewerPlaybackSpeed, 0.1, 2.5, "%.2fx");
+
+    // Performance Metrics Section
     if (mRenderEnv)
     {
+        ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Frame Delta    : %.1f ms", mRealDeltaTimeAvg * 1000.0);
-        ImGui::Text("Sim Step Time  : %.1f ms", mSimulationStepDuration * 1000.0);
-        ImGui::Text("Sim Step Avg   : %.1f ms", mSimStepDurationAvg * 1000.0);
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
+        ImGui::Text("PERFORMANCE");
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+
+        if (ImGui::BeginTable("PerfTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(labelColor, "Frame Delta");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(valueColor, "%.1f ms", mRealDeltaTimeAvg * 1000.0);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(labelColor, "Sim Step");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(valueColor, "%.1f ms", mSimulationStepDuration * 1000.0);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(labelColor, "Sim Avg");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(valueColor, "%.1f ms", mSimStepDurationAvg * 1000.0);
+
+            ImGui::EndTable();
+        }
     }
 
+    // Warning Section
     if (mIsPlaybackTooFast)
     {
+        ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "WARNING: Playback too fast!");
-        if (!mRenderEnv) {
-             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Simulation cannot keep up");
-        }
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.0f, 1.0f));
+        ImGui::Text("WARNING");
+        ImGui::PopStyleColor();
+
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Playback too fast!");
+        if (!mRenderEnv) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Simulation cannot keep up");
     }
 
     ImGui::PopFont();

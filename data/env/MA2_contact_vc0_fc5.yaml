@@ -46,7 +46,7 @@ environment:
     scale: 0.04
     residual: true
     time_warping: 0.001  # -1 means disabled
-    gait_phase_mode: "phase"  # "contact" or "phase"
+    gait_phase_mode: "contact"  # "contact" or "phase"
 
   # Advanced Behavior
   advanced:

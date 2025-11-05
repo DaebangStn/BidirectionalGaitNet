@@ -46,7 +46,7 @@ environment:
     scale: 0.04
     residual: true
     time_warping: 0.001  # -1 means disabled
-    gait_phase_mode: "phase"  # "contact" or "phase"
+    gait_phase_mode: "contact"  # "contact" or "phase"
 
   # Advanced Behavior
   advanced:
@@ -84,7 +84,7 @@ environment:
       avg_vel:
         weight: 4.0
         window_mult: 1.0
-        clip: 0.0  # clip velocity difference magnitude
+        clip: 0.2  # clip velocity difference magnitude
         consider_x: false
       dragX:
         use: true
