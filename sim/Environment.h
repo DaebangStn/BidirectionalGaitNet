@@ -124,6 +124,7 @@ public:
 
     void setAction(Eigen::VectorXd _action);
 
+    virtual void preStep();
     virtual void step();
     void reset(double phase = -1.0);  // phase: 0.0-1.0 for specific phase, -1.0 for randomized
     double getReward() { return mReward; }
@@ -391,6 +392,10 @@ public:
     bool isGaitCycleComplete();
     void clearGaitCycleComplete();  // Clear the PD-level completion flag
     int getGaitCycleCount() const { return mWorldPhaseCount; }
+
+    // Step completion detection
+    bool isStepComplete();
+    void clearStepComplete();  // Clear the PD-level step completion flag
 
     void muscleStep();
     int getNumSubSteps() { return mNumSubSteps; }

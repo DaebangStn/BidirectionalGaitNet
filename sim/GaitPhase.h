@@ -108,6 +108,19 @@ public:
     void clearGaitCycleComplete();
 
     /**
+     * Check if a step completed (PD-step level flag)
+     * This flag is set on both right and left foot strikes
+     * and persists across multiple muscle steps until cleared
+     */
+    bool isStepComplete();
+
+    /**
+     * Clear the PD-level step completion flag
+     * Call this after consuming the step completion event
+     */
+    void clearStepComplete();
+
+    /**
      * Get total gait cycle count
      */
     int getCycleCount() const { return mCycleCount; }
@@ -290,6 +303,8 @@ private:
     int mCycleCount;                      // Total gait cycles completed
     bool mIsGaitCycleComplete;            // Flag: cycle completed (muscle-step level, resets in step())
     bool mGaitCycleCompletePD;            // Flag: cycle completed (PD-step level, persists until cleared)
+    bool mIsStepComplete;                 // Flag: step completed (muscle-step level, resets in step())
+    bool mStepCompletePD;                 // Flag: step completed (PD-step level, persists until cleared)
     double mCycleTime;                    // Last cycle duration
     double mCurCycleTime;                 // Current cycle start time
     double mPrevCycleTime;                // Previous cycle start time

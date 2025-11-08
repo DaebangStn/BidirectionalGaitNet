@@ -16,6 +16,7 @@ RenderEnvironment::~RenderEnvironment()
 }
 
 void RenderEnvironment::step() {
+    preStep();
 
     for (int i = 0; i < getNumSubSteps(); i++) {
         muscleStep();
@@ -323,5 +324,21 @@ void RenderEnvironment::RecordGraphData() {
                 mGraphData->push(key, noiseValue);
             }
         }
+    }
+
+    // Record gait phase metrics only on foot strikes
+    if (getGaitPhase() && getGaitPhase()->isStepComplete()) {
+        // Determine which foot just struck
+        bool isLeftStance = getGaitPhase()->isLeftLegStance();
+
+        // Push stride length for whichever foot just struck
+        double strideLength = isLeftStance ? getGaitPhase()->getStrideLengthL() : getGaitPhase()->getStrideLengthR();
+        if (mGraphData->key_exists("stride_length"))
+            mGraphData->push("stride_length", strideLength);
+
+        // Push phase total for whichever foot just struck
+        double phaseTotal = isLeftStance ? getGaitPhase()->getPhaseTotalL() : getGaitPhase()->getPhaseTotalR();
+        if (mGraphData->key_exists("phase_total"))
+            mGraphData->push("phase_total", phaseTotal);
     }
 }

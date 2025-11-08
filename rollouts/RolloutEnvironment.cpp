@@ -59,6 +59,7 @@ void RolloutEnvironment::SetAction(const Eigen::VectorXd& action) {
 
 void RolloutEnvironment::Step(RolloutRecord* record) {
     // Call environment step (no pGraphData)
+    mEnv.preStep();
     for (int i = 0; i < mEnv.getNumSubSteps(); i++) {
         mEnv.muscleStep();
         RecordStep(record);

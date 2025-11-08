@@ -183,8 +183,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("com_z", 1000);
 
     // Register COM velocity keys
-    mGraphData->register_key("com_vel_x", 1000);
-    mGraphData->register_key("com_vel_z", 1000);
+    mGraphData->register_key("com_vel_x", 400);
+    mGraphData->register_key("com_vel_z", 5000);
 
     // Register COM regression error key
     mGraphData->register_key("com_deviation", 1000);
@@ -201,6 +201,10 @@ GLFWApp::GLFWApp(int argc, char **argv)
         mGraphData->register_key(joint + "_torque_z", 1000);
         mGraphData->register_key(joint + "_torque_mag", 1000);
     }
+
+    // Gait phase metrics (unified keys for both feet)
+    mGraphData->register_key("stride_length", 1000);
+    mGraphData->register_key("phase_total", 1000);
 
     // Forward GaitNEt
     selected_fgn = 0;
@@ -2072,8 +2076,6 @@ void GLFWApp::drawSimVisualizationPanel()
         ImGui::Begin("Sim visualization##1", nullptr, ImGuiWindowFlags_NoCollapse);
         ImGui::Text("Environment not loaded.");
 
-
-
         ImGui::End();
         return;
     }
@@ -2154,10 +2156,10 @@ void GLFWApp::drawSimVisualizationPanel()
     ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
     // Center of Mass Trajectory
-    if (ImGui::CollapsingHeader("COM Trajectory"))
+    if (ImGui::CollapsingHeader("COM Trajectory", ImGuiTreeNodeFlags_DefaultOpen))
     {
         // Plot selection controls
-        static int plotSelection = 2;  // 0 = Trajectory, 1 = Velocity, 2 = Deviation
+        static int plotSelection = 1;  // 0 = Trajectory, 1 = Velocity, 2 = Deviation
         static bool showStats = true;
 
         // Checkbox for stats
@@ -2251,16 +2253,24 @@ void GLFWApp::drawSimVisualizationPanel()
 
             // Velocity plot
             std::string title_vel = mPlotTitle ? mCheckpointName : "COM Velocity (m/s)";
-            ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.1, 1.3, ImPlotCond_Once);
-            ImPlot::SetNextAxisLimits(ImAxis_Y2, -0.05, 0.05, ImPlotCond_Once);
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -10.0, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.15, 1.3, ImPlotCond_Once);
+            // ImPlot::SetNextAxisLimits(ImAxis_Y2, -0.05, 0.05, ImPlotCond_Once);
             if (ImPlot::BeginPlot((title_vel + "##COMVel").c_str()))
             {
                 ImPlot::SetupAxes("Time (s)", "Z Velocity (m/s)");
-                ImPlot::SetupAxis(ImAxis_Y2, "X Velocity (m/s)", ImPlotAxisFlags_AuxDefault);
+                // ImPlot::SetupAxis(ImAxis_Y2, "X Velocity (m/s)", ImPlotAxisFlags_AuxDefault);
 
                 // Plot velocity data using common plotting function
                 plotGraphData({"com_vel_z"}, ImAxis_Y1, "", showStats);
-                plotGraphData({"com_vel_x"}, ImAxis_Y2, "", showStats, 1);
+                // plotGraphData({"com_vel_x"}, ImAxis_Y2, "", showStats, 1);
+
+                // Plot target velocity as horizontal line
+                double targetVel = mRenderEnv->getTargetCOMVelocity();
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 0.8f)); // Red color
+                ImPlot::PlotInfLines("target_vel##target", &targetVel, 1, ImPlotInfLinesFlags_Horizontal);
+                ImPlot::PopStyleColor();
 
                 ImPlot::EndPlot();
             }
@@ -2277,6 +2287,73 @@ void GLFWApp::drawSimVisualizationPanel()
                 // Plot regression error
                 std::vector<std::string> errKeys = {"com_deviation"};
                 plotGraphData(errKeys, ImAxis_Y1, "", showStats);
+
+                ImPlot::EndPlot();
+            }
+        }
+    }
+
+    // Gait Phase Metrics
+    if (ImGui::CollapsingHeader("Gait Metrics"))
+    {
+        // Plot selection controls
+        static int gaitMetricSelection = 0;  // 0 = Stride Length, 1 = Phase Total
+        static bool showGaitStats = false;
+
+        // Checkbox for stats
+        ImGui::Checkbox("Stats##GaitStats", &showGaitStats);
+        ImGui::SameLine();
+
+        // Radio buttons for metric selection
+        ImGui::RadioButton("Stride Length", &gaitMetricSelection, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Phase Total", &gaitMetricSelection, 1);
+
+        ImGui::Separator();
+
+        // Stride Length plot (gaitMetricSelection == 0)
+        if (gaitMetricSelection == 0) {
+            std::string title_stride = mPlotTitle ? mCheckpointName : "Stride Length (m)";
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0.0, 2.0, ImPlotCond_Once);
+            if (ImPlot::BeginPlot((title_stride + "##StrideLength").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Stride Length (m)");
+
+                // Plot stride length data (unified key for both feet)
+                plotGraphData({"stride_length"}, ImAxis_Y1, "", showGaitStats);
+
+                // Plot target stride as horizontal line
+                double targetStride = mRenderEnv->getStride() * mRenderEnv->getRefStride() * mRenderEnv->getCharacter()->getGlobalRatio();
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 0.8f)); // Red color
+                ImPlot::PlotInfLines("target##stride", &targetStride, 1, ImPlotInfLinesFlags_Horizontal);
+                ImPlot::PopStyleColor();
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        // Phase Total plot (gaitMetricSelection == 1)
+        if (gaitMetricSelection == 1) {
+            std::string title_phase = mPlotTitle ? mCheckpointName : "Phase Total (s)";
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0.0, 2.0, ImPlotCond_Once);
+            if (ImPlot::BeginPlot((title_phase + "##PhaseTotal").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Phase Total (s)");
+
+                // Plot phase total data (unified key for both feet)
+                plotGraphData({"phase_total"}, ImAxis_Y1, "", showGaitStats);
+
+                // Plot target phase total as horizontal line
+                // Target phase total = motion cycle time / cadence
+                double motionCycleTime = mRenderEnv->getMotion()->getMaxTime() / sqrt(mRenderEnv->getCharacter()->getGlobalRatio());
+                double targetPhaseTotal = motionCycleTime / mRenderEnv->getCadence();
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 0.8f)); // Red color
+                ImPlot::PlotInfLines("target##phase", &targetPhaseTotal, 1, ImPlotInfLinesFlags_Horizontal);
+                ImPlot::PopStyleColor();
 
                 ImPlot::EndPlot();
             }

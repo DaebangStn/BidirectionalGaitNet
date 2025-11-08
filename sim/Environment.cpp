@@ -1675,8 +1675,17 @@ void Environment::muscleStep()
     postMuscleStep();
 }
 
+void Environment::preStep()
+{
+    // Clear PD-level step completion flag at the beginning of each PD step
+    if (mGaitPhase) {
+        mGaitPhase->clearStepComplete();
+    }
+}
+
 void Environment::step()
 {
+    preStep();
     for (int i = 0; i < mNumSubSteps; i++) muscleStep();
     postStep();
 }
@@ -2314,6 +2323,18 @@ void Environment::clearGaitCycleComplete()
 {
     // Clear the PD-level completion flag after consumption
     mGaitPhase->clearGaitCycleComplete();
+}
+
+bool Environment::isStepComplete()
+{
+    // Delegate to GaitPhase - returns PD-level persistent flag
+    return mGaitPhase->isStepComplete();
+}
+
+void Environment::clearStepComplete()
+{
+    // Clear the PD-level step completion flag after consumption
+    mGaitPhase->clearStepComplete();
 }
 
 Network Environment::loadPrevNetworks(std::string path, bool isFirst)

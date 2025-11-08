@@ -28,6 +28,8 @@ GaitPhase::GaitPhase(Character* character,
       mCycleCount(0),
       mIsGaitCycleComplete(false),
       mGaitCycleCompletePD(false),
+      mIsStepComplete(false),
+      mStepCompletePD(false),
       mSwingTimeR(0.0),
       mSwingTimeL(0.0),
       mStanceTimeR(0.0),
@@ -70,6 +72,8 @@ void GaitPhase::reset()
     mCycleCount = 0;
     mIsGaitCycleComplete = false;
     mGaitCycleCompletePD = false;
+    mIsStepComplete = false;
+    mStepCompletePD = false;
 
     // Reset timing
     mSwingTimeR = 0.0;
@@ -167,6 +171,7 @@ void GaitPhase::reset()
 void GaitPhase::step()
 {
     mIsGaitCycleComplete = false;  // Reset flag
+    mIsStepComplete = false;       // Reset flag
 
     // Detect raw contact state
     Eigen::Vector2i rawContact = detectContact(mWorld);
@@ -205,6 +210,17 @@ void GaitPhase::clearGaitCycleComplete()
 {
     mIsGaitCycleComplete = false;
     mGaitCycleCompletePD = false;
+}
+
+bool GaitPhase::isStepComplete()
+{
+    return mStepCompletePD;
+}
+
+void GaitPhase::clearStepComplete()
+{
+    mIsStepComplete = false;
+    mStepCompletePD = false;
 }
 
 // ========== Contact Detection ==========
@@ -405,6 +421,10 @@ void GaitPhase::updateFromContact()
                 mFootPrevLz = footLPos[2];
                 mCurrentFoot = footLPos;
                 mIsLeftLegStance = true;
+
+                // Step complete (left heel strike)
+                mIsStepComplete = true;
+                mStepCompletePD = true;  // Set PD-level persistent flag
             } else {
 #if LOG_STATE_CHANGES
                 std::ostringstream oss;
@@ -497,6 +517,8 @@ void GaitPhase::updateFromContact()
 
                 mIsGaitCycleComplete = true;
                 mGaitCycleCompletePD = true;  // Set PD-level persistent flag
+                mIsStepComplete = true;
+                mStepCompletePD = true;  // Set PD-level persistent flag (right heel strike)
                 mCycleCount++;
             } else {
 #if LOG_STATE_CHANGES
