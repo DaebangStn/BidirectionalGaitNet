@@ -205,6 +205,9 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("knee_loading_max", kneeLoading);
     }
 
+    // Log local phase
+    if (mGraphData->key_exists("local_phase")) mGraphData->push("local_phase", getLocalPhase(true));
+
     // Log COM position
     Eigen::Vector3d com = skel->getCOM();
     // Eigen::Vector3d com = skel->getBodyNode("Head")->getCOM();

@@ -1178,13 +1178,10 @@ void Environment::setAction(Eigen::VectorXd _action)
         mAction.head(mNumActuatorAction) *= mActionScale;
     }
     
-    if (mPhaseDisplacementScale > 0.0)
-        mPhaseDisplacement += (mWeights.size() > 0 ? mWeights.back() : 1.0) * mPhaseDisplacementScale * mAction[mNumActuatorAction];
-    else
-        mPhaseDisplacement = 0.0;
+    if (mPhaseDisplacementScale > 0.0) mPhaseDisplacement += (mWeights.size() > 0 ? mWeights.back() : 1.0) * mPhaseDisplacementScale * mAction[mNumActuatorAction];
+    else mPhaseDisplacement = 0.0;
 
-    if (mPhaseDisplacement < (-1.0 / mControlHz))
-        mPhaseDisplacement = -1.0 / mControlHz;
+    if (mPhaseDisplacement < (-1.0 / mControlHz)) mPhaseDisplacement = -1.0 / mControlHz;
 
     Eigen::VectorXd actuatorAction = mAction.head(mNumActuatorAction);
 

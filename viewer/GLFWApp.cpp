@@ -152,6 +152,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // Register kinematic keys
     // mGraphData->register_key("sway_Torso_X", 500);
+    mGraphData->register_key("local_phase", 1000);
     mGraphData->register_key("sway_Foot_Rx", 1000);
     mGraphData->register_key("sway_Foot_Lx", 1000);
     mGraphData->register_key("sway_Toe_Ry", 1000);
@@ -2156,7 +2157,7 @@ void GLFWApp::drawSimVisualizationPanel()
     ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
     // Center of Mass Trajectory
-    if (ImGui::CollapsingHeader("COM Trajectory", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("COM Trajectory"))
     {
         // Plot selection controls
         static int plotSelection = 1;  // 0 = Trajectory, 1 = Velocity, 2 = Deviation
@@ -2297,8 +2298,8 @@ void GLFWApp::drawSimVisualizationPanel()
     if (ImGui::CollapsingHeader("Gait Metrics"))
     {
         // Plot selection controls
-        static int gaitMetricSelection = 0;  // 0 = Stride Length, 1 = Phase Total
-        static bool showGaitStats = false;
+        static int gaitMetricSelection = 0;  // 0 = Stride Length, 1 = Phase Total, 2 = Local Phase
+        static bool showGaitStats = true;
 
         // Checkbox for stats
         ImGui::Checkbox("Stats##GaitStats", &showGaitStats);
@@ -2307,16 +2308,17 @@ void GLFWApp::drawSimVisualizationPanel()
         // Radio buttons for metric selection
         ImGui::RadioButton("Stride Length", &gaitMetricSelection, 0);
         ImGui::SameLine();
-        ImGui::RadioButton("Phase Total", &gaitMetricSelection, 1);
-
+        ImGui::RadioButton("Step time", &gaitMetricSelection, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Local Phase", &gaitMetricSelection, 2);
         ImGui::Separator();
 
         // Stride Length plot (gaitMetricSelection == 0)
         if (gaitMetricSelection == 0) {
             std::string title_stride = mPlotTitle ? mCheckpointName : "Stride Length (m)";
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0, ImGuiCond_Once);
-            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0.0, 2.0, ImPlotCond_Once);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -0.5, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.25, 1.4, ImPlotCond_Once);
             if (ImPlot::BeginPlot((title_stride + "##StrideLength").c_str()))
             {
                 ImPlot::SetupAxes("Time (s)", "Stride Length (m)");
@@ -2338,8 +2340,8 @@ void GLFWApp::drawSimVisualizationPanel()
         if (gaitMetricSelection == 1) {
             std::string title_phase = mPlotTitle ? mCheckpointName : "Phase Total (s)";
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0, ImGuiCond_Once);
-            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0.0, 2.0, ImPlotCond_Once);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -0.5, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.05, 1.15, ImPlotCond_Once);
             if (ImPlot::BeginPlot((title_phase + "##PhaseTotal").c_str()))
             {
                 ImPlot::SetupAxes("Time (s)", "Phase Total (s)");
@@ -2354,6 +2356,26 @@ void GLFWApp::drawSimVisualizationPanel()
                 ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 0.8f)); // Red color
                 ImPlot::PlotInfLines("target##phase", &targetPhaseTotal, 1, ImPlotInfLinesFlags_Horizontal);
                 ImPlot::PopStyleColor();
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        // Local Phase plot (gaitMetricSelection == 2)
+        if (gaitMetricSelection == 2) {
+            std::string title_local_phase = mPlotTitle ? mCheckpointName : "Local Phase";
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, -0.05, 1.05, ImPlotCond_Once);
+            if (ImPlot::BeginPlot((title_local_phase + "##LocalPhase").c_str()))
+            {
+                ImPlot::SetupAxes("Time (s)", "Local Phase");
+
+                // Plot local phase data
+                plotGraphData({"local_phase"}, ImAxis_Y1, "", showGaitStats);
+
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);    
 
                 ImPlot::EndPlot();
             }
@@ -2577,7 +2599,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Kinematics
-    if (ImGui::CollapsingHeader("Kinematics"))
+    if (ImGui::CollapsingHeader("Kinematics", ImGuiTreeNodeFlags_DefaultOpen))
     {
         static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway, 4=Anteversion
         static bool stats = true;
@@ -5500,6 +5522,10 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             // mFocus += 1;
             // mFocus %= 5;
             // break;
+        case GLFW_KEY_H:
+            mXminResizablePlotPane = getHeelStrikeTime();
+            mXmin = mXminResizablePlotPane;
+            break;
 
         case GLFW_KEY_0:
         case GLFW_KEY_KP_0:
