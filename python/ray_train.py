@@ -16,7 +16,7 @@ import ray
 from ray import tune
 from ray.tune import CLIReporter
 from ray.rllib.algorithms.ppo.ppo_torch_policy import PPOTorchPolicy
-from ray.rllib.algorithms.ppo import PPO
+from ray.rllib.algorithms.ppo import PPO, PPOConfig
 from ray.rllib.models import ModelCatalog
 from ray.tune.registry import register_env
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
@@ -250,7 +250,7 @@ class MyTrainer(PPO):
 
             model_weights = ray.put(
                 self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-            self.workers.foreach_worker(
+            self.env_runner_group.foreach_env_runner(
                 lambda worker: worker.foreach_env(
                     lambda env: env.load_muscle_model_weights(model_weights)))
 
@@ -261,7 +261,7 @@ class MyTrainer(PPO):
         result["loss"] = {}
 
         # Collect info map averages from each environment
-        results = self.workers.foreach_worker(
+        results = self.env_runner_group.foreach_env_runner(
             lambda worker: worker.foreach_env(lambda env: env.get_info_map_average())
         )
 
@@ -275,7 +275,9 @@ class MyTrainer(PPO):
         # Average across all workers/envs and add to metrics
         if worker_info_maps:
             avg_info_map = mean_dict_list(worker_info_maps)
-            result['sampler_results']['custom_metrics']['info'] = avg_info_map
+            if 'custom_metrics' not in result:
+                result['custom_metrics'] = {}
+            result['custom_metrics']['info'] = avg_info_map
 
         # For Two Level Controller
         if self.isTwoLevelActuator:
@@ -284,7 +286,7 @@ class MyTrainer(PPO):
             muscle_transitions = []
 
             for idx in range(5 if self.env_config["cascading"] else 3):
-                worker_results = self.workers.foreach_worker(
+                worker_results = self.env_runner_group.foreach_env_runner(
                     lambda worker: worker.foreach_env(lambda env: env.get_muscle_tuple(idx))
                 )
                 mts.append(worker_results)
@@ -304,7 +306,7 @@ class MyTrainer(PPO):
 
             distribute_time = time.perf_counter()
             model_weights = ray.put(self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-            self.workers.foreach_worker(
+            self.env_runner_group.foreach_env_runner(
                 lambda worker: worker.foreach_env(lambda env: env.load_muscle_model_weights(model_weights))
             )
 
@@ -359,10 +361,19 @@ class MyTrainer(PPO):
         PPO.load_checkpoint(self, str(checkpoint_path))
 
 
-def get_config_from_file(filename: str, config: str):
+def get_config_from_file(filename: str, config_name: str):
     exec(open(filename).read(), globals())
-    config = CONFIG[config]
+    config_dict = CONFIG[config_name]
+    
+    # Create a PPOConfig object and update it with the loaded dictionary
+    config = PPOConfig()
+    config.update_from_dict(config_dict)
+    
+    # Disable the new API stack for compatibility with ModelV2
+    config.api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
+    
     return config
+
 
 
 parser = argparse.ArgumentParser()
