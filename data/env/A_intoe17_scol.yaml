@@ -47,6 +47,7 @@ environment:
     scale: 0.04
     residual: true
     time_warping: 0.001  # -1 means disabled
+    gait_phase_mode: "contact"  # "contact" or "phase"
 
   # Advanced Behavior
   advanced:
@@ -78,8 +79,21 @@ environment:
     locomotion:
       head_linear_acc_weight: 4.0
       head_rot_weight: 4.0
-      step_weight: 2.0
-      avg_vel_weight: 6.0
+      step:
+        weight: 2.0
+        clip: 0.0  # Z-axis clipping value (forward progression tolerance)
+      avg_vel:
+        weight: 4.0
+        window_mult: 1.0
+        clip: 0.2  # clip velocity difference magnitude
+        consider_x: false
+      dragX:
+        use: true
+        weight: 1.0
+        threshold: 0.1
+      phase:
+        use: false
+        weight: 1.0
 
     # Penalty/auxiliary rewards
     knee_pain:
