@@ -6,8 +6,6 @@ common_config = {
     "env": "MyEnv",
     "trainer_config": {},
     "env_config": {
-
-
     },
     "batch_mode": "truncate_episodes",
     "framework": "torch",
@@ -21,9 +19,6 @@ common_config = {
         "max_seq_len": 0    # Placeholder value needed for ray to register model
     },
     "evaluation_config": {},
-    # Disable new RLModule API for compatibility with ModelV2
-    "_enable_rl_module_api": False,
-    "_enable_learner_api": False,
 }
 
 CONFIG["ppo"] = copy.deepcopy(common_config)
@@ -56,9 +51,9 @@ CONFIG["ppo"].update({
     "create_env_on_driver": False,
     "num_cpus_for_driver": 0,
     "num_gpus": 1,
-    "num_gpus_per_env_runner": 0,
-    "num_envs_per_env_runner": 1,
-    "num_cpus_per_env_runner": 1,
+    "num_gpus_per_worker": 0,
+    "num_envs_per_worker": 1,
+    "num_cpus_per_worker": 1,
 })
 
 # Muscle Configuration
@@ -71,35 +66,30 @@ CONFIG["ppo_large"] = copy.deepcopy(CONFIG["ppo"])
 CONFIG["ppo_large"]["train_batch_size"] = 8192 * 8 * 4
 CONFIG["ppo_large"]["sgd_minibatch_size"] = 4096
 CONFIG["ppo_large"]["trainer_config"]["muscle_sgd_minibatch_size"] = 4096
-CONFIG["ppo_large"]["trainer_config"]["marginal_sgd_minibatch_size"] = 4096
 
 # Medium Set (For a node or a PC)
 CONFIG["ppo_medium"] = copy.deepcopy(CONFIG["ppo"])
 CONFIG["ppo_medium"]["train_batch_size"] = 8192 * 4 * 2
 CONFIG["ppo_medium"]["sgd_minibatch_size"] = 1024
 CONFIG["ppo_medium"]["trainer_config"]["muscle_sgd_minibatch_size"] = 1024
-CONFIG["ppo_medium"]["trainer_config"]["marginal_sgd_minibatch_size"] = 1024
 
 # Small Set (For PC)
 CONFIG["ppo_small"] = copy.deepcopy(CONFIG["ppo"])
 CONFIG["ppo_small"]["train_batch_size"] = 2048 * 4
 CONFIG["ppo_small"]["sgd_minibatch_size"] = 512
 CONFIG["ppo_small"]["trainer_config"]["muscle_sgd_minibatch_size"] = 512
-CONFIG["ppo_small"]["trainer_config"]["marginal_sgd_minibatch_size"] = 512
 
 # Mini Set (For Test)
 CONFIG["ppo_mini"] = copy.deepcopy(CONFIG["ppo"])
 CONFIG["ppo_mini"]["train_batch_size"] = 256
 CONFIG["ppo_mini"]["sgd_minibatch_size"] = 64
 CONFIG["ppo_mini"]["trainer_config"]["muscle_sgd_minibatch_size"] = 64
-CONFIG["ppo_mini"]["trainer_config"]["marginal_sgd_minibatch_size"] = 64
 
 # Small Set (For PC)
 CONFIG["ppo_mass"] = copy.deepcopy(CONFIG["ppo"])
 CONFIG["ppo_mass"]["train_batch_size"] = 2048
 CONFIG["ppo_mass"]["sgd_minibatch_size"] = 128
 CONFIG["ppo_mass"]["trainer_config"]["muscle_sgd_minibatch_size"] = 128
-CONFIG["ppo_mass"]["trainer_config"]["marginal_sgd_minibatch_size"] = 128
 
 # ===============================Training Configuration For Various Devices=========================================
 

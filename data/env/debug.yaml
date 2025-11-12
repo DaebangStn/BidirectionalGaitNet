@@ -1,7 +1,7 @@
 # Training Configuration
 training:
   max_epoch: 12002
-  checkpoint_freq: 2
+  checkpoint_freq: 200
 
 environment:
   # Skeleton and Character

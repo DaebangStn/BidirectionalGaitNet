@@ -209,6 +209,20 @@ class MyTrainer(PPO):
     _metadata_name = None
     _training_start_timestamp = None
 
+    class WeightSetter:
+        def __init__(self, weights_ref):
+            self.weights_ref = weights_ref
+
+        def __call__(self, worker):
+            worker.foreach_env(lambda env: env.load_muscle_model_weights(self.weights_ref))
+
+    class TupleGetter:
+        def __init__(self, idx):
+            self.idx = idx
+
+        def __call__(self, worker):
+            return worker.foreach_env(lambda env: env.get_muscle_tuple(self.idx))
+
     def get_default_policy_class(self, config):
         return PPOTorchPolicy
 
@@ -228,20 +242,6 @@ class MyTrainer(PPO):
         PPO.setup(self, config=config)
         self.max_reward = 0
 
-        # Monkey-patch StorageContext to use custom checkpoint naming
-        from ray.train._internal.storage import StorageContext
-
-        def custom_checkpoint_dir_name(index: int):
-            """Custom checkpoint directory naming format using trainer iteration."""
-            # Use self.iteration from the trainer instance instead of storage index
-            iteration = self.iteration if hasattr(self, 'iteration') else index
-            if MyTrainer._metadata_name and MyTrainer._training_start_timestamp:
-                return f"{MyTrainer._metadata_name}-{iteration:06d}-{MyTrainer._training_start_timestamp}"
-            else:
-                return f"checkpoint_{index:06d}"
-
-        StorageContext._make_checkpoint_dir_name = staticmethod(custom_checkpoint_dir_name)
-
         self.env_config = config.pop("env_config")
 
         if self.isTwoLevelActuator:
@@ -250,9 +250,8 @@ class MyTrainer(PPO):
 
             model_weights = ray.put(
                 self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-            self.env_runner_group.foreach_env_runner(
-                lambda worker: worker.foreach_env(
-                    lambda env: env.load_muscle_model_weights(model_weights)))
+            setter = MyTrainer.WeightSetter(model_weights)
+            self.workers.foreach_worker(setter)
 
     def step(self):
         # Simulation NN Learning
@@ -261,7 +260,7 @@ class MyTrainer(PPO):
         result["loss"] = {}
 
         # Collect info map averages from each environment
-        results = self.env_runner_group.foreach_env_runner(
+        results = self.workers.foreach_worker(
             lambda worker: worker.foreach_env(lambda env: env.get_info_map_average())
         )
 
@@ -286,9 +285,8 @@ class MyTrainer(PPO):
             muscle_transitions = []
 
             for idx in range(5 if self.env_config["cascading"] else 3):
-                worker_results = self.env_runner_group.foreach_env_runner(
-                    lambda worker: worker.foreach_env(lambda env: env.get_muscle_tuple(idx))
-                )
+                getter = MyTrainer.TupleGetter(idx)
+                worker_results = self.workers.foreach_worker(getter)
                 mts.append(worker_results)
                 muscle_transitions.append([])
 
@@ -305,10 +303,10 @@ class MyTrainer(PPO):
             stats = self.muscle_learner.learn(muscle_transitions)
 
             distribute_time = time.perf_counter()
-            model_weights = ray.put(self.muscle_learner.get_model_weights(device=torch.device("cpu")))
-            self.env_runner_group.foreach_env_runner(
-                lambda worker: worker.foreach_env(lambda env: env.load_muscle_model_weights(model_weights))
-            )
+            model_weights = ray.put(
+                self.muscle_learner.get_model_weights(device=torch.device("cpu")))
+            setter = MyTrainer.WeightSetter(model_weights)
+            self.workers.foreach_worker(setter)
 
             distribute_time = (time.perf_counter() - distribute_time) * 1000
             total_time = (time.perf_counter() - start) * 1000
@@ -364,14 +362,12 @@ class MyTrainer(PPO):
 def get_config_from_file(filename: str, config_name: str):
     exec(open(filename).read(), globals())
     config_dict = CONFIG[config_name]
-    
-    # Create a PPOConfig object and update it with the loaded dictionary
-    config = PPOConfig()
-    config.update_from_dict(config_dict)
-    
-    # Disable the new API stack for compatibility with ModelV2
-    config.api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
-    
+
+    # For Ray 2.0.1, we need to work with dictionaries.
+    # Create a dictionary from the default PPOConfig and update it.
+    config = PPOConfig().to_dict()
+    config.update(config_dict)
+
     return config
 
 
@@ -449,7 +445,7 @@ if __name__ == "__main__":
     print(f'Loading config {args.config} from config file {args.config_file}.')
 
     # Always use auto for rollout_fragment_length to avoid batch size division errors
-    config["rollout_fragment_length"] = "auto"
+    config["rollout_fragment_length"] = int(config["train_batch_size"] / (config["num_workers"] * config["num_envs_per_worker"]))
 
     # Initialize environment with appropriate file type
     with MyEnv(env_content, is_xml=is_xml) if is_xml else MyEnv(env_content) as env:
@@ -469,7 +465,7 @@ if __name__ == "__main__":
              name=Path(args.env).stem,
              config=config,
              trial_dirname_creator=(lambda trial: timestamp()),
-             storage_path=str(Path.cwd() / "ray_results"),
+             local_dir=str(Path.cwd() / "ray_results"),
              restore=checkpoint_path,
              stop={"training_iteration": max_epoch},
              progress_reporter=CLIReporter(max_report_frequency=500),

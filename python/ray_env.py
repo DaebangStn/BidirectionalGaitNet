@@ -1,6 +1,6 @@
 from python.pysim import RayEnvManager
 import numpy as np
-import gymnasium
+import gym
 import ray
 from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 from python.uri_resolver import resolve_path, ensure_directory_exists
@@ -13,7 +13,7 @@ class EnvSpec:
         self.max_episode_steps = max_episode_steps
 
 
-class MyEnv(gymnasium.Env):
+class MyEnv(gym.Env):
     # Gymnasium requires metadata to be a class-level dict
     metadata = {}
 
@@ -32,12 +32,12 @@ class MyEnv(gymnasium.Env):
         # Store the actual metadata in a different attribute
         self.env_metadata = self.env.getMetadata()
 
-        self.observation_space = gymnasium.spaces.Box(
+        self.observation_space = gym.spaces.Box(
             low=np.float32(-np.inf), high=np.float32(np.inf), shape=(self.num_state,))
-        self.action_space = gymnasium.spaces.Box(
+        self.action_space = gym.spaces.Box(
             low=np.float32(-np.inf), high=np.float32(np.inf), shape=(self.num_action,))
 
-        # Add spec to prevent Gymnasium warning about max_episode_steps
+        # Add spec to prevent Gym warning about max_episode_steps
         # The actual horizon is controlled by RLlib config, this just silences the warning
         self.spec = EnvSpec(max_episode_steps=10000)
 
@@ -57,7 +57,7 @@ class MyEnv(gymnasium.Env):
         self.info_map_buffer = []
 
     def reset(self, seed=None, options=None):
-        # Gymnasium API: reset() returns (observation, info)
+        # Gym API: reset() returns (observation, info)
         super().reset(seed=seed)
 
         if self.param_count > 300:
@@ -67,10 +67,11 @@ class MyEnv(gymnasium.Env):
         self.obs = self.env.getState()
 
         info = {}
-        return self.obs, info
+        # return self.obs, info
+        return self.obs
 
     def step(self, action):
-        # Gymnasium API: step() returns (obs, reward, terminated, truncated, info)
+        # Gym API: step() returns (obs, reward, terminated, truncated, info)
         self.env.setAction(action)
         self.env.step()
         self.param_count += 1
@@ -92,7 +93,7 @@ class MyEnv(gymnasium.Env):
             for i in range(len(mt)):
                 self.muscle_tuples[i].append(mt[i])
 
-        return self.obs, reward, terminated, truncated, info
+        return self.obs, reward, terminated or truncated, info
 
     def get_muscle_tuple(self, idx):
         assert (self.isTwoLevelActuator)
