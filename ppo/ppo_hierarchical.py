@@ -10,6 +10,7 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import gymnasium as gym
 import numpy as np
@@ -25,24 +26,6 @@ from ppo.env_wrapper import HierarchicalEnv, make_env
 from ppo.muscle_learner import MuscleLearner
 
 
-def mean_dict_list(dict_list):
-    """Average values across list of dictionaries (from Ray implementation)."""
-    if not dict_list:
-        return {}
-
-    # Collect all keys
-    all_keys = set()
-    for d in dict_list:
-        all_keys.update(d.keys())
-
-    # Average each key
-    result = {}
-    for key in all_keys:
-        values = [d[key] for d in dict_list if key in d]
-        if values:
-            result[key] = np.mean(values)
-
-    return result
 
 
 @dataclass
@@ -67,7 +50,7 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer (Ray default)"""
-    # num_envs: int = 4
+    # num_envs: int = 2
     # num_envs: int = 16
     num_envs: int = 96
     """the number of parallel game environments (ppo_small_pc default)"""
@@ -95,9 +78,9 @@ class Args:
     """coefficient of the entropy"""
     vf_coef: float = 1.0
     """coefficient of the value function (Ray vf_loss_coeff)"""
-    max_grad_norm: float = None
+    max_grad_norm: Optional[float] = None
     """the maximum norm for the gradient clipping (Ray grad_clip=None)"""
-    target_kl: float = 0.01
+    target_kl: Optional[float] = 0.01
     """the target KL divergence threshold (Ray kl_target)"""
 
     # Muscle learning specific arguments (Ray defaults)
@@ -105,6 +88,7 @@ class Args:
     """muscle network learning rate"""
     muscle_num_epochs: int = 4
     """muscle network training epochs (Ray default)"""
+    # muscle_batch_size: int = 128
     muscle_batch_size: int = 512
     """muscle network batch size (ppo_small sgd_minibatch_size)"""
 
@@ -197,12 +181,16 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    # Use 'spawn' context for CUDA compatibility with multiprocessing
+    # TEST: Use SyncVectorEnv to compare with AsyncVectorEnv
     envs = gym.vector.AsyncVectorEnv(
         [make_env(args.env_file, i) for i in range(args.num_envs)],
         shared_memory=True,
-        context='spawn'  # Required for CUDA compatibility
+        context='spawn',
+        autoreset_mode=gym.vector.AutoresetMode.DISABLED
     )
+    # envs = gym.vector.SyncVectorEnv(
+        # [make_env(args.env_file, i) for i in range(args.num_envs)]
+    # )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     # Get environment configuration from first env using call()
@@ -266,9 +254,15 @@ if __name__ == "__main__":
             optimizer.param_groups[0]["lr"] = lrnow
 
         # ===== ROLLOUT PHASE (Standard CleanRL) =====
-        # Collect info dicts from all steps for averaging
-        episode_info_dicts = []
+        # Collect info metrics and episode metrics using running sums
+        info_sums = {}
+        info_counts = {}
+        episode_return_sum = 0.0
+        episode_return_count = 0
+        episode_length_sum = 0.0
+        episode_length_count = 0
 
+        rollout_start = time.perf_counter()
         for step in range(0, args.num_steps):
             global_step += args.num_envs
             obs[step] = next_obs
@@ -288,6 +282,24 @@ if __name__ == "__main__":
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
+            # Accumulate info metrics from every step using running sums
+            for env_idx in range(args.num_envs):
+                for key, value_array in infos.items():
+                    # Skip internal keys that start with underscore
+                    # Skip non-scalar keys like 'final_observation' (observation arrays)
+                    if not key.startswith('_') and key not in ['final_observation', 'final_info', 'episode']:
+                        # Each value is a numpy array with one element per environment
+                        if isinstance(value_array, np.ndarray) and env_idx < len(value_array):
+                            # Only convert scalar values (0-d or 1-element arrays)
+                            element = value_array[env_idx]
+                            if np.isscalar(element) or (isinstance(element, np.ndarray) and element.size == 1):
+                                value = float(element)
+                                if key not in info_sums:
+                                    info_sums[key] = 0.0
+                                    info_counts[key] = 0
+                                info_sums[key] += value
+                                info_counts[key] += 1
+
             # https://github.com/DLR-RM/stable-baselines3/pull/658
             for idx, trunc in enumerate(truncations):
                 if trunc and not terminations[idx]:
@@ -296,25 +308,42 @@ if __name__ == "__main__":
                         terminal_value = agent.get_value(torch.Tensor(real_next_obs).to(device)).reshape(1, -1)[0][0]
                     rewards[step][idx] += args.gamma * terminal_value
 
+            # Accumulate episode completion data for averaging
+            # AsyncVectorEnv aggregates episode data as dict of arrays, not array of dicts
+            if "episode" in infos:
+                # Format: infos["episode"]["r"] = array([0, 0, 2.068, ...])
+                #         infos["episode"]["_r"] = array([False, False, True, ...]) (validity mask)
+                ep_data = infos["episode"]
+                if isinstance(ep_data, dict) and "r" in ep_data and "_r" in ep_data:
+                    # Accumulate episode stats for each environment that completed
+                    ep_returns = ep_data["r"]
+                    ep_lengths = ep_data["l"]
+                    ep_valid = ep_data["_r"]  # Validity mask
 
-            # Handle truncation (from CleanRL)
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']:.2f}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                    for env_idx in range(args.num_envs):
+                        if ep_valid[env_idx]:
+                            episode_return_sum += float(ep_returns[env_idx])
+                            episode_return_count += 1
+                            episode_length_sum += float(ep_lengths[env_idx])
+                            episode_length_count += 1
 
-                        # Collect info dict for averaging (excluding special keys)
-                        info_copy = {k: v for k, v in info.items() if k not in ["episode", "_episode"]}
-                        if info_copy:
-                            episode_info_dicts.append(info_copy)
+        rollout_time = (time.perf_counter() - rollout_start) * 1000
+        writer.add_scalar("perf/rollout_time_ms", rollout_time, global_step)
 
-        # Average and log info metrics from all completed episodes
-        if episode_info_dicts:
-            avg_info = mean_dict_list(episode_info_dicts)
-            for key, value in avg_info.items():
-                writer.add_scalar(f"info/{key}", value, global_step)
+        # Log averaged info metrics from all steps and environments
+        for key in info_sums:
+            avg_value = info_sums[key] / info_counts[key]
+            writer.add_scalar(f"info/{key}", avg_value, global_step)
+
+        # Log averaged episode metrics
+        if episode_return_count > 0:
+            avg_episode_return = episode_return_sum / episode_return_count
+            writer.add_scalar("charts/episodic_return", avg_episode_return, global_step)
+        if episode_length_count > 0:
+            avg_episode_length = episode_length_sum / episode_length_count
+            writer.add_scalar("charts/episodic_length", avg_episode_length, global_step)
+                
+        ppo_learn_start = time.perf_counter()
 
         # ===== PPO LEARNING PHASE (Standard CleanRL) =====
         # bootstrap value if not done
@@ -400,6 +429,9 @@ if __name__ == "__main__":
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
+        ppo_learn_time = (time.perf_counter() - ppo_learn_start) * 1000
+        writer.add_scalar("perf/ppo_learn_time_ms", ppo_learn_time, global_step)
+
         # ===== MUSCLE LEARNING PHASE (Hierarchical Control Extension) =====
         if muscle_learner is not None:
             muscle_start = time.perf_counter()
@@ -422,7 +454,7 @@ if __name__ == "__main__":
             writer.add_scalar("muscle/loss_reg", muscle_stats['loss_reg'], global_step)
             writer.add_scalar("muscle/loss_act", muscle_stats['loss_act'], global_step)
             writer.add_scalar("muscle/num_tuples", muscle_stats['num_tuples'], global_step)
-            writer.add_scalar("muscle/time_ms", muscle_time, global_step)
+            writer.add_scalar("perf/time_ms", muscle_time, global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -433,8 +465,9 @@ if __name__ == "__main__":
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print(f"Iteration {iteration}/{args.num_iterations}, SPS: {int(global_step / (time.time() - start_time))}")
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        iteration_time = (time.perf_counter() - rollout_start) * 1000
+        writer.add_scalar("perf/iteration_time_ms", iteration_time, global_step)
+        writer.add_scalar("perf/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     # Save models
     if args.save_model:

@@ -7,6 +7,7 @@ Gymnasium interface with hierarchical muscle control support.
 
 import gymnasium as gym
 import numpy as np
+import time
 from typing import Optional, Tuple, Dict, Any
 from ppo import GymEnvManager
 
@@ -76,6 +77,11 @@ class HierarchicalEnv(gym.Env):
         # Parameter update counter (from ray_env.py)
         self.param_count = 0
 
+        # Episode tracking for logging
+        self.episode_return = 0.0
+        self.episode_length = 0
+        self.episode_start_time = None
+
     def reset(
         self,
         seed: Optional[int] = None,
@@ -112,6 +118,11 @@ class HierarchicalEnv(gym.Env):
                 dtype=np.float32
             )
 
+        # Reset episode tracking
+        self.episode_return = 0.0
+        self.episode_length = 0
+        self.episode_start_time = time.time()
+
         return obs.astype(np.float32), info
 
     def step(
@@ -139,6 +150,29 @@ class HierarchicalEnv(gym.Env):
 
         # Execute step (muscle substeps happen internally)
         obs, reward, terminated, truncated, info = self.env.step(action)
+
+        # Update episode tracking
+        self.episode_return += float(reward)
+        self.episode_length += 1
+
+        # If episode ended, add episode statistics to info
+        if terminated or truncated:
+            episode_time = time.time() - self.episode_start_time
+
+            # Add episode statistics (compatible with RecordEpisodeStatistics format)
+            info["episode"] = {
+                "r": self.episode_return,
+                "l": self.episode_length,
+                "t": episode_time
+            }
+
+            # Log episode completion (optional - can be commented out for less verbosity)
+            # print(f"[HierarchicalEnv] Episode complete: return={self.episode_return:.2f}, length={self.episode_length}, time={episode_time:.2f}s, terminated={terminated}, truncated={truncated}")
+
+            # Reset episode tracking for next episode (C++ has already auto-reset)
+            self.episode_return = 0.0
+            self.episode_length = 0
+            self.episode_start_time = time.time()
 
         # Increment parameter counter
         self.param_count += 1
@@ -210,6 +244,8 @@ def make_env(env_file: str, idx: int = 0):
     """
     def thunk():
         env = HierarchicalEnv(env_file)
+        # Note: RecordEpisodeStatistics removed - HierarchicalEnv handles episode tracking directly
+        # to avoid conflict with auto-reset protocol where info["episode"] is already populated
         env.reset(seed=idx)
         return env
 

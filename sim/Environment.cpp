@@ -297,7 +297,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     if (isTwoLevelController())
     {
         Character *character = mCharacter;
-        mMuscleNN = py::module::import("python.ray_model").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
+        mMuscleNN = py::module::import("ppo.muscle_nn").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
     }
 
     if (doc.FirstChildElement("Horizon") != NULL)
@@ -734,7 +734,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     // === Two-level controller ===
     if (isTwoLevelController()) {
         Character *character = mCharacter;
-        mMuscleNN = py::module::import("python.ray_model").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
+        mMuscleNN = py::module::import("ppo.muscle_nn").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
     }
 
     // === Horizon ===

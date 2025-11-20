@@ -2,3 +2,4 @@
 - For interactive activation, first run: eval "$(/opt/miniconda3/bin/micromamba shell hook --shell zsh)" then: micromamba activate bidir
 - You can build the release mode with 'ninja -C build/release'
 - If you test ray_rollout.py, you must launch tmux window like debugging since rollout takes quite long time.
+- If you should check the ppo output, run "python ppo/ppo_hierarchical.py"

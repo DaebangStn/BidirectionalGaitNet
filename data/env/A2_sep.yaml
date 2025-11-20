@@ -78,7 +78,11 @@ environment:
       head_linear_acc_weight: 4.0
       head_rot_weight: 4.0
       step_weight: 2.0
-      avg_vel_weight: 6.0
+      avg_vel:
+        weight: 6.0
+        window_mult: 1.0
+        clip: 1.0
+        consider_x: true
 
     # Penalty/auxiliary rewards
     knee_pain:

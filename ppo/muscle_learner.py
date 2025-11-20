@@ -12,7 +12,7 @@ import numpy as np
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
-from python.ray_model import MuscleNN
+from ppo.muscle_nn import MuscleNN
 
 
 class MuscleLearner:

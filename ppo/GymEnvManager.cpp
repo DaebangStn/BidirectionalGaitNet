@@ -116,15 +116,19 @@ public:
             MuscleTuple mt = Environment::getRandomMuscleTuple();
             Eigen::VectorXd dt = Environment::getRandomDesiredTorque();
 
-            // Convert to numpy and store
-            muscle_tuple_buffer[0].append(toNumPyArray(dt));
-            muscle_tuple_buffer[1].append(toNumPyArray(mt.JtA_reduced));
-            muscle_tuple_buffer[2].append(toNumPyArray(mt.JtA));
-
-            if (Environment::getUseCascading())
+            // Check if muscle tuple data is valid (non-zero size)
+            if (dt.size() > 0 && mt.JtA_reduced.rows() > 0 && mt.JtA.rows() > 0)
             {
-                muscle_tuple_buffer[3].append(toNumPyArray(Environment::getRandomPrevOut()));
-                muscle_tuple_buffer[4].append(toNumPyArray(Environment::getRandomWeight()));
+                // Convert to numpy and store
+                muscle_tuple_buffer[0].append(toNumPyArray(dt));
+                muscle_tuple_buffer[1].append(toNumPyArray(mt.JtA_reduced));
+                muscle_tuple_buffer[2].append(toNumPyArray(mt.JtA));
+
+                if (Environment::getUseCascading())
+                {
+                    muscle_tuple_buffer[3].append(toNumPyArray(Environment::getRandomPrevOut()));
+                    muscle_tuple_buffer[4].append(toNumPyArray(Environment::getRandomWeight()));
+                }
             }
         }
 
@@ -133,6 +137,22 @@ public:
         bool terminated = Environment::isTerminated();
         bool truncated = Environment::isTruncated();
         py::dict info = getInfoMap();
+
+        // AUTO-RESET: If episode ended, reset and return fresh observation
+        // This is required for proper episode tracking and AsyncVectorEnv compatibility
+        if (terminated || truncated) {
+            // Optional: Enable for debugging termination detection
+            // std::cout << "Environment terminated or truncated" << std::endl;
+
+            // Store final observation in info for AsyncVectorEnv compatibility
+            info["final_observation"] = obs;
+
+            // Reset environment to start new episode
+            Environment::reset();
+
+            // Return fresh observation from reset (not the terminal state)
+            obs = toNumPyArray(Environment::getState());
+        }
 
         return py::make_tuple(obs, reward, terminated, truncated, info);
     }
