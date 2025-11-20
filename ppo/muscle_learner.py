@@ -11,7 +11,8 @@ import torch.optim as optim
 import numpy as np
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
+# from python.ray_model import MuscleNN
 from ppo.muscle_nn import MuscleNN
 
 
@@ -61,7 +62,6 @@ class MuscleLearner:
             num_muscle_dofs,
             num_actuator_action,
             num_muscles,
-            is_cpu=(device == "cpu"),
             is_cascaded=is_cascaded
         ).to(self.device)
 
@@ -153,7 +153,7 @@ class MuscleLearner:
 
         num_batches = num_samples // self.batch_size
 
-        for epoch in range(self.num_epochs):
+        for _ in range(self.num_epochs):
             np.random.shuffle(indices)
 
             epoch_loss = 0.0

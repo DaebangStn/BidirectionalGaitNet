@@ -6,9 +6,5 @@
 
 ulimit -u 65535
 ulimit -n 65536
-
-let "num_pending_trials=(${SLURM_NNODES} * 64)"
-export TUNE_MAX_PENDING_TRIALS_PG=${num_pending_trials}
-
-python ppo/ppo_hierarchical.py
+python -u ppo/ppo_hierarchical.py
 echo "Training finished"

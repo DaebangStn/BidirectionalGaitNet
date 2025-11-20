@@ -9,6 +9,11 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+# Configure PyTorch threading for multiprocessing (similar to Ray's behavior)
+# Set number of threads per worker to 1 to avoid thread contention across processes
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
+
 
 def weights_init(m):
     """Xavier initialization for linear layers."""

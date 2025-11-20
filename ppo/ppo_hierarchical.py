@@ -7,6 +7,7 @@ Implements Option C design where muscle learning happens after PPO learning.
 
 import os
 import random
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,8 @@ class Args:
     """whether to capture videos of the agent performances"""
     save_model: bool = True
     """whether to save model into the `runs/{run_name}` folder"""
+    checkpoint_interval: Optional[int] = 1000
+    """save checkpoint every K iterations (None = no checkpoints, only final save)"""
 
     # Algorithm specific arguments
     env_file: str = "data/env/A2_sep.yaml"
@@ -51,11 +54,9 @@ class Args:
     learning_rate: float = 1e-4
     """the learning rate of the optimizer (Ray default)"""
     # num_envs: int = 2
-    # num_envs: int = 16
     num_envs: int = 96
     """the number of parallel game environments (ppo_small_pc default)"""
     num_steps: int = 128
-    # num_steps: int = 2048
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
@@ -63,8 +64,7 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.99
     """the lambda for the general advantage estimation (Ray default)"""
-    # num_minibatches: int = 8
-    num_minibatches: int = 64
+    num_minibatches: int = 16
     """the number of mini-batches (computed from batch_size and sgd_minibatch_size)"""
     update_epochs: int = 4
     """the K epochs to update the policy (Ray num_sgd_iter)"""
@@ -88,7 +88,6 @@ class Args:
     """muscle network learning rate"""
     muscle_num_epochs: int = 4
     """muscle network training epochs (Ray default)"""
-    # muscle_batch_size: int = 128
     muscle_batch_size: int = 512
     """muscle network batch size (ppo_small sgd_minibatch_size)"""
 
@@ -188,9 +187,6 @@ if __name__ == "__main__":
         context='spawn',
         autoreset_mode=gym.vector.AutoresetMode.DISABLED
     )
-    # envs = gym.vector.SyncVectorEnv(
-        # [make_env(args.env_file, i) for i in range(args.num_envs)]
-    # )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     # Get environment configuration from first env using call()
@@ -246,7 +242,16 @@ if __name__ == "__main__":
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
 
-    for iteration in tqdm(range(1, args.num_iterations + 1), desc="Iterations", ncols=100):
+    # Disable tqdm in SLURM batch jobs (non-TTY) to avoid ^M control characters in logs
+    use_tqdm = sys.stdout.isatty()
+
+    for iteration in tqdm(range(1, args.num_iterations + 1), desc="Iterations", ncols=100, disable=not use_tqdm):
+        # Log progress periodically when tqdm is disabled (SLURM batch jobs)
+        if not use_tqdm and iteration % 10 == 0:
+            elapsed = time.time() - start_time
+            sps = int(global_step / elapsed) if elapsed > 0 else 0
+            print(f"[Iteration {iteration}/{args.num_iterations}] Steps: {global_step}, SPS: {sps}, Elapsed: {elapsed:.1f}s")
+
         # Annealing the rate if instructed to do so
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
@@ -454,7 +459,7 @@ if __name__ == "__main__":
             writer.add_scalar("muscle/loss_reg", muscle_stats['loss_reg'], global_step)
             writer.add_scalar("muscle/loss_act", muscle_stats['loss_act'], global_step)
             writer.add_scalar("muscle/num_tuples", muscle_stats['num_tuples'], global_step)
-            writer.add_scalar("perf/time_ms", muscle_time, global_step)
+            writer.add_scalar("perf/muscle_time_ms", muscle_time, global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -468,6 +473,21 @@ if __name__ == "__main__":
         iteration_time = (time.perf_counter() - rollout_start) * 1000
         writer.add_scalar("perf/iteration_time_ms", iteration_time, global_step)
         writer.add_scalar("perf/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        # Checkpoint saving
+        if args.checkpoint_interval is not None and iteration % args.checkpoint_interval == 0:
+            checkpoint_path = f"runs/{run_name}/ckpt_{iteration}"
+            os.makedirs(checkpoint_path, exist_ok=True)
+
+            # Save policy agent checkpoint
+            torch.save(agent.state_dict(), f"{checkpoint_path}/agent.pt")
+
+            # Save muscle learner checkpoint if hierarchical
+            if muscle_learner is not None:
+                muscle_learner.save(f"{checkpoint_path}/muscle.pt")
+
+            if not use_tqdm:
+                print(f"[Checkpoint] Saved at iteration {iteration}: {checkpoint_path}")
 
     # Save models
     if args.save_model:

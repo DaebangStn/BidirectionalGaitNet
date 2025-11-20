@@ -115,20 +115,14 @@ public:
         {
             MuscleTuple mt = Environment::getRandomMuscleTuple();
             Eigen::VectorXd dt = Environment::getRandomDesiredTorque();
+            muscle_tuple_buffer[0].append(toNumPyArray(dt));
+            muscle_tuple_buffer[1].append(toNumPyArray(mt.JtA_reduced));
+            muscle_tuple_buffer[2].append(toNumPyArray(mt.JtA));
 
-            // Check if muscle tuple data is valid (non-zero size)
-            if (dt.size() > 0 && mt.JtA_reduced.rows() > 0 && mt.JtA.rows() > 0)
+            if (Environment::getUseCascading())
             {
-                // Convert to numpy and store
-                muscle_tuple_buffer[0].append(toNumPyArray(dt));
-                muscle_tuple_buffer[1].append(toNumPyArray(mt.JtA_reduced));
-                muscle_tuple_buffer[2].append(toNumPyArray(mt.JtA));
-
-                if (Environment::getUseCascading())
-                {
-                    muscle_tuple_buffer[3].append(toNumPyArray(Environment::getRandomPrevOut()));
-                    muscle_tuple_buffer[4].append(toNumPyArray(Environment::getRandomWeight()));
-                }
+                muscle_tuple_buffer[3].append(toNumPyArray(Environment::getRandomPrevOut()));
+                muscle_tuple_buffer[4].append(toNumPyArray(Environment::getRandomWeight()));
             }
         }
 
