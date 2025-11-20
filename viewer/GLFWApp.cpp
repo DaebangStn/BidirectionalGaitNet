@@ -100,22 +100,15 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mRelTrans = Eigen::Vector3d(0.0, 0.0, 0.0);  // Initialize user translation offset
     mEye = Eigen::Vector3d(0.0, 0.0, 1.0);
     mUp = Eigen::Vector3d(0.0, 1.0, 0.0);
-    mDrawOBJ = true;
 
-    // Rendering Option
-    mDrawCharacter = true;
-    mDrawPDTarget = false;
-    mDrawJointSphere = false;
+    // Rendering Options (mDrawFlags initialized with struct defaults)
     mStochasticPolicy = false;
-    mDrawFootStep = false;
-    mDrawEOE = false;
 
     mMuscleRenderType = activationLevel;
     mMuscleRenderTypeInt = 2;
     mMuscleResolution = 0.0;
 
     // Noise Injector UI initialization
-    mDrawNoiseArrows = true;
     mNoiseMode = 0;  // Default to no noise
     mPlotActivationNoise = false;  // Default: don't plot noise
 
@@ -210,7 +203,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // Forward GaitNEt
     selected_fgn = 0;
-    mDrawFGNSkeleton = false;
 
     // Backward GaitNEt
     selected_bgn = 0;
@@ -1552,7 +1544,7 @@ void GLFWApp::drawKinematicsControlPanel()
     ImGui::Begin("Kinematics Control");
 
     // FGN
-    ImGui::Checkbox("Draw FGN Result\t", &mDrawFGNSkeleton);
+    ImGui::Checkbox("Draw FGN Result\t", &mDrawFlags.fgnSkeleton);
     if (ImGui::CollapsingHeader("FGN"))
     {
         int idx = 0;
@@ -1571,7 +1563,7 @@ void GLFWApp::drawKinematicsControlPanel()
     {
         if (ImGui::Button("Load FGN"))
         {
-            mDrawFGNSkeleton = true;
+            mDrawFlags.fgnSkeleton = true;
             py::tuple res = py::module::import("forward_gaitnet").attr("load_FGN")(mFGNList[selected_fgn], mRenderEnv->getNumParamState(), mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows());
             mFGN = res[0];
             mFGNmetadata = res[1].cast<std::string>();
@@ -3986,11 +3978,12 @@ void GLFWApp::drawSimControlPanel()
             ImGuiFileDialog::Instance()->Close();
         }
 
-        ImGui::Checkbox("Draw PD Target Motion", &mDrawPDTarget);
-        ImGui::Checkbox("Draw Joint Sphere", &mDrawJointSphere);
+        ImGui::Checkbox("Draw PD Target Motion", &mDrawFlags.pdTarget);
+        ImGui::Checkbox("Draw Joint Sphere", &mDrawFlags.jointSphere);
         ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
-        ImGui::Checkbox("Draw Foot Step", &mDrawFootStep);
-        ImGui::Checkbox("Draw EOE", &mDrawEOE);
+        ImGui::Checkbox("Draw Foot Step", &mDrawFlags.footStep);
+        ImGui::Checkbox("Draw EOE", &mDrawFlags.eoe);
+        ImGui::Checkbox("Draw Collision", &mDrawFlags.collision);
 
         ImGui::Separator();
         // Muscle Filtering and Selection
@@ -4749,7 +4742,7 @@ void GLFWApp::drawSimFrame()
     if (mRenderEnv){
         // Draw phase using viewer time
         drawPhase(mViewerPhase, mViewerPhase);
-        if (mDrawCharacter)
+        if (mDrawFlags.character)
         {
             drawSkeleton(mRenderEnv->getCharacter()->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 1.0));
             if (!mRenderConditions) drawShadow();
@@ -4759,8 +4752,8 @@ void GLFWApp::drawSimFrame()
         // Draw noise visualizations
         drawNoiseVisualizations();
 
-        if ((mRenderEnv->getRewardType() == gaitnet) && mDrawFootStep) drawFootStep();
-        if (mDrawJointSphere)
+        if ((mRenderEnv->getRewardType() == gaitnet) && mDrawFlags.footStep) drawFootStep();
+        if (mDrawFlags.jointSphere)
         {
             for (auto jn : mRenderEnv->getCharacter()->getSkeleton()->getJoints())
             {
@@ -4771,7 +4764,7 @@ void GLFWApp::drawSimFrame()
                 GUI::DrawSphere(jn_pos, 0.1);
             }
         }
-        if (!mRenderConditions && mDrawPDTarget)
+        if (!mRenderConditions && mDrawFlags.pdTarget)
         {
             const auto& character = mRenderEnv->getCharacter();
             Eigen::VectorXd pos = character->getPDTarget();
@@ -4779,7 +4772,7 @@ void GLFWApp::drawSimFrame()
             pos[5] += 1.0;
             drawSkeleton(pos, Eigen::Vector4d(1.0, 0.35, 0.35, 1.0));
         }
-        if (mDrawEOE)
+        if (mDrawFlags.eoe)
         {
             glColor4f(1.0, 0.0, 0.0, 1.0);
             GUI::DrawSphere(mRenderEnv->getCharacter()->getSkeleton()->getCOM(), 0.01);
@@ -4791,9 +4784,10 @@ void GLFWApp::drawSimFrame()
             glVertex3f(-10, mRenderEnv->getLimitY() * mRenderEnv->getCharacter()->getGlobalRatio(), 10);
             glEnd();
         }
+        if (mDrawFlags.collision) drawCollision();
 
         // FGN - use viewer phase for playback
-        if (mDrawFGNSkeleton)
+        if (mDrawFlags.fgnSkeleton)
         {
             Eigen::VectorXd FGN_in = Eigen::VectorXd::Zero(mRenderEnv->getNumParamState() + 2);
             Eigen::VectorXd phase = Eigen::VectorXd::Zero(2);
@@ -4822,7 +4816,7 @@ void GLFWApp::drawSimFrame()
     drawPlayableMotion();
 
     // FGN playback using viewer time (independent of mRenderEnv)
-    if (!mRenderEnv && mDrawFGNSkeleton && !mFGN.is_none())
+    if (!mRenderEnv && mDrawFlags.fgnSkeleton && !mFGN.is_none())
     {
         drawPhase(mViewerPhase, mViewerPhase);  // Draw phase bar using viewer phase
 
@@ -5578,7 +5572,7 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             else reset();
             break;
         case GLFW_KEY_O:
-            mDrawOBJ = !mDrawOBJ;
+            mDrawFlags.obj = !mDrawFlags.obj;
             break;
         case GLFW_KEY_SPACE:
             mRolloutStatus.pause = !mRolloutStatus.pause;
@@ -5696,7 +5690,7 @@ void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
     glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_DEPTH_TEST);
     glColor4d(color[0], color[1], color[2], color[3]);
-    if (!mDrawOBJ)
+    if (!mDrawFlags.obj)
     {
 
         // glColor4dv(color.data());
@@ -5830,23 +5824,51 @@ void GLFWApp::setCamera()
 
 void GLFWApp::drawCollision()
 {
+    glDisable(GL_LIGHTING);
     const auto result = mRenderEnv->getWorld()->getConstraintSolver()->getLastCollisionResult();
-    for (const auto &contact : result.getContacts())
-    {
+    for (const auto& contact : result.getContacts()) {
         Eigen::Vector3d v = contact.point;
-        Eigen::Vector3d f = contact.force / 1000.0;
-        glLineWidth(2.0);
-        glColor3f(0.8, 0.8, 0.2);
+        Eigen::Vector3d f = contact.force / 1500.0;
+
+        // Draw arrow shaft
+        glLineWidth(20.0);
+        glColor3f(1.0, 0.4, 0.4);
+
         glBegin(GL_LINES);
         glVertex3f(v[0], v[1], v[2]);
-        glVertex3f(v[0] + f[0], v[1] + f[1], v[2] + f[2]);
+        glVertex3f(v[0]+f[0], v[1]+f[1], v[2]+f[2]);
         glEnd();
-        glColor3f(0.8, 0.8, 0.2);
+
+        // Draw arrow head
+        const float head_size = 0.025;
+
+        Eigen::Vector3d dir = f.normalized();
+        Eigen::Vector3d up = Eigen::Vector3d::UnitY();
+        Eigen::Vector3d right = dir.cross(up).normalized();
+        if(right.norm() < 0.1) right = Eigen::Vector3d::UnitX();
+        Eigen::Vector3d up2 = right.cross(dir).normalized();
+
+        Eigen::Vector3d base = v + f;
+        Eigen::Vector3d tip = base + dir * head_size;
+
+        glBegin(GL_TRIANGLES);
+        glVertex3f(tip[0], tip[1], tip[2]);
+        glVertex3f(base[0] + right[0]*head_size, base[1] + right[1]*head_size, base[2] + right[2]*head_size);
+        glVertex3f(base[0] - right[0]*head_size, base[1] - right[1]*head_size, base[2] - right[2]*head_size);
+
+        glVertex3f(tip[0], tip[1], tip[2]);
+        glVertex3f(base[0] + up2[0]*head_size, base[1] + up2[1]*head_size, base[2] + up2[2]*head_size);
+        glVertex3f(base[0] - up2[0]*head_size, base[1] - up2[1]*head_size, base[2] - up2[2]*head_size);
+        glEnd();
+
         glPushMatrix();
         glTranslated(v[0], v[1], v[2]);
+        glColor3f(0.5, 0.2, 0.5);
         GUI::DrawSphere(0.01);
         glPopMatrix();
     }
+
+    glEnable(GL_LIGHTING);
 }
 
 void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
@@ -6229,13 +6251,13 @@ void GLFWApp::drawNoiseControlPanel()
         ImGui::Separator();
 
         // Visualization toggle
-        ImGui::Checkbox("Draw Noise Arrows", &mDrawNoiseArrows);
+        ImGui::Checkbox("Draw Noise Arrows", &mDrawFlags.noiseArrows);
     }
 }
 
 void GLFWApp::drawNoiseVisualizations()
 {
-    if (!mDrawNoiseArrows || !mRenderEnv) return;
+    if (!mDrawFlags.noiseArrows || !mRenderEnv) return;
 
     auto* ni = mRenderEnv->getNoiseInjector();
     if (!ni || !ni->isEnabled()) return;

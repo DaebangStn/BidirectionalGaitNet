@@ -113,6 +113,22 @@ enum PlaybackNavigationMode
 };
 
 /**
+ * @brief Unified draw flags for rendering control
+ */
+struct DrawFlags
+{
+    bool character = true;
+    bool pdTarget = false;
+    bool jointSphere = false;
+    bool footStep = false;
+    bool eoe = false;
+    bool collision = false;
+    bool noiseArrows = true;
+    bool fgnSkeleton = false;
+    bool obj = true;
+};
+
+/**
  * @brief Unified viewer-specific state for playback display (motion and markers)
  *
  * Separates viewer concerns (positioning, caching, navigation) from data sources.
@@ -258,7 +274,6 @@ private:
 
 
     ShapeRenderer mShapeRenderer;
-    bool mDrawOBJ;
 
     // Trackball/Camera variables
     dart::gui::Trackball mTrackball;
@@ -279,20 +294,15 @@ private:
     // Rollout Control
     RolloutStatus mRolloutStatus;
 
-    // Rendering Option
-    bool mDrawCharacter;
-    bool mDrawPDTarget;
-    bool mDrawJointSphere;
-    bool mDrawFootStep;
+    // Rendering Options
+    DrawFlags mDrawFlags;
     bool mStochasticPolicy;
-    bool mDrawEOE;
 
     MuscleRenderingType mMuscleRenderType;
     int mMuscleRenderTypeInt;
     float mMuscleResolution, mMuscleTransparency;
 
     // Noise Injector UI state
-    bool mDrawNoiseArrows;
     int mNoiseMode;  // 0=None, 1=Position, 2=Force, 3=Activation, 4=All
 
     // Muscle Selection UI
@@ -321,7 +331,6 @@ private:
     int selected_fgn;
     int selected_bgn;
     int mSelectedC3d;
-    bool mDrawFGNSkeleton;
 
     // Motion Buffer
     std::vector<Eigen::VectorXd> mMotionBuffer;
