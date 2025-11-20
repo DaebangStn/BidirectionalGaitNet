@@ -50,16 +50,20 @@ public:
      * @param motionCycleTime Motion cycle duration (NOT Motion pointer)
      * @param refStride Reference stride length (typically 1.34m)
      * @param mode Update mode (CONTACT or PHASE)
+     * @param controlHz Control frequency
+     * @param simulationHz Simulation frequency
      */
     GaitPhase(Character* character,
               dart::simulation::WorldPtr world,
               double motionCycleTime,
               double refStride,
-              UpdateMode mode);
+              UpdateMode mode,
+              double controlHz,
+              double simulationHz);
 
     /**
      * Main update method - call every simulation step (600Hz)
-     * Uses stored parameters (world, stride, refStride) - no arguments needed
+     * Uses stored parameters including mPhaseDisplacement
      */
     void step();
 
@@ -200,6 +204,23 @@ public:
      */
     double getMotionCycleTime() const { return mMotionCycleTime; }
 
+    // ========== Time Management ==========
+
+    /**
+     * Set local time
+     */
+    void setLocalTime(double time) { mLocalTime = time; }
+
+    /**
+     * Get current local time
+     */
+    double getLocalTime() const { return mLocalTime; }
+
+    /**
+     * Set phase action (updated each control step)
+     */
+    void setPhaseAction(double action);
+
     // ========== Contact Detection (Cached) ==========
 
     /**
@@ -261,6 +282,13 @@ private:
     double mRefStride;         // Reference stride (constant, typically 1.34m)
     double mCadence;           // Current cadence ratio
     double mStride;            // Current stride ratio
+
+    // ========== Time Management ==========
+
+    double mLocalTime;           // Local simulation time
+    double mControlHz;           // Control frequency
+    double mSimulationHz;        // Simulation frequency
+    double mPhaseAction;   // Phase displacement (passed to step())
 
     // ========== Cached Contact State ==========
 

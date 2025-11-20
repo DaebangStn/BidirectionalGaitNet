@@ -73,10 +73,6 @@ public:
     std::vector<std::pair<Joint *, Joint *>> getPairs() { return mPairs; }
     Eigen::VectorXd getMirrorPosition(Eigen::VectorXd pos);
 
-    void setLocalTime(double time) { mLocalTime = time; }
-    double getLocalTime() { return mLocalTime; }
-    double updateLocalTime(double dtime);
-
     Eigen::VectorXd getSPDForces(const Eigen::VectorXd &p_desired, const Eigen::VectorXd &ext, int inference_per_sim = 1);
 
     void setPDTarget(Eigen::VectorXd _pdtarget) { mPDTarget = _pdtarget; }
@@ -214,8 +210,6 @@ private:
 
     std::vector<std::pair<Joint *, Joint *>> mPairs;
     std::vector<Eigen::Matrix3d> mBodyNodeTransform;
-
-    double mLocalTime;
 
     ActuatorType mActuatorType;
     Eigen::VectorXd mTorque;

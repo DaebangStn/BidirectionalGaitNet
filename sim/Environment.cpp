@@ -30,7 +30,6 @@ Environment::Environment()
     mStride = 1.0;
     mCadence = 1.0;
     mPhaseDisplacementScale = -1.0;
-    mPhaseDisplacement = 0.0;
     mNumActuatorAction = 0;
 
     mLoadedMuscleNN = false;
@@ -532,7 +531,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     // std::cout << "Num Known Param : " << mNumKnownParam << std::endl;
 
     // Initialize GaitPhase after all configuration is loaded (default to PHASE mode)
-    mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, GaitPhase::PHASE);
+    mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, GaitPhase::PHASE, mControlHz, mSimulationHz);
 }
 
 void Environment::parseEnvConfigYaml(const std::string& yaml_content)
@@ -1080,7 +1079,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
     // Initialize GaitPhase after all configuration is loaded
     GaitPhase::UpdateMode mode = (gaitUpdateMode == "contact") ? GaitPhase::CONTACT : GaitPhase::PHASE;
-    mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, mode);
+    mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, mode, mControlHz, mSimulationHz);
 }
 
 void Environment::addCharacter(std::string path, bool collide_all)
@@ -1096,7 +1095,7 @@ void Environment::addObject(std::string path)
 
 void Environment::setAction(Eigen::VectorXd _action)
 {
-    mPhaseDisplacement = 0.0;
+    double phaseAction = 0.0;
     mAction.setZero();
     if (mAction.rows() != _action.rows())
     {
@@ -1149,7 +1148,7 @@ void Environment::setAction(Eigen::VectorXd _action)
             {
                 mAction.head(mNumActuatorAction) = mActionScale * (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * prev_action.head(mNumActuatorAction);
                 mAction.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction) += (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * prev_action.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction);
-                mPhaseDisplacement += mPhaseDisplacementScale * prev_action[mNumActuatorAction];
+                phaseAction += mPhaseDisplacementScale * prev_action[mNumActuatorAction];
                 continue;
             }
             double beta = 0.2 + 0.1 * prev_action[prev_action.rows() - 1];
@@ -1159,7 +1158,7 @@ void Environment::setAction(Eigen::VectorXd _action)
             // Joint Anlge 부분은 add position 을 통해서
             mAction.head(mNumActuatorAction) = mCharacter->addPositions(mAction.head(mNumActuatorAction), (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights[i] * mActionScale * prev_action.head(mNumActuatorAction), false); // mAction.head(mNumActuatorAction)
             mAction.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction) += (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights[i] * prev_action.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction);
-            mPhaseDisplacement += mWeights[i] * mPhaseDisplacementScale * prev_action[mNumActuatorAction];
+            phaseAction += mWeights[i] * mPhaseDisplacementScale * prev_action[mNumActuatorAction];
         }
         // Current Networks
         if (mLoadedMuscleNN)
@@ -1178,10 +1177,10 @@ void Environment::setAction(Eigen::VectorXd _action)
         mAction.head(mNumActuatorAction) *= mActionScale;
     }
     
-    if (mPhaseDisplacementScale > 0.0) mPhaseDisplacement += (mWeights.size() > 0 ? mWeights.back() : 1.0) * mPhaseDisplacementScale * mAction[mNumActuatorAction];
-    else mPhaseDisplacement = 0.0;
+    if (mPhaseDisplacementScale > 0.0) phaseAction += (mWeights.size() > 0 ? mWeights.back() : 1.0) * mPhaseDisplacementScale * mAction[mNumActuatorAction];
+    else phaseAction = 0.0;
 
-    if (mPhaseDisplacement < (-1.0 / mControlHz)) mPhaseDisplacement = -1.0 / mControlHz;
+    mGaitPhase->setPhaseAction(phaseAction);
 
     Eigen::VectorXd actuatorAction = mAction.head(mNumActuatorAction);
 
@@ -1622,15 +1621,14 @@ void Environment::postMuscleStep()
     mSimulationCount++;
     mGlobalTime += 1.0 / mSimulationHz;
     mWorldTime += 1.0 / mSimulationHz;
-    mCharacter->updateLocalTime((1.0 + mPhaseDisplacement * mControlHz) / mSimulationHz);
 
-    // Update gait phase tracking
+    // Update gait phase tracking (also updates local time using phase displacement set in setAction)
     mGaitPhase->step();
 
     // Check for gait cycle completion (muscle-step level check)
     if (mGaitPhase->isGaitCycleComplete()) {
         mWorldPhaseCount++;
-        mWorldTime = mCharacter->getLocalTime();
+        mWorldTime = mGaitPhase->getLocalTime();
 
         // Store the maximum knee loading from the completed gait cycle
         mKneeLoadingMaxCycle = mCharacter->getKneeLoadingMax();
@@ -1644,19 +1642,19 @@ void Environment::postMuscleStep()
     if (mHardPhaseClipping)
     {
         int currentGlobalCount = mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-        int currentLocalCount = mCharacter->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+        int currentLocalCount = mGaitPhase->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
 
-        if (currentGlobalCount > currentLocalCount) mCharacter->setLocalTime(mGlobalTime);
-        else if (currentGlobalCount < currentLocalCount) mCharacter->setLocalTime(currentLocalCount * ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
+        if (currentGlobalCount > currentLocalCount) mGaitPhase->setLocalTime(mGlobalTime);
+        else if (currentGlobalCount < currentLocalCount) mGaitPhase->setLocalTime(currentLocalCount * ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
     }
     else if (mSoftPhaseClipping)
     {
         // FIXED LOCAL PHASE TIME
-        int currentCount = mCharacter->getLocalTime() / (0.5 * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
-        // int currentCount = mCharacter->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+        int currentCount = mGaitPhase->getLocalTime() / (0.5 * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+        // int currentCount = mGaitPhase->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
         if (mPhaseCount != currentCount)
         {
-            mGlobalTime = mCharacter->getLocalTime();
+            mGlobalTime = mGaitPhase->getLocalTime();
             mPhaseCount = currentCount;
         }
     }
@@ -1664,7 +1662,7 @@ void Environment::postMuscleStep()
 
 void Environment::muscleStep()
 {
-    if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower)  calcActivation();
+    if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower) calcActivation();
 
     if (mNoiseInjector) mNoiseInjector->step(mCharacter);
     mCharacter->step();
@@ -1675,9 +1673,7 @@ void Environment::muscleStep()
 void Environment::preStep()
 {
     // Clear PD-level step completion flag at the beginning of each PD step
-    if (mGaitPhase) {
-        mGaitPhase->clearStepComplete();
-    }
+    mGaitPhase->clearStepComplete();
 }
 
 void Environment::step()
@@ -1857,7 +1853,8 @@ void Environment::reset(double phase)
     mCharacter->getSkeleton()->clearInternalForces();
     mCharacter->getSkeleton()->clearExternalForces();
 
-    mCharacter->setLocalTime(time);
+    mGaitPhase->setLocalTime(time);
+    mGaitPhase->setPhaseAction(0.0);
 
     // Initial Pose Setting
     updateTargetPosAndVel(true);
@@ -1872,11 +1869,6 @@ void Environment::reset(double phase)
     mCharacter->getSkeleton()->setVelocities(mTargetVelocities);
 
     updateTargetPosAndVel();
-    
-    // auto pose = mCharacter->getSkeleton()->getPositions().head(6);
-    // std::cout << "skel orientation: " << pose.transpose() * 180.0 / M_PI << std::endl;
-    // auto r_before = FreeJoint::convertToTransform(pose).linear();
-    // std::cout << "r_before: " << r_before.transpose() << std::endl;
 
     // if (mMusclePoseOptimization) poseOptimization();
     if (mRewardType == gaitnet)

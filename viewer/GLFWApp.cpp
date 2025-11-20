@@ -4992,7 +4992,7 @@ void GLFWApp::reset()
         mFGNRootOffset = mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getPositions().tail(3);
         mUseWeights = mRenderEnv->getUseWeights();
         mViewerTime = mRenderEnv->getWorld()->getTime();
-        mViewerPhase = mRenderEnv->getCharacter()->getLocalTime() / (mRenderEnv->getMotion()->getMaxTime() / mRenderEnv->getCadence());
+        mViewerPhase = mRenderEnv->getGaitPhase()->getLocalTime() / (mRenderEnv->getMotion()->getMaxTime() / mRenderEnv->getCadence());
     }
     alignMarkerToSimulation();
     alignMotionToSimulation();

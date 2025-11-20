@@ -145,7 +145,7 @@ public:
     Eigen::VectorXd getRefPose() { return mRefPose; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }
 
-    double getLocalPhase(bool mod_one = false) { return (mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mCharacter->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
+    double getLocalPhase(bool mod_one = false) { return (mGaitPhase->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mGaitPhase->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
 
     Eigen::VectorXd getState();
     std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
@@ -468,7 +468,7 @@ private:
     double mRefStride;
     double mStride, mCadence;  // Ratio of Foot stride & time displacement [default = 1]
     std::unique_ptr<GaitPhase> mGaitPhase;  // Gait phase tracking (stores update mode internally)
-    double mPhaseDisplacement, mPhaseDisplacementScale;
+    double mPhaseDisplacementScale;
     int mNumActuatorAction;
 
     double mLimitY; // For EOE

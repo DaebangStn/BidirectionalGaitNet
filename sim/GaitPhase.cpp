@@ -13,7 +13,9 @@ GaitPhase::GaitPhase(Character* character,
                      dart::simulation::WorldPtr world,
                      double motionCycleTime,
                      double refStride,
-                     UpdateMode mode)
+                     UpdateMode mode,
+                     double controlHz,
+                     double simulationHz)
     : mCharacter(character),
       mWorld(world),
       mMode(mode),
@@ -21,6 +23,10 @@ GaitPhase::GaitPhase(Character* character,
       mRefStride(refStride),
       mCadence(1.0),
       mStride(1.0),
+      mLocalTime(0.0),
+      mControlHz(controlHz),
+      mSimulationHz(simulationHz),
+      mPhaseAction(0.0),
       mCachedContact(Eigen::Vector2i::Zero()),
       mCachedGRF(Eigen::Vector2d::Zero()),
       mState(RIGHT_STANCE),
@@ -76,6 +82,7 @@ void GaitPhase::reset()
     mStepCompletePD = false;
 
     // Reset timing
+    mLocalTime = 0.0;
     mSwingTimeR = 0.0;
     mSwingTimeL = 0.0;
     mStanceTimeR = 0.0;
@@ -104,7 +111,7 @@ void GaitPhase::reset()
     Eigen::Vector3d footLPos = getLowestPointFromBodyNodes({"TalusL", "FootPinkyL", "FootThumbL"});
 
     // Calculate initial phase and target stride
-    double localTime = mCharacter->getLocalTime();
+    double localTime = mLocalTime;
     double phase = localTime / mMotionCycleTime;
     phase = phase - floor(phase);  // Normalize to [0, 1)
     double targetStride = mStride * mRefStride * mCharacter->getGlobalRatio();
@@ -170,6 +177,9 @@ void GaitPhase::reset()
 
 void GaitPhase::step()
 {
+    // Update local time
+    mLocalTime += (1.0 + mPhaseAction) / mSimulationHz;
+
     mIsGaitCycleComplete = false;  // Reset flag
     mIsStepComplete = false;       // Reset flag
 
@@ -505,7 +515,7 @@ void GaitPhase::updateFromContact()
                 mCycleDist = (mCurCycleCOM - mPrevCycleCOM).norm();
                 mPrevCycleCOM = mCurCycleCOM;
 
-                mCurCycleTime = mCharacter->getLocalTime();
+                mCurCycleTime = mLocalTime;
                 mCycleTime = mCurCycleTime - mPrevCycleTime;
                 mPrevCycleTime = mCurCycleTime;
 
@@ -542,8 +552,8 @@ void GaitPhase::updateFromContact()
 
 void GaitPhase::updateFromPhase()
 {
-    // Calculate phase from Character local time and stored motion duration
-    double localTime = mCharacter->getLocalTime();
+    // Calculate phase from local time and stored motion duration
+    double localTime = mLocalTime;
     double cycleDuration = mMotionCycleTime;
     double phase = localTime / cycleDuration;
     phase = phase - floor(phase);  // Normalize to [0, 1)
@@ -583,4 +593,10 @@ void GaitPhase::updateFromPhase()
     // Zero out Y component (height)
     mCurrentTargetFoot[1] = 0.0;
     mNextTargetFoot[1] = 0.0;
+}
+
+void GaitPhase::setPhaseAction(double action)
+{
+    if (action < (-1.0 / mControlHz)) action = -1.0 / mControlHz;
+    mPhaseAction = action;
 }

@@ -338,8 +338,6 @@ Character::Character(std::string path, bool collide_all)
     mTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
     mPDTarget = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
-    mLocalTime = 0.0;
-
     mKp = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
     mKv = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
     mTorqueWeight = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
@@ -651,12 +649,6 @@ Eigen::VectorXd Character::getMirrorPosition(Eigen::VectorXd pos)
         pos.segment(p.second->getIndexInSkeleton(0), p.second->getNumDofs()) = pos_second;
     }
     return pos;
-}
-
-double Character::updateLocalTime(double dtime)
-{
-    mLocalTime += dtime;
-    return mLocalTime;
 }
 
 Eigen::VectorXd Character::getSPDForces(const Eigen::VectorXd &p_desired, const Eigen::VectorXd &ext, int inference_per_sim)
