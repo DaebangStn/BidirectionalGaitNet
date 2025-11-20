@@ -47,6 +47,7 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer (Ray default)"""
+    # num_envs: int = 4
     num_envs: int = 16
     """the number of parallel game environments (ppo_small_pc default)"""
     num_steps: int = 64
@@ -176,15 +177,17 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_file, i) for i in range(args.num_envs)]
+    # Use 'spawn' context for CUDA compatibility with multiprocessing
+    envs = gym.vector.AsyncVectorEnv(
+        [make_env(args.env_file, i) for i in range(args.num_envs)],
+        shared_memory=True,
+        context='spawn'  # Required for CUDA compatibility
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
-    # Get environment configuration from first env
-    sample_env = envs.envs[0]
-    is_hierarchical = sample_env.is_hierarchical
-    use_cascading = sample_env.use_cascading if is_hierarchical else False
+    # Get environment configuration from first env using call()
+    is_hierarchical = envs.call('is_hierarchical')[0]
+    use_cascading = envs.call('use_cascading')[0] if is_hierarchical else False
 
     print(f"Environment: {Path(args.env_file).name}")
     print(f"Hierarchical control: {is_hierarchical}")
@@ -198,11 +201,10 @@ if __name__ == "__main__":
     # Create muscle learner if hierarchical
     muscle_learner = None
     if is_hierarchical:
-        # Get muscle configuration from C++ environment
-        cpp_env = sample_env.env
-        num_actuator_action = cpp_env.getNumActuatorAction()
-        num_muscles = cpp_env.getNumMuscles()
-        num_muscle_dofs = cpp_env.getNumMuscleDof()
+        # Get muscle configuration from C++ environment using call()
+        num_actuator_action = envs.call('getNumActuatorAction')[0]
+        num_muscles = envs.call('getNumMuscles')[0]
+        num_muscle_dofs = envs.call('getNumMuscleDof')[0]
 
         print(f"Muscle configuration: {num_muscles} muscles, {num_muscle_dofs} DOFs, {num_actuator_action} actuators")
 
@@ -219,8 +221,7 @@ if __name__ == "__main__":
 
         # Initialize muscle weights in all environments
         state_dict = muscle_learner.get_state_dict()
-        for env in envs.envs:
-            env.update_muscle_weights(state_dict)
+        envs.call('update_muscle_weights', state_dict)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
@@ -370,15 +371,14 @@ if __name__ == "__main__":
             muscle_start = time.perf_counter()
 
             # Collect muscle tuples from all environments
-            all_tuples = [env.get_muscle_tuples() for env in envs.envs]
+            all_tuples = envs.call('get_muscle_tuples')
 
             # Train muscle network
             muscle_stats = muscle_learner.learn(all_tuples)
 
             # Distribute updated weights to all environments
             state_dict = muscle_learner.get_state_dict()
-            for env in envs.envs:
-                env.update_muscle_weights(state_dict)
+            envs.call('update_muscle_weights', state_dict)
 
             muscle_time = (time.perf_counter() - muscle_start) * 1000
 

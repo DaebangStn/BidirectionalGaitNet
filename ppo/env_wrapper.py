@@ -184,6 +184,18 @@ class HierarchicalEnv(gym.Env):
         """Whether this environment uses hierarchical control."""
         return self.is_two_level
 
+    def getNumActuatorAction(self) -> int:
+        """Get number of actuator actions (for AsyncVectorEnv compatibility)."""
+        return self.env.getNumActuatorAction()
+
+    def getNumMuscles(self) -> int:
+        """Get number of muscles (for AsyncVectorEnv compatibility)."""
+        return self.env.getNumMuscles()
+
+    def getNumMuscleDof(self) -> int:
+        """Get number of muscle DOFs (for AsyncVectorEnv compatibility)."""
+        return self.env.getNumMuscleDof()
+
 
 def make_env(env_file: str, idx: int = 0):
     """
