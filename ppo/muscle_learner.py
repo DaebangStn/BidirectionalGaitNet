@@ -257,8 +257,13 @@ class MuscleLearner:
         }
 
     def get_state_dict(self) -> Dict:
-        """Get model state dict with torch tensors for C++ environment update."""
-        return self.model.state_dict()
+        """
+        Get model state dict with CPU tensors for C++ environment update.
+
+        Note: Converts GPU tensors to CPU for distribution to C++ simulation environments.
+        Training happens on GPU, but C++ environments require CPU tensors.
+        """
+        return {k: v.cpu() for k, v in self.model.state_dict().items()}
 
     def set_weights(self, weights: Dict) -> None:
         """Load model weights from numpy arrays."""

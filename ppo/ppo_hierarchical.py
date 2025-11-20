@@ -43,14 +43,15 @@ class Args:
     # Algorithm specific arguments
     env_file: str = "data/env/A2_sep.yaml"
     """path to environment configuration file"""
-    total_timesteps: int = 10000000
+    total_timesteps: int = 50000000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer (Ray default)"""
     # num_envs: int = 4
-    num_envs: int = 16
+    # num_envs: int = 16
+    num_envs: int = 96
     """the number of parallel game environments (ppo_small_pc default)"""
-    num_steps: int = 64
+    num_steps: int = 128
     # num_steps: int = 2048
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = False
@@ -59,8 +60,8 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.99
     """the lambda for the general advantage estimation (Ray default)"""
-    num_minibatches: int = 8
-    # num_minibatches: int = 64
+    # num_minibatches: int = 8
+    num_minibatches: int = 64
     """the number of mini-batches (computed from batch_size and sgd_minibatch_size)"""
     update_epochs: int = 4
     """the K epochs to update the policy (Ray num_sgd_iter)"""
@@ -82,10 +83,9 @@ class Args:
     # Muscle learning specific arguments (Ray defaults)
     muscle_lr: float = 1e-4
     """muscle network learning rate"""
-    muscle_num_epochs: int = 10
+    muscle_num_epochs: int = 4
     """muscle network training epochs (Ray default)"""
-    muscle_batch_size: int = 64
-    # muscle_batch_size: int = 512
+    muscle_batch_size: int = 512
     """muscle network batch size (ppo_small sgd_minibatch_size)"""
 
     # to be filled in runtime
