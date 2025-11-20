@@ -161,6 +161,9 @@ private:
     statGraphData(const std::vector<std::string>& keys, double xMin, double xMax);
 
     void plotPhaseBar(double x_min, double x_max, double y_min, double y_max);
+
+    // Collapsing header with 2x height control (uses config system for default open)
+    bool collapsingHeaderWithControls(const std::string& title);
     
     void initEnv(std::string metadata);
     void initGL();
@@ -499,6 +502,13 @@ private:
     // Plot title control
     bool mPlotTitle, mPlotTitleResizablePlotPane;
     std::string mCheckpointName;
+
+    // Plot legend control
+    bool mPlotHideLegend;
+
+    // Default open panels configuration
+    std::set<std::string> mDefaultOpenPanels;
+    bool isPanelDefaultOpen(const std::string& panelName) const;
 
     // Configuration loading
     void loadRenderConfig();

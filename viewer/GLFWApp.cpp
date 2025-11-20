@@ -60,6 +60,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mYminResizablePlotPane = 0.0;
     mYmaxResizablePlotPane = 1.0;
     mPlotTitle = false;
+    mPlotHideLegend = false;
 
     // Initialize viewer time management with default cycle duration
     mViewerTime = 0.0;
@@ -557,6 +558,17 @@ void GLFWApp::loadRenderConfig()
                 if (config["glfwapp"]["resizable_plot"]["title"])
                     mPlotTitleResizablePlotPane = config["glfwapp"]["resizable_plot"]["title"].as<bool>();
             }
+
+            // Load default open panels configuration
+            if (config["glfwapp"]["default_open_panels"]) {
+                mDefaultOpenPanels.clear();
+                if (config["glfwapp"]["default_open_panels"].IsSequence()) {
+                    for (const auto& panel : config["glfwapp"]["default_open_panels"]) {
+                        mDefaultOpenPanels.insert(panel.as<std::string>());
+                    }
+                    LOG_VERBOSE("[Config] Default open panels: " << mDefaultOpenPanels.size() << " panels");
+                }
+            }
         }
 
         LOG_VERBOSE("[Config] Loaded - Window: " << mWidth << "x" << mHeight
@@ -570,6 +582,11 @@ void GLFWApp::loadRenderConfig()
         std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
         std::cerr << "[Config] Using default values." << std::endl;
     }
+}
+
+bool GLFWApp::isPanelDefaultOpen(const std::string& panelName) const
+{
+    return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
 }
 
 GLFWApp::~GLFWApp()
@@ -729,6 +746,65 @@ void GLFWApp::update(bool _isSave)
 
 }
 
+// Shared static map to track double-size state for each plot title
+static std::map<std::string, bool>& getDoublePlotSizeMap()
+{
+    static std::map<std::string, bool> doublePlotSizeMap;
+    return doublePlotSizeMap;
+}
+
+// Get plot height based on double height setting
+static float getPlotHeight(const std::string& title, float baseHeight = 300.0f)
+{
+    auto& doublePlotSizeMap = getDoublePlotSizeMap();
+
+    if (doublePlotSizeMap.find(title) == doublePlotSizeMap.end()) {
+        return baseHeight;
+    }
+
+    return doublePlotSizeMap[title] ? baseHeight * 2.0f : baseHeight;
+}
+
+// Member function that uses config system for default open state
+bool GLFWApp::collapsingHeaderWithControls(const std::string& title)
+{
+    // Check config for default open state
+    bool defaultOpen = isPanelDefaultOpen(title);
+
+    // Access shared static map to track double-size state
+    auto& doublePlotSizeMap = getDoublePlotSizeMap();
+
+    // Initialize the map entry if it doesn't exist
+    if (doublePlotSizeMap.find(title) == doublePlotSizeMap.end()) {
+        doublePlotSizeMap[title] = false;
+    }
+
+    // Calculate position for the 2x checkbox
+    float windowWidth = ImGui::GetWindowWidth();
+    float checkboxWidth = 45.0f;
+    float checkboxPosX = windowWidth - checkboxWidth - 10; // 10px padding
+
+    // Save cursor position
+    ImVec2 cursorPos = ImGui::GetCursorPos();
+
+    // Position the 2x checkbox
+    ImGui::SetCursorPos(ImVec2(checkboxPosX, cursorPos.y));
+    ImGui::Checkbox(("2x##" + title).c_str(), &doublePlotSizeMap[title]);
+
+    // Restore cursor position for the header
+    ImGui::SetCursorPos(cursorPos);
+
+    // Draw the collapsing header
+    bool headerOpen = false;
+    if (defaultOpen) {
+        headerOpen = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+    } else {
+        headerOpen = ImGui::CollapsingHeader(title.c_str());
+    }
+
+    return headerOpen;
+}
+
 void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
                             std::string postfix, bool show_stat, int color_ofs)
 {
@@ -812,7 +888,7 @@ void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
             colorIndex += colormapSize;
         ImVec4 lineColor = ImPlot::GetColormapColor(colorIndex);
         ImPlot::PushStyleColor(ImPlotCol_Line, lineColor);
-
+        if (mPlotHideLegend) ImPlot::HideNextItem(true, ImPlotCond_Always);
         // Plot the line
         ImPlot::PlotLine(plot_label.c_str(), x.data(), y.data(), bufferSize);
 
@@ -2148,6 +2224,8 @@ void GLFWApp::drawSimVisualizationPanel()
     ImGui::SameLine();
     if (ImGui::Button("1.1")) mXmin = -1.1;
     ImGui::SameLine();
+    mPlotHideLegend = ImGui::Button("Hide"); ImGui::SameLine();
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(30);
     ImGui::InputDouble("X(min)", &mXmin);
 
@@ -2157,7 +2235,7 @@ void GLFWApp::drawSimVisualizationPanel()
     ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
     // Center of Mass Trajectory
-    if (ImGui::CollapsingHeader("COM Trajectory"))
+    if (collapsingHeaderWithControls("COM Trajectory"))
     {
         // Plot selection controls
         static int plotSelection = 1;  // 0 = Trajectory, 1 = Velocity, 2 = Deviation
@@ -2219,7 +2297,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(ImAxis_X1, mean_z - half_width, mean_z + half_width, ImPlotCond_Always);
             ImPlot::SetNextAxisLimits(ImAxis_Y1, mean_x - half_height, mean_x + half_height, ImPlotCond_Always);
             std::string title_com = mPlotTitle ? mCheckpointName : "COM Trajectory";
-            if (ImPlot::BeginPlot((title_com + "##COMTraj").c_str()))
+            if (ImPlot::BeginPlot((title_com + "##COMTraj").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
             {
                 // Setup axes with limits BEFORE plotting
                 ImPlot::SetupAxes("Z Position (m)", "X Position (m)");
@@ -2258,7 +2336,7 @@ void GLFWApp::drawSimVisualizationPanel()
             else ImPlot::SetNextAxisLimits(ImAxis_X1, -10.0, 0, ImGuiCond_Once);
             ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.15, 1.3, ImPlotCond_Once);
             // ImPlot::SetNextAxisLimits(ImAxis_Y2, -0.05, 0.05, ImPlotCond_Once);
-            if (ImPlot::BeginPlot((title_vel + "##COMVel").c_str()))
+            if (ImPlot::BeginPlot((title_vel + "##COMVel").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Z Velocity (m/s)");
                 // ImPlot::SetupAxis(ImAxis_Y2, "X Velocity (m/s)", ImPlotAxisFlags_AuxDefault);
@@ -2281,7 +2359,7 @@ void GLFWApp::drawSimVisualizationPanel()
         if (plotSelection == 2) {
             std::string title_err = mPlotTitle ? mCheckpointName : "Lateral Deviation Error (m)";
             ImPlot::SetNextAxisLimits(ImAxis_Y1, 0, 10, ImPlotCond_Once);
-            if (ImPlot::BeginPlot((title_err + "##COMRegErr").c_str()))
+            if (ImPlot::BeginPlot((title_err + "##COMRegErr").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Mean Error (mm)");
 
@@ -2295,7 +2373,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Gait Phase Metrics
-    if (ImGui::CollapsingHeader("Gait Metrics"))
+    if (collapsingHeaderWithControls("Gait Metrics"))
     {
         // Plot selection controls
         static int gaitMetricSelection = 0;  // 0 = Stride Length, 1 = Phase Total, 2 = Local Phase
@@ -2319,7 +2397,7 @@ void GLFWApp::drawSimVisualizationPanel()
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(ImAxis_X1, -0.5, 0, ImGuiCond_Once);
             ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.25, 1.4, ImPlotCond_Once);
-            if (ImPlot::BeginPlot((title_stride + "##StrideLength").c_str()))
+            if (ImPlot::BeginPlot((title_stride + "##StrideLength").c_str(), ImVec2(-1, getPlotHeight("Gait Metrics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Stride Length (m)");
 
@@ -2342,7 +2420,7 @@ void GLFWApp::drawSimVisualizationPanel()
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(ImAxis_X1, -0.5, 0, ImGuiCond_Once);
             ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.05, 1.15, ImPlotCond_Once);
-            if (ImPlot::BeginPlot((title_phase + "##PhaseTotal").c_str()))
+            if (ImPlot::BeginPlot((title_phase + "##PhaseTotal").c_str(), ImVec2(-1, getPlotHeight("Gait Metrics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Phase Total (s)");
 
@@ -2367,7 +2445,7 @@ void GLFWApp::drawSimVisualizationPanel()
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0, ImGuiCond_Once);
             ImPlot::SetNextAxisLimits(ImAxis_Y1, -0.05, 1.05, ImPlotCond_Once);
-            if (ImPlot::BeginPlot((title_local_phase + "##LocalPhase").c_str()))
+            if (ImPlot::BeginPlot((title_local_phase + "##LocalPhase").c_str(), ImVec2(-1, getPlotHeight("Gait Metrics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Local Phase");
 
@@ -2383,10 +2461,10 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Rewards
-    if (ImGui::CollapsingHeader("Rewards"))
+    if (collapsingHeaderWithControls("Rewards"))
     {
         std::string title_str = mPlotTitle ? mCheckpointName : "Reward";
-        if (ImPlot::BeginPlot((title_str + "##Reward").c_str()))
+        if (ImPlot::BeginPlot((title_str + "##Reward").c_str(), ImVec2(-1, getPlotHeight("Rewards"))))
         {
             ImPlot::SetupAxes("Time (s)", "Reward");
 
@@ -2402,7 +2480,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Metabolic Energy
-    if (ImGui::CollapsingHeader("Energy"))
+    if (collapsingHeaderWithControls("Energy"))
     {
         // Display current metabolic type
         MetabolicType currentType = mRenderEnv->getCharacter()->getMetabolicType();
@@ -2438,7 +2516,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImGui::Checkbox("Plot Mean Energy", &plot_mean_energy);
 
             std::string title_energy = mPlotTitle ? mCheckpointName : "Energy";
-            if (ImPlot::BeginPlot((title_energy + "##Energy").c_str()))
+            if (ImPlot::BeginPlot((title_energy + "##Energy").c_str(), ImVec2(-1, getPlotHeight("Energy"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Energy");
 
@@ -2465,7 +2543,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Knee Loading
-    if (ImGui::CollapsingHeader("Knee Loading"))
+    if (collapsingHeaderWithControls("Knee Loading"))
     {
         // Display current knee loading max value
         ImGui::Text("Max Knee Loading: %.2f kN", mRenderEnv->getCharacter()->getKneeLoadingMax());
@@ -2480,7 +2558,7 @@ void GLFWApp::drawSimVisualizationPanel()
         if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
         else ImPlot::SetNextAxisLimits(0, -1.5, 0);
         ImPlot::SetNextAxisLimits(3, 0, 5);
-        if (ImPlot::BeginPlot((title_knee + "##KneeLoading").c_str()))
+        if (ImPlot::BeginPlot((title_knee + "##KneeLoading").c_str(), ImVec2(-1, getPlotHeight("Knee Loading"))))
         {
             ImPlot::SetupAxes("Time (s)", "Knee Loading (kN)");
 
@@ -2493,7 +2571,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Ground Reaction Force (GRF)
-    if (ImGui::CollapsingHeader("Ground Reaction Force"))
+    if (collapsingHeaderWithControls("Ground Reaction Force"))
     {
         // Checkbox for statistics
         static bool show_grf_stats = false;
@@ -2506,7 +2584,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(0, -1.5, 0);
         ImPlot::SetNextAxisLimits(3, 0, 3);  // 0-3x body weight typical range
 
-        if (ImPlot::BeginPlot((title_grf + "##GRF").c_str()))
+        if (ImPlot::BeginPlot((title_grf + "##GRF").c_str(), ImVec2(-1, getPlotHeight("Ground Reaction Force"))))
         {
             ImPlot::SetupAxes("Time (s)", "GRF (Body Weight)");
 
@@ -2523,7 +2601,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Joint Loading
-    if (ImGui::CollapsingHeader("Joint Loading"))
+    if (collapsingHeaderWithControls("Joint Loading"))
     {
         // Joint selection dropdown
         static int selected_joint = 1; // Default to knee (0=hip, 1=knee, 2=ankle)
@@ -2550,7 +2628,7 @@ void GLFWApp::drawSimVisualizationPanel()
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(0, -1.5, 0);
             ImPlot::SetNextAxisLimits(3, -1, 6);
-            if (ImPlot::BeginPlot((title_force + "##JointForces").c_str()))
+            if (ImPlot::BeginPlot((title_force + "##JointForces").c_str(), ImVec2(-1, getPlotHeight("Joint Loading"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Force (N)");
                 std::vector<std::string> forceKeys;
@@ -2575,7 +2653,7 @@ void GLFWApp::drawSimVisualizationPanel()
             std::string title_torque = mPlotTitle ? mCheckpointName : (selected_name + " Torques (Nm)");
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             ImPlot::SetNextAxisLimits(3, -150, 150);
-            if (ImPlot::BeginPlot((title_torque + "##JointTorques").c_str()))
+            if (ImPlot::BeginPlot((title_torque + "##JointTorques").c_str(), ImVec2(-1, getPlotHeight("Joint Loading"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Torque (Nm)");
                 std::vector<std::string> torqueKeys;
@@ -2599,7 +2677,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Kinematics
-    if (ImGui::CollapsingHeader("Kinematics", ImGuiTreeNodeFlags_DefaultOpen))
+    if (collapsingHeaderWithControls("Kinematics"))
     {
         static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway, 4=Anteversion
         static bool stats = true;
@@ -2621,7 +2699,8 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(3, -45, 60);
             
             std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
-            if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str()))
+            float plotHeight = getPlotHeight("Kinematics");
+            if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
@@ -2643,7 +2722,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(3, -10, 15);
 
             std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
-            if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str()))
+            if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
 
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
@@ -2665,7 +2744,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(3, -20, 20);
 
             std::string title_pelvis_joints = mPlotTitle ? mCheckpointName : "Pelvis Angles (deg)";
-            if (ImPlot::BeginPlot((title_pelvis_joints + "##PelvisJoints").c_str()))
+            if (ImPlot::BeginPlot((title_pelvis_joints + "##PelvisJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
@@ -2694,7 +2773,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(ImAxis_Y2, -60.0, 60.0, ImGuiCond_Once);
 
             std::string title_sway = mPlotTitle ? mCheckpointName : "Foot Sway (m)";
-            if (ImPlot::BeginPlot((title_sway + "##FootSway").c_str()))
+            if (ImPlot::BeginPlot((title_sway + "##FootSway").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Sway (m)");
                 ImPlot::SetupAxis(ImAxis_Y2, "out - FPA (°) - in", ImPlotAxisFlags_AuxDefault);
@@ -2726,7 +2805,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(3, -10, 10);
 
             std::string title_anteversion = mPlotTitle ? mCheckpointName : "Anteversion (deg)";
-            if (ImPlot::BeginPlot((title_anteversion + "##Anteversion").c_str()))
+            if (ImPlot::BeginPlot((title_anteversion + "##Anteversion").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Anteversion (deg)");
 
@@ -2760,7 +2839,7 @@ void GLFWApp::drawSimVisualizationPanel()
     }
 
     // Muscle Activations
-    if (ImGui::CollapsingHeader("Muscle Activations"))
+    if (collapsingHeaderWithControls("Muscle Activations"))
     {
         // Get all available keys from graph data
         static std::vector<std::string> all_activation_keys;
@@ -2882,7 +2961,7 @@ void GLFWApp::drawSimVisualizationPanel()
             ImPlot::SetNextAxisLimits(3, 0.0, 1.0);  // Activation range 0-1
 
             std::string title_activations = mPlotTitle ? mCheckpointName : "Muscle Activations";
-            if (ImPlot::BeginPlot((title_activations + "##MuscleActivations").c_str()))
+            if (ImPlot::BeginPlot((title_activations + "##MuscleActivations").c_str(), ImVec2(-1, getPlotHeight("Muscle Activations"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Activation (0-1)");
 
