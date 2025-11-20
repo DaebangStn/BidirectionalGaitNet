@@ -25,6 +25,26 @@ from ppo.env_wrapper import HierarchicalEnv, make_env
 from ppo.muscle_learner import MuscleLearner
 
 
+def mean_dict_list(dict_list):
+    """Average values across list of dictionaries (from Ray implementation)."""
+    if not dict_list:
+        return {}
+
+    # Collect all keys
+    all_keys = set()
+    for d in dict_list:
+        all_keys.update(d.keys())
+
+    # Average each key
+    result = {}
+    for key in all_keys:
+        values = [d[key] for d in dict_list if key in d]
+        if values:
+            result[key] = np.mean(values)
+
+    return result
+
+
 @dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
@@ -246,6 +266,9 @@ if __name__ == "__main__":
             optimizer.param_groups[0]["lr"] = lrnow
 
         # ===== ROLLOUT PHASE (Standard CleanRL) =====
+        # Collect info dicts from all steps for averaging
+        episode_info_dicts = []
+
         for step in range(0, args.num_steps):
             global_step += args.num_envs
             obs[step] = next_obs
@@ -281,6 +304,17 @@ if __name__ == "__main__":
                         print(f"global_step={global_step}, episodic_return={info['episode']['r']:.2f}")
                         writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                         writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+
+                        # Collect info dict for averaging (excluding special keys)
+                        info_copy = {k: v for k, v in info.items() if k not in ["episode", "_episode"]}
+                        if info_copy:
+                            episode_info_dicts.append(info_copy)
+
+        # Average and log info metrics from all completed episodes
+        if episode_info_dicts:
+            avg_info = mean_dict_list(episode_info_dicts)
+            for key, value in avg_info.items():
+                writer.add_scalar(f"info/{key}", value, global_step)
 
         # ===== PPO LEARNING PHASE (Standard CleanRL) =====
         # bootstrap value if not done
