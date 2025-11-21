@@ -18,4 +18,5 @@ target_link_libraries(sim PUBLIC
         yaml-cpp
         ${HDF5_CXX_LIBRARIES}
         ezc3d
+        ${TORCH_LIBRARIES}
 )

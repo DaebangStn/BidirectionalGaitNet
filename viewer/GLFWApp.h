@@ -561,4 +561,7 @@ private:
     double computeMotionHeightCalibration(const Eigen::VectorXd& motion_pose);
     void alignMotionToSimulation();
     void setMotion(Motion* motion);  // Helper: delete old, assign new, initialize state
+
+    // Store muscle network state_dict for transfer to Environment
+    py::object mMuscleStateDict;
 };

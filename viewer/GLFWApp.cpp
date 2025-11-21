@@ -1379,8 +1379,15 @@ void GLFWApp::initEnv(std::string metadata)
         loadNetworkFromPath(path);
     }
     
-    if (!mNetworks.empty()) {
-        mRenderEnv->setMuscleNetwork(mNetworks.back().muscle);
+    // Load muscle network weights into the Environment's MuscleNN
+    // (The C++ MuscleNN is created automatically in initialize())
+    if (!mNetworks.empty() && mNetworks.back().muscle && !mMuscleStateDict.is_none()) {
+        std::cout << "[Viewer] Loading muscle network weights into Environment..." << std::endl;
+
+        // Transfer the stored Python state_dict to Environment's MuscleNN
+        mRenderEnv->setMuscleNetworkWeight(mMuscleStateDict);
+
+        std::cout << "[Viewer] Muscle network weights successfully transferred to Environment!" << std::endl;
     }
 
     // Initialize DOF tracking
@@ -6382,7 +6389,53 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
         }
 
         new_elem.joint = res[0];
-        new_elem.muscle = res[1];
+
+        // Convert Python muscle state_dict to C++ MuscleNN
+        if (use_muscle && !res[1].is_none()) {
+            std::cout << "[Viewer] Loading muscle network..." << std::endl;
+            int num_muscles = character->getNumMuscles();
+            int num_muscle_dofs = character->getNumMuscleRelatedDof();
+            int num_actuator_action = mRenderEnv->getNumActuatorAction();
+            bool is_cascaded = false;  // TODO: detect from network structure if needed
+
+            std::cout << "[Viewer] Creating MuscleNN: muscle_dofs=" << num_muscle_dofs
+                      << ", actuator_action=" << num_actuator_action
+                      << ", num_muscles=" << num_muscles << std::endl;
+
+            // Create C++ MuscleNN
+            new_elem.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded);
+
+            // res[1] is now a state_dict (Python dict), not a network object
+            std::cout << "[Viewer] Converting state_dict to C++ format..." << std::endl;
+            py::dict state_dict = res[1].cast<py::dict>();
+            std::cout << "[Viewer] State dict has " << state_dict.size() << " entries" << std::endl;
+
+            // Store the Python state_dict for transfer to Environment
+            mMuscleStateDict = res[1];
+
+            // Convert Python state_dict to C++ format
+            std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
+            for (auto item : state_dict) {
+                std::string key = item.first.cast<std::string>();
+                py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+
+                auto buf = np_array.request();
+                std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+
+                torch::Tensor tensor = torch::from_blob(
+                    buf.ptr,
+                    shape,
+                    torch::TensorOptions().dtype(torch::kFloat32)
+                ).clone();
+
+                cpp_state_dict[key] = tensor;
+            }
+
+            std::cout << "[Viewer] Loading weights into C++ MuscleNN..." << std::endl;
+            new_elem.muscle->load_state_dict(cpp_state_dict);
+            std::cout << "[Viewer] Muscle network loaded successfully!" << std::endl;
+        }
+
         mNetworks.push_back(new_elem);
     } catch (const std::exception& e) {
         std::cerr << "Error loading network from " << path << ": " << e.what() << std::endl;

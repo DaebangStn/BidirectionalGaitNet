@@ -5,6 +5,7 @@
 #include "Character.h"
 #include "GaitPhase.h"
 #include "NoiseInjector.h"
+#include "MuscleNN.h"
 #include "dart/collision/bullet/bullet.hpp"
 #include "export.h"
 #include <map>
@@ -33,8 +34,8 @@ struct param_group
 struct DLL_PUBLIC Network
 {
     std::string name; // Actually Path
-    py::object joint;
-    py::object muscle;
+    py::object joint;        // Python joint network (for compatibility)
+    MuscleNN muscle;         // C++ muscle network (libtorch)
 
     // Only for cascading learning
     Eigen::VectorXd minV;
@@ -170,22 +171,13 @@ public:
     // Metabolic Reward
     void setIncludeMetabolicReward(bool _includeMetabolicReward) { mIncludeMetabolicReward = _includeMetabolicReward; }
     bool getIncludeMetabolicReward() { return mIncludeMetabolicReward; }
+    // DEPRECATED: MuscleNN is now created in C++ during initialize()
+    // This method is kept for backward compatibility but does nothing
     void setMuscleNetwork(py::object nn)
     {
-        if (!mLoadedMuscleNN)
-        {
-            std::vector<int> child_elem;
-
-            for (int i = 0; i < mPrevNetworks.size(); i++)
-            {
-                mEdges.push_back(Eigen::Vector2i(i, mPrevNetworks.size()));
-                child_elem.push_back(i);
-            }
-            mChildNetworks.push_back(child_elem);
-        }
-
-        mMuscleNN = nn;
-        mLoadedMuscleNN = true;
+        // Network is already created in initialize() with C++ libtorch
+        // This method is now a no-op for backward compatibility
+        std::cout << "Warning: setMuscleNetwork is deprecated. MuscleNN is created automatically." << std::endl;
     }
     void setMuscleNetworkWeight(py::object w)
     {
@@ -200,7 +192,29 @@ public:
             }
             mChildNetworks.push_back(child_elem);
         }
-        mMuscleNN.attr("load_state_dict")(w);
+
+        // Convert Python state_dict to C++ format
+        std::unordered_map<std::string, torch::Tensor> state_dict;
+        py::dict py_dict = w.cast<py::dict>();
+
+        for (auto item : py_dict) {
+            std::string key = item.first.cast<std::string>();
+            py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+
+            // Convert numpy array to torch::Tensor
+            auto buf = np_array.request();
+            std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+
+            torch::Tensor tensor = torch::from_blob(
+                buf.ptr,
+                shape,
+                torch::TensorOptions().dtype(torch::kFloat32)
+            ).clone();  // Clone to own the memory
+
+            state_dict[key] = tensor;
+        }
+
+        mMuscleNN->load_state_dict(state_dict);
         mLoadedMuscleNN = true;
     }
 
@@ -456,8 +470,8 @@ private:
     Eigen::VectorXd mRandomPrevOut;
     double mRandomWeight;
 
-    // Network
-    py::object mMuscleNN;
+    // Network (C++ libtorch for thread-safe inference)
+    MuscleNN mMuscleNN;
 
     // Reward Type (Deep Mimic or GaitNet)
     RewardType mRewardType;

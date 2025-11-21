@@ -297,7 +297,9 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     if (isTwoLevelController())
     {
         Character *character = mCharacter;
-        mMuscleNN = py::module::import("ppo.muscle_nn").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
+        // Create C++ MuscleNN (libtorch) for thread-safe inference
+        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading);
+        mLoadedMuscleNN = true;
     }
 
     if (doc.FirstChildElement("Horizon") != NULL)
@@ -734,8 +736,9 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     // === Two-level controller ===
     if (isTwoLevelController()) {
         Character *character = mCharacter;
-        // mMuscleNN = py::module::import("python.ray_model").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
-        mMuscleNN = py::module::import("ppo.muscle_nn").attr("generating_muscle_nn")(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), true, mUseCascading);
+        // Create C++ MuscleNN (libtorch) for thread-safe inference
+        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading);
+        mLoadedMuscleNN = true;
     }
 
     // === Horizon ===
@@ -1573,29 +1576,36 @@ void Environment::calcActivation()
         prev_activations.push_back(Eigen::VectorXf::Zero(mCharacter->getMuscles().size()));
 
     // For base network
-    if (mPrevNetworks.size() > 0)
-        prev_activations[0] = mPrevNetworks[0].muscle.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, py::cast<py::none>(Py_None), true, py::cast<py::none>(Py_None)).cast<Eigen::VectorXf>();
+    if (mPrevNetworks.size() > 0) {
+        prev_activations[0] = mPrevNetworks[0].muscle->unnormalized_no_grad_forward(mt.JtA_reduced, dt, nullptr, 1.0);
+    }
 
     for (int j = 1; j < mPrevNetworks.size(); j++)
     {
         Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
         for (int k : mChildNetworks[j]) prev_activation += prev_activations[k];
-        prev_activations[j] = (mUseWeights[j * 2 + 1] ? 1 : 0) * mWeights[j] * mPrevNetworks[j].muscle.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights[j]).cast<Eigen::VectorXf>();
+        prev_activations[j] = (mUseWeights[j * 2 + 1] ? 1 : 0) * mWeights[j] * mPrevNetworks[j].muscle->unnormalized_no_grad_forward(mt.JtA_reduced, dt, &prev_activation, mWeights[j]);
     }
     // Current Network
     if (mLoadedMuscleNN)
     {
         Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
-        for (int k : mChildNetworks.back()) prev_activation += prev_activations[k];
 
-        if (mPrevNetworks.size() > 0) prev_activations[prev_activations.size() - 1] = (mUseWeights.back() ? 1 : 0) * mWeights.back() * mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, prev_activation, true, mWeights.back()).cast<Eigen::VectorXf>();
-        else prev_activations[prev_activations.size() - 1] = mMuscleNN.attr("unnormalized_no_grad_forward")(mt.JtA_reduced, dt, py::cast<py::none>(Py_None), true, py::cast<py::none>(Py_None)).cast<Eigen::VectorXf>();
+        if (!mChildNetworks.empty()) {
+            for (int k : mChildNetworks.back()) prev_activation += prev_activations[k];
+        }
+
+        if (mPrevNetworks.size() > 0) {
+            prev_activations[prev_activations.size() - 1] = (mUseWeights.back() ? 1 : 0) * mWeights.back() * mMuscleNN->unnormalized_no_grad_forward(mt.JtA_reduced, dt, &prev_activation, mWeights.back());
+        } else {
+            prev_activations[prev_activations.size() - 1] = mMuscleNN->unnormalized_no_grad_forward(mt.JtA_reduced, dt, nullptr, 1.0);
+        }
     }
 
     Eigen::VectorXf activations = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
     for (Eigen::VectorXf a : prev_activations) activations += a;
 
-    activations = mMuscleNN.attr("forward_filter")(activations).cast<Eigen::VectorXf>();
+    activations = mMuscleNN->forward_filter(activations);
 
     if (isMirror()) activations = mCharacter->getMirrorActivation(activations.cast<double>()).cast<float>();
 
@@ -1663,7 +1673,9 @@ void Environment::postMuscleStep()
 
 void Environment::muscleStep()
 {
-    if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower) calcActivation();
+    if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower) {
+        calcActivation();
+    }
 
     if (mNoiseInjector) mNoiseInjector->step(mCharacter);
     mCharacter->step();
@@ -2353,7 +2365,42 @@ Network Environment::loadPrevNetworks(std::string path, bool isFirst)
     py::tuple res = loading_network(path, projState.rows(), mAction.rows() - (isFirst ? 1 : 0), true);
 
     nn.joint = res[0];
-    nn.muscle = res[1];
+
+    // Convert Python muscle state_dict to C++ MuscleNN
+    if (!res[1].is_none()) {
+        Character *character = mCharacter;
+        int num_muscles = character->getNumMuscles();
+        int num_muscle_dofs = character->getNumMuscleRelatedDof();
+        int num_actuator_action = getNumActuatorAction();
+        bool is_cascaded = false;  // Prev networks don't use cascading
+
+        // Create C++ MuscleNN
+        nn.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded);
+
+        // res[1] is now a state_dict (Python dict), not a network object
+        py::dict state_dict = res[1].cast<py::dict>();
+
+        // Convert Python state_dict to C++ format
+        std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
+        for (auto item : state_dict) {
+            std::string key = item.first.cast<std::string>();
+            py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+
+            auto buf = np_array.request();
+            std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+
+            torch::Tensor tensor = torch::from_blob(
+                buf.ptr,
+                shape,
+                torch::TensorOptions().dtype(torch::kFloat32)
+            ).clone();
+
+            cpp_state_dict[key] = tensor;
+        }
+
+        nn.muscle->load_state_dict(cpp_state_dict);
+    }
+
     nn.minV = space.first;
     nn.maxV = space.second;
     nn.name = path;

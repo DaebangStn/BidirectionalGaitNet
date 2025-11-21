@@ -57,6 +57,15 @@ link_libraries(${Python3_LIBRARIES})
 find_package(pybind11 REQUIRED)
 link_libraries(stdc++fs)
 
+# Find libtorch (PyTorch C++ API)
+set(CAFFE2_USE_CUDNN ON)
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")  # CUDA compiler path
+set(CMAKE_CUDA_ARCHITECTURES "native")  # Auto-detect GPU architecture
+find_package(Torch REQUIRED)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+message(STATUS "Torch found: ${TORCH_LIBRARIES}")
+message(STATUS "Torch CXX flags: ${TORCH_CXX_FLAGS}")
+
 # Find native HDF5 C++ library from conda environment
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 include_directories(${HDF5_INCLUDE_DIRS})
