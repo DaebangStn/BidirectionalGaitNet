@@ -6,5 +6,5 @@
 
 ulimit -u 65535
 ulimit -n 65536
-python -u ppo/ppo_hierarchical.py
+python -u ppo/ppo_hierarchical.py --num_envs 96 --num_steps 128 --muscle_batch_size 512  --num_minibatches 16
 echo "Training finished"

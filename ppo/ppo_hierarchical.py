@@ -53,10 +53,9 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer (Ray default)"""
-    # num_envs: int = 2
-    num_envs: int = 96
+    num_envs: int = 2
     """the number of parallel game environments (ppo_small_pc default)"""
-    num_steps: int = 128
+    num_steps: int = 64
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
@@ -64,7 +63,7 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.99
     """the lambda for the general advantage estimation (Ray default)"""
-    num_minibatches: int = 16
+    num_minibatches: int = 4
     """the number of mini-batches (computed from batch_size and sgd_minibatch_size)"""
     update_epochs: int = 4
     """the K epochs to update the policy (Ray num_sgd_iter)"""
@@ -88,7 +87,7 @@ class Args:
     """muscle network learning rate"""
     muscle_num_epochs: int = 4
     """muscle network training epochs (Ray default)"""
-    muscle_batch_size: int = 512
+    muscle_batch_size: int = 64
     """muscle network batch size (ppo_small sgd_minibatch_size)"""
 
     # to be filled in runtime
@@ -163,6 +162,23 @@ if __name__ == "__main__":
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
+
+    # Hyperparameter validation
+    if args.minibatch_size < 16:
+        print(f"ERROR: minibatch_size ({args.minibatch_size}) is too small. Must be >= 16.")
+        print(f"Current configuration: num_envs={args.num_envs}, num_steps={args.num_steps}, num_minibatches={args.num_minibatches}")
+        print(f"Computed: batch_size={args.batch_size}, minibatch_size={args.minibatch_size}")
+        print("Suggestion: Increase num_envs, num_steps, or decrease num_minibatches")
+        sys.exit(1)
+
+    if args.muscle_batch_size > 4 * args.batch_size:
+        print(f"ERROR: muscle_batch_size ({args.muscle_batch_size}) is too large relative to batch_size ({args.batch_size}).")
+        print(f"Constraint: muscle_batch_size must be <= 4 * batch_size (currently {4 * args.batch_size})")
+        print(f"Current configuration: num_envs={args.num_envs}, num_steps={args.num_steps}")
+        print(f"Computed: batch_size={args.batch_size}")
+        print("Suggestion: Decrease muscle_batch_size or increase num_envs/num_steps")
+        sys.exit(1)
+
     run_name = f"{Path(args.env_file).stem}__{args.exp_name}__{args.seed}__{int(time.time())}"
 
     writer = SummaryWriter(f"runs/{run_name}")

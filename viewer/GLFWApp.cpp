@@ -23,7 +23,6 @@ namespace fs = std::filesystem;
 
 // Note: computeMarkerCentroid moved to C3D::computeCentroid() in sim/C3D.cpp
 
-
 const std::vector<std::string> CHANNELS =
     {
         "Xposition",
@@ -388,11 +387,33 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     py::gil_scoped_acquire gil;
     
-    // Import Python modules
+    // Detect checkpoint format and import appropriate Python modules
+    std::string checkpoint_type = "unknown";
+    if (!mNetworkPaths.empty()) {
+        std::string path = mNetworkPaths.back();
+        if (path.substr(path.length() - 4) != ".xml") {
+            try {
+                py::object detector = py::module::import("python.checkpoint_detector");
+                checkpoint_type = detector.attr("detect_checkpoint_type")(path).cast<std::string>();
+                LOG_INFO("Detected checkpoint type: " << checkpoint_type);
+            } catch (const py::error_already_set& e) {
+                LOG_WARN("Warning: Failed to detect checkpoint type: " << e.what());
+                checkpoint_type = "ray_2.12.0";  // Default to Ray format
+            }
+        }
+    }
+
+    // Import appropriate loader based on checkpoint type
     try {
-        loading_network = py::module::import("python.ray_model").attr("loading_network");
+        if (checkpoint_type == "cleanrl") {
+            LOG_INFO("Loading CleanRL checkpoint (no Ray dependency)");
+            loading_network = py::module::import("python.cleanrl_model").attr("loading_network");
+        } else {
+            LOG_INFO("Loading Ray checkpoint");
+            loading_network = py::module::import("python.ray_model").attr("loading_network");
+        }
     } catch (const py::error_already_set& e) {
-        LOG_WARN("Warning: Failed to import python.ray_model: " << e.what());
+        LOG_WARN("Warning: Failed to import checkpoint loader: " << e.what());
         loading_network = py::none();
     }
 
@@ -404,11 +425,17 @@ GLFWApp::GLFWApp(int argc, char **argv)
             mNetworkPaths.pop_back();
         } else {
             try {
-                py::object py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(path);
+                py::object py_metadata;
+                if (checkpoint_type == "cleanrl") {
+                    py_metadata = py::module::import("python.cleanrl_model").attr("loading_metadata")(path);
+                } else {
+                    py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(path);
+                }
+
                 if (!py_metadata.is_none()) {
                     // Handle both Ray 2.0.1 (string) and Ray 2.12.0 (dict) metadata formats
                     if (py::isinstance<py::str>(py_metadata)) {
-                        // Ray 2.0.1: metadata is XML string
+                        // Ray 2.0.1 or CleanRL: metadata is XML string
                         mCachedMetadata = py_metadata.cast<std::string>();
                     } else if (py::isinstance<py::dict>(py_metadata)) {
                         // Ray 2.12.0: metadata is dict (usually empty)
@@ -6323,14 +6350,37 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
         auto character = mRenderEnv->getCharacter();
         Network new_elem;
         new_elem.name = path;
-        
-        py::tuple res = loading_network(
-            path.c_str(),
-            mRenderEnv->getState().rows(),
-            mRenderEnv->getAction().rows(),
-            (character->getActuatorType() == mass || character->getActuatorType() == mass_lower)
-        );
-        
+
+        bool use_muscle = (character->getActuatorType() == mass || character->getActuatorType() == mass_lower);
+
+        // Prepare arguments for loading_network
+        py::tuple res;
+        if (use_muscle) {
+            // Pass muscle dimensions for CleanRL checkpoint compatibility
+            int num_muscles = character->getNumMuscles();
+            int num_muscle_dofs = character->getNumMuscleRelatedDof();
+            int num_actuator_action = mRenderEnv->getNumActuatorAction();
+
+            res = loading_network(
+                path.c_str(),
+                mRenderEnv->getState().rows(),
+                mRenderEnv->getAction().rows(),
+                use_muscle,
+                "cpu",  // device
+                num_muscles,
+                num_muscle_dofs,
+                num_actuator_action
+            );
+        } else {
+            // No muscle network needed
+            res = loading_network(
+                path.c_str(),
+                mRenderEnv->getState().rows(),
+                mRenderEnv->getAction().rows(),
+                use_muscle
+            );
+        }
+
         new_elem.joint = res[0];
         new_elem.muscle = res[1];
         mNetworks.push_back(new_elem);
