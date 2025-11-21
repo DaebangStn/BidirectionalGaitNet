@@ -14,13 +14,28 @@ endif()
 link_directories(../sim/)
 include_directories(../sim/)
 
-file(GLOB srcs "*.h" "*.cpp")
-
-add_library(gymenv SHARED ${srcs})
-
+# GymEnvManager module (existing single-env wrapper)
+set(gymenv_srcs
+    GymEnvManager.cpp
+)
+add_library(gymenv SHARED ${gymenv_srcs})
 target_link_libraries(gymenv
         ${Python3_LIBRARIES}
         sim
         pybind11::embed
+        ${TORCH_LIBRARIES}
 )
 set_target_properties(gymenv PROPERTIES PREFIX "" )
+
+# BatchEnv module (new high-performance batched wrapper)
+set(batchenv_srcs
+    BatchEnv.cpp
+)
+add_library(batchenv SHARED ${batchenv_srcs})
+target_link_libraries(batchenv
+        ${Python3_LIBRARIES}
+        sim
+        pybind11::embed
+        ${TORCH_LIBRARIES}
+)
+set_target_properties(batchenv PROPERTIES PREFIX "" )

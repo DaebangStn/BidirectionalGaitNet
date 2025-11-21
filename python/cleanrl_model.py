@@ -295,23 +295,21 @@ class CleanRLPolicyWrapper:
         return self.filter
 
 
-def _load_cleanrl_checkpoint(checkpoint_dir, num_states, num_actions, use_mcn, device,
-                             num_muscles=None, num_muscle_dofs=None, num_actuator_action=None):
+def _load_cleanrl_checkpoint(checkpoint_dir, num_states, num_actions, use_mcn, device):
     """
-    Load CleanRL checkpoint and return (policy, muscle) tuple.
+    Load CleanRL checkpoint and return (policy, muscle_state_dict) tuple.
 
     Args:
         checkpoint_dir: Path to checkpoint directory
         num_states: Observation space dimension
         num_actions: Action space dimension
-        use_mcn: Whether to load muscle network
+        use_mcn: Whether to load muscle network state_dict
         device: torch device (cpu/cuda)
-        num_muscles: Number of muscles (optional, inferred if not provided)
-        num_muscle_dofs: Number of muscle-related DOFs (optional, inferred if not provided)
-        num_actuator_action: Number of actuator actions (optional, inferred if not provided)
 
     Returns:
-        tuple: (policy_wrapper, muscle_network) compatible with viewer
+        tuple: (policy_wrapper, muscle_state_dict or None)
+            - policy_wrapper: CleanRLPolicyWrapper for joint control
+            - muscle_state_dict: Dict of muscle network weights (to be loaded into C++ MuscleNN)
     """
     # Load agent weights
     agent_path = os.path.join(checkpoint_dir, "agent.pt")
@@ -323,54 +321,15 @@ def _load_cleanrl_checkpoint(checkpoint_dir, num_states, num_actions, use_mcn, d
     # Create policy wrapper
     policy = CleanRLPolicyWrapper(agent_state_dict, num_states, num_actions, device)
 
-    # Load muscle network if requested
-    muscle = None
+    # Load muscle network state_dict if requested (to be loaded into C++ MuscleNN)
+    muscle_state_dict = None
     if use_mcn:
         muscle_path = os.path.join(checkpoint_dir, "muscle.pt")
         if os.path.exists(muscle_path):
-            # Load muscle state to infer dimensions
+            # Load muscle state_dict (will be passed to C++ via setMuscleNetworkWeight)
             muscle_state_dict = torch.load(muscle_path, map_location=device)
 
-            # Infer dimensions from state_dict tensor shapes
-            # CleanRL uses Sequential: fc.0.weight is first layer
-            # fc.0.weight shape: [256, num_total_muscle_related_dofs + num_dofs]
-            fc0_weight = muscle_state_dict['fc.0.weight']
-            input_dim = fc0_weight.shape[1]
-
-            # fc.6.weight is last layer: [num_muscles, 256]
-            fc6_weight = muscle_state_dict['fc.6.weight']
-            inferred_num_muscles = fc6_weight.shape[0]
-
-            # Use provided dimensions if available, otherwise infer
-            if num_muscles is None:
-                num_muscles = inferred_num_muscles
-
-            if num_muscle_dofs is not None and num_actuator_action is not None:
-                # Use provided dimensions (from C++ environment)
-                num_total_muscle_related_dofs = num_muscle_dofs
-                num_dofs = num_actuator_action
-            else:
-                # Fallback: infer from tensor shapes (may be incorrect)
-                # This heuristic assumes equal split, which is often wrong
-                num_total_muscle_related_dofs = input_dim // 2
-                num_dofs = input_dim - num_total_muscle_related_dofs
-                print(f"Warning: Inferring muscle dimensions from checkpoint (may be incorrect)")
-                print(f"  Input dim: {input_dim}, assuming num_muscle_dofs={num_total_muscle_related_dofs}, num_actuator_action={num_dofs}")
-
-            # Create MuscleNN instance with ray_model signature
-            muscle = MuscleNN(
-                num_total_muscle_related_dofs=num_total_muscle_related_dofs,
-                num_dofs=num_dofs,
-                num_muscles=num_muscles,
-                is_cpu=(device == "cpu"),
-                is_cascaded=False
-            )
-
-            # Load weights
-            muscle.load_state_dict(muscle_state_dict)
-            muscle.eval()
-
-    return policy, muscle
+    return policy, muscle_state_dict
 
 
 def loading_network(checkpoint_dir, num_states, num_actions, use_mcn, device="cpu",
@@ -384,17 +343,18 @@ def loading_network(checkpoint_dir, num_states, num_actions, use_mcn, device="cp
         checkpoint_dir: Path to checkpoint directory
         num_states: Observation space dimension
         num_actions: Action space dimension
-        use_mcn: Whether to load muscle network
+        use_mcn: Whether to load muscle network state_dict
         device: torch device (cpu/cuda)
-        num_muscles: Number of muscles (optional, from environment)
-        num_muscle_dofs: Number of muscle-related DOFs (optional, from environment)
-        num_actuator_action: Number of actuator actions (optional, from environment)
+        num_muscles: (unused, kept for compatibility)
+        num_muscle_dofs: (unused, kept for compatibility)
+        num_actuator_action: (unused, kept for compatibility)
 
     Returns:
-        tuple: (policy, muscle) compatible with viewer
+        tuple: (policy, muscle_state_dict or None)
+            - policy: CleanRLPolicyWrapper for joint control
+            - muscle_state_dict: Dict of weights to load into C++ MuscleNN via setMuscleNetworkWeight
     """
-    return _load_cleanrl_checkpoint(checkpoint_dir, num_states, num_actions, use_mcn, device,
-                                    num_muscles, num_muscle_dofs, num_actuator_action)
+    return _load_cleanrl_checkpoint(checkpoint_dir, num_states, num_actions, use_mcn, device)
 
 
 def loading_metadata(checkpoint_dir):
