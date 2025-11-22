@@ -235,6 +235,7 @@ public:
     bool getUseCascading() { return mUseCascading; }
     bool getUseMuscle() { return mUseMuscle; }
     bool isTwoLevelController() { return mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower; }
+    MuscleNN* getMuscleNN() { return &mMuscleNN; }
 
     // get Reward Term
     Eigen::Vector3d getCurrentFootStep() { return mGaitPhase->getCurrentFoot(); }

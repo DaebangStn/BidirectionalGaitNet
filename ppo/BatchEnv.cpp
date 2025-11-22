@@ -41,20 +41,30 @@ static py::array_t<float> toNumPyArray(const Eigen::MatrixXd& mat) {
 }
 
 BatchEnv::BatchEnv(const std::string& yaml_content, int num_envs)
-    : num_envs_(num_envs), pool_(std::thread::hardware_concurrency()) {
+    : num_envs_(num_envs), pool_(num_envs) {  // Match thread count to num_envs
 
     if (num_envs <= 0) {
         throw std::invalid_argument("num_envs must be positive");
     }
 
-    // Create environments
-    envs_.reserve(num_envs);
+    // Create environments in parallel (each in its dedicated thread)
+    // This significantly reduces initialization time for large num_envs
+    envs_.resize(num_envs);
+
     for (int i = 0; i < num_envs; ++i) {
-        auto env = std::make_unique<Environment>();
-        env->initialize(yaml_content);  // Pass YAML content, not file path
-        env->reset();  // CRITICAL: Must call reset() after initialize() to set up DART collision detector
-        envs_.push_back(std::move(env));
+        pool_.enqueue([this, i, &yaml_content]() {
+            // Each environment is created and initialized in its own thread
+            auto env = std::make_unique<Environment>();
+            env->initialize(yaml_content);  // Pass YAML content, not file path
+            env->reset();  // CRITICAL: Must call reset() after initialize() to set up DART collision detector
+
+            // Thread-safe assignment (each thread writes to different index)
+            envs_[i] = std::move(env);
+        });
     }
+
+    // Wait for all environments to finish initialization
+    pool_.wait();
 
     // Query dimensions from first environment
     obs_dim_ = envs_[0]->getState().size();
@@ -247,15 +257,57 @@ py::list BatchEnv::get_muscle_tuples() {
 }
 
 void BatchEnv::update_muscle_weights(py::dict state_dict) {
-    // Broadcast weight update to all environments
-    for (int i = 0; i < num_envs_; ++i) {
-        envs_[i]->setMuscleNetworkWeight(state_dict);
+    // OPTIMIZED: Pre-convert Python dict to C++ format, then parallel load without GIL
+    //
+    // PHASE 1: Convert Python dict to C++ format (with GIL, sequential)
+    // This phase MUST be sequential because Python dict iteration requires GIL
+    std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
+
+    for (auto item : state_dict) {
+        std::string key = item.first.cast<std::string>();
+        py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+
+        // Convert numpy array to torch::Tensor
+        auto buf = np_array.request();
+        std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+
+        torch::Tensor tensor = torch::from_blob(
+            buf.ptr,
+            shape,
+            torch::TensorOptions().dtype(torch::kFloat32)
+        ).clone();  // Clone to own the memory
+
+        cpp_state_dict[key] = tensor;
     }
+
+    // PHASE 2: Parallel broadcast to all environments (WITHOUT GIL, parallel!)
+    // Each environment has its own MuscleNN instance, so updates are independent
+    {
+        py::gil_scoped_release release;  // Release GIL for parallel execution
+
+        for (int i = 0; i < num_envs_; ++i) {
+            pool_.enqueue([this, i, &cpp_state_dict]() {
+                // No GIL needed - pure libtorch operations
+                (*envs_[i]->getMuscleNN())->load_state_dict(cpp_state_dict);
+            });
+        }
+        pool_.wait();
+    }
+    // GIL automatically reacquired here
 }
 
 // ===== PYBIND11 MODULE =====
 
 PYBIND11_MODULE(batchenv, m) {
+    // Configure libtorch threading BEFORE any torch operations
+    // Use try-catch to handle case where it's already configured
+    try {
+        torch::set_num_threads(1);
+        torch::set_num_interop_threads(1);
+    } catch (...) {
+        // Already configured, ignore
+    }
+
     m.doc() = "High-performance batched environment with zero-copy numpy bindings and ThreadPool parallelization";
 
     py::class_<BatchEnv>(m, "BatchEnv")

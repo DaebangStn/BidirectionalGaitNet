@@ -231,6 +231,15 @@ private:
 
 PYBIND11_MODULE(gymenv, m)
 {
+    // Configure libtorch threading BEFORE any torch operations
+    // Use try-catch to handle case where it's already configured
+    try {
+        torch::set_num_threads(1);
+        torch::set_num_interop_threads(1);
+    } catch (...) {
+        // Already configured, ignore
+    }
+
     py::class_<GymEnvManager>(m, "GymEnvManager")
         .def(py::init<std::string>())
 

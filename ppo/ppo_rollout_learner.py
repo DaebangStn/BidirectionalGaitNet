@@ -283,6 +283,8 @@ if __name__ == "__main__":
     start_time = time.time()
 
     use_tqdm = sys.stdout.isatty()
+    
+    print(f"Training loop started with {args.num_iterations} iterations")
 
     for iteration in tqdm(range(1, args.num_iterations + 1), desc="Iterations", ncols=100, disable=not use_tqdm):
         # Log progress periodically when tqdm is disabled (SLURM batch jobs)
