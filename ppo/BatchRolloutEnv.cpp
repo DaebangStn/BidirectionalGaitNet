@@ -139,6 +139,10 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         trajectory_.store_truncated_final_obs(step, i, final_obs);
                     }
 
+                    // AUTO-RESET: Reset environment to start new episode
+                    // This matches GymEnvManager behavior (lines 137-149 in GymEnvManager.cpp)
+                    envs_[i]->reset();
+
                     // Reset episode tracking for this environment
                     episode_returns_[i] = 0.0;
                     episode_lengths_[i] = 0;

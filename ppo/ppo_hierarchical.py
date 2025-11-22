@@ -15,6 +15,7 @@ from typing import Optional
 
 import gymnasium as gym
 import numpy as np
+import psutil
 
 # Set threading before torch import to prevent nested parallelism
 import os
@@ -519,6 +520,15 @@ if __name__ == "__main__":
         iteration_time = (time.perf_counter() - rollout_start) * 1000
         writer.add_scalar("perf/iteration_time_ms", iteration_time, global_step)
         writer.add_scalar("perf/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        # Log system resources every 10 epochs
+        if iteration % 10 == 0:
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            writer.add_scalar("system/cpu_percent", cpu_percent, global_step)
+            writer.add_scalar("system/memory_used_gb", memory.used / (1024**3), global_step)
+            writer.add_scalar("system/memory_percent", memory.percent, global_step)
+            writer.add_scalar("system/memory_available_gb", memory.available / (1024**3), global_step)
 
         # Checkpoint saving
         if args.checkpoint_interval is not None and iteration % args.checkpoint_interval == 0:

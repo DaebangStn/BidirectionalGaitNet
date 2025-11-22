@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import psutil
 
 # CRITICAL: Disable nested parallelism to prevent thread oversubscription
 # BatchRolloutEnv uses ThreadPool for environment-level parallelism (hardware_concurrency threads)
@@ -73,7 +74,7 @@ class Args:
     """the number of parallel game environments"""
     num_steps: int = 64
     """the number of steps to run in each environment per policy rollout"""
-    anneal_lr: bool = False
+    anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -456,12 +457,13 @@ if __name__ == "__main__":
 
             muscle_learn_time = (time.perf_counter() - muscle_learn_start) * 1000
 
+            # Log muscle training stats (matching ppo_hierarchical.py format)
+            writer.add_scalar("muscle/loss", muscle_loss['loss_muscle'], global_step)
+            writer.add_scalar("muscle/loss_target", muscle_loss['loss_target'], global_step)
+            writer.add_scalar("muscle/loss_reg", muscle_loss['loss_reg'], global_step)
+            writer.add_scalar("muscle/loss_act", muscle_loss['loss_act'], global_step)
+            writer.add_scalar("muscle/num_tuples", muscle_loss['num_tuples'], global_step)
             writer.add_scalar("perf/muscle_time_ms", muscle_learn_time, global_step)
-            # muscle_loss is a dict, extract the total loss
-            if isinstance(muscle_loss, dict):
-                writer.add_scalar("losses/muscle_loss", muscle_loss.get("loss", 0.0), global_step)
-            else:
-                writer.add_scalar("losses/muscle_loss", muscle_loss, global_step)
 
         # Logging
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
@@ -478,20 +480,28 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
 
         # Performance metrics
-        elapsed = time.time() - start_time
-        sps = int(global_step / elapsed) if elapsed > 0 else 0
-        writer.add_scalar("perf/SPS", sps, global_step)
+        iteration_time = (time.perf_counter() - rollout_start) * 1000
+        writer.add_scalar("perf/iteration_time_ms", iteration_time, global_step)
+        writer.add_scalar("perf/SPS", int(global_step / (time.time() - start_time)), global_step)
 
         # Log averaged info metrics from C++ accumulation
         if 'info' in trajectory:
             for key, avg_value in trajectory['info'].items():
-                writer.add_scalar(f"rollout/{key}", avg_value, global_step)
+                writer.add_scalar(f"info/{key}", avg_value, global_step)
 
         # Log episode statistics from C++ accumulation
         if 'avg_episode_return' in trajectory:
-            writer.add_scalar("rollout/avg_episode_return", trajectory['avg_episode_return'], global_step)
-            writer.add_scalar("rollout/avg_episode_length", trajectory['avg_episode_length'], global_step)
-            writer.add_scalar("rollout/episode_count", trajectory['episode_count'], global_step)
+            writer.add_scalar("charts/episodic_return", trajectory['avg_episode_return'], global_step)
+            writer.add_scalar("charts/episodic_length", trajectory['avg_episode_length'], global_step)
+
+        # Log system resources every 10 epochs
+        if iteration % 10 == 0:
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            writer.add_scalar("system/cpu_percent", cpu_percent, global_step)
+            writer.add_scalar("system/memory_used_gb", memory.used / (1024**3), global_step)
+            writer.add_scalar("system/memory_percent", memory.percent, global_step)
+            writer.add_scalar("system/memory_available_gb", memory.available / (1024**3), global_step)
 
         # Checkpoint saving
         if args.checkpoint_interval is not None and iteration % args.checkpoint_interval == 0:
