@@ -71,7 +71,7 @@ class Args:
     """the number of parallel game environments (ppo_small_pc default)"""
     num_steps: int = 64
     """the number of steps to run in each environment per policy rollout"""
-    anneal_lr: bool = False
+    anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -210,8 +210,7 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
-
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = "cuda"
 
     # env setup - select backend
     if args.use_batch_env:

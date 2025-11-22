@@ -7,7 +7,7 @@ void xavier_init(torch::nn::Linear& layer) {
     torch::nn::init::zeros_(layer->bias);
 }
 
-MuscleNNImpl::MuscleNNImpl(int num_total_muscle_related_dofs, int num_dofs, int num_muscles, bool is_cascaded)
+MuscleNNImpl::MuscleNNImpl(int num_total_muscle_related_dofs, int num_dofs, int num_muscles, bool is_cascaded, bool force_cpu)
     : num_total_muscle_related_dofs_(num_total_muscle_related_dofs),
       num_dofs_(num_dofs),
       num_muscles_(num_muscles),
@@ -35,8 +35,8 @@ MuscleNNImpl::MuscleNNImpl(int num_total_muscle_related_dofs, int num_dofs, int 
     std_muscle_tau = torch::ones({num_total_muscle_related_dofs}) * 200.0f;
     std_tau = torch::ones({num_dofs}) * 200.0f;
 
-    // Check for CUDA availability
-    if (torch::cuda::is_available()) {
+    // Check for CUDA availability (unless force_cpu is true)
+    if (!force_cpu && torch::cuda::is_available()) {
         device_ = torch::kCUDA;
         to(device_);
         std_muscle_tau = std_muscle_tau.to(device_);

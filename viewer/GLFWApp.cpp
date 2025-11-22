@@ -6403,7 +6403,8 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
                       << ", num_muscles=" << num_muscles << std::endl;
 
             // Create C++ MuscleNN
-            new_elem.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded);
+            // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
+            new_elem.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded, true);
 
             // res[1] is now a state_dict (Python dict), not a network object
             std::cout << "[Viewer] Converting state_dict to C++ format..." << std::endl;

@@ -298,7 +298,8 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     {
         Character *character = mCharacter;
         // Create C++ MuscleNN (libtorch) for thread-safe inference
-        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading);
+        // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
+        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading, true);
         mLoadedMuscleNN = true;
     }
 
@@ -737,7 +738,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     if (isTwoLevelController()) {
         Character *character = mCharacter;
         // Create C++ MuscleNN (libtorch) for thread-safe inference
-        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading);
+        // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
+        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading, true);
         mLoadedMuscleNN = true;
     }
 
@@ -2375,7 +2377,8 @@ Network Environment::loadPrevNetworks(std::string path, bool isFirst)
         bool is_cascaded = false;  // Prev networks don't use cascading
 
         // Create C++ MuscleNN
-        nn.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded);
+        // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
+        nn.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded, true);
 
         // res[1] is now a state_dict (Python dict), not a network object
         py::dict state_dict = res[1].cast<py::dict>();

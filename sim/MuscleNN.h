@@ -21,8 +21,9 @@ public:
      * @param num_dofs Dimension of desired torques
      * @param num_muscles Number of muscles (output dimension)
      * @param is_cascaded Whether this is a cascading (hierarchical) network
+     * @param force_cpu If true, force CPU execution even if CUDA is available
      */
-    MuscleNNImpl(int num_total_muscle_related_dofs, int num_dofs, int num_muscles, bool is_cascaded = false);
+    MuscleNNImpl(int num_total_muscle_related_dofs, int num_dofs, int num_muscles, bool is_cascaded = false, bool force_cpu = false);
 
     /**
      * Forward pass without activation functions.
@@ -111,7 +112,9 @@ using MuscleNN = std::shared_ptr<MuscleNNImpl>;
 
 /**
  * Factory function to create MuscleNN instance.
+ *
+ * @param force_cpu If true, force CPU execution even if CUDA is available (useful for multi-process scenarios)
  */
-inline MuscleNN make_muscle_nn(int num_total_muscle_related_dofs, int num_dofs, int num_muscles, bool is_cascaded = false) {
-    return std::make_shared<MuscleNNImpl>(num_total_muscle_related_dofs, num_dofs, num_muscles, is_cascaded);
+inline MuscleNN make_muscle_nn(int num_total_muscle_related_dofs, int num_dofs, int num_muscles, bool is_cascaded = false, bool force_cpu = false) {
+    return std::make_shared<MuscleNNImpl>(num_total_muscle_related_dofs, num_dofs, num_muscles, is_cascaded, force_cpu);
 }

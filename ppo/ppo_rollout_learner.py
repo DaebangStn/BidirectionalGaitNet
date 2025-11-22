@@ -456,7 +456,7 @@ if __name__ == "__main__":
 
             muscle_learn_time = (time.perf_counter() - muscle_learn_start) * 1000
 
-            writer.add_scalar("perf/muscle_learn_time_ms", muscle_learn_time, global_step)
+            writer.add_scalar("perf/muscle_time_ms", muscle_learn_time, global_step)
             # muscle_loss is a dict, extract the total loss
             if isinstance(muscle_loss, dict):
                 writer.add_scalar("losses/muscle_loss", muscle_loss.get("loss", 0.0), global_step)
@@ -480,7 +480,7 @@ if __name__ == "__main__":
         # Performance metrics
         elapsed = time.time() - start_time
         sps = int(global_step / elapsed) if elapsed > 0 else 0
-        writer.add_scalar("charts/SPS", sps, global_step)
+        writer.add_scalar("perf/SPS", sps, global_step)
 
         # Log averaged info metrics from C++ accumulation
         if 'info' in trajectory:
