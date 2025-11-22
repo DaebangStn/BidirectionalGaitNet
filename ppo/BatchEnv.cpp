@@ -6,6 +6,40 @@
 
 namespace py = pybind11;
 
+// Helper function: Convert Eigen::VectorXd to numpy array (float32)
+static py::array_t<float> toNumPyArray(const Eigen::VectorXd& vec) {
+    py::array_t<float> arr(vec.size());
+    auto buf = arr.request();
+    float* ptr = static_cast<float*>(buf.ptr);
+    for (int i = 0; i < vec.size(); ++i) {
+        ptr[i] = static_cast<float>(vec[i]);
+    }
+    return arr;
+}
+
+// Helper function: Convert Eigen::VectorXf to numpy array (float32)
+static py::array_t<float> toNumPyArray(const Eigen::VectorXf& vec) {
+    py::array_t<float> arr(vec.size());
+    auto buf = arr.request();
+    float* ptr = static_cast<float*>(buf.ptr);
+    std::memcpy(ptr, vec.data(), vec.size() * sizeof(float));
+    return arr;
+}
+
+// Helper function: Convert Eigen::MatrixXd to numpy array (float32, row-major)
+static py::array_t<float> toNumPyArray(const Eigen::MatrixXd& mat) {
+    py::array_t<float> arr({mat.rows(), mat.cols()});
+    auto buf = arr.request();
+    float* ptr = static_cast<float*>(buf.ptr);
+    int idx = 0;
+    for (int i = 0; i < mat.rows(); ++i) {
+        for (int j = 0; j < mat.cols(); ++j) {
+            ptr[idx++] = static_cast<float>(mat(i, j));
+        }
+    }
+    return arr;
+}
+
 BatchEnv::BatchEnv(const std::string& yaml_content, int num_envs)
     : num_envs_(num_envs), pool_(std::thread::hardware_concurrency()) {
 
@@ -30,6 +64,12 @@ BatchEnv::BatchEnv(const std::string& yaml_content, int num_envs)
     obs_buffer_ = RowMajorMatrixXf::Zero(num_envs_, obs_dim_);
     rew_buffer_ = Eigen::VectorXf::Zero(num_envs_);
     done_buffer_ = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>::Zero(num_envs_);
+
+    // Initialize muscle tuple buffers if hierarchical control enabled
+    if (envs_[0]->isTwoLevelController()) {
+        muscle_tuple_buffers_.resize(num_envs_);
+        // Vectors will be populated during step()
+    }
 }
 
 void BatchEnv::reset() {
@@ -87,11 +127,130 @@ void BatchEnv::step(const RowMajorMatrixXf& actions) {
 
             // Write done flag (terminated OR truncated)
             done_buffer_[i] = (envs_[i]->isTerminated() || envs_[i]->isTruncated()) ? 1 : 0;
+
+            // Collect muscle tuples if hierarchical control enabled
+            // Note: Muscle tuple collection must happen with GIL held (after pool_.wait())
+            // because py::list operations require GIL
         });
     }
 
     // Wait for all step tasks to complete
     pool_.wait();
+
+    // Collect muscle tuples after step (store raw Eigen data, no GIL needed)
+    if (!muscle_tuple_buffers_.empty()) {
+        for (int i = 0; i < num_envs_; ++i) {
+            MuscleTuple mt = envs_[i]->getRandomMuscleTuple();
+            Eigen::VectorXd dt = envs_[i]->getRandomDesiredTorque();
+
+            muscle_tuple_buffers_[i].tau_des.push_back(dt);
+            muscle_tuple_buffers_[i].JtA_reduced.push_back(mt.JtA_reduced);
+            muscle_tuple_buffers_[i].JtA.push_back(mt.JtA);
+
+            if (envs_[i]->getUseCascading()) {
+                muscle_tuple_buffers_[i].prev_out.push_back(envs_[i]->getRandomPrevOut());
+                muscle_tuple_buffers_[i].weight.push_back(envs_[i]->getRandomWeight());
+            }
+        }
+    }
+}
+
+// ===== HIERARCHICAL CONTROL METHODS =====
+
+bool BatchEnv::is_hierarchical() const {
+    // Query first environment
+    return envs_[0]->isTwoLevelController();
+}
+
+bool BatchEnv::use_cascading() const {
+    // Query first environment
+    return envs_[0]->getUseCascading();
+}
+
+int BatchEnv::getNumActuatorAction() const {
+    // Query first environment
+    return envs_[0]->getNumActuatorAction();
+}
+
+int BatchEnv::getNumMuscles() const {
+    // Query first environment
+    return envs_[0]->getCharacter()->getNumMuscles();
+}
+
+int BatchEnv::getNumMuscleDof() const {
+    // Query first environment
+    return envs_[0]->getCharacter()->getNumMuscleRelatedDof();
+}
+
+py::list BatchEnv::get_muscle_tuples() {
+    // Convert raw Eigen data to numpy arrays (with GIL held)
+    py::list all_tuples;
+
+    if (muscle_tuple_buffers_.empty()) {
+        return all_tuples;  // Not hierarchical, return empty list
+    }
+
+    bool use_cascading = envs_[0]->getUseCascading();
+
+    for (int i = 0; i < num_envs_; ++i) {
+        // Create list of numpy arrays for this environment
+        py::list env_tuple;
+
+        // tau_des list
+        py::list tau_des_list;
+        for (const auto& data : muscle_tuple_buffers_[i].tau_des) {
+            tau_des_list.append(toNumPyArray(data));
+        }
+        env_tuple.append(tau_des_list);
+
+        // JtA_reduced list
+        py::list JtA_reduced_list;
+        for (const auto& data : muscle_tuple_buffers_[i].JtA_reduced) {
+            JtA_reduced_list.append(toNumPyArray(data));
+        }
+        env_tuple.append(JtA_reduced_list);
+
+        // JtA list
+        py::list JtA_list;
+        for (const auto& data : muscle_tuple_buffers_[i].JtA) {
+            JtA_list.append(toNumPyArray(data));
+        }
+        env_tuple.append(JtA_list);
+
+        if (use_cascading) {
+            // prev_out list
+            py::list prev_out_list;
+            for (const auto& data : muscle_tuple_buffers_[i].prev_out) {
+                prev_out_list.append(toNumPyArray(data));
+            }
+            env_tuple.append(prev_out_list);
+
+            // weight list
+            py::list weight_list;
+            for (const auto& data : muscle_tuple_buffers_[i].weight) {
+                weight_list.append(toNumPyArray(data));
+            }
+            env_tuple.append(weight_list);
+        }
+
+        all_tuples.append(env_tuple);
+
+        // Clear buffers for next collection
+        muscle_tuple_buffers_[i].tau_des.clear();
+        muscle_tuple_buffers_[i].JtA_reduced.clear();
+        muscle_tuple_buffers_[i].JtA.clear();
+        muscle_tuple_buffers_[i].prev_out.clear();
+        muscle_tuple_buffers_[i].weight.clear();
+    }
+
+    return all_tuples;
+}
+
+void BatchEnv::update_muscle_weights(py::dict state_dict) {
+    // Broadcast weight update to all environments
+    for (int i = 0; i < num_envs_; ++i) {
+        envs_[i]->setMuscleNetworkWeight(state_dict);
+    }
 }
 
 // ===== PYBIND11 MODULE =====
@@ -190,5 +349,36 @@ PYBIND11_MODULE(batchenv, m) {
 
         .def("num_envs", &BatchEnv::numEnvs, "Get number of parallel environments")
         .def("obs_dim", &BatchEnv::obsDim, "Get observation dimension")
-        .def("action_dim", &BatchEnv::actionDim, "Get action dimension");
+        .def("action_dim", &BatchEnv::actionDim, "Get action dimension")
+
+        // Hierarchical control methods
+        .def("is_hierarchical", &BatchEnv::is_hierarchical,
+             "Check if environment uses hierarchical (two-level) control\n\n"
+             "Returns:\n"
+             "    bool: True if hierarchical control is enabled")
+        .def("use_cascading", &BatchEnv::use_cascading,
+             "Check if cascading control mode is enabled\n\n"
+             "Returns:\n"
+             "    bool: True if cascading mode is enabled")
+        .def("getNumActuatorAction", &BatchEnv::getNumActuatorAction,
+             "Get number of actuator actions (joint torque dimension)\n\n"
+             "Returns:\n"
+             "    int: Number of actuator actions")
+        .def("getNumMuscles", &BatchEnv::getNumMuscles,
+             "Get number of muscles in the character\n\n"
+             "Returns:\n"
+             "    int: Number of muscles")
+        .def("getNumMuscleDof", &BatchEnv::getNumMuscleDof,
+             "Get number of muscle-related degrees of freedom\n\n"
+             "Returns:\n"
+             "    int: Number of muscle DOFs")
+        .def("get_muscle_tuples", &BatchEnv::get_muscle_tuples,
+             "Collect muscle training tuples from all environments\n\n"
+             "Returns:\n"
+             "    list: List of tuple lists, one per environment")
+        .def("update_muscle_weights", &BatchEnv::update_muscle_weights,
+             py::arg("state_dict"),
+             "Update muscle network weights in all environments\n\n"
+             "Args:\n"
+             "    state_dict (dict): PyTorch state_dict with muscle network weights");
 }

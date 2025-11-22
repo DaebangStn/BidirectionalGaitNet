@@ -59,8 +59,12 @@ link_libraries(stdc++fs)
 
 # Find libtorch (PyTorch C++ API)
 set(CAFFE2_USE_CUDNN ON)
+set(CUDAToolkit_ROOT "/usr/local/cuda")
+set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda")
 set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")  # CUDA compiler path
 set(CMAKE_CUDA_ARCHITECTURES "native")  # Auto-detect GPU architecture
+
+find_package(CUDAToolkit REQUIRED)
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 message(STATUS "Torch found: ${TORCH_LIBRARIES}")

@@ -13,6 +13,7 @@ endif()
 
 link_directories(../sim/)
 include_directories(../sim/)
+include_directories($ENV{CONDA_PREFIX}/include/eigen3)
 
 # GymEnvManager module (existing single-env wrapper)
 set(gymenv_srcs
@@ -39,3 +40,19 @@ target_link_libraries(batchenv
         ${TORCH_LIBRARIES}
 )
 set_target_properties(batchenv PROPERTIES PREFIX "" )
+
+# BatchRolloutEnv module (autonomous C++ rollout with libtorch inference)
+# Includes PolicyNet and TrajectoryBuffer compiled directly
+set(batchrolloutenv_srcs
+    BatchRolloutEnv.cpp
+    TrajectoryBuffer.cpp
+    PolicyNet.cpp
+)
+add_library(batchrolloutenv SHARED ${batchrolloutenv_srcs})
+target_link_libraries(batchrolloutenv
+        ${Python3_LIBRARIES}
+        sim
+        pybind11::embed
+        ${TORCH_LIBRARIES}
+)
+set_target_properties(batchrolloutenv PROPERTIES PREFIX "" )

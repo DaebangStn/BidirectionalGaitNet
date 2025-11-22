@@ -3,8 +3,11 @@
 #include <vector>
 #include <string>
 #include <Eigen/Dense>
+#include <pybind11/pybind11.h>
 #include "Environment.h"
 #include "ThreadPool.h"
+
+namespace py = pybind11;
 
 /**
  * High-performance batched environment with ThreadPool parallelization.
@@ -61,6 +64,17 @@ public:
     int obsDim() const { return obs_dim_; }
     int actionDim() const { return action_dim_; }
 
+    // Hierarchical control query methods (queried from first environment)
+    bool is_hierarchical() const;
+    bool use_cascading() const;
+    int getNumActuatorAction() const;
+    int getNumMuscles() const;
+    int getNumMuscleDof() const;
+
+    // Hierarchical control training methods
+    py::list get_muscle_tuples();
+    void update_muscle_weights(py::dict state_dict);
+
 private:
     // Environment instances
     std::vector<std::unique_ptr<Environment>> envs_;
@@ -77,4 +91,15 @@ private:
     int num_envs_;
     int obs_dim_;
     int action_dim_;
+
+    // Muscle tuple buffers (for hierarchical control)
+    // Store raw Eigen data, convert to numpy in get_muscle_tuples() with GIL held
+    struct MuscleTupleData {
+        std::vector<Eigen::VectorXd> tau_des;
+        std::vector<Eigen::VectorXd> JtA_reduced;
+        std::vector<Eigen::MatrixXd> JtA;
+        std::vector<Eigen::VectorXd> prev_out;  // cascading only
+        std::vector<Eigen::VectorXf> weight;    // cascading only
+    };
+    std::vector<MuscleTupleData> muscle_tuple_buffers_;
 };

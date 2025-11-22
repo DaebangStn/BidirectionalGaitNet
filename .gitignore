@@ -91,3 +91,4 @@ uv.lock
 data/motion/c3d/
 render.yaml
 runs/
+benchmark_results/

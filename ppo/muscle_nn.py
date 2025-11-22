@@ -9,10 +9,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-# Configure PyTorch threading for multiprocessing (similar to Ray's behavior)
-# Set number of threads per worker to 1 to avoid thread contention across processes
-torch.set_num_threads(1)
-torch.set_num_interop_threads(1)
+# NOTE: PyTorch threading is configured at the entry point (ppo_rollout_learner.py, ppo_hierarchical.py)
+# Do not set threading here to avoid "cannot set number of interop threads" errors
 
 
 def weights_init(m):
