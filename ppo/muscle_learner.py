@@ -33,7 +33,6 @@ class MuscleLearner:
         num_epochs: int = 3,
         batch_size: int = 128,
         is_cascaded: bool = False,
-        device: str = "cuda"
     ):
         """
         Initialize muscle learner.
@@ -46,9 +45,8 @@ class MuscleLearner:
             num_epochs: Number of training epochs per update (default: 3)
             batch_size: Minibatch size for SGD (default: 128)
             is_cascaded: Whether to use cascading mode (default: False)
-            device: Device for training ("cuda" or "cpu")
         """
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda")
         self.num_actuator_action = num_actuator_action
         self.num_muscles = num_muscles
         self.num_muscle_dofs = num_muscle_dofs

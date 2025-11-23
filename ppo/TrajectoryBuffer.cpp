@@ -66,6 +66,7 @@ void TrajectoryBuffer::append(int step, int env_idx,
 }
 
 void TrajectoryBuffer::accumulate_info(const std::map<std::string, double>& info_map) {
+    std::lock_guard<std::mutex> lock(info_mutex_);
     for (const auto& [key, value] : info_map) {
         info_sums_[key] += value;
         info_counts_[key] += 1;
@@ -73,10 +74,12 @@ void TrajectoryBuffer::accumulate_info(const std::map<std::string, double>& info
 }
 
 void TrajectoryBuffer::store_truncated_final_obs(int step, int env_idx, const Eigen::VectorXf& obs) {
+    std::lock_guard<std::mutex> lock(truncated_mutex_);
     truncated_final_obs_.push_back({step, env_idx, obs});
 }
 
 void TrajectoryBuffer::accumulate_episode(double episode_return, int episode_length) {
+    std::lock_guard<std::mutex> lock(episode_mutex_);
     episode_count_ += 1;
     episode_return_sum_ += episode_return;
     episode_length_sum_ += episode_length;

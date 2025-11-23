@@ -41,8 +41,7 @@ static py::array_t<float> toNumPyArray(const Eigen::MatrixXd& mat) {
 }
 
 BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps)
-    : num_envs_(num_envs), num_steps_(num_steps), pool_(num_envs),  // Match thread count to num_envs
-      trajectory_(num_steps, num_envs, 1, 1)  // Temporary init, will resize
+    : num_envs_(num_envs), num_steps_(num_steps), pool_(num_envs)  // Match thread count to num_envs
 {
     if (num_envs <= 0) {
         throw std::invalid_argument("num_envs must be positive");
@@ -75,7 +74,7 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
     action_dim_ = envs_[0]->getAction().size();
 
     // Create properly-sized trajectory buffer
-    trajectory_ = TrajectoryBuffer(num_steps, num_envs, obs_dim_, action_dim_);
+    trajectory_ = std::make_unique<TrajectoryBuffer>(num_steps, num_envs, obs_dim_, action_dim_);
 
     // Create policy network
     policy_ = std::make_shared<PolicyNetImpl>(obs_dim_, action_dim_);
@@ -94,7 +93,7 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
 // Internal method: Execute rollout without GIL (no Python object creation)
 void BatchRolloutEnv::collect_rollout_nogil() {
     // Reset trajectory buffer
-    trajectory_.reset();
+    trajectory_->reset();
 
     // Rollout loop: Enqueue all work asynchronously without waiting
     // Each environment will independently run through all its steps
@@ -118,10 +117,10 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                 uint8_t truncated = envs_[i]->isTruncated() ? 1 : 0;
 
                 // 5. Store in trajectory buffer with separate flags
-                trajectory_.append(step, i, obs, action, reward, value, logprob, terminated, truncated);
+                trajectory_->append(step, i, obs, action, reward, value, logprob, terminated, truncated);
 
                 // 6. Accumulate info metrics (every step)
-                trajectory_.accumulate_info(envs_[i]->getInfoMap());
+                trajectory_->accumulate_info(envs_[i]->getInfoMap());
 
                 // 7. Track episode progress
                 episode_returns_[i] += reward;
@@ -130,13 +129,13 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                 // 8. On episode end: accumulate stats and store truncated final obs
                 if (terminated || truncated) {
                     // Accumulate episode statistics
-                    trajectory_.accumulate_episode(episode_returns_[i], episode_lengths_[i]);
+                    trajectory_->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
 
                     // Store final observation for PURE truncated episodes (for terminal bootstrapping)
                     // Only bootstrap if truncated but NOT terminated (matches ppo_hierarchical.py:343)
                     if (truncated && !terminated) {
                         Eigen::VectorXf final_obs = envs_[i]->getState().cast<float>();
-                        trajectory_.store_truncated_final_obs(step, i, final_obs);
+                        trajectory_->store_truncated_final_obs(step, i, final_obs);
                     }
 
                     // AUTO-RESET: Reset environment to start new episode
@@ -172,7 +171,7 @@ void BatchRolloutEnv::collect_rollout_nogil() {
 
 // Public method: Convert trajectory to numpy (requires GIL)
 py::dict BatchRolloutEnv::collect_rollout() {
-    return trajectory_.to_numpy();
+    return trajectory_->to_numpy();
 }
 
 void BatchRolloutEnv::update_policy_weights(py::dict state_dict) {

@@ -56,10 +56,6 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = True
-    """if toggled, cuda will be enabled by default"""
-    save_model: bool = True
-    """whether to save model into the `runs/{run_name}` folder"""
     checkpoint_interval: Optional[int] = 1000
     """save checkpoint every K iterations (None = no checkpoints, only final save)"""
 
@@ -72,7 +68,7 @@ class Args:
     """the learning rate of the optimizer"""
     num_envs: int = 32
     """the number of parallel game environments"""
-    num_steps: int = 64
+    num_steps: int = 4
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -209,8 +205,7 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
-
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = 'cuda'
 
     # BatchRolloutEnv setup
     try:
@@ -266,16 +261,12 @@ if __name__ == "__main__":
             num_epochs=args.muscle_num_epochs,
             batch_size=args.muscle_batch_size,
             is_cascaded=use_cascading,
-            device="cuda" if torch.cuda.is_available() and args.cuda else "cpu"
         )
 
         # Initialize muscle weights in all environments
         state_dict = muscle_learner.get_state_dict()
         envs.update_muscle_weights(state_dict)
-
     # Initialize C++ policy weights
-    print("Synchronizing initial policy weights to C++...")
-    # Move all tensors to CPU before passing to C++
     agent_state_cpu = {k: v.cpu() for k, v in agent.state_dict().items()}
     envs.update_policy_weights(agent_state_cpu)
 
@@ -301,13 +292,13 @@ if __name__ == "__main__":
             optimizer.param_groups[0]["lr"] = lrnow
 
         # ===== AUTONOMOUS C++ ROLLOUT =====
-        rollout_start = time.perf_counter()
+        epoch_start = time.perf_counter()
 
         # C++ runs entire rollout autonomously with libtorch inference
         # Returns: dict with numpy arrays (zero-copy)
         trajectory = envs.collect_rollout()
 
-        rollout_time = (time.perf_counter() - rollout_start) * 1000
+        rollout_time = (time.perf_counter() - epoch_start) * 1000
         writer.add_scalar("perf/rollout_time_ms", rollout_time, global_step)
 
         global_step += args.batch_size
@@ -335,7 +326,6 @@ if __name__ == "__main__":
         dones = torch.logical_or(terminations, truncations).float()
 
         # Terminal value bootstrapping for truncated episodes
-        # CRITICAL: Must happen BEFORE GAE computation
         if 'truncated_final_obs' in trajectory and len(trajectory['truncated_final_obs']) > 0:
             with torch.no_grad():
                 for step, env_idx, final_obs_np in trajectory['truncated_final_obs']:
@@ -480,7 +470,7 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
 
         # Performance metrics
-        iteration_time = (time.perf_counter() - rollout_start) * 1000
+        iteration_time = (time.perf_counter() - epoch_start) * 1000
         writer.add_scalar("perf/iteration_time_ms", iteration_time, global_step)
         writer.add_scalar("perf/SPS", int(global_step / (time.time() - start_time)), global_step)
 

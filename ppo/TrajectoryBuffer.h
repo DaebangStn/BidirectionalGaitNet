@@ -7,6 +7,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <mutex>
 
 namespace py = pybind11;
 
@@ -166,4 +167,9 @@ private:
     int num_envs_;
     int obs_dim_;
     int action_dim_;
+
+    // Thread safety for concurrent accumulation
+    mutable std::mutex info_mutex_;      // Protects info_sums_ and info_counts_
+    mutable std::mutex episode_mutex_;   // Protects episode statistics
+    mutable std::mutex truncated_mutex_; // Protects truncated_final_obs_
 };

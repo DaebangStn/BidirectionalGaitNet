@@ -113,8 +113,8 @@ private:
     // Policy network
     PolicyNet policy_;
 
-    // Trajectory buffer
-    TrajectoryBuffer trajectory_;
+    // Trajectory buffer (unique_ptr because std::mutex is non-movable)
+    std::unique_ptr<TrajectoryBuffer> trajectory_;
 
     // Thread pool for parallel execution
     ThreadPool pool_;
