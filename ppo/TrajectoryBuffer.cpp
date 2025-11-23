@@ -108,6 +108,19 @@ void TrajectoryBuffer::set_next_obs(int env_idx, const Eigen::VectorXf& obs, uin
     next_done_[env_idx] = done;
 }
 
+// Accessor methods for C++ aggregation (GIL-free)
+Eigen::VectorXf TrajectoryBuffer::get_obs_row(int idx) const {
+    return obs_.row(idx);
+}
+
+Eigen::VectorXf TrajectoryBuffer::get_action_row(int idx) const {
+    return actions_.row(idx);
+}
+
+Eigen::VectorXf TrajectoryBuffer::get_next_obs_row(int env_idx) const {
+    return next_obs_.row(env_idx);
+}
+
 void TrajectoryBuffer::reset() {
     // Zero out all data for next rollout
     obs_.setZero();

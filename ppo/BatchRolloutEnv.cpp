@@ -41,9 +41,7 @@ static py::array_t<float> toNumPyArray(const Eigen::MatrixXd& mat) {
 }
 
 BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps, bool enable_numa)
-    : num_envs_(num_envs), num_steps_(num_steps),
-      pool_(enable_numa ? 0 : num_envs),            // Regular pool if NUMA disabled
-      pool_numa_(enable_numa ? num_envs : 0, enable_numa)  // NUMA pool if enabled
+    : num_envs_(num_envs), num_steps_(num_steps)
 {
     if (num_envs <= 0) {
         throw std::invalid_argument("num_envs must be positive");
@@ -52,14 +50,25 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
         throw std::invalid_argument("num_steps must be positive");
     }
 
-    // Determine NUMA configuration
-    numa_enabled_ = enable_numa && pool_numa_.numa_enabled();
-    if (numa_enabled_) {
-        num_nodes_ = pool_numa_.num_numa_nodes();
-        envs_per_node_ = num_envs / num_nodes_;
-        std::cout << "BatchRolloutEnv: NUMA enabled with " << num_nodes_ << " nodes, "
-                  << envs_per_node_ << " envs per node" << std::endl;
+    // Create only the thread pool we'll use
+    if (enable_numa) {
+        pool_numa_ = std::make_unique<NUMAThreadPool>(num_envs, true);
+        numa_enabled_ = pool_numa_->numa_enabled();
+
+        if (numa_enabled_) {
+            num_nodes_ = pool_numa_->num_numa_nodes();
+            envs_per_node_ = num_envs / num_nodes_;
+            std::cout << "BatchRolloutEnv: NUMA enabled with " << num_nodes_ << " nodes, "
+                      << envs_per_node_ << " envs per node" << std::endl;
+        }
+    } else {
+        pool_ = std::make_unique<ThreadPool>(num_envs);
+        numa_enabled_ = false;
     }
+
+    // IMPORTANT: Initialize URIResolver eagerly in main thread BEFORE parallel environment creation
+    // This eliminates the need for thread synchronization during Environment::initialize()
+    PMuscle::URIResolver::getInstance().initialize();
 
     // Create environments in parallel
     envs_.resize(num_envs);
@@ -73,17 +82,17 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
         };
 
         if (numa_enabled_) {
-            pool_numa_.enqueue(task);
+            pool_numa_->enqueue(task);
         } else {
-            pool_.enqueue(task);
+            pool_->enqueue(task);
         }
     }
 
     // Wait for environment creation
     if (numa_enabled_) {
-        pool_numa_.wait();
+        pool_numa_->wait();
     } else {
-        pool_.wait();
+        pool_->wait();
     }
 
     // Query dimensions
@@ -129,9 +138,9 @@ void BatchRolloutEnv::collect_rollout_nogil() {
 
         // Rollout loop with NUMA-local writes
         for (int i = 0; i < num_envs_; ++i) {
-            pool_numa_.enqueue([this, i]() {
+            pool_numa_->enqueue([this, i]() {
                 // Determine NUMA node for this environment
-                int my_node = pool_numa_.get_numa_node(i);
+                int my_node = pool_numa_->get_numa_node(i);
                 int local_env_idx = i % envs_per_node_;
 
                 for (int step = 0; step < num_steps_; ++step) {
@@ -198,7 +207,7 @@ void BatchRolloutEnv::collect_rollout_nogil() {
             });
         }
 
-        pool_numa_.wait();
+        pool_numa_->wait();
 
         // Aggregate NUMA-local trajectories → master
         aggregate_trajectories();
@@ -208,7 +217,7 @@ void BatchRolloutEnv::collect_rollout_nogil() {
         trajectory_->reset();
 
         for (int i = 0; i < num_envs_; ++i) {
-            pool_.enqueue([this, i]() {
+            pool_->enqueue([this, i]() {
                 for (int step = 0; step < num_steps_; ++step) {
                     Eigen::VectorXf obs = envs_[i]->getState().cast<float>();
                     auto [action, value, logprob] = policy_->sample_action(obs);
@@ -261,7 +270,7 @@ void BatchRolloutEnv::collect_rollout_nogil() {
             });
         }
 
-        pool_.wait();
+        pool_->wait();
     }
 }
 
@@ -272,91 +281,50 @@ void BatchRolloutEnv::aggregate_trajectories() {
         return;
     }
 
-    // Simple aggregation: collect trajectories from each NUMA node
-    // and combine via to_numpy() → from numpy rebuild
-    // This is simpler than direct matrix manipulation and works with existing API
+    // CRITICAL: This is called WITHOUT GIL from collect_rollout_nogil()
+    // Must NOT create Python objects (no to_numpy(), py::dict, py::array, etc.)
+    // Use direct C++ memory copy instead
 
     master_trajectory_->reset();
 
-    // Aggregate by collecting dicts from each NUMA buffer and rebuilding master
-    std::vector<py::dict> numa_dicts;
-    for (int node = 0; node < num_nodes_; ++node) {
-        numa_dicts.push_back(trajectory_numa_[node]->to_numpy());
-    }
-
-    // Rebuild master from NUMA dicts
-    // For now, use simple copy approach: iterate and append
+    // Direct C++ aggregation without Python objects
     int env_offset = 0;
     for (int node = 0; node < num_nodes_; ++node) {
-        auto& numa_dict = numa_dicts[node];
+        auto& traj = trajectory_numa_[node];
 
-        // Extract numpy arrays
-        auto obs_np = numa_dict["obs"].cast<py::array_t<float>>();
-        auto actions_np = numa_dict["actions"].cast<py::array_t<float>>();
-        auto rewards_np = numa_dict["rewards"].cast<py::array_t<float>>();
-        auto values_np = numa_dict["values"].cast<py::array_t<float>>();
-        auto logprobs_np = numa_dict["logprobs"].cast<py::array_t<float>>();
-        auto terminations_np = numa_dict["terminations"].cast<py::array_t<uint8_t>>();
-        auto truncations_np = numa_dict["truncations"].cast<py::array_t<uint8_t>>();
-        auto next_obs_np = numa_dict["next_obs"].cast<py::array_t<float>>();
-        auto next_done_np = numa_dict["next_done"].cast<py::array_t<uint8_t>>();
+        // Copy trajectory data directly from NUMA-local buffer to master
+        for (int step = 0; step < num_steps_; ++step) {
+            for (int local_env = 0; local_env < envs_per_node_; ++local_env) {
+                int global_env = env_offset + local_env;
+                int src_idx = step * envs_per_node_ + local_env;
 
-        auto obs_buf = obs_np.request();
-        auto actions_buf = actions_np.request();
-        auto rewards_buf = rewards_np.request();
-        auto values_buf = values_np.request();
-        auto logprobs_buf = logprobs_np.request();
-        auto terminations_buf = terminations_np.request();
-        auto truncations_buf = truncations_np.request();
-        auto next_obs_buf = next_obs_np.request();
-        auto next_done_buf = next_done_np.request();
+                // Get data from NUMA-local trajectory
+                Eigen::VectorXf obs = traj->get_obs_row(src_idx);
+                Eigen::VectorXf action = traj->get_action_row(src_idx);
+                float reward = traj->get_reward(src_idx);
+                float value = traj->get_value(src_idx);
+                float logprob = traj->get_logprob(src_idx);
+                uint8_t termination = traj->get_termination(src_idx);
+                uint8_t truncation = traj->get_truncation(src_idx);
 
-        float* obs_ptr = static_cast<float*>(obs_buf.ptr);
-        float* actions_ptr = static_cast<float*>(actions_buf.ptr);
-        float* rewards_ptr = static_cast<float*>(rewards_buf.ptr);
-        float* values_ptr = static_cast<float*>(values_buf.ptr);
-        float* logprobs_ptr = static_cast<float*>(logprobs_buf.ptr);
-        uint8_t* terminations_ptr = static_cast<uint8_t*>(terminations_buf.ptr);
-        uint8_t* truncations_ptr = static_cast<uint8_t*>(truncations_buf.ptr);
-        float* next_obs_ptr = static_cast<float*>(next_obs_buf.ptr);
-        uint8_t* next_done_ptr = static_cast<uint8_t*>(next_done_buf.ptr);
-
-        int batch_size = num_steps_ * envs_per_node_;
-
-        for (int i = 0; i < batch_size; ++i) {
-            int step = i / envs_per_node_;
-            int local_env = i % envs_per_node_;
-            int global_env = env_offset + local_env;
-
-            // Extract vectors from flat arrays
-            Eigen::VectorXf obs(obs_dim_);
-            Eigen::VectorXf action(action_dim_);
-
-            for (int j = 0; j < obs_dim_; ++j) {
-                obs[j] = obs_ptr[i * obs_dim_ + j];
+                // Write to master trajectory
+                master_trajectory_->append(step, global_env, obs, action, reward, value, logprob, termination, truncation);
             }
-            for (int j = 0; j < action_dim_; ++j) {
-                action[j] = actions_ptr[i * action_dim_ + j];
-            }
-
-            master_trajectory_->append(step, global_env, obs, action,
-                                        rewards_ptr[i], values_ptr[i], logprobs_ptr[i],
-                                        terminations_ptr[i], truncations_ptr[i]);
         }
 
-        // Aggregate next_obs from this NUMA node
+        env_offset += envs_per_node_;
+    }
+
+    // Also copy next_obs for GAE bootstrap
+    env_offset = 0;
+    for (int node = 0; node < num_nodes_; ++node) {
+        auto& traj = trajectory_numa_[node];
         for (int local_env = 0; local_env < envs_per_node_; ++local_env) {
             int global_env = env_offset + local_env;
-
-            // Extract next_obs vector
-            Eigen::VectorXf next_obs(obs_dim_);
-            for (int j = 0; j < obs_dim_; ++j) {
-                next_obs[j] = next_obs_ptr[local_env * obs_dim_ + j];
-            }
-
-            master_trajectory_->set_next_obs(global_env, next_obs, next_done_ptr[local_env]);
+            Eigen::VectorXf next_obs = traj->get_next_obs_row(local_env);
+            uint8_t next_done = traj->get_next_done(local_env);
+            master_trajectory_->set_next_obs(global_env, next_obs, next_done);
         }
-
         env_offset += envs_per_node_;
     }
 }
@@ -372,13 +340,12 @@ py::dict BatchRolloutEnv::collect_rollout() {
 
 void BatchRolloutEnv::update_policy_weights(py::dict state_dict) {
     if (numa_enabled_) {
-        // Load weights into all NUMA-local policy networks in parallel
+        // CRITICAL: Cannot pass Python objects to worker threads (not thread-safe without GIL)
+        // Solution: Each policy network loads independently from the SAME Python dict sequentially
+        // This is safe because we're in the main thread with GIL held
         for (int node = 0; node < num_nodes_; ++node) {
-            pool_numa_.enqueue([this, node, &state_dict]() {
-                policy_numa_[node]->load_state_dict(state_dict);
-            });
+            policy_numa_[node]->load_state_dict(state_dict);
         }
-        pool_numa_.wait();
     } else {
         // Load weights into single policy network
         policy_->load_state_dict(state_dict);
@@ -415,12 +382,23 @@ void BatchRolloutEnv::update_muscle_weights(py::dict state_dict) {
         py::gil_scoped_release release;  // Release GIL for parallel execution
 
         for (int i = 0; i < num_envs_; ++i) {
-            pool_.enqueue([this, i, &cpp_state_dict]() {
+            auto task = [this, i, &cpp_state_dict]() {
                 // No GIL needed - pure libtorch operations
                 (*envs_[i]->getMuscleNN())->load_state_dict(cpp_state_dict);
-            });
+            };
+
+            if (numa_enabled_) {
+                pool_numa_->enqueue(task);
+            } else {
+                pool_->enqueue(task);
+            }
         }
-        pool_.wait();
+
+        if (numa_enabled_) {
+            pool_numa_->wait();
+        } else {
+            pool_->wait();
+        }
     }
     // GIL automatically reacquired here
 }

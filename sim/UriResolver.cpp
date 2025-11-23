@@ -17,14 +17,15 @@ URIResolver& URIResolver::getInstance() {
 }
 
 void URIResolver::initialize() {
-    if (mInitialized) return;
-    
-    // Register default @data/ scheme
-    std::string dataRoot = getDataRootPath();
-    registerScheme("data", dataRoot);
-    
-    mInitialized = true;
-    LOG_VERBOSE("[URIResolver] Initialized with data root: " << dataRoot);
+    // Eager initialization - must be called from main thread before parallel access
+    // No synchronization needed since this is called once before any parallel operations
+    if (mSchemeRoots.empty()) {
+        // Register default @data/ scheme
+        std::string dataRoot = getDataRootPath();
+        registerScheme("data", dataRoot);
+
+        LOG_VERBOSE("[URIResolver] Initialized with data root: " << dataRoot);
+    }
 }
 
 std::string URIResolver::resolve(const std::string& uri) const {

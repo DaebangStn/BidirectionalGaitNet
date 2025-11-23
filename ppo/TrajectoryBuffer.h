@@ -109,6 +109,20 @@ public:
     void set_next_obs(int env_idx, const Eigen::VectorXf& obs, uint8_t done);
 
     /**
+     * Accessor methods for C++ aggregation (without Python/GIL).
+     * Used by aggregate_trajectories() to copy NUMA-local data to master.
+     */
+    Eigen::VectorXf get_obs_row(int idx) const;
+    Eigen::VectorXf get_action_row(int idx) const;
+    float get_reward(int idx) const { return rewards_[idx]; }
+    float get_value(int idx) const { return values_[idx]; }
+    float get_logprob(int idx) const { return logprobs_[idx]; }
+    uint8_t get_termination(int idx) const { return terminations_[idx]; }
+    uint8_t get_truncation(int idx) const { return truncations_[idx]; }
+    Eigen::VectorXf get_next_obs_row(int env_idx) const;
+    uint8_t get_next_done(int env_idx) const { return next_done_[env_idx]; }
+
+    /**
      * Convert to numpy arrays (zero-copy).
      *
      * Returns dict with keys:

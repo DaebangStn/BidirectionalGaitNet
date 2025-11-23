@@ -103,7 +103,7 @@ public:
 
     // NUMA accessors
     bool numaEnabled() const { return numa_enabled_; }
-    int numNumaNodes() const { return numa_enabled_ ? pool_numa_.num_numa_nodes() : 1; }
+    int numNumaNodes() const { return numa_enabled_ && pool_numa_ ? pool_numa_->num_numa_nodes() : 1; }
 
     // Hierarchical control query methods
     bool is_hierarchical() const;
@@ -123,13 +123,13 @@ private:
     int num_nodes_{1};
     int envs_per_node_{0};
 
-    // Thread pools (only one is active based on numa_enabled_)
-    ThreadPool pool_;              // Used when NUMA disabled
-    NUMAThreadPool pool_numa_;     // Used when NUMA enabled
+    // Thread pools (only one is created based on numa_enabled_)
+    std::unique_ptr<ThreadPool> pool_;              // Used when NUMA disabled
+    std::unique_ptr<NUMAThreadPool> pool_numa_;     // Used when NUMA enabled
 
     // Policy networks
     PolicyNet policy_;                                      // Single policy (NUMA disabled)
-    std::vector<PolicyNet> policy_numa_;                    // Per-NUMA policies (NUMA enabled)
+    std::vector<PolicyNet> policy_numa_;                    // Per-thread policies (NUMA enabled, one per thread to avoid shared access)
 
     // Trajectory buffers
     std::unique_ptr<TrajectoryBuffer> trajectory_;          // Single trajectory (NUMA disabled)

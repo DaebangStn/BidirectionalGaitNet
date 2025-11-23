@@ -51,7 +51,6 @@ private:
     std::string getTempDir() const;
     std::string generateTempFilePath(const std::string& host, const std::string& remotePath) const;
 
-    bool mInitialized = false;
     std::unordered_map<std::string, std::string> mSchemeRoots;
     mutable std::unordered_map<std::string, FTPCredentials> mFTPCredentialsCache;
 };
