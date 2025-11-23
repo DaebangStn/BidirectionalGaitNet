@@ -121,6 +121,33 @@ Eigen::VectorXf TrajectoryBuffer::get_next_obs_row(int env_idx) const {
     return next_obs_.row(env_idx);
 }
 
+// Merge methods for NUMA aggregation (GIL-free)
+void TrajectoryBuffer::merge_info(const std::map<std::string, double>& sums,
+                                   const std::map<std::string, int>& counts) {
+    for (const auto& [key, sum] : sums) {
+        info_sums_[key] += sum;
+    }
+    for (const auto& [key, count] : counts) {
+        info_counts_[key] += count;
+    }
+}
+
+void TrajectoryBuffer::merge_episodes(int count, double return_sum, int length_sum) {
+    episode_count_ += count;
+    episode_return_sum_ += return_sum;
+    episode_length_sum_ += length_sum;
+}
+
+void TrajectoryBuffer::merge_truncated_obs(const std::vector<TruncatedObs>& obs_list, int env_offset) {
+    for (const auto& trunc_obs : obs_list) {
+        truncated_final_obs_.push_back({
+            trunc_obs.step,
+            trunc_obs.env_idx + env_offset,  // Adjust env_idx to global index
+            trunc_obs.obs
+        });
+    }
+}
+
 void TrajectoryBuffer::reset() {
     // Zero out all data for next rollout
     obs_.setZero();

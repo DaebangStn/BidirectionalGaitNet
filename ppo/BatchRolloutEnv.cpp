@@ -327,6 +327,27 @@ void BatchRolloutEnv::aggregate_trajectories() {
         }
         env_offset += envs_per_node_;
     }
+
+    // Aggregate episode statistics and info metrics (GIL-free, pure C++)
+    env_offset = 0;
+    for (int node = 0; node < num_nodes_; ++node) {
+        auto& traj = trajectory_numa_[node];
+
+        // Merge info metrics
+        master_trajectory_->merge_info(traj->get_info_sums(), traj->get_info_counts());
+
+        // Merge episode statistics
+        master_trajectory_->merge_episodes(
+            traj->get_episode_count(),
+            traj->get_episode_return_sum(),
+            traj->get_episode_length_sum()
+        );
+
+        // Merge truncated final observations (adjust env indices to global)
+        master_trajectory_->merge_truncated_obs(traj->get_truncated_final_obs(), env_offset);
+
+        env_offset += envs_per_node_;
+    }
 }
 
 // Public method: Convert trajectory to numpy (requires GIL)

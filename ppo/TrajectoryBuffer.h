@@ -36,6 +36,13 @@ public:
     // Row-major matrix for numpy C-contiguous compatibility
     using RowMajorMatrixXf = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
+    // Truncated observation data structure (for sparse storage)
+    struct TruncatedObs {
+        int step;
+        int env_idx;
+        Eigen::VectorXf obs;
+    };
+
     /**
      * Construct trajectory buffer with preallocated matrices.
      *
@@ -122,6 +129,19 @@ public:
     Eigen::VectorXf get_next_obs_row(int env_idx) const;
     uint8_t get_next_done(int env_idx) const { return next_done_[env_idx]; }
 
+    // Episode/info statistics accessors (for NUMA aggregation)
+    const std::map<std::string, double>& get_info_sums() const { return info_sums_; }
+    const std::map<std::string, int>& get_info_counts() const { return info_counts_; }
+    int get_episode_count() const { return episode_count_; }
+    double get_episode_return_sum() const { return episode_return_sum_; }
+    int get_episode_length_sum() const { return episode_length_sum_; }
+    const std::vector<TruncatedObs>& get_truncated_final_obs() const { return truncated_final_obs_; }
+
+    // Accumulation methods (for NUMA master aggregation)
+    void merge_info(const std::map<std::string, double>& sums, const std::map<std::string, int>& counts);
+    void merge_episodes(int count, double return_sum, int length_sum);
+    void merge_truncated_obs(const std::vector<TruncatedObs>& obs_list, int env_offset);
+
     /**
      * Convert to numpy arrays (zero-copy).
      *
@@ -181,11 +201,6 @@ private:
     int episode_length_sum_;      // Sum of episode lengths
 
     // Sparse truncated final observations (~5% of steps)
-    struct TruncatedObs {
-        int step;
-        int env_idx;
-        Eigen::VectorXf obs;
-    };
     std::vector<TruncatedObs> truncated_final_obs_;
 
     // Next observation for GAE bootstrap (observations AFTER rollout completes)
