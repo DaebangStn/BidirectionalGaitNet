@@ -42,11 +42,12 @@ target_link_libraries(batchenv
 set_target_properties(batchenv PROPERTIES PREFIX "" )
 
 # BatchRolloutEnv module (autonomous C++ rollout with libtorch inference)
-# Includes PolicyNet and TrajectoryBuffer compiled directly
+# Includes PolicyNet, TrajectoryBuffer, and NUMAThreadPool compiled directly
 set(batchrolloutenv_srcs
     BatchRolloutEnv.cpp
     TrajectoryBuffer.cpp
     PolicyNet.cpp
+    NUMAThreadPool.cpp
 )
 add_library(batchrolloutenv SHARED ${batchrolloutenv_srcs})
 target_link_libraries(batchrolloutenv
@@ -54,5 +55,6 @@ target_link_libraries(batchrolloutenv
         sim
         pybind11::embed
         ${TORCH_LIBRARIES}
+        numa  # libnuma for NUMA-aware thread affinity
 )
 set_target_properties(batchrolloutenv PROPERTIES PREFIX "" )

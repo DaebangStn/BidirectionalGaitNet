@@ -103,6 +103,10 @@ class Args:
     muscle_batch_size: int = 64
     """muscle network batch size"""
 
+    # NUMA optimization
+    numa: bool = False
+    """enable NUMA-aware thread affinity for BatchRolloutEnv"""
+
     # to be filled in runtime
     batch_size: int = 0
     """the batch size (computed in runtime)"""
@@ -217,8 +221,8 @@ if __name__ == "__main__":
         with open(args.env_file, 'r') as f:
             yaml_content = f.read()
 
-        print(f"Creating BatchRolloutEnv: {args.num_envs} envs, {args.num_steps} steps")
-        envs = BatchRolloutEnv(yaml_content, args.num_envs, args.num_steps)
+        print(f"Creating BatchRolloutEnv: {args.num_envs} envs, {args.num_steps} steps, NUMA: {args.numa}")
+        envs = BatchRolloutEnv(yaml_content, args.num_envs, args.num_steps, args.numa)
 
         # Get dimensions
         num_states = envs.obs_size()
@@ -226,6 +230,13 @@ if __name__ == "__main__":
 
         print(f"Environment: {Path(args.env_file).name}")
         print(f"Observation dim: {num_states}, Action dim: {num_actions}")
+
+        # Log NUMA status
+        if args.numa:
+            if envs.numa_enabled():
+                print(f"NUMA enabled: {envs.num_numa_nodes()} nodes")
+            else:
+                print("NUMA requested but not available (falling back to standard mode)")
 
     except ImportError as e:
         print(f"ERROR: Failed to import BatchRolloutEnv: {e}")

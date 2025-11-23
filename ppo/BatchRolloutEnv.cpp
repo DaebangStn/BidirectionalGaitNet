@@ -40,8 +40,10 @@ static py::array_t<float> toNumPyArray(const Eigen::MatrixXd& mat) {
     return arr;
 }
 
-BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps)
-    : num_envs_(num_envs), num_steps_(num_steps), pool_(num_envs)  // Match thread count to num_envs
+BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps, bool enable_numa)
+    : num_envs_(num_envs), num_steps_(num_steps),
+      pool_(enable_numa ? 0 : num_envs),            // Regular pool if NUMA disabled
+      pool_numa_(enable_numa ? num_envs : 0, enable_numa)  // NUMA pool if enabled
 {
     if (num_envs <= 0) {
         throw std::invalid_argument("num_envs must be positive");
@@ -50,39 +52,64 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
         throw std::invalid_argument("num_steps must be positive");
     }
 
-    // Create environments in parallel (each in its dedicated thread)
-    // This significantly reduces initialization time for large num_envs
+    // Determine NUMA configuration
+    numa_enabled_ = enable_numa && pool_numa_.numa_enabled();
+    if (numa_enabled_) {
+        num_nodes_ = pool_numa_.num_numa_nodes();
+        envs_per_node_ = num_envs / num_nodes_;
+        std::cout << "BatchRolloutEnv: NUMA enabled with " << num_nodes_ << " nodes, "
+                  << envs_per_node_ << " envs per node" << std::endl;
+    }
+
+    // Create environments in parallel
     envs_.resize(num_envs);
 
     for (int i = 0; i < num_envs; ++i) {
-        pool_.enqueue([this, i, &yaml_content]() {
-            // Each environment is created and initialized in its own thread
+        auto task = [this, i, &yaml_content]() {
             auto env = std::make_unique<Environment>();
             env->initialize(yaml_content);
-            env->reset();  // CRITICAL: Must call reset() after initialize()
-
-            // Thread-safe assignment (each thread writes to different index)
+            env->reset();
             envs_[i] = std::move(env);
-        });
+        };
+
+        if (numa_enabled_) {
+            pool_numa_.enqueue(task);
+        } else {
+            pool_.enqueue(task);
+        }
     }
 
-    // Wait for all environments to finish initialization
-    pool_.wait();
+    // Wait for environment creation
+    if (numa_enabled_) {
+        pool_numa_.wait();
+    } else {
+        pool_.wait();
+    }
 
-    // Query dimensions from first environment
+    // Query dimensions
     obs_dim_ = envs_[0]->getState().size();
     action_dim_ = envs_[0]->getAction().size();
 
-    // Create properly-sized trajectory buffer
-    trajectory_ = std::make_unique<TrajectoryBuffer>(num_steps, num_envs, obs_dim_, action_dim_);
-
-    // Create policy network
-    policy_ = std::make_shared<PolicyNetImpl>(obs_dim_, action_dim_);
+    // Create trajectory buffers and policy networks based on NUMA configuration
+    if (numa_enabled_) {
+        // Per-NUMA resources
+        for (int node = 0; node < num_nodes_; ++node) {
+            trajectory_numa_.push_back(
+                std::make_unique<TrajectoryBuffer>(num_steps, envs_per_node_, obs_dim_, action_dim_)
+            );
+            policy_numa_.push_back(std::make_shared<PolicyNetImpl>(obs_dim_, action_dim_));
+        }
+        // Master trajectory for aggregation
+        master_trajectory_ = std::make_unique<TrajectoryBuffer>(num_steps, num_envs, obs_dim_, action_dim_);
+    } else {
+        // Single trajectory and policy
+        trajectory_ = std::make_unique<TrajectoryBuffer>(num_steps, num_envs, obs_dim_, action_dim_);
+        policy_ = std::make_shared<PolicyNetImpl>(obs_dim_, action_dim_);
+    }
 
     // Initialize muscle tuple buffers if hierarchical control enabled
     if (envs_[0]->isTwoLevelController()) {
         muscle_tuple_buffers_.resize(num_envs_);
-        // Vectors will be populated during rollout
     }
 
     // Initialize episode tracking
@@ -92,91 +119,239 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
 
 // Internal method: Execute rollout without GIL (no Python object creation)
 void BatchRolloutEnv::collect_rollout_nogil() {
-    // Reset trajectory buffer
-    trajectory_->reset();
+    if (numa_enabled_) {
+        // NUMA-aware rollout with per-NUMA buffers
 
-    // Rollout loop: Enqueue all work asynchronously without waiting
-    // Each environment will independently run through all its steps
-    for (int i = 0; i < num_envs_; ++i) {
-        pool_.enqueue([this, i]() {
-            // Each environment runs its own rollout loop independently
-            for (int step = 0; step < num_steps_; ++step) {
-                // 1. Get observation (double → float)
-                Eigen::VectorXf obs = envs_[i]->getState().cast<float>();
+        // Reset NUMA-local trajectory buffers
+        for (auto& traj : trajectory_numa_) {
+            traj->reset();
+        }
 
-                // 2. Policy inference (sequential, per-env, no GIL needed)
-                auto [action, value, logprob] = policy_->sample_action(obs);
+        // Rollout loop with NUMA-local writes
+        for (int i = 0; i < num_envs_; ++i) {
+            pool_numa_.enqueue([this, i]() {
+                // Determine NUMA node for this environment
+                int my_node = pool_numa_.get_numa_node(i);
+                int local_env_idx = i % envs_per_node_;
 
-                // 3. Step environment (float → double for action)
-                envs_[i]->setAction(action.cast<double>().eval());
-                envs_[i]->step();
+                for (int step = 0; step < num_steps_; ++step) {
+                    // 1. Get observation
+                    Eigen::VectorXf obs = envs_[i]->getState().cast<float>();
 
-                // 4. Get reward and separate termination/truncation flags
-                float reward = static_cast<float>(envs_[i]->getReward());
-                uint8_t terminated = envs_[i]->isTerminated() ? 1 : 0;
-                uint8_t truncated = envs_[i]->isTruncated() ? 1 : 0;
+                    // 2. Policy inference from NUMA-local policy
+                    auto [action, value, logprob] = policy_numa_[my_node]->sample_action(obs);
 
-                // 5. Store in trajectory buffer with separate flags
-                trajectory_->append(step, i, obs, action, reward, value, logprob, terminated, truncated);
+                    // 3. Step environment
+                    envs_[i]->setAction(action.cast<double>().eval());
+                    envs_[i]->step();
 
-                // 6. Accumulate info metrics (every step)
-                trajectory_->accumulate_info(envs_[i]->getInfoMap());
+                    // 4. Get reward and flags
+                    float reward = static_cast<float>(envs_[i]->getReward());
+                    uint8_t terminated = envs_[i]->isTerminated() ? 1 : 0;
+                    uint8_t truncated = envs_[i]->isTruncated() ? 1 : 0;
 
-                // 7. Track episode progress
-                episode_returns_[i] += reward;
-                episode_lengths_[i] += 1;
+                    // 5. Store in NUMA-local trajectory buffer
+                    trajectory_numa_[my_node]->append(step, local_env_idx, obs, action, reward, value, logprob, terminated, truncated);
 
-                // 8. On episode end: accumulate stats and store truncated final obs
-                if (terminated || truncated) {
-                    // Accumulate episode statistics
-                    trajectory_->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
+                    // 6. Accumulate info metrics
+                    trajectory_numa_[my_node]->accumulate_info(envs_[i]->getInfoMap());
 
-                    // Store final observation for PURE truncated episodes (for terminal bootstrapping)
-                    // Only bootstrap if truncated but NOT terminated (matches ppo_hierarchical.py:343)
-                    if (truncated && !terminated) {
-                        Eigen::VectorXf final_obs = envs_[i]->getState().cast<float>();
-                        trajectory_->store_truncated_final_obs(step, i, final_obs);
+                    // 7. Track episode progress
+                    episode_returns_[i] += reward;
+                    episode_lengths_[i] += 1;
+
+                    // 8. On episode end
+                    if (terminated || truncated) {
+                        trajectory_numa_[my_node]->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
+
+                        if (truncated && !terminated) {
+                            Eigen::VectorXf final_obs = envs_[i]->getState().cast<float>();
+                            trajectory_numa_[my_node]->store_truncated_final_obs(step, local_env_idx, final_obs);
+                        }
+
+                        envs_[i]->reset();
+                        episode_returns_[i] = 0.0;
+                        episode_lengths_[i] = 0;
                     }
 
-                    // AUTO-RESET: Reset environment to start new episode
-                    // This matches GymEnvManager behavior (lines 137-149 in GymEnvManager.cpp)
-                    envs_[i]->reset();
+                    // 9. Collect muscle tuples
+                    if (!muscle_tuple_buffers_.empty()) {
+                        MuscleTuple mt = envs_[i]->getRandomMuscleTuple();
+                        Eigen::VectorXd dt = envs_[i]->getRandomDesiredTorque();
 
-                    // Reset episode tracking for this environment
-                    episode_returns_[i] = 0.0;
-                    episode_lengths_[i] = 0;
-                }
+                        muscle_tuple_buffers_[i].tau_des.push_back(dt);
+                        muscle_tuple_buffers_[i].JtA_reduced.push_back(mt.JtA_reduced);
+                        muscle_tuple_buffers_[i].JtA.push_back(mt.JtA);
 
-                // 9. Collect muscle tuples (if hierarchical)
-                if (!muscle_tuple_buffers_.empty()) {
-                    MuscleTuple mt = envs_[i]->getRandomMuscleTuple();
-                    Eigen::VectorXd dt = envs_[i]->getRandomDesiredTorque();
-
-                    muscle_tuple_buffers_[i].tau_des.push_back(dt);
-                    muscle_tuple_buffers_[i].JtA_reduced.push_back(mt.JtA_reduced);
-                    muscle_tuple_buffers_[i].JtA.push_back(mt.JtA);
-
-                    if (envs_[i]->getUseCascading()) {
-                        muscle_tuple_buffers_[i].prev_out.push_back(envs_[i]->getRandomPrevOut());
-                        muscle_tuple_buffers_[i].weight.push_back(envs_[i]->getRandomWeight());
+                        if (envs_[i]->getUseCascading()) {
+                            muscle_tuple_buffers_[i].prev_out.push_back(envs_[i]->getRandomPrevOut());
+                            muscle_tuple_buffers_[i].weight.push_back(envs_[i]->getRandomWeight());
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
+
+        pool_numa_.wait();
+
+        // Aggregate NUMA-local trajectories → master
+        aggregate_trajectories();
+
+    } else {
+        // Standard rollout (non-NUMA)
+        trajectory_->reset();
+
+        for (int i = 0; i < num_envs_; ++i) {
+            pool_.enqueue([this, i]() {
+                for (int step = 0; step < num_steps_; ++step) {
+                    Eigen::VectorXf obs = envs_[i]->getState().cast<float>();
+                    auto [action, value, logprob] = policy_->sample_action(obs);
+                    envs_[i]->setAction(action.cast<double>().eval());
+                    envs_[i]->step();
+
+                    float reward = static_cast<float>(envs_[i]->getReward());
+                    uint8_t terminated = envs_[i]->isTerminated() ? 1 : 0;
+                    uint8_t truncated = envs_[i]->isTruncated() ? 1 : 0;
+
+                    trajectory_->append(step, i, obs, action, reward, value, logprob, terminated, truncated);
+                    trajectory_->accumulate_info(envs_[i]->getInfoMap());
+
+                    episode_returns_[i] += reward;
+                    episode_lengths_[i] += 1;
+
+                    if (terminated || truncated) {
+                        trajectory_->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
+
+                        if (truncated && !terminated) {
+                            Eigen::VectorXf final_obs = envs_[i]->getState().cast<float>();
+                            trajectory_->store_truncated_final_obs(step, i, final_obs);
+                        }
+
+                        envs_[i]->reset();
+                        episode_returns_[i] = 0.0;
+                        episode_lengths_[i] = 0;
+                    }
+
+                    if (!muscle_tuple_buffers_.empty()) {
+                        MuscleTuple mt = envs_[i]->getRandomMuscleTuple();
+                        Eigen::VectorXd dt = envs_[i]->getRandomDesiredTorque();
+
+                        muscle_tuple_buffers_[i].tau_des.push_back(dt);
+                        muscle_tuple_buffers_[i].JtA_reduced.push_back(mt.JtA_reduced);
+                        muscle_tuple_buffers_[i].JtA.push_back(mt.JtA);
+
+                        if (envs_[i]->getUseCascading()) {
+                            muscle_tuple_buffers_[i].prev_out.push_back(envs_[i]->getRandomPrevOut());
+                            muscle_tuple_buffers_[i].weight.push_back(envs_[i]->getRandomWeight());
+                        }
+                    }
+                }
+            });
+        }
+
+        pool_.wait();
+    }
+}
+
+// Aggregate NUMA-local trajectories into master trajectory
+void BatchRolloutEnv::aggregate_trajectories() {
+    if (!numa_enabled_) {
+        std::cout << "BatchRolloutEnv: NUMA not enabled, skipping aggregation" << std::endl;
+        return;
     }
 
-    // Wait only once at the end for all environments to finish their complete rollouts
-    pool_.wait();
+    // Simple aggregation: collect trajectories from each NUMA node
+    // and combine via to_numpy() → from numpy rebuild
+    // This is simpler than direct matrix manipulation and works with existing API
+
+    master_trajectory_->reset();
+
+    // Aggregate by collecting dicts from each NUMA buffer and rebuilding master
+    std::vector<py::dict> numa_dicts;
+    for (int node = 0; node < num_nodes_; ++node) {
+        numa_dicts.push_back(trajectory_numa_[node]->to_numpy());
+    }
+
+    // Rebuild master from NUMA dicts
+    // For now, use simple copy approach: iterate and append
+    int env_offset = 0;
+    for (int node = 0; node < num_nodes_; ++node) {
+        auto& numa_dict = numa_dicts[node];
+
+        // Extract numpy arrays
+        auto obs_np = numa_dict["obs"].cast<py::array_t<float>>();
+        auto actions_np = numa_dict["actions"].cast<py::array_t<float>>();
+        auto rewards_np = numa_dict["rewards"].cast<py::array_t<float>>();
+        auto values_np = numa_dict["values"].cast<py::array_t<float>>();
+        auto logprobs_np = numa_dict["logprobs"].cast<py::array_t<float>>();
+        auto terminations_np = numa_dict["terminations"].cast<py::array_t<uint8_t>>();
+        auto truncations_np = numa_dict["truncations"].cast<py::array_t<uint8_t>>();
+
+        auto obs_buf = obs_np.request();
+        auto actions_buf = actions_np.request();
+        auto rewards_buf = rewards_np.request();
+        auto values_buf = values_np.request();
+        auto logprobs_buf = logprobs_np.request();
+        auto terminations_buf = terminations_np.request();
+        auto truncations_buf = truncations_np.request();
+
+        float* obs_ptr = static_cast<float*>(obs_buf.ptr);
+        float* actions_ptr = static_cast<float*>(actions_buf.ptr);
+        float* rewards_ptr = static_cast<float*>(rewards_buf.ptr);
+        float* values_ptr = static_cast<float*>(values_buf.ptr);
+        float* logprobs_ptr = static_cast<float*>(logprobs_buf.ptr);
+        uint8_t* terminations_ptr = static_cast<uint8_t*>(terminations_buf.ptr);
+        uint8_t* truncations_ptr = static_cast<uint8_t*>(truncations_buf.ptr);
+
+        int batch_size = num_steps_ * envs_per_node_;
+
+        for (int i = 0; i < batch_size; ++i) {
+            int step = i / envs_per_node_;
+            int local_env = i % envs_per_node_;
+            int global_env = env_offset + local_env;
+
+            // Extract vectors from flat arrays
+            Eigen::VectorXf obs(obs_dim_);
+            Eigen::VectorXf action(action_dim_);
+
+            for (int j = 0; j < obs_dim_; ++j) {
+                obs[j] = obs_ptr[i * obs_dim_ + j];
+            }
+            for (int j = 0; j < action_dim_; ++j) {
+                action[j] = actions_ptr[i * action_dim_ + j];
+            }
+
+            master_trajectory_->append(step, global_env, obs, action,
+                                        rewards_ptr[i], values_ptr[i], logprobs_ptr[i],
+                                        terminations_ptr[i], truncations_ptr[i]);
+        }
+
+        env_offset += envs_per_node_;
+    }
 }
 
 // Public method: Convert trajectory to numpy (requires GIL)
 py::dict BatchRolloutEnv::collect_rollout() {
-    return trajectory_->to_numpy();
+    if (numa_enabled_) {
+        return master_trajectory_->to_numpy();
+    } else {
+        return trajectory_->to_numpy();
+    }
 }
 
 void BatchRolloutEnv::update_policy_weights(py::dict state_dict) {
-    // Load weights into policy network
-    policy_->load_state_dict(state_dict);
+    if (numa_enabled_) {
+        // Load weights into all NUMA-local policy networks in parallel
+        for (int node = 0; node < num_nodes_; ++node) {
+            pool_numa_.enqueue([this, node, &state_dict]() {
+                policy_numa_[node]->load_state_dict(state_dict);
+            });
+        }
+        pool_numa_.wait();
+    } else {
+        // Load weights into single policy network
+        policy_->load_state_dict(state_dict);
+    }
 }
 
 void BatchRolloutEnv::update_muscle_weights(py::dict state_dict) {
@@ -320,19 +495,21 @@ PYBIND11_MODULE(batchrolloutenv, m) {
     m.doc() = "Autonomous rollout environment with C++ policy inference and zero-copy trajectory return";
 
     py::class_<BatchRolloutEnv>(m, "BatchRolloutEnv")
-        .def(py::init<std::string, int, int>(),
+        .def(py::init<std::string, int, int, bool>(),
              py::arg("yaml_content"),
              py::arg("num_envs"),
              py::arg("num_steps"),
+             py::arg("enable_numa") = false,
              "Create autonomous rollout environment\n\n"
              "Args:\n"
              "    yaml_content (str): YAML configuration content (NOT file path!)\n"
              "    num_envs (int): Number of parallel environments\n"
-             "    num_steps (int): Rollout length (steps per trajectory)\n\n"
+             "    num_steps (int): Rollout length (steps per trajectory)\n"
+             "    enable_numa (bool): Enable NUMA-aware thread affinity (default: False)\n\n"
              "Example:\n"
              "    with open('data/env/config.yaml') as f:\n"
              "        yaml_content = f.read()\n"
-             "    env = BatchRolloutEnv(yaml_content, num_envs=32, num_steps=64)")
+             "    env = BatchRolloutEnv(yaml_content, num_envs=32, num_steps=64, enable_numa=True)")
 
         .def("collect_rollout", [](BatchRolloutEnv& self) {
             // Phase 1: Release GIL during C++ rollout (no Python objects)
@@ -375,6 +552,12 @@ PYBIND11_MODULE(batchrolloutenv, m) {
         .def("num_steps", &BatchRolloutEnv::numSteps, "Get rollout length")
         .def("obs_size", &BatchRolloutEnv::obsSize, "Get observation dimension")
         .def("action_size", &BatchRolloutEnv::actionSize, "Get action dimension")
+
+        // NUMA query methods
+        .def("numa_enabled", &BatchRolloutEnv::numaEnabled,
+             "Check if NUMA-aware threading is enabled")
+        .def("num_numa_nodes", &BatchRolloutEnv::numNumaNodes,
+             "Get number of NUMA nodes (1 if NUMA disabled)")
 
         // Hierarchical control query methods
         .def("is_hierarchical", &BatchRolloutEnv::is_hierarchical,
