@@ -99,6 +99,16 @@ public:
     void accumulate_episode(double episode_return, int episode_length);
 
     /**
+     * Store final next observation for one environment (for GAE bootstrap).
+     * Called after rollout completes for each ongoing (non-terminal) environment.
+     *
+     * @param env_idx Environment index [0, num_envs)
+     * @param obs Next observation vector
+     * @param done Terminal flag (terminated OR truncated)
+     */
+    void set_next_obs(int env_idx, const Eigen::VectorXf& obs, uint8_t done);
+
+    /**
      * Convert to numpy arrays (zero-copy).
      *
      * Returns dict with keys:
@@ -109,6 +119,8 @@ public:
      * - 'logprobs': (steps*envs,) float32
      * - 'terminations': (steps*envs,) uint8 (episode ended naturally)
      * - 'truncations': (steps*envs,) uint8 (time limit reached)
+     * - 'next_obs': (num_envs, obs_dim) float32 (observation AFTER rollout for GAE)
+     * - 'next_done': (num_envs,) uint8 (terminal flags AFTER rollout)
      * - 'info': dict of averaged scalar metrics
      * - 'avg_episode_return': scalar
      * - 'avg_episode_length': scalar
@@ -161,6 +173,10 @@ private:
         Eigen::VectorXf obs;
     };
     std::vector<TruncatedObs> truncated_final_obs_;
+
+    // Next observation for GAE bootstrap (observations AFTER rollout completes)
+    RowMajorMatrixXf next_obs_;          // (num_envs, obs_dim)
+    Eigen::Matrix<uint8_t, Eigen::Dynamic, 1> next_done_;  // (num_envs) - terminal flags
 
     // Metadata
     int num_steps_;

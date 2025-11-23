@@ -189,6 +189,12 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         }
                     }
                 }
+
+                // After rollout completes, capture next observation for GAE bootstrap
+                // Environment has already stepped to the next state after last action
+                Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
+                uint8_t next_done = (envs_[i]->isTerminated() || envs_[i]->isTruncated()) ? 1 : 0;
+                trajectory_numa_[my_node]->set_next_obs(local_env_idx, next_obs, next_done);
             });
         }
 
@@ -246,6 +252,12 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         }
                     }
                 }
+
+                // After rollout completes, capture next observation for GAE bootstrap
+                // Environment has already stepped to the next state after last action
+                Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
+                uint8_t next_done = (envs_[i]->isTerminated() || envs_[i]->isTruncated()) ? 1 : 0;
+                trajectory_->set_next_obs(i, next_obs, next_done);
             });
         }
 
@@ -286,6 +298,8 @@ void BatchRolloutEnv::aggregate_trajectories() {
         auto logprobs_np = numa_dict["logprobs"].cast<py::array_t<float>>();
         auto terminations_np = numa_dict["terminations"].cast<py::array_t<uint8_t>>();
         auto truncations_np = numa_dict["truncations"].cast<py::array_t<uint8_t>>();
+        auto next_obs_np = numa_dict["next_obs"].cast<py::array_t<float>>();
+        auto next_done_np = numa_dict["next_done"].cast<py::array_t<uint8_t>>();
 
         auto obs_buf = obs_np.request();
         auto actions_buf = actions_np.request();
@@ -294,6 +308,8 @@ void BatchRolloutEnv::aggregate_trajectories() {
         auto logprobs_buf = logprobs_np.request();
         auto terminations_buf = terminations_np.request();
         auto truncations_buf = truncations_np.request();
+        auto next_obs_buf = next_obs_np.request();
+        auto next_done_buf = next_done_np.request();
 
         float* obs_ptr = static_cast<float*>(obs_buf.ptr);
         float* actions_ptr = static_cast<float*>(actions_buf.ptr);
@@ -302,6 +318,8 @@ void BatchRolloutEnv::aggregate_trajectories() {
         float* logprobs_ptr = static_cast<float*>(logprobs_buf.ptr);
         uint8_t* terminations_ptr = static_cast<uint8_t*>(terminations_buf.ptr);
         uint8_t* truncations_ptr = static_cast<uint8_t*>(truncations_buf.ptr);
+        float* next_obs_ptr = static_cast<float*>(next_obs_buf.ptr);
+        uint8_t* next_done_ptr = static_cast<uint8_t*>(next_done_buf.ptr);
 
         int batch_size = num_steps_ * envs_per_node_;
 
@@ -324,6 +342,19 @@ void BatchRolloutEnv::aggregate_trajectories() {
             master_trajectory_->append(step, global_env, obs, action,
                                         rewards_ptr[i], values_ptr[i], logprobs_ptr[i],
                                         terminations_ptr[i], truncations_ptr[i]);
+        }
+
+        // Aggregate next_obs from this NUMA node
+        for (int local_env = 0; local_env < envs_per_node_; ++local_env) {
+            int global_env = env_offset + local_env;
+
+            // Extract next_obs vector
+            Eigen::VectorXf next_obs(obs_dim_);
+            for (int j = 0; j < obs_dim_; ++j) {
+                next_obs[j] = next_obs_ptr[local_env * obs_dim_ + j];
+            }
+
+            master_trajectory_->set_next_obs(global_env, next_obs, next_done_ptr[local_env]);
         }
 
         env_offset += envs_per_node_;

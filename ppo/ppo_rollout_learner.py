@@ -56,6 +56,8 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
+    save_model: bool = True
+    """whether to save model into the `runs/{run_name}` folder"""
     checkpoint_interval: Optional[int] = 1000
     """save checkpoint every K iterations (None = no checkpoints, only final save)"""
 
@@ -323,6 +325,8 @@ if __name__ == "__main__":
         terminations = torch.from_numpy(trajectory['terminations']).to(device).float()  # (batch,)
         truncations = torch.from_numpy(trajectory['truncations']).to(device).float()  # (batch,)
         values = torch.from_numpy(trajectory['values']).to(device)  # (batch,)
+        next_obs = torch.from_numpy(trajectory['next_obs']).to(device)  # (num_envs, obs_dim)
+        next_done = torch.from_numpy(trajectory['next_done']).to(device).float()  # (num_envs,)
 
         # Reshape to (num_steps, num_envs) for GAE computation
         obs = obs.reshape(args.num_steps, args.num_envs, -1)
@@ -351,8 +355,7 @@ if __name__ == "__main__":
         # ===== GAE COMPUTATION (Python) =====
         with torch.no_grad():
             # Get next value for bootstrap
-            next_obs = obs[-1]  # Last step observation
-            next_done = dones[-1]  # Last step done flags
+            # next_obs and next_done are the observations AFTER the rollout completes (from C++)
             next_value = agent.get_value(next_obs).reshape(1, -1)
 
             advantages = torch.zeros_like(rewards).to(device)
@@ -506,24 +509,31 @@ if __name__ == "__main__":
 
         # Checkpoint saving
         if args.checkpoint_interval is not None and iteration % args.checkpoint_interval == 0:
-            checkpoint_path = f"runs/{run_name}/checkpoint_{iteration}.pt"
-            os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
-            torch.save({
-                'iteration': iteration,
-                'agent_state_dict': agent.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'muscle_state_dict': muscle_learner.get_state_dict() if muscle_learner else None,
-            }, checkpoint_path)
-            print(f"Checkpoint saved: {checkpoint_path}")
+            checkpoint_path = f"runs/{run_name}/ckpt_{iteration}"
+            os.makedirs(checkpoint_path, exist_ok=True)
 
-    # Final model save
+            # Save policy agent checkpoint
+            torch.save(agent.state_dict(), f"{checkpoint_path}/agent.pt")
+
+            # Save muscle learner checkpoint if hierarchical
+            if muscle_learner is not None:
+                muscle_learner.save(f"{checkpoint_path}/muscle.pt")
+
+            if not use_tqdm:
+                print(f"[Checkpoint] Saved at iteration {iteration}: {checkpoint_path}")
+
+    # Save models
     if args.save_model:
-        model_path = f"runs/{run_name}/final_model.pt"
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        torch.save({
-            'agent_state_dict': agent.state_dict(),
-            'muscle_state_dict': muscle_learner.get_state_dict() if muscle_learner else None,
-        }, model_path)
-        print(f"Final model saved: {model_path}")
+        model_path = f"runs/{run_name}"
+        os.makedirs(model_path, exist_ok=True)
+
+        # Save policy agent
+        torch.save(agent.state_dict(), f"{model_path}/agent.pt")
+        print(f"Policy agent saved to {model_path}/agent.pt")
+
+        # Save muscle learner if hierarchical
+        if muscle_learner is not None:
+            muscle_learner.save(f"{model_path}/muscle.pt")
+            print(f"Muscle network saved to {model_path}/muscle.pt")
 
     writer.close()

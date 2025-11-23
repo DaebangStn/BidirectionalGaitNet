@@ -20,6 +20,10 @@ TrajectoryBuffer::TrajectoryBuffer(int num_steps, int num_envs, int obs_dim, int
     logprobs_ = Eigen::VectorXf::Zero(total_size);
     terminations_ = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>::Zero(total_size);
     truncations_ = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>::Zero(total_size);
+
+    // Preallocate next observation storage for GAE bootstrap
+    next_obs_ = RowMajorMatrixXf::Zero(num_envs, obs_dim);
+    next_done_ = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>::Zero(num_envs);
 }
 
 void TrajectoryBuffer::append(int step, int env_idx,
@@ -85,6 +89,25 @@ void TrajectoryBuffer::accumulate_episode(double episode_return, int episode_len
     episode_length_sum_ += episode_length;
 }
 
+void TrajectoryBuffer::set_next_obs(int env_idx, const Eigen::VectorXf& obs, uint8_t done) {
+    // Validate index
+    if (env_idx < 0 || env_idx >= num_envs_) {
+        throw std::out_of_range("Environment index out of range: " + std::to_string(env_idx));
+    }
+
+    // Validate dimension
+    if (obs.size() != obs_dim_) {
+        throw std::invalid_argument(
+            "Next observation dimension mismatch: expected " + std::to_string(obs_dim_) +
+            ", got " + std::to_string(obs.size())
+        );
+    }
+
+    // Store next observation and done flag
+    next_obs_.row(env_idx) = obs;
+    next_done_[env_idx] = done;
+}
+
 void TrajectoryBuffer::reset() {
     // Zero out all data for next rollout
     obs_.setZero();
@@ -94,6 +117,8 @@ void TrajectoryBuffer::reset() {
     logprobs_.setZero();
     terminations_.setZero();
     truncations_.setZero();
+    next_obs_.setZero();
+    next_done_.setZero();
 
     // Clear accumulation data
     info_sums_.clear();
@@ -160,6 +185,20 @@ py::dict TrajectoryBuffer::to_numpy() {
         {total_size},
         {sizeof(uint8_t)},
         truncations_.data()
+    );
+
+    // Next observations for GAE bootstrap: (num_envs, obs_dim)
+    result["next_obs"] = py::array_t<float>(
+        {num_envs_, obs_dim_},
+        {obs_dim_ * sizeof(float), sizeof(float)},  // row-major strides
+        next_obs_.data()
+    );
+
+    // Next done flags for GAE bootstrap: (num_envs,)
+    result["next_done"] = py::array_t<uint8_t>(
+        {num_envs_},
+        {sizeof(uint8_t)},
+        next_done_.data()
     );
 
     // Averaged info metrics (scalars)
