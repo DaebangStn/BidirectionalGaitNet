@@ -65,6 +65,8 @@ dependencies:
   - h5netcdf
   - yaml
   - yaml-cpp
+  - libnuma
+  - psutil
   - pip:
     - bvh
     - click==8.0.4

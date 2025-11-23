@@ -31,8 +31,6 @@ set(CMAKE_PREFIX_PATH $ENV{ENVDIR})
 set(CMAKE_MODULE_PATH "${CMAKE_HOME_DIRECTORY}/cmake")
 set(CMAKE_PREFIX_PATH $ENV{CONDA_PREFIX} ${CMAKE_PREFIX_PATH})
 set(CMAKE_PREFIX_PATH $ENV{HOME}/pkgenv ${CMAKE_PREFIX_PATH})
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold -Wl,-O1 -Wl,--as-needed -Wl,--hash-style=gnu")
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold -Wl,-O1 -Wl,--as-needed -Wl,--hash-style=gnu")
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, 
@@ -59,9 +57,19 @@ link_libraries(stdc++fs)
 
 # Find libtorch (PyTorch C++ API)
 set(CAFFE2_USE_CUDNN ON)
-set(CUDAToolkit_ROOT "/usr/local/cuda")
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda")
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")  # CUDA compiler path
+
+# CUDA paths are set via CMakePresets.json (CUDAToolkit_ROOT, CUDA_TOOLKIT_ROOT_DIR, CMAKE_CUDA_COMPILER)
+# Default values if not set by preset (for backward compatibility)
+if(NOT DEFINED CUDAToolkit_ROOT)
+    set(CUDAToolkit_ROOT "/usr/local/cuda")
+endif()
+if(NOT DEFINED CUDA_TOOLKIT_ROOT_DIR)
+    set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda")
+endif()
+if(NOT DEFINED CMAKE_CUDA_COMPILER)
+    set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
+endif()
+
 set(CMAKE_CUDA_ARCHITECTURES "native")  # Auto-detect GPU architecture
 
 find_package(CUDAToolkit REQUIRED)
@@ -73,6 +81,9 @@ message(STATUS "Torch CXX flags: ${TORCH_CXX_FLAGS}")
 # Find native HDF5 C++ library from conda environment
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 include_directories(${HDF5_INCLUDE_DIRS})
+
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold -Wl,-O1 -Wl,--as-needed -Wl,--hash-style=gnu")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold -Wl,-O1 -Wl,--as-needed -Wl,--hash-style=gnu")
 
 add_subdirectory( sim )
 add_subdirectory( rollouts )

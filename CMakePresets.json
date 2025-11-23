@@ -13,7 +13,10 @@
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
           "CMAKE_BUILD_TYPE": "Release",
-          "SERVER_BUILD": false
+          "SERVER_BUILD": false,
+          "CUDAToolkit_ROOT": "/usr/local/cuda",
+          "CUDA_TOOLKIT_ROOT_DIR": "/usr/local/cuda",
+          "CMAKE_CUDA_COMPILER": "/usr/local/cuda/bin/nvcc"
       }
   },
   {
@@ -21,14 +24,32 @@
       "inherits": "release",
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
-          "CMAKE_BUILD_TYPE": "Debug"
+          "CMAKE_BUILD_TYPE": "Debug",
+          "CUDAToolkit_ROOT": "/usr/local/cuda",
+          "CUDA_TOOLKIT_ROOT_DIR": "/usr/local/cuda",
+          "CMAKE_CUDA_COMPILER": "/usr/local/cuda/bin/nvcc"
       }
+  },
+  {
+    "name": "a6000",
+    "inherits": "release",
+    "binaryDir": "${sourceDir}/build/a6000",
+    "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SERVER_BUILD": false,
+        "CUDAToolkit_ROOT": "/usr/local/cuda",
+        "CUDA_TOOLKIT_ROOT_DIR": "/usr/local/cuda",
+        "CMAKE_CUDA_COMPILER": "/usr/local/cuda/bin/nvcc"
+    }
   },
   {
     "name": "gait",
     "inherits": "release",
     "cacheVariables": {
-        "SERVER_BUILD": true
+        "SERVER_BUILD": true,
+        "CUDAToolkit_ROOT": "/opt/ohpc/pub/cuda/cuda-12.4",
+        "CUDA_TOOLKIT_ROOT_DIR": "/opt/ohpc/pub/cuda/cuda-12.4",
+        "CMAKE_CUDA_COMPILER": "/opt/ohpc/pub/cuda/cuda-12.4/bin/nvcc"
     }
   }
   ]
