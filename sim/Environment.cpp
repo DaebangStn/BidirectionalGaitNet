@@ -7,7 +7,25 @@
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <cmath>
+#include <random>
 
+// Thread-safe random number generation
+// Each thread gets its own random number generator to avoid data races
+namespace {
+    thread_local std::mt19937 thread_rng(std::random_device{}());
+
+    // Thread-safe replacement for dart::math::Random::uniform(min, max)
+    inline double thread_safe_uniform(double min, double max) {
+        std::uniform_real_distribution<double> dist(min, max);
+        return dist(thread_rng);
+    }
+
+    // Thread-safe replacement for dart::math::Random::normal(mean, stddev)
+    inline double thread_safe_normal(double mean, double stddev) {
+        std::normal_distribution<double> dist(mean, stddev);
+        return dist(thread_rng);
+    }
+}
 
 Environment::Environment()
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
@@ -1613,7 +1631,7 @@ void Environment::calcActivation()
 
     mCharacter->setActivations(activations.cast<double>());
 
-    if (dart::math::Random::uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mTupleFilled)
+    if (thread_safe_uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mTupleFilled)
     {
         mRandomMuscleTuple = mt;
         mRandomDesiredTorque = dt;
@@ -1844,11 +1862,11 @@ void Environment::reset(double phase)
         time = phase * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     }
     else if (mRewardType == deepmimic) {
-        time = dart::math::Random::uniform(1E-2, mMotion->getMaxTime() - 1E-2);
+        time = thread_safe_uniform(1E-2, mMotion->getMaxTime() - 1E-2);
     }
     else if (mRewardType == gaitnet)
     {
-        time = (dart::math::Random::uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + dart::math::Random::uniform(-0.05, 0.05);
+        time = (thread_safe_uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + thread_safe_uniform(-0.05, 0.05);
         time *= (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
     }    
     
@@ -2276,24 +2294,24 @@ Eigen::VectorXd Environment::getParamSample()
                 locs.push_back(0.5);
         }
 
-        int sampled_c = (int)dart::math::Random::uniform(0.0, locs.size() - 0.01);
-        double scale = locs[sampled_c]; // + dart::math::Random::normal(0.0, (mParamMin[p.param_idxs[0]] < 0.1? 0.1 : 0.5) * w);
+        int sampled_c = (int)thread_safe_uniform(0.0, locs.size() - 0.01);
+        double scale = locs[sampled_c]; // + thread_safe_normal(0.0, (mParamMin[p.param_idxs[0]] < 0.1? 0.1 : 0.5) * w);
 
         scale = dart::math::clip(scale, 0.0, 1.0);
 
-        bool isAllSample = true; //(dart::math::Random::uniform(0, 1) < (1.0 / 10)?true:false);
+        bool isAllSample = true; //(thread_safe_uniform(0, 1) < (1.0 / 10)?true:false);
 
         p.v = scale;
 
-        double std_dev = dart::math::Random::normal(0.0, 0.025);
+        double std_dev = thread_safe_normal(0.0, 0.025);
         for (auto idx : p.param_idxs)
         {
             double param_w = mParamMax[idx] - mParamMin[idx];
             if (isAllSample)
             {
-                sampled_c = (int)dart::math::Random::uniform(0.0, locs.size() - 0.01);
+                sampled_c = (int)thread_safe_uniform(0.0, locs.size() - 0.01);
                 scale = locs[sampled_c];
-                std_dev = dart::math::Random::normal(0.0, 0.025);
+                std_dev = thread_safe_normal(0.0, 0.025);
             }
             // std::cout << p.name << " param w " << param_w << " scale " << scale << "loc size " << locs.size() << " is uniform " << p.is_uniform << std::endl;
             sampled_param[idx] = mParamMin[idx] + param_w * scale + std_dev;
