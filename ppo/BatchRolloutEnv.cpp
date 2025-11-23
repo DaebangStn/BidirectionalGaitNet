@@ -124,6 +124,32 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
     // Initialize episode tracking
     episode_returns_.resize(num_envs_, 0.0);
     episode_lengths_.resize(num_envs_, 0);
+    next_done_.resize(num_envs_, 0);  // Initialize to False (like Python's torch.zeros)
+}
+
+// Reset all environments to initial state
+void BatchRolloutEnv::reset() {
+    if (numa_enabled_) {
+        for (int i = 0; i < num_envs_; ++i) {
+            pool_numa_->enqueue([this, i]() {
+                envs_[i]->reset();
+                episode_returns_[i] = 0.0;
+                episode_lengths_[i] = 0;
+                next_done_[i] = 0;  // Reset to False
+            });
+        }
+        pool_numa_->wait();
+    } else {
+        for (int i = 0; i < num_envs_; ++i) {
+            pool_->enqueue([this, i]() {
+                envs_[i]->reset();
+                episode_returns_[i] = 0.0;
+                episode_lengths_[i] = 0;
+                next_done_[i] = 0;  // Reset to False
+            });
+        }
+        pool_->wait();
+    }
 }
 
 // Internal method: Execute rollout without GIL (no Python object creation)
@@ -154,13 +180,16 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                     envs_[i]->setAction(action.cast<double>().eval());
                     envs_[i]->step();
 
-                    // 4. Get reward and flags
+                    // 4. Get reward and flags AFTER step (result of this transition)
                     float reward = static_cast<float>(envs_[i]->getReward());
                     uint8_t terminated = envs_[i]->isTerminated() ? 1 : 0;
                     uint8_t truncated = envs_[i]->isTruncated() ? 1 : 0;
 
                     // 5. Store in NUMA-local trajectory buffer
-                    trajectory_numa_[my_node]->append(step, local_env_idx, obs, action, reward, value, logprob, terminated, truncated);
+                    // done = cached done status from BEFORE action (previous step's result)
+                    // Matches Python: dones[step] = next_done (from previous iteration)
+                    trajectory_numa_[my_node]->append(step, local_env_idx, obs, action, reward, value, logprob,
+                                                      next_done_[i], terminated, truncated);
 
                     // 6. Accumulate info metrics
                     trajectory_numa_[my_node]->accumulate_info(envs_[i]->getInfoMap());
@@ -169,7 +198,17 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                     episode_returns_[i] += reward;
                     episode_lengths_[i] += 1;
 
-                    // 8. On episode end
+                    // 8. Update next_done with result from THIS step (matches Python semantics)
+                    // Python: next_done = np.logical_or(terminations, truncations)
+                    // This cached value will be used in the NEXT iteration's append() call
+                    next_done_[i] = (terminated || truncated) ? 1 : 0;
+
+                    // 9. Set next_obs for GAE bootstrap (use updated next_done)
+                    // After rollout completes, this contains the state and done status after final step
+                    Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
+                    trajectory_numa_[my_node]->set_next_obs(local_env_idx, next_obs, next_done_[i]);
+
+                    // 10. On episode end (AFTER capturing next_obs)
                     if (terminated || truncated) {
                         trajectory_numa_[my_node]->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
 
@@ -181,9 +220,11 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         envs_[i]->reset();
                         episode_returns_[i] = 0.0;
                         episode_lengths_[i] = 0;
+                        // DO NOT reset next_done_[i] here! It should remain 1 for the next iteration's append()
+                        // The next step will naturally set next_done_[i] = 0 after the reset environment returns terminated=0, truncated=0
                     }
 
-                    // 9. Collect muscle tuples
+                    // 10. Collect muscle tuples
                     if (!muscle_tuple_buffers_.empty()) {
                         MuscleTuple mt = envs_[i]->getRandomMuscleTuple();
                         Eigen::VectorXd dt = envs_[i]->getRandomDesiredTorque();
@@ -198,12 +239,6 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         }
                     }
                 }
-
-                // After rollout completes, capture next observation for GAE bootstrap
-                // Environment has already stepped to the next state after last action
-                Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
-                uint8_t next_done = (envs_[i]->isTerminated() || envs_[i]->isTruncated()) ? 1 : 0;
-                trajectory_numa_[my_node]->set_next_obs(local_env_idx, next_obs, next_done);
             });
         }
 
@@ -228,11 +263,23 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                     uint8_t terminated = envs_[i]->isTerminated() ? 1 : 0;
                     uint8_t truncated = envs_[i]->isTruncated() ? 1 : 0;
 
-                    trajectory_->append(step, i, obs, action, reward, value, logprob, terminated, truncated);
+                    // Append to trajectory (done = cached done status from BEFORE action)
+                    // Matches Python: dones[step] = next_done (from previous iteration)
+                    trajectory_->append(step, i, obs, action, reward, value, logprob,
+                                        next_done_[i], terminated, truncated);
                     trajectory_->accumulate_info(envs_[i]->getInfoMap());
 
                     episode_returns_[i] += reward;
                     episode_lengths_[i] += 1;
+
+                    // Update next_done with result from THIS step (matches Python semantics)
+                    // Python: next_done = np.logical_or(terminations, truncations)
+                    // This cached value will be used in the NEXT iteration's append() call
+                    next_done_[i] = (terminated || truncated) ? 1 : 0;
+
+                    // Set next_obs for GAE bootstrap (use updated next_done)
+                    Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
+                    trajectory_->set_next_obs(i, next_obs, next_done_[i]);
 
                     if (terminated || truncated) {
                         trajectory_->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
@@ -245,6 +292,8 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         envs_[i]->reset();
                         episode_returns_[i] = 0.0;
                         episode_lengths_[i] = 0;
+                        // DO NOT reset next_done_[i] here! It should remain 1 for the next iteration's append()
+                        // The next step will naturally set next_done_[i] = 0 after the reset environment returns terminated=0, truncated=0
                     }
 
                     if (!muscle_tuple_buffers_.empty()) {
@@ -261,12 +310,7 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         }
                     }
                 }
-
-                // After rollout completes, capture next observation for GAE bootstrap
-                // Environment has already stepped to the next state after last action
-                Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
-                uint8_t next_done = (envs_[i]->isTerminated() || envs_[i]->isTruncated()) ? 1 : 0;
-                trajectory_->set_next_obs(i, next_obs, next_done);
+                // next_obs already captured during last step (before potential reset)
             });
         }
 
@@ -304,11 +348,13 @@ void BatchRolloutEnv::aggregate_trajectories() {
                 float reward = traj->get_reward(src_idx);
                 float value = traj->get_value(src_idx);
                 float logprob = traj->get_logprob(src_idx);
+                uint8_t done = traj->get_done(src_idx);
                 uint8_t termination = traj->get_termination(src_idx);
                 uint8_t truncation = traj->get_truncation(src_idx);
 
                 // Write to master trajectory
-                master_trajectory_->append(step, global_env, obs, action, reward, value, logprob, termination, truncation);
+                master_trajectory_->append(step, global_env, obs, action, reward, value, logprob,
+                                           done, termination, truncation);
             }
         }
 
@@ -540,6 +586,11 @@ PYBIND11_MODULE(batchrolloutenv, m) {
              "    with open('data/env/config.yaml') as f:\n"
              "        yaml_content = f.read()\n"
              "    env = BatchRolloutEnv(yaml_content, num_envs=32, num_steps=64, enable_numa=True)")
+
+        .def("reset", &BatchRolloutEnv::reset,
+             "Reset all environments to initial state\n\n"
+             "Should be called before the first rollout to ensure environments\n"
+             "start from a valid initial state.")
 
         .def("collect_rollout", [](BatchRolloutEnv& self) {
             // Phase 1: Release GIL during C++ rollout (no Python objects)

@@ -63,8 +63,9 @@ public:
      * @param reward Reward scalar
      * @param value Value estimate
      * @param logprob Log probability of action
-     * @param terminated Episode ended naturally (failure/success)
-     * @param truncated Episode cut off by time limit
+     * @param done Done status BEFORE taking action (cached from previous step)
+     * @param terminated Episode ended naturally (failure/success) AFTER taking action
+     * @param truncated Episode cut off by time limit AFTER taking action
      */
     void append(int step, int env_idx,
                 const Eigen::VectorXf& obs,
@@ -72,6 +73,7 @@ public:
                 float reward,
                 float value,
                 float logprob,
+                uint8_t done,
                 uint8_t terminated,
                 uint8_t truncated);
 
@@ -124,6 +126,7 @@ public:
     float get_reward(int idx) const { return rewards_[idx]; }
     float get_value(int idx) const { return values_[idx]; }
     float get_logprob(int idx) const { return logprobs_[idx]; }
+    uint8_t get_done(int idx) const { return dones_[idx]; }
     uint8_t get_termination(int idx) const { return terminations_[idx]; }
     uint8_t get_truncation(int idx) const { return truncations_[idx]; }
     Eigen::VectorXf get_next_obs_row(int env_idx) const;
@@ -151,8 +154,9 @@ public:
      * - 'rewards': (steps*envs,) float32
      * - 'values': (steps*envs,) float32
      * - 'logprobs': (steps*envs,) float32
-     * - 'terminations': (steps*envs,) uint8 (episode ended naturally)
-     * - 'truncations': (steps*envs,) uint8 (time limit reached)
+     * - 'dones': (steps*envs,) uint8 (done status BEFORE action, cached from previous step)
+     * - 'terminations': (steps*envs,) uint8 (episode ended naturally AFTER action)
+     * - 'truncations': (steps*envs,) uint8 (time limit reached AFTER action)
      * - 'next_obs': (num_envs, obs_dim) float32 (observation AFTER rollout for GAE)
      * - 'next_done': (num_envs,) uint8 (terminal flags AFTER rollout)
      * - 'info': dict of averaged scalar metrics
@@ -188,8 +192,9 @@ private:
     Eigen::VectorXf rewards_;    // (steps*envs)
     Eigen::VectorXf values_;     // (steps*envs)
     Eigen::VectorXf logprobs_;   // (steps*envs)
-    Eigen::Matrix<uint8_t, Eigen::Dynamic, 1> terminations_;  // (steps*envs) episode ended naturally
-    Eigen::Matrix<uint8_t, Eigen::Dynamic, 1> truncations_;   // (steps*envs) time limit reached
+    Eigen::Matrix<uint8_t, Eigen::Dynamic, 1> dones_;         // (steps*envs) done BEFORE action (cached from prev step)
+    Eigen::Matrix<uint8_t, Eigen::Dynamic, 1> terminations_;  // (steps*envs) episode ended naturally AFTER action
+    Eigen::Matrix<uint8_t, Eigen::Dynamic, 1> truncations_;   // (steps*envs) time limit reached AFTER action
 
     // Info metric accumulation (running sums for averaging)
     std::map<std::string, double> info_sums_;     // Sum of each metric

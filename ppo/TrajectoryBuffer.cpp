@@ -18,6 +18,7 @@ TrajectoryBuffer::TrajectoryBuffer(int num_steps, int num_envs, int obs_dim, int
     rewards_ = Eigen::VectorXf::Zero(total_size);
     values_ = Eigen::VectorXf::Zero(total_size);
     logprobs_ = Eigen::VectorXf::Zero(total_size);
+    dones_ = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>::Zero(total_size);
     terminations_ = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>::Zero(total_size);
     truncations_ = Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>::Zero(total_size);
 
@@ -32,6 +33,7 @@ void TrajectoryBuffer::append(int step, int env_idx,
                                float reward,
                                float value,
                                float logprob,
+                               uint8_t done,
                                uint8_t terminated,
                                uint8_t truncated) {
     // Validate indices
@@ -65,6 +67,7 @@ void TrajectoryBuffer::append(int step, int env_idx,
     rewards_[idx] = reward;
     values_[idx] = value;
     logprobs_[idx] = logprob;
+    dones_[idx] = done;
     terminations_[idx] = terminated;
     truncations_[idx] = truncated;
 }
@@ -155,6 +158,7 @@ void TrajectoryBuffer::reset() {
     rewards_.setZero();
     values_.setZero();
     logprobs_.setZero();
+    dones_.setZero();
     terminations_.setZero();
     truncations_.setZero();
     next_obs_.setZero();
@@ -213,14 +217,21 @@ py::dict TrajectoryBuffer::to_numpy() {
         logprobs_.data()
     );
 
-    // Terminations: (steps*envs,) - episode ended naturally
+    // Dones: (steps*envs,) - done status BEFORE action (cached from previous step)
+    result["dones"] = py::array_t<uint8_t>(
+        {total_size},
+        {sizeof(uint8_t)},
+        dones_.data()
+    );
+
+    // Terminations: (steps*envs,) - episode ended naturally AFTER action
     result["terminations"] = py::array_t<uint8_t>(
         {total_size},
         {sizeof(uint8_t)},
         terminations_.data()
     );
 
-    // Truncations: (steps*envs,) - time limit reached
+    // Truncations: (steps*envs,) - time limit reached AFTER action
     result["truncations"] = py::array_t<uint8_t>(
         {total_size},
         {sizeof(uint8_t)},

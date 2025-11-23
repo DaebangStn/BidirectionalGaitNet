@@ -117,6 +117,9 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
+    run_name: Optional[str] = None
+    """custom run name for TensorBoard logs (overrides auto-generated name)"""
+
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -198,7 +201,11 @@ if __name__ == "__main__":
         print("Suggestion: Decrease muscle_batch_size or increase num_envs/num_steps")
         sys.exit(1)
 
-    run_name = f"{Path(args.env_file).stem}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    if args.run_name:
+        timestamp = time.strftime("%y%m%d_%H%M%S")
+        run_name = f"{args.run_name}/{timestamp}"
+    else:
+        run_name = f"{Path(args.env_file).stem}__{args.exp_name}__{args.seed}__{int(time.time())}"
 
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(

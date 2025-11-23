@@ -55,6 +55,12 @@ public:
     BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps, bool enable_numa = false);
 
     /**
+     * Reset all environments to initial state.
+     * Should be called before the first rollout.
+     */
+    void reset();
+
+    /**
      * Internal: Execute rollout without GIL (no Python object creation).
      * Must be called without GIL held.
      */
@@ -155,5 +161,6 @@ private:
 
     // Episode tracking (per environment)
     std::vector<double> episode_returns_;  // Current episode return for each env
+    std::vector<uint8_t> next_done_;       // Cached done status (matches Python's next_done semantics)
     std::vector<int> episode_lengths_;     // Current episode length for each env
 };

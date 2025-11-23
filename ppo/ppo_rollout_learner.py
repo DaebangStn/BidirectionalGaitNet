@@ -117,6 +117,12 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
+    run_name: Optional[str] = None
+    """custom run name for TensorBoard logs (overrides auto-generated name)"""
+
+    use_erroneous_bootstrap: bool = False
+    """use erroneous bootstrap (ignore next_obs/next_done from C++, use last rollout step instead)"""
+
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -198,7 +204,11 @@ if __name__ == "__main__":
         print("Suggestion: Decrease muscle_batch_size or increase num_envs/num_steps")
         sys.exit(1)
 
-    run_name = f"{Path(args.env_file).stem}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    if args.run_name:
+        timestamp = time.strftime("%y%m%d_%H%M%S")
+        run_name = f"{args.run_name}/{timestamp}"
+    else:
+        run_name = f"{Path(args.env_file).stem}__{args.exp_name}__{args.seed}__{int(time.time())}"
 
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
@@ -283,12 +293,15 @@ if __name__ == "__main__":
     agent_state_cpu = {k: v.cpu() for k, v in agent.state_dict().items()}
     envs.update_policy_weights(agent_state_cpu)
 
+    # Reset all environments to initial state before first rollout
+    envs.reset()
+
     # Training loop
     global_step = 0
     start_time = time.time()
 
     use_tqdm = sys.stdout.isatty()
-    
+
     print(f"Training loop started with {args.num_iterations} iterations")
 
     for iteration in tqdm(range(1, args.num_iterations + 1), desc="Iterations", ncols=100, disable=not use_tqdm):
@@ -326,6 +339,7 @@ if __name__ == "__main__":
         truncations = torch.from_numpy(trajectory['truncations']).to(device).float()  # (batch,)
         values = torch.from_numpy(trajectory['values']).to(device)  # (batch,)
         next_obs = torch.from_numpy(trajectory['next_obs']).to(device)  # (num_envs, obs_dim)
+        dones = torch.from_numpy(trajectory['dones']).to(device).float()
         next_done = torch.from_numpy(trajectory['next_done']).to(device).float()  # (num_envs,)
 
         # Reshape to (num_steps, num_envs) for GAE computation
@@ -333,36 +347,39 @@ if __name__ == "__main__":
         actions = actions.reshape(args.num_steps, args.num_envs, -1)
         logprobs = logprobs.reshape(args.num_steps, args.num_envs)
         rewards = rewards.reshape(args.num_steps, args.num_envs)
+        dones = dones.reshape(args.num_steps, args.num_envs)
         terminations = terminations.reshape(args.num_steps, args.num_envs)
         truncations = truncations.reshape(args.num_steps, args.num_envs)
         values = values.reshape(args.num_steps, args.num_envs)
 
-        # Compute dones (terminations OR truncations) for GAE masking
-        dones = torch.logical_or(terminations, truncations).float()
-
         # Terminal value bootstrapping for truncated episodes
-        if 'truncated_final_obs' in trajectory and len(trajectory['truncated_final_obs']) > 0:
-            with torch.no_grad():
-                for step, env_idx, final_obs_np in trajectory['truncated_final_obs']:
-                    # Get terminal value for truncated episode
-                    final_obs_tensor = torch.from_numpy(final_obs_np).unsqueeze(0).to(device)
-                    terminal_value = agent.get_value(final_obs_tensor).item()
-                    # Bootstrap: add discounted terminal value to reward
-                    rewards[step, env_idx] += args.gamma * terminal_value
+        with torch.no_grad():
+            for step, env_idx, final_obs_np in trajectory['truncated_final_obs']:
+                # Get terminal value for truncated episode
+                final_obs_tensor = torch.from_numpy(final_obs_np).unsqueeze(0).to(device)
+                terminal_value = agent.get_value(final_obs_tensor).item()
+                # Bootstrap: add discounted terminal value to reward
+                rewards[step, env_idx] += args.gamma * terminal_value
 
         ppo_learn_start = time.perf_counter()
 
         # ===== GAE COMPUTATION (Python) =====
         with torch.no_grad():
-            # Get next value for bootstrap
-            # next_obs and next_done are the observations AFTER the rollout completes (from C++)
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            if args.use_erroneous_bootstrap:
+                # ERRONEOUS: Use last step's obs/done instead of correct next_obs/next_done
+                # This replicates the bug for comparison purposes
+                next_value = values[-1:]  # Last step's value (incorrect!)
+                bootstrap_done = dones[-1]  # Last step's done (incorrect!)
+            else:
+                # CORRECT: Use next_obs and next_done from C++ (observations AFTER rollout completes)
+                next_value = agent.get_value(next_obs).reshape(1, -1)
+                bootstrap_done = next_done
 
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
-                    nextnonterminal = 1.0 - next_done
+                    nextnonterminal = 1.0 - bootstrap_done
                     nextvalues = next_value
                 else:
                     # Use dones for advantage masking (both termination types end episodes)
