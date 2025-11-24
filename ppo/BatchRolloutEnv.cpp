@@ -203,18 +203,14 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                     // This cached value will be used in the NEXT iteration's append() call
                     next_done_[i] = (terminated || truncated) ? 1 : 0;
 
-                    // 9. Set next_obs for GAE bootstrap (use updated next_done)
-                    // After rollout completes, this contains the state and done status after final step
-                    Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
-                    trajectory_numa_[my_node]->set_next_obs(local_env_idx, next_obs, next_done_[i]);
-
-                    // 10. On episode end (AFTER capturing next_obs)
+                    // 9. On episode end
                     if (terminated || truncated) {
                         trajectory_numa_[my_node]->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
 
                         if (truncated && !terminated) {
-                            Eigen::VectorXf final_obs = envs_[i]->getState().cast<float>();
-                            trajectory_numa_[my_node]->store_truncated_final_obs(step, local_env_idx, final_obs);
+                            // Capture truncated final obs (state after step, before reset)
+                            Eigen::VectorXf truncated_final_obs = envs_[i]->getState().cast<float>();
+                            trajectory_numa_[my_node]->store_truncated_final_obs(step, local_env_idx, truncated_final_obs);
                         }
 
                         envs_[i]->reset();
@@ -239,6 +235,11 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         }
                     }
                 }
+
+                // Capture final next_obs for GAE bootstrap (AFTER all steps complete)
+                // Only needed once at the end, not every step
+                Eigen::VectorXf final_next_obs = envs_[i]->getState().cast<float>();
+                trajectory_numa_[my_node]->set_next_obs(local_env_idx, final_next_obs, next_done_[i]);
             });
         }
 
@@ -277,16 +278,13 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                     // This cached value will be used in the NEXT iteration's append() call
                     next_done_[i] = (terminated || truncated) ? 1 : 0;
 
-                    // Set next_obs for GAE bootstrap (use updated next_done)
-                    Eigen::VectorXf next_obs = envs_[i]->getState().cast<float>();
-                    trajectory_->set_next_obs(i, next_obs, next_done_[i]);
-
                     if (terminated || truncated) {
                         trajectory_->accumulate_episode(episode_returns_[i], episode_lengths_[i]);
 
                         if (truncated && !terminated) {
-                            Eigen::VectorXf final_obs = envs_[i]->getState().cast<float>();
-                            trajectory_->store_truncated_final_obs(step, i, final_obs);
+                            // Capture truncated final obs (state after step, before reset)
+                            Eigen::VectorXf truncated_final_obs = envs_[i]->getState().cast<float>();
+                            trajectory_->store_truncated_final_obs(step, i, truncated_final_obs);
                         }
 
                         envs_[i]->reset();
@@ -310,7 +308,11 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         }
                     }
                 }
-                // next_obs already captured during last step (before potential reset)
+
+                // Capture final next_obs for GAE bootstrap (AFTER all steps complete)
+                // Only needed once at the end, not every step
+                Eigen::VectorXf final_next_obs = envs_[i]->getState().cast<float>();
+                trajectory_->set_next_obs(i, final_next_obs, next_done_[i]);
             });
         }
 

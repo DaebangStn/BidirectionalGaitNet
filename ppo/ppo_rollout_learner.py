@@ -120,9 +120,6 @@ class Args:
     run_name: Optional[str] = None
     """custom run name for TensorBoard logs (overrides auto-generated name)"""
 
-    use_erroneous_bootstrap: bool = False
-    """use erroneous bootstrap (ignore next_obs/next_done from C++, use last rollout step instead)"""
-
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -329,18 +326,18 @@ if __name__ == "__main__":
 
         global_step += args.batch_size
 
-        # Convert trajectory to torch tensors
+        # Convert trajectory to torch tensors (direct GPU allocation)
         # Trajectory shape: (steps*envs, dim)
-        obs = torch.from_numpy(trajectory['obs']).to(device)  # (batch, obs_dim)
-        actions = torch.from_numpy(trajectory['actions']).to(device)  # (batch, action_dim)
-        logprobs = torch.from_numpy(trajectory['logprobs']).to(device)  # (batch,)
-        rewards = torch.from_numpy(trajectory['rewards']).to(device)  # (batch,)
-        terminations = torch.from_numpy(trajectory['terminations']).to(device).float()  # (batch,)
-        truncations = torch.from_numpy(trajectory['truncations']).to(device).float()  # (batch,)
-        values = torch.from_numpy(trajectory['values']).to(device)  # (batch,)
-        next_obs = torch.from_numpy(trajectory['next_obs']).to(device)  # (num_envs, obs_dim)
-        dones = torch.from_numpy(trajectory['dones']).to(device).float()
-        next_done = torch.from_numpy(trajectory['next_done']).to(device).float()  # (num_envs,)
+        obs = torch.as_tensor(trajectory['obs'], device=device, dtype=torch.float32)  # (batch, obs_dim)
+        actions = torch.as_tensor(trajectory['actions'], device=device, dtype=torch.float32)  # (batch, action_dim)
+        logprobs = torch.as_tensor(trajectory['logprobs'], device=device, dtype=torch.float32)  # (batch,)
+        rewards = torch.as_tensor(trajectory['rewards'], device=device, dtype=torch.float32)  # (batch,)
+        terminations = torch.as_tensor(trajectory['terminations'], device=device, dtype=torch.float32)  # (batch,)
+        truncations = torch.as_tensor(trajectory['truncations'], device=device, dtype=torch.float32)  # (batch,)
+        values = torch.as_tensor(trajectory['values'], device=device, dtype=torch.float32)  # (batch,)
+        next_obs = torch.as_tensor(trajectory['next_obs'], device=device, dtype=torch.float32)  # (num_envs, obs_dim)
+        dones = torch.as_tensor(trajectory['dones'], device=device, dtype=torch.float32)
+        next_done = torch.as_tensor(trajectory['next_done'], device=device, dtype=torch.float32)  # (num_envs,)
 
         # Reshape to (num_steps, num_envs) for GAE computation
         obs = obs.reshape(args.num_steps, args.num_envs, -1)
@@ -355,8 +352,8 @@ if __name__ == "__main__":
         # Terminal value bootstrapping for truncated episodes
         with torch.no_grad():
             for step, env_idx, final_obs_np in trajectory['truncated_final_obs']:
-                # Get terminal value for truncated episode
-                final_obs_tensor = torch.from_numpy(final_obs_np).unsqueeze(0).to(device)
+                # Get terminal value for truncated episode (direct GPU allocation)
+                final_obs_tensor = torch.as_tensor(final_obs_np, device=device, dtype=torch.float32).unsqueeze(0)
                 terminal_value = agent.get_value(final_obs_tensor).item()
                 # Bootstrap: add discounted terminal value to reward
                 rewards[step, env_idx] += args.gamma * terminal_value
@@ -365,15 +362,9 @@ if __name__ == "__main__":
 
         # ===== GAE COMPUTATION (Python) =====
         with torch.no_grad():
-            if args.use_erroneous_bootstrap:
-                # ERRONEOUS: Use last step's obs/done instead of correct next_obs/next_done
-                # This replicates the bug for comparison purposes
-                next_value = values[-1:]  # Last step's value (incorrect!)
-                bootstrap_done = dones[-1]  # Last step's done (incorrect!)
-            else:
-                # CORRECT: Use next_obs and next_done from C++ (observations AFTER rollout completes)
-                next_value = agent.get_value(next_obs).reshape(1, -1)
-                bootstrap_done = next_done
+            # Use next_obs and next_done from C++ (observations AFTER rollout completes)
+            next_value = agent.get_value(next_obs).reshape(1, -1)
+            bootstrap_done = next_done
 
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
@@ -483,7 +474,6 @@ if __name__ == "__main__":
             writer.add_scalar("muscle/loss_target", muscle_loss['loss_target'], global_step)
             writer.add_scalar("muscle/loss_reg", muscle_loss['loss_reg'], global_step)
             writer.add_scalar("muscle/loss_act", muscle_loss['loss_act'], global_step)
-            writer.add_scalar("muscle/num_tuples", muscle_loss['num_tuples'], global_step)
             writer.add_scalar("perf/muscle_time_ms", muscle_learn_time, global_step)
 
         # Logging
