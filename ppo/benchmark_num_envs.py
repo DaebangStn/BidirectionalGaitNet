@@ -20,28 +20,15 @@ Expected behavior:
 import argparse
 import time
 import psutil
-import os
 import sys
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List
 
-# CRITICAL: Disable nested parallelism to prevent thread oversubscription
-# BatchRolloutEnv uses ThreadPool for environment-level parallelism
-# Setting OMP/MKL to 1 prevents: num_envs × cpu_count thread explosion
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-
+# Configure threading before torch import (prevents thread oversubscription)
+import ppo.torch_config
 import torch
-# Also set PyTorch's internal threading limits
-# Use try-except to handle cases where threading is already configured
-try:
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-except RuntimeError:
-    # Threading already configured, ignore
-    pass
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))

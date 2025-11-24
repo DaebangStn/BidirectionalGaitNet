@@ -6,22 +6,13 @@ Measures the performance improvement from parallel weight updates in
 update_muscle_weights() for both BatchEnv and BatchRolloutEnv.
 """
 
-# CRITICAL: Set threading BEFORE any imports that might load torch/libtorch
-import os
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-
 import sys
 import time
 from pathlib import Path
 
+# Configure threading before torch import (prevents thread oversubscription)
+import ppo.torch_config
 import torch
-try:
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-except RuntimeError:
-    pass
-
 import numpy as np
 
 # Add project root to path

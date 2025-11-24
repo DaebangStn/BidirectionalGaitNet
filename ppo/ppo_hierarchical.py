@@ -17,20 +17,9 @@ import gymnasium as gym
 import numpy as np
 import psutil
 
-# Set threading before torch import to prevent nested parallelism
-import os
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-
+# Configure threading before torch import (prevents thread oversubscription)
+import ppo.torch_config
 import torch
-# Use try-except to handle cases where threading is already configured
-try:
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-except RuntimeError:
-    # Threading already configured, ignore
-    pass
-
 import torch.nn as nn
 import torch.optim as optim
 import tyro

@@ -21,23 +21,9 @@ from typing import Optional
 import numpy as np
 import psutil
 
-# CRITICAL: Disable nested parallelism to prevent thread oversubscription
-# BatchRolloutEnv uses ThreadPool for environment-level parallelism (hardware_concurrency threads)
-# Setting OMP/MKL to 1 ensures each libtorch operation runs single-threaded within its thread
-# This prevents thread explosion: num_envs × OMP_NUM_THREADS (e.g., 16 × 64 = 1024 threads!)
-import os
-os.environ.setdefault("OMP_NUM_THREADS", '1')
-os.environ.setdefault("MKL_NUM_THREADS", '1')
-
+# Configure threading before torch import (prevents thread oversubscription)
+import ppo.torch_config
 import torch
-# Also set PyTorch's internal threading limits
-# Use try-except to handle cases where threading is already configured (e.g., when imported as module)
-try:
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-except RuntimeError:
-    # Threading already configured, ignore
-    pass
 import torch.nn as nn
 import torch.optim as optim
 import tyro

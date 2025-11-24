@@ -5,21 +5,13 @@ Benchmark environment initialization time with parallel vs sequential creation.
 Tests BatchRolloutEnv and BatchEnv initialization times for different num_envs.
 """
 
-# CRITICAL: Set threading BEFORE any imports that might load torch/libtorch
-import os
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-
 import sys
 import time
 from pathlib import Path
 
+# Configure threading before torch import (prevents thread oversubscription)
+import ppo.torch_config
 import torch
-try:
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-except RuntimeError:
-    pass
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
