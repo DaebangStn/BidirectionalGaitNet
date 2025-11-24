@@ -1,0 +1,80 @@
+digraph ppo_rollout_learner {
+    // Clean base settings
+    rankdir=LR;
+    splines=ortho;
+    nodesep=0.6;
+    ranksep=1.0;
+    fontname="Helvetica";
+
+    // Default node style
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Helvetica",
+        fontsize=11,
+        margin="0.2,0.15"
+    ];
+
+    // Default edge style
+    edge [
+        color="gray50",
+        penwidth=1.0,
+        arrowsize=0.8,
+        fontname="Helvetica",
+        fontsize=9
+    ];
+
+    // C++ Rollout (left zone)
+    subgraph cluster_rollout {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">C++ Autonomous Rollout</font>>;
+
+        policycpp [label="Policy NN", xlabel=<<font point-size="8">libtorch CPU</font>>];
+        threadpool [label="ThreadPool", xlabel=<<font point-size="8">parallel</font>>];
+        env [label="Environment", xlabel=<<font point-size="8">C++ sim</font>>];
+        musclecpp [label="Muscle NN", xlabel=<<font point-size="8">libtorch CPU</font>>];
+        trajectory [label="Trajectory", xlabel=<<font point-size="8">batch buffer</font>>];
+    }
+
+    // Python Learning (right zone)
+    subgraph cluster_learning {
+        style=filled;
+        fillcolor="#F1F8E9";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Python Learning</font>>;
+
+        ppo [label="PPO", xlabel=<<font point-size="8">PyTorch GPU</font>>];
+        agent [label="Agent", xlabel=<<font point-size="8">Actor-Critic</font>>];
+        mlearn [label="Muscle Loss", xlabel=<<font point-size="8">MSE</font>>];
+        muscle [label="Muscle Net", xlabel=<<font point-size="8">Hierarchical</font>>];
+        sync [label="Weight Sync", xlabel=<<font point-size="8">GPU→CPU</font>>, fillcolor="#FFF8E1"];
+    }
+
+    // Main flow: Policy → ThreadPool → Env → Trajectory → PPO → Agent (thick black)
+    policycpp -> threadpool [penwidth=2.5, color=black];
+    threadpool -> env [penwidth=2.5, color=black];
+    env -> trajectory [penwidth=2.5, color=black];
+    trajectory -> ppo [label="data", penwidth=2.5, color=black, fontsize=10];
+    ppo -> agent [penwidth=2.5, color=black];
+
+    // Supporting flows (thin gray)
+    env -> musclecpp [label="substeps", penwidth=1.0, color="gray60", style=dotted];
+    trajectory -> mlearn [penwidth=1.0, color="gray60"];
+    mlearn -> muscle [penwidth=1.0, color="gray60"];
+
+    // Weight sync loop (dashed orange)
+    agent -> sync [penwidth=1.5, color="orange", style=dashed];
+    muscle -> sync [penwidth=1.5, color="orange", style=dashed];
+    sync -> policycpp [label="update", penwidth=1.5, color="orange", style=dashed, fontsize=9];
+    sync -> musclecpp [penwidth=1.5, color="orange", style=dashed];
+
+    // Alignment: same rank for parallel components
+    {rank=same; ppo; mlearn;}
+    {rank=same; agent; muscle;}
+}
