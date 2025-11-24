@@ -7,7 +7,6 @@
 #include <pybind11/pybind11.h>
 #include "Environment.h"
 #include "ThreadPool.h"
-#include "NUMAThreadPool.h"
 #include "PolicyNet.h"
 #include "TrajectoryBuffer.h"
 
@@ -50,9 +49,8 @@ public:
      * @param yaml_content YAML configuration content (not file path!)
      * @param num_envs Number of parallel environments
      * @param num_steps Rollout length (steps per trajectory)
-     * @param enable_numa Enable NUMA-aware thread affinity (default: false)
      */
-    BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps, bool enable_numa = false);
+    BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps);
 
     /**
      * Reset all environments to initial state.
@@ -107,10 +105,6 @@ public:
     int obsSize() const { return obs_dim_; }
     int actionSize() const { return action_dim_; }
 
-    // NUMA accessors
-    bool numaEnabled() const { return numa_enabled_; }
-    int numNumaNodes() const { return numa_enabled_ && pool_numa_ ? pool_numa_->num_numa_nodes() : 1; }
-
     // Hierarchical control query methods
     bool is_hierarchical() const;
     bool use_cascading() const;
@@ -119,28 +113,17 @@ public:
     int getNumMuscleDof() const;
 
 private:
-    void aggregate_trajectories();  // Aggregate NUMA-local trajectories → master
-
     // Environment instances
     std::vector<std::unique_ptr<Environment>> envs_;
 
-    // NUMA configuration
-    bool numa_enabled_{false};
-    int num_nodes_{1};
-    int envs_per_node_{0};
+    // Thread pool
+    std::unique_ptr<ThreadPool> pool_;
 
-    // Thread pools (only one is created based on numa_enabled_)
-    std::unique_ptr<ThreadPool> pool_;              // Used when NUMA disabled
-    std::unique_ptr<NUMAThreadPool> pool_numa_;     // Used when NUMA enabled
+    // Policy network
+    PolicyNet policy_;
 
-    // Policy networks
-    PolicyNet policy_;                                      // Single policy (NUMA disabled)
-    std::vector<PolicyNet> policy_numa_;                    // Per-thread policies (NUMA enabled, one per thread to avoid shared access)
-
-    // Trajectory buffers
-    std::unique_ptr<TrajectoryBuffer> trajectory_;          // Single trajectory (NUMA disabled)
-    std::vector<std::unique_ptr<TrajectoryBuffer>> trajectory_numa_;  // Per-NUMA trajectories (NUMA enabled)
-    std::unique_ptr<TrajectoryBuffer> master_trajectory_;   // Master for aggregation (NUMA enabled)
+    // Trajectory buffer
+    std::unique_ptr<TrajectoryBuffer> trajectory_;
 
     // Environment metadata
     int num_envs_;

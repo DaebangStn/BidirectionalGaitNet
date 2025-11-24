@@ -65,7 +65,6 @@ dependencies:
   - h5netcdf
   - yaml
   - yaml-cpp
-  - libnuma
   - psutil
   - pip:
     - bvh
