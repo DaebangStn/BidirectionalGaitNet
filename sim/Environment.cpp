@@ -29,13 +29,12 @@ namespace {
 
 Environment::Environment()
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
-    mEnforceSymmetry(false), mLimitY(0.6), mLearningStd(false)
+    mEnforceSymmetry(false), mLimitY(0.6)
 {
     // Initialize URI resolver for path resolution
     PMuscle::URIResolver::getInstance().initialize();
-    
+
     mWorld = std::make_shared<dart::simulation::World>();
-    mCyclic = true;
     mIsResidual = true;
     mSimulationCount = 0;
     mActionScale = 0.04;
@@ -54,11 +53,9 @@ Environment::Environment()
     mUseJointState = false;
     // Parameter
     mNumParamState = 0;
-    mLearningStd = false;
 
     // Simulation Setting
     mSimulationStep = 0;
-    mEOEType = EOEType::abstime;
 
     mSoftPhaseClipping = false;
     mHardPhaseClipping = false;
@@ -156,10 +153,6 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mUseMuscle = true;
     }
     
-    // Learning Std
-    if (doc.FirstChildElement("learningStd") != NULL)
-        mLearningStd = doc.FirstChildElement("learningStd")->BoolText();
-
     // Phase Displacement Reward
     if (doc.FirstChildElement("timeWarping") != NULL)
         mPhaseDisplacementScale = doc.FirstChildElement("timeWarping")->DoubleText();
@@ -176,20 +169,11 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mAction = Eigen::VectorXd::Zero(mCharacter->getMuscles().size() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
         mNumActuatorAction = mCharacter->getMuscles().size();
     }
-    // Ground Loading
-    if (doc.FirstChildElement("ground") != NULL) {
-        std::string groundPath = Trim(std::string(doc.FirstChildElement("ground")->GetText()));
-        std::string resolvedGroundPath = PMuscle::URIResolver::getInstance().resolve(groundPath);
-        addObject(resolvedGroundPath);
-    }
+    // Ground Loading (hardcoded)
+    addObject(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"));
 
-    // Cyclic Mode
-    if (doc.FirstChildElement("cyclicbvh") != NULL)
-        mCyclic = doc.FirstChildElement("cyclicbvh")->BoolText();
-
-    // Controller Setting
-    if (doc.FirstChildElement("residual") != NULL)
-        mIsResidual = doc.FirstChildElement("residual")->BoolText();
+    // Controller Setting (hardcoded)
+    mIsResidual = true;
 
     // Simulation Setting
     if (doc.FirstChildElement("simHz") != NULL)
@@ -207,17 +191,12 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     if (doc.FirstChildElement("actionScale") != NULL)
         mActionScale = doc.FirstChildElement("actionScale")->DoubleText();
 
-    // Inference Per Sim
-    if (doc.FirstChildElement("inferencePerSim") != NULL)
-        mInferencePerSim = doc.FirstChildElement("inferencePerSim")->IntText();
+    // Inference Per Sim (hardcoded)
+    mInferencePerSim = 1;
 
-    // soft Phase Clipping
-    if (doc.FirstChildElement("softPhaseClipping") != NULL)
-        mSoftPhaseClipping = doc.FirstChildElement("softPhaseClipping")->BoolText();
-
-    // hard Phase Clipping
-    if (doc.FirstChildElement("hardPhaseClipping") != NULL)
-        mHardPhaseClipping = doc.FirstChildElement("hardPhaseClipping")->BoolText();
+    // Phase Clipping (hardcoded)
+    mSoftPhaseClipping = false;
+    mHardPhaseClipping = true;
 
     if (doc.FirstChildElement("musclePoseOptimization") != NULL)
     {
@@ -231,13 +210,9 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mMusclePoseOptimization = doc.FirstChildElement("musclePoseOptimization")->BoolText();
     }
 
-    // Torque Clipping
-    if (doc.FirstChildElement("torqueClipping") != NULL)
-        mCharacter->setTorqueClipping(doc.FirstChildElement("torqueClipping")->BoolText());
-
-    // Include JtP in SPD
-    if (doc.FirstChildElement("includeJtPinSPD") != NULL)
-        mCharacter->setIncludeJtPinSPD(doc.FirstChildElement("includeJtPinSPD")->BoolText());
+    // Advanced settings (hardcoded)
+    mCharacter->setTorqueClipping(false);
+    mCharacter->setIncludeJtPinSPD(false);
 
     if (doc.FirstChildElement("rewardType") != NULL)
     {
@@ -250,12 +225,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
             mRewardType = scadiver;
     }
 
-    if (doc.FirstChildElement("eoeType") != NULL)
-    {
-        std::string str_eoeType = doc.FirstChildElement("eoeType")->GetText();
-        if (str_eoeType == "time") mEOEType = EOEType::abstime;
-        else if (str_eoeType == "tuple") mEOEType = EOEType::tuple;
-    }
+    // EOEType is always tuple (hardcoded)
 
     // Simulation World Wetting
     mWorld->setTimeStep(1.0 / mSimulationHz);
@@ -308,9 +278,8 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     }
 
 
-    // Advanced Option
-    if (doc.FirstChildElement("enforceSymmetry") != NULL)
-        mEnforceSymmetry = doc.FirstChildElement("enforceSymmetry")->BoolText();
+    // Advanced Option (hardcoded)
+    mEnforceSymmetry = true;
 
     if (isTwoLevelController())
     {
@@ -327,8 +296,8 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     // =================== Reward ======================
     // =================================================
 
-    if (doc.FirstChildElement("useNormalizedParamState") != NULL)
-        mUseNormalizedParamState = doc.FirstChildElement("useNormalizedParamState")->BoolText();
+    // Use normalized param state (hardcoded)
+    mUseNormalizedParamState = false;
 
     if (doc.FirstChildElement("HeadLinearAccWeight") != NULL)
         mRewardConfig.head_linear_acc_weight = doc.FirstChildElement("HeadLinearAccWeight")->DoubleText();
@@ -619,10 +588,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         LOG_VERBOSE("[Environment] Created default NoiseInjector (disabled)");
     }
 
-    // === Learning Std ===
-    if (env["advanced"] && env["advanced"]["learning_std"])
-        mLearningStd = env["advanced"]["learning_std"].as<bool>(false);
-
     // === Action ===
     if (env["action"]) {
         auto action = env["action"];
@@ -643,23 +608,14 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mNumActuatorAction = mCharacter->getMuscles().size();
     }
 
-    // === Ground ===
-    if (env["ground"]) {
-        std::string groundPath = env["ground"]["file"].as<std::string>();
-        std::string resolved = PMuscle::URIResolver::getInstance().resolve(groundPath);
-        addObject(resolved);
-    }
+    // === Ground === (hardcoded)
+    addObject(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"));
 
-    // === Motion ===
-    if (env["motion"]) {
-        auto motion = env["motion"];
-        mCyclic = motion["cyclic"].as<bool>(true);
-        // Height calibration is always applied in strict mode (no config needed)
-    }
+    // === Motion === (hardcoded)
+    // Height calibration is always applied in strict mode (no config needed)
 
-    // === Action (residual) ===
-    if (env["action"] && env["action"]["residual"])
-        mIsResidual = env["action"]["residual"].as<bool>(true);
+    // === Action (residual) === (hardcoded)
+    mIsResidual = true;
 
     // === Simulation ===
     if (env["simulation"]) {
@@ -678,25 +634,15 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     if (env["action"] && env["action"]["scale"])
         mActionScale = env["action"]["scale"].as<double>(0.04);
 
-    // === Inference per sim ===
-    if (env["simulation"] && env["simulation"]["inference_per_sim"])
-        mInferencePerSim = env["simulation"]["inference_per_sim"].as<int>(1);
+    // === Inference per sim === (hardcoded)
+    mInferencePerSim = 1;
 
-    // === Advanced ===
-    if (env["advanced"]) {
-        auto adv = env["advanced"];
-
-        if (adv["soft_phase_clipping"])
-            mSoftPhaseClipping = adv["soft_phase_clipping"].as<bool>(false);
-
-        if (adv["hard_phase_clipping"])
-            mHardPhaseClipping = adv["hard_phase_clipping"].as<bool>(false);
-
-        if (adv["torque_clipping"])
-            mCharacter->setTorqueClipping(adv["torque_clipping"].as<bool>());
-
-        if (adv["include_jtp_in_spd"])
-            mCharacter->setIncludeJtPinSPD(adv["include_jtp_in_spd"].as<bool>());
+    // === Advanced === (hardcoded)
+    {
+        mSoftPhaseClipping = false;
+        mHardPhaseClipping = true;
+        mCharacter->setTorqueClipping(false);
+        mCharacter->setIncludeJtPinSPD(false);
     }
 
     // === Reward Type ===
@@ -705,12 +651,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         if (rewardType == "gaitnet") mRewardType = gaitnet;
         else if (rewardType == "deepmimic") mRewardType = deepmimic;
         else if (rewardType == "scadiver") mRewardType = scadiver;
-    }
-
-    // === EOE Type ===
-    if (env["reward"] && env["reward"]["eoe_type"]) {
-        std::string eoeType = env["reward"]["eoe_type"].as<std::string>("time");
-        mEOEType = (eoeType == "tuple") ? EOEType::tuple : EOEType::abstime;
     }
 
     // === World Setup ===
@@ -748,9 +688,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
     // === Advanced: height calibration already handled above ===
 
-    // === Advanced: enforce symmetry ===
-    if (env["advanced"] && env["advanced"]["enforce_symmetry"])
-        mEnforceSymmetry = env["advanced"]["enforce_symmetry"].as<bool>(false);
+    // === Advanced: enforce symmetry === (hardcoded)
+    mEnforceSymmetry = true;
 
     // === Two-level controller ===
     if (isTwoLevelController()) {
@@ -765,9 +704,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     if (config["Horizon"])
         mHorizon = config["Horizon"].as<int>();
 
-    // === Reward parameters ===
-    if (env["advanced"] && env["advanced"]["use_normalized_param_state"])
-        mUseNormalizedParamState = env["advanced"]["use_normalized_param_state"].as<bool>(false);
+    // === Reward parameters === (hardcoded)
+    mUseNormalizedParamState = false;
 
     // === Reward clipping ===
     if (env["reward"] && env["reward"]["clip"]) {
@@ -1217,7 +1155,7 @@ void Environment::setAction(Eigen::VectorXd _action)
         Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
         action.tail(actuatorAction.rows()) = actuatorAction;
         if (isMirror()) action = mCharacter->getMirrorPosition(action);
-        if (mIsResidual) action = mCharacter->addPositions(mRefPose, action);
+        action = mCharacter->addPositions(mRefPose, action);
         mCharacter->setPDTarget(action);
     }
     else if (mCharacter->getActuatorType() == tor)
@@ -1264,20 +1202,13 @@ void Environment::checkTerminated()
 
 void Environment::checkTruncated()
 {
-    // Episode ends due to external limits: time or step count
-    bool time_limit = false;
-    bool step_limit = false;
-
-    if (mEOEType == EOEType::tuple)
-        step_limit = mSimulationStep >= mHorizon;
-    else if (mEOEType == EOEType::abstime)
-        time_limit = mWorld->getTime() > 10.0;
-
-    bool truncated = time_limit || step_limit;
+    // Episode ends due to step count (EOEType is always tuple)
+    bool step_limit = mSimulationStep >= mHorizon;
+    bool truncated = step_limit;
 
     // Log to mInfoMap for TensorBoard
     mInfoMap["truncated"] = truncated ? 1.0 : 0.0;
-    mInfoMap["truncation_time"] = time_limit ? 1.0 : 0.0;
+    mInfoMap["truncation_time"] = 0.0;  // Always 0 since time_limit is never true
     mInfoMap["truncation_steps"] = step_limit ? 1.0 : 0.0;
 }
 
@@ -1670,25 +1601,12 @@ void Environment::postMuscleStep()
         // Note: Flag will persist for PD-level check, don't clear here
     }
 
-    if (mHardPhaseClipping)
-    {
-        int currentGlobalCount = mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-        int currentLocalCount = mGaitPhase->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+    // Hard phase clipping (always enabled)
+    int currentGlobalCount = mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+    int currentLocalCount = mGaitPhase->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
 
-        if (currentGlobalCount > currentLocalCount) mGaitPhase->setLocalTime(mGlobalTime);
-        else if (currentGlobalCount < currentLocalCount) mGaitPhase->setLocalTime(currentLocalCount * ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
-    }
-    else if (mSoftPhaseClipping)
-    {
-        // FIXED LOCAL PHASE TIME
-        int currentCount = mGaitPhase->getLocalTime() / (0.5 * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
-        // int currentCount = mGaitPhase->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
-        if (mPhaseCount != currentCount)
-        {
-            mGlobalTime = mGaitPhase->getLocalTime();
-            mPhaseCount = currentCount;
-        }
-    }
+    if (currentGlobalCount > currentLocalCount) mGaitPhase->setLocalTime(mGlobalTime);
+    else if (currentGlobalCount < currentLocalCount) mGaitPhase->setLocalTime(currentLocalCount * ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
 }
 
 void Environment::muscleStep()

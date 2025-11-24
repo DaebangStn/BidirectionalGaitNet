@@ -187,7 +187,6 @@ PYBIND11_MODULE(pysim, m)
         .def("setMuscleNetworkWeight", &RayEnvManager::setMuscleNetworkWeight)
         .def("isTwoLevelController", &RayEnvManager::isTwoLevelController)
 
-        .def("getLearningStd", &RayEnvManager::getLearningStd)
         .def("getUseCascading", &RayEnvManager::getUseCascading)
 
         .def("getParamState", &RayEnvManager::getParamState)

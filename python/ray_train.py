@@ -457,7 +457,6 @@ if __name__ == "__main__":
         config["metadata_name"] = Path(args.env).stem
         config["training_start_timestamp"] = timestamp()
         config["isTwoLevelActuator"] = env.isTwoLevelActuator
-        config["model"]["custom_model_config"]["learningStd"] = env.env.getLearningStd()
         config["env_config"]["cascading"] = env.env.getUseCascading()
         config["env_config"]["num_action"] = env.env.getNumAction()
         config["env_config"]["num_actuator_action"] = env.env.getNumActuatorAction()

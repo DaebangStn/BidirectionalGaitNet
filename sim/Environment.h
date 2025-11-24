@@ -96,12 +96,6 @@ struct RewardConfig
     double clip_value = 0.0;
 };
 
-enum EOEType
-{
-    abstime,
-    tuple
-};
-
 class DLL_PUBLIC Environment
 {
 public:
@@ -161,7 +155,7 @@ public:
     int getSimulationStep() const { return mSimulationStep; }
     std::string getMetadata() { return mMetadata; }
 
-    bool isMirror() { return mEnforceSymmetry && ((mHardPhaseClipping) ? (getNormalizedPhase() > 0.5) : (getLocalPhase(true) > 0.5)); }
+    bool isMirror() { return getNormalizedPhase() > 0.5; }
 
     bool isFall();
     dart::simulation::WorldPtr getWorld() { return mWorld; }
@@ -315,8 +309,6 @@ public:
     void updateParamState() { setParamState(getParamSample(), false, true); }
     double getLimitY() { return mLimitY; }
 
-    bool getLearningStd() { return mLearningStd; }
-    void setLearningStd(bool learningStd) { mLearningStd = learningStd; }
     void poseOptimization(int iter = 100);
 
     // Contact detection (delegated to GaitPhase if available)
@@ -458,9 +450,6 @@ private:
     // [Advanced Option]
     bool mIncludeMetabolicReward;
 
-    // Cyclic or Not
-    bool mCyclic;
-
     int mSimulationCount, mSimulationStep;
     bool mEnforceSymmetry;
 
@@ -491,7 +480,7 @@ private:
     // Offset for Stance phase at current bvh;
     double mStanceOffset;
 
-    bool mLoadedMuscleNN, mUseJointState, mLearningStd;
+    bool mLoadedMuscleNN, mUseJointState;
 
     // Parameter
     std::vector<param_group> mParamGroups;
@@ -504,7 +493,6 @@ private:
     // Simulation Setting
     bool mSoftPhaseClipping, mHardPhaseClipping;
     int mPhaseCount, mWorldPhaseCount;
-    EOEType mEOEType;
     double mGlobalTime, mWorldTime;
 
     // Pose Optimization

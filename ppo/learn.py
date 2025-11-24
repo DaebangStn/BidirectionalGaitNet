@@ -48,9 +48,9 @@ class Args:
     """save checkpoint every K iterations (None = no checkpoints, only final save)"""
 
     # Algorithm specific arguments
-    env_file: str = "data/env/A2_sep.yaml"
+    env_file: str = "data/env/A2.yaml"
     """path to environment configuration file"""
-    total_timesteps: int = 50000000
+    total_timesteps: int = 100_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer"""
@@ -90,10 +90,6 @@ class Args:
     """muscle network training epochs"""
     muscle_batch_size: int = 64
     """muscle network batch size"""
-
-    # NUMA optimization
-    numa: bool = False
-    """enable NUMA-aware thread affinity for BatchRolloutEnv"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -216,8 +212,8 @@ if __name__ == "__main__":
         with open(args.env_file, 'r') as f:
             yaml_content = f.read()
 
-        print(f"Creating BatchRolloutEnv: {args.num_envs} envs, {args.num_steps} steps, NUMA: {args.numa}")
-        envs = BatchRolloutEnv(yaml_content, args.num_envs, args.num_steps, args.numa)
+        print(f"Creating BatchRolloutEnv: {args.num_envs} envs, {args.num_steps} steps")
+        envs = BatchRolloutEnv(yaml_content, args.num_envs, args.num_steps)
 
         # Get dimensions
         num_states = envs.obs_size()
@@ -225,13 +221,6 @@ if __name__ == "__main__":
 
         print(f"Environment: {Path(args.env_file).name}")
         print(f"Observation dim: {num_states}, Action dim: {num_actions}")
-
-        # Log NUMA status
-        if args.numa:
-            if envs.numa_enabled():
-                print(f"NUMA enabled: {envs.num_numa_nodes()} nodes")
-            else:
-                print("NUMA requested but not available (falling back to standard mode)")
 
     except ImportError as e:
         print(f"ERROR: Failed to import BatchRolloutEnv: {e}")
@@ -502,7 +491,9 @@ if __name__ == "__main__":
 
         # Checkpoint saving
         if args.checkpoint_interval is not None and iteration % args.checkpoint_interval == 0:
-            checkpoint_path = f"runs/{run_name}/ckpt_{iteration}"
+            ckpt_timestamp = time.strftime("%m%d_%H%M%S")
+            checkpoint_name = f"{run_name.replace('/', '-')}-{iteration:05d}-{ckpt_timestamp}"
+            checkpoint_path = f"runs/{run_name}/{checkpoint_name}"
             os.makedirs(checkpoint_path, exist_ok=True)
 
             # Save policy agent checkpoint
