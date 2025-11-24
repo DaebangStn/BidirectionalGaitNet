@@ -12,6 +12,7 @@ Expected performance: 2.0-2.3x speedup over BatchEnv (target: 900-1000 SPS)
 
 import os
 import random
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -42,10 +43,8 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    save_model: bool = True
-    """whether to save model into the `runs/{run_name}` folder"""
-    checkpoint_interval: Optional[int] = 1000
-    """save checkpoint every K iterations (None = no checkpoints, only final save)"""
+    checkpoint_interval: int = 1000
+    """save checkpoint every K iterations"""
 
     # Algorithm specific arguments
     env_file: str = "data/env/A2.yaml"
@@ -53,7 +52,9 @@ class Args:
     total_timesteps: int = 100_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
-    """the learning rate of the optimizer"""
+    """the initial learning rate of the optimizer"""
+    lr_final: float = 2e-5
+    """the final learning rate after annealing"""
     num_envs: int = 32
     """the number of parallel game environments"""
     num_steps: int = 4
@@ -101,6 +102,10 @@ class Args:
 
     run_name: Optional[str] = None
     """custom run name for TensorBoard logs (overrides auto-generated name)"""
+    log_interval: int = 10
+    """log progress every K iterations (for non-tty batch jobs)"""
+    learn_std: bool = False
+    """if True, log_std is learned (nn.Parameter); if False, constant"""
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -115,7 +120,7 @@ class Agent(nn.Module):
     IMPORTANT: This must exactly match PolicyNet.cpp architecture for weight compatibility!
     """
 
-    def __init__(self, num_states, num_actions):
+    def __init__(self, num_states, num_actions, learn_std=True):
         super().__init__()
 
         # Value network: 3 hidden layers of 512 units with ReLU
@@ -146,7 +151,11 @@ class Agent(nn.Module):
             init_log_std[18:] *= 0.5  # For upper body
         init_log_std[-1] = 1.0  # For cascading
 
-        self.actor_logstd = nn.Parameter(init_log_std.unsqueeze(0))
+        self.learn_std = learn_std
+        if learn_std:
+            self.actor_logstd = nn.Parameter(init_log_std.unsqueeze(0))
+        else:
+            self.register_buffer('actor_logstd', init_log_std.unsqueeze(0))
 
     def get_value(self, x):
         return self.critic(x)
@@ -236,7 +245,7 @@ if __name__ == "__main__":
         print(f"Cascading mode: {use_cascading}")
 
     # Create main PPO agent
-    agent = Agent(num_states, num_actions).to(device)
+    agent = Agent(num_states, num_actions, learn_std=args.learn_std).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # Create muscle learner if hierarchical
@@ -278,7 +287,7 @@ if __name__ == "__main__":
 
     for iteration in tqdm(range(1, args.num_iterations + 1), desc="Iterations", ncols=100, disable=not use_tqdm):
         # Log progress periodically when tqdm is disabled (SLURM batch jobs)
-        if not use_tqdm and iteration % 10 == 0:
+        if not use_tqdm and iteration % args.log_interval == 0:
             elapsed = time.time() - start_time
             sps = int(global_step / elapsed) if elapsed > 0 else 0
             print(f"[Iteration {iteration}/{args.num_iterations}] Steps: {global_step}, SPS: {sps}, Elapsed: {elapsed:.1f}s")
@@ -286,7 +295,7 @@ if __name__ == "__main__":
         # Annealing the rate if instructed to do so
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
-            lrnow = frac * args.learning_rate
+            lrnow = args.lr_final + frac * (args.learning_rate - args.lr_final)
             optimizer.param_groups[0]["lr"] = lrnow
 
         # ===== AUTONOMOUS C++ ROLLOUT =====
@@ -297,7 +306,6 @@ if __name__ == "__main__":
         trajectory = envs.collect_rollout()
 
         rollout_time = (time.perf_counter() - epoch_start) * 1000
-        writer.add_scalar("perf/rollout_time_ms", rollout_time, global_step)
 
         global_step += args.batch_size
 
@@ -418,7 +426,6 @@ if __name__ == "__main__":
                 break
 
         ppo_learn_time = (time.perf_counter() - ppo_learn_start) * 1000
-        writer.add_scalar("perf/ppo_learn_time_ms", ppo_learn_time, global_step)
 
         # ===== SYNCHRONIZE WEIGHTS TO C++ =====
         sync_start = time.perf_counter()
@@ -426,9 +433,10 @@ if __name__ == "__main__":
         agent_state_cpu = {k: v.cpu() for k, v in agent.state_dict().items()}
         envs.update_policy_weights(agent_state_cpu)
         sync_time = (time.perf_counter() - sync_start) * 1000
-        writer.add_scalar("perf/weight_sync_time_ms", sync_time, global_step)
 
         # ===== MUSCLE LEARNING (if hierarchical) =====
+        muscle_loss = None
+        muscle_learn_time = 0.0
         if muscle_learner is not None:
             muscle_learn_start = time.perf_counter()
 
@@ -444,53 +452,8 @@ if __name__ == "__main__":
 
             muscle_learn_time = (time.perf_counter() - muscle_learn_start) * 1000
 
-            # Log muscle training stats (matching ppo_hierarchical.py format)
-            writer.add_scalar("muscle/loss", muscle_loss['loss_muscle'], global_step)
-            writer.add_scalar("muscle/loss_target", muscle_loss['loss_target'], global_step)
-            writer.add_scalar("muscle/loss_reg", muscle_loss['loss_reg'], global_step)
-            writer.add_scalar("muscle/loss_act", muscle_loss['loss_act'], global_step)
-            writer.add_scalar("perf/muscle_time_ms", muscle_learn_time, global_step)
-
-        # Logging
-        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-        var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
-
-        # Performance metrics
-        iteration_time = (time.perf_counter() - epoch_start) * 1000
-        writer.add_scalar("perf/iteration_time_ms", iteration_time, global_step)
-        writer.add_scalar("perf/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-        # Log averaged info metrics from C++ accumulation
-        if 'info' in trajectory:
-            for key, avg_value in trajectory['info'].items():
-                writer.add_scalar(f"info/{key}", avg_value, global_step)
-
-        # Log episode statistics from C++ accumulation
-        if 'avg_episode_return' in trajectory:
-            writer.add_scalar("charts/episodic_return", trajectory['avg_episode_return'], global_step)
-            writer.add_scalar("charts/episodic_length", trajectory['avg_episode_length'], global_step)
-
-        # Log system resources every 10 epochs
-        if iteration % 10 == 0:
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory()
-            writer.add_scalar("system/cpu_percent", cpu_percent, global_step)
-            writer.add_scalar("system/memory_used_gb", memory.used / (1024**3), global_step)
-            writer.add_scalar("system/memory_percent", memory.percent, global_step)
-            writer.add_scalar("system/memory_available_gb", memory.available / (1024**3), global_step)
-
         # Checkpoint saving
-        if args.checkpoint_interval is not None and iteration % args.checkpoint_interval == 0:
+        if iteration % args.checkpoint_interval == 0:
             ckpt_timestamp = time.strftime("%m%d_%H%M%S")
             checkpoint_name = f"{run_name.replace('/', '-')}-{iteration:05d}-{ckpt_timestamp}"
             checkpoint_path = f"runs/{run_name}/{checkpoint_name}"
@@ -503,21 +466,78 @@ if __name__ == "__main__":
             if muscle_learner is not None:
                 muscle_learner.save(f"{checkpoint_path}/muscle.pt")
 
+            # Save metadata (copy of env config for viewer compatibility)
+            shutil.copy(args.env_file, f"{checkpoint_path}/metadata.yaml")
+
             if not use_tqdm:
                 print(f"[Checkpoint] Saved at iteration {iteration}: {checkpoint_path}")
 
+        # ===== TENSORBOARD LOGGING (at end of iteration to prevent blocking) =====
+        if iteration % args.log_interval == 0:
+            writer.add_scalar("perf/rollout_time_ms", rollout_time, global_step)
+            writer.add_scalar("perf/ppo_learn_time_ms", ppo_learn_time, global_step)
+            writer.add_scalar("perf/weight_sync_time_ms", sync_time, global_step)
+
+            if muscle_loss is not None:
+                writer.add_scalar("muscle/loss", muscle_loss['loss_muscle'], global_step)
+                writer.add_scalar("muscle/loss_target", muscle_loss['loss_target'], global_step)
+                writer.add_scalar("muscle/loss_reg", muscle_loss['loss_reg'], global_step)
+                writer.add_scalar("muscle/loss_act", muscle_loss['loss_act'], global_step)
+                writer.add_scalar("perf/muscle_time_ms", muscle_learn_time, global_step)
+
+            # Logging
+            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+            var_y = np.var(y_true)
+            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+            writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+            writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+            writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+            writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+            writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+            writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+            writer.add_scalar("losses/explained_variance", explained_var, global_step)
+            writer.add_scalar("losses/log_std_mean", agent.actor_logstd.mean().item(), global_step)
+
+            # Performance metrics
+            iteration_time = (time.perf_counter() - epoch_start) * 1000
+            writer.add_scalar("perf/iteration_time_ms", iteration_time, global_step)
+            writer.add_scalar("perf/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+            # Log averaged info metrics from C++ accumulation
+            if 'info' in trajectory:
+                for key, avg_value in trajectory['info'].items():
+                    writer.add_scalar(f"info/{key}", avg_value, global_step)
+
+            # Log episode statistics from C++ accumulation
+            if 'avg_episode_return' in trajectory:
+                writer.add_scalar("charts/episodic_return", trajectory['avg_episode_return'], global_step)
+                writer.add_scalar("charts/episodic_length", trajectory['avg_episode_length'], global_step)
+
+            # Log system resources
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            writer.add_scalar("system/cpu_percent", cpu_percent, global_step)
+            writer.add_scalar("system/memory_used_gb", memory.used / (1024**3), global_step)
+            writer.add_scalar("system/memory_percent", memory.percent, global_step)
+            writer.add_scalar("system/memory_available_gb", memory.available / (1024**3), global_step)
+
     # Save models
-    if args.save_model:
-        model_path = f"runs/{run_name}"
-        os.makedirs(model_path, exist_ok=True)
+    model_path = f"runs/{run_name}"
+    os.makedirs(model_path, exist_ok=True)
 
-        # Save policy agent
-        torch.save(agent.state_dict(), f"{model_path}/agent.pt")
-        print(f"Policy agent saved to {model_path}/agent.pt")
+    # Save policy agent
+    torch.save(agent.state_dict(), f"{model_path}/agent.pt")
+    print(f"Policy agent saved to {model_path}/agent.pt")
 
-        # Save muscle learner if hierarchical
-        if muscle_learner is not None:
-            muscle_learner.save(f"{model_path}/muscle.pt")
-            print(f"Muscle network saved to {model_path}/muscle.pt")
+    # Save muscle learner if hierarchical
+    if muscle_learner is not None:
+        muscle_learner.save(f"{model_path}/muscle.pt")
+        print(f"Muscle network saved to {model_path}/muscle.pt")
+
+    # Save metadata (copy of env config for viewer compatibility)
+    shutil.copy(args.env_file, f"{model_path}/metadata.yaml")
+    print(f"Metadata saved to {model_path}/metadata.yaml")
 
     writer.close()

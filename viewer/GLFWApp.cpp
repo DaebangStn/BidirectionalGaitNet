@@ -406,7 +406,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Import appropriate loader based on checkpoint type
     try {
         if (checkpoint_type == "cleanrl") {
-            LOG_INFO("Loading CleanRL checkpoint (no Ray dependency)");
+            LOG_INFO("Loading CleanRL checkpoint");
             loading_network = py::module::import("python.cleanrl_model").attr("loading_network");
         } else {
             LOG_INFO("Loading Ray checkpoint");

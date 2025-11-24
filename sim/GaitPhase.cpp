@@ -6,8 +6,8 @@
 // ============================================================================
 // Debug Flags
 // ============================================================================
-#define LOG_STATE_CHANGES 0  // Set to 1 to enable state change logging, 0 to disable
-// #define LOG_STATE_CHANGES 1
+// #define LOG_STATE_CHANGES 0  // Set to 1 to enable state change logging, 0 to disable
+#define LOG_STATE_CHANGES 1
 
 GaitPhase::GaitPhase(Character* character,
                      dart::simulation::WorldPtr world,
@@ -55,7 +55,7 @@ GaitPhase::GaitPhase(Character* character,
       mCurrentCadence(0.0),
       mStanceRatioR(0.0),
       mStanceRatioL(0.0),
-      mStepMinRatio(0.5),
+      mStepMinRatio(0.3),
       mGRFThreshold(0.2),
       mContactDebounceAlpha(0.25),
       mContactDebounceThreshold(0.5),
@@ -270,8 +270,8 @@ Eigen::Vector3d GaitPhase::getLowestPointFromBodyNodes(const std::vector<std::st
         }
     }
 
-    LOG_VERBOSE("Lowest point Y: " << lowestY << " at position: ["
-                << lowestPoint[0] << ", " << lowestPoint[1] << ", " << lowestPoint[2] << "]");
+    // LOG_VERBOSE("Lowest point Y: " << lowestY << " at position: ["
+                // << lowestPoint[0] << ", " << lowestPoint[1] << ", " << lowestPoint[2] << "]");
 
     return lowestPoint;
 }
@@ -362,9 +362,9 @@ void GaitPhase::updateFromContact()
 
     double time = mWorld->getTime();
     auto skel = mCharacter->getSkeleton();
-    LOG_VERBOSE("=== Right Foot Lowest Point ===");
+    // LOG_VERBOSE("=== Right Foot Lowest Point ===");
     Eigen::Vector3d footRPos = getLowestPointFromBodyNodes({"TalusR", "FootPinkyR", "FootThumbR"});
-    LOG_VERBOSE("=== Left Foot Lowest Point ===");
+    // LOG_VERBOSE("=== Left Foot Lowest Point ===");
     Eigen::Vector3d footLPos = getLowestPointFromBodyNodes({"TalusL", "FootPinkyL", "FootThumbL"});
 
     // Calculate target stride and minimum step using stored parameters

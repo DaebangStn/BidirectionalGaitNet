@@ -24,7 +24,7 @@ environment:
 
   # Simulation Timing
   simulation:
-    sim_hz: 300
+    sim_hz: 120
     control_hz: 30
 
   # Action and Control
@@ -32,8 +32,7 @@ environment:
     scale: 0.04
     time_warping: 0.001  # -1 means disabled
     gait_phase_mode: "contact"  # "contact" or "phase"
-    contact_debounce_alpha: 0.25
-
+    contact_debounce_alpha: 0.4
   # Reward System
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
@@ -41,7 +40,7 @@ environment:
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2
-      weight: 0.02
+      weight: 0.15
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:

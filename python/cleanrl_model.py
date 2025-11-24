@@ -161,7 +161,7 @@ def _load_metadata_yaml(checkpoint_dir):
 
     if not os.path.exists(metadata_path):
         # Use default environment config
-        default_config = "data/env/A2_sep.yaml"
+        default_config = "data/env/A.yaml"
         if os.path.exists(default_config):
             print(f"Warning: metadata.yaml not found in {checkpoint_dir}")
             print(f"Using default environment config: {default_config}")
@@ -170,7 +170,7 @@ def _load_metadata_yaml(checkpoint_dir):
         else:
             raise FileNotFoundError(
                 f"metadata.yaml not found in {checkpoint_dir} and default config not found at {default_config}\n"
-                f"Please copy environment config: cp data/env/A2_sep.yaml {checkpoint_dir}/metadata.yaml"
+                f"Please copy environment config: cp data/env/A.yaml {checkpoint_dir}/metadata.yaml"
             )
 
     with open(metadata_path, 'r') as f:
@@ -260,6 +260,12 @@ class CleanRLPolicyWrapper:
         """
         obs_tensor = torch.from_numpy(np.array(obs, dtype=np.float32)).to(self.device)
 
+        # Ensure batch dimension exists
+        squeeze_output = False
+        if obs_tensor.dim() == 1:
+            obs_tensor = obs_tensor.unsqueeze(0)
+            squeeze_output = True
+
         with torch.no_grad():
             action_mean = self.actor_mean(obs_tensor)
 
@@ -270,6 +276,9 @@ class CleanRLPolicyWrapper:
                 action = dist.sample()
             else:
                 action = action_mean
+
+        if squeeze_output:
+            action = action.squeeze(0)
 
         return action.cpu().numpy()
 
