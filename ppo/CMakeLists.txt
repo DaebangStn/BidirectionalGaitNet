@@ -9,37 +9,9 @@ if(OPENMP_FOUND)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif()
 
-
-
 link_directories(../sim/)
 include_directories(../sim/)
 include_directories($ENV{CONDA_PREFIX}/include/eigen3)
-
-# GymEnvManager module (existing single-env wrapper)
-set(gymenv_srcs
-    GymEnvManager.cpp
-)
-add_library(gymenv SHARED ${gymenv_srcs})
-target_link_libraries(gymenv
-        ${Python3_LIBRARIES}
-        sim
-        pybind11::embed
-        ${TORCH_LIBRARIES}
-)
-set_target_properties(gymenv PROPERTIES PREFIX "" )
-
-# BatchEnv module (new high-performance batched wrapper)
-set(batchenv_srcs
-    BatchEnv.cpp
-)
-add_library(batchenv SHARED ${batchenv_srcs})
-target_link_libraries(batchenv
-        ${Python3_LIBRARIES}
-        sim
-        pybind11::embed
-        ${TORCH_LIBRARIES}
-)
-set_target_properties(batchenv PROPERTIES PREFIX "" )
 
 # BatchRolloutEnv module (autonomous C++ rollout with libtorch inference)
 # Includes PolicyNet and TrajectoryBuffer compiled directly
