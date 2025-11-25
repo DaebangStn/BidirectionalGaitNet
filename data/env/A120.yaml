@@ -40,7 +40,7 @@ environment:
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2
-      weight: 0.15
+      weight: 0.02
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:

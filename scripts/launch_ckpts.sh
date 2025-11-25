@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Define the directory containing your renamed checkpoints
-CHECKPOINT_DIR="./ray_results"
+CHECKPOINT_DIR="./runs"
+# CHECKPOINT_DIR="./ray_results"
 FILTER=""
 
 # Parse command line arguments

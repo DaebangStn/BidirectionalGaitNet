@@ -11,6 +11,7 @@ Expected performance: 2.0-2.3x speedup over BatchEnv (target: 900-1000 SPS)
 """
 
 import os
+import yaml
 import random
 import shutil
 import sys
@@ -37,8 +38,6 @@ from ppo.muscle_learner import MuscleLearner
 
 @dataclass
 class Args:
-    exp_name: str = "ppo_rollout_learner"
-    """the name of this experiment"""
     seed: int = 1
     """seed of the experiment"""
     torch_deterministic: bool = False
@@ -49,7 +48,7 @@ class Args:
     # Algorithm specific arguments
     env_file: str = "data/env/A2.yaml"
     """path to environment configuration file"""
-    total_timesteps: int = 100_000_000
+    total_timesteps: int = 200_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the initial learning rate of the optimizer"""
@@ -100,12 +99,12 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-    run_name: Optional[str] = None
-    """custom run name for TensorBoard logs (overrides auto-generated name)"""
     log_interval: int = 10
     """log progress every K iterations (for non-tty batch jobs)"""
     learn_std: bool = False
     """if True, log_std is learned (nn.Parameter); if False, constant"""
+    init_log_std: float = 1.0
+    """initial value for log_std (action noise)"""
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -114,13 +113,43 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     return layer
 
 
+def save_checkpoint(
+    checkpoint_path: str,
+    agent: nn.Module,
+    muscle_learner,
+    env_file: str,
+):
+    """Save a training checkpoint with agent, muscle network, and metadata.
+
+    Args:
+        checkpoint_path: Directory path to save checkpoint files
+        agent: PPO agent module
+        muscle_learner: Muscle learner (or None if not hierarchical)
+        env_file: Path to environment config file for metadata
+        verbose: Whether to print save messages
+    """
+    os.makedirs(checkpoint_path, exist_ok=True)
+
+    # Save policy agent checkpoint
+    torch.save(agent.state_dict(), f"{checkpoint_path}/agent.pt")
+
+    # Save muscle learner checkpoint if hierarchical
+    if muscle_learner is not None:
+        muscle_learner.save(f"{checkpoint_path}/muscle.pt")
+
+    # Save metadata (copy of env config for viewer compatibility)
+    shutil.copy(env_file, f"{checkpoint_path}/metadata.yaml")
+
+    print(f"Checkpoint saved to {checkpoint_path}")
+
+
 class Agent(nn.Module):
     """PPO agent with actor-critic architecture
 
     IMPORTANT: This must exactly match PolicyNet.cpp architecture for weight compatibility!
     """
 
-    def __init__(self, num_states, num_actions, learn_std=True):
+    def __init__(self, num_states, num_actions, learn_std=True, init_log_std=1.0):
         super().__init__()
 
         # Value network: 3 hidden layers of 512 units with ReLU
@@ -146,16 +175,13 @@ class Agent(nn.Module):
         )
 
         # Initialize log_std
-        init_log_std = torch.ones(num_actions)
-        if num_actions > 18:
-            init_log_std[18:] *= 0.5  # For upper body
-        init_log_std[-1] = 1.0  # For cascading
+        log_std_init = torch.ones(num_actions) * init_log_std
 
         self.learn_std = learn_std
         if learn_std:
-            self.actor_logstd = nn.Parameter(init_log_std.unsqueeze(0))
+            self.actor_logstd = nn.Parameter(log_std_init.unsqueeze(0))
         else:
-            self.register_buffer('actor_logstd', init_log_std.unsqueeze(0))
+            self.register_buffer('actor_logstd', log_std_init.unsqueeze(0))
 
     def get_value(self, x):
         return self.critic(x)
@@ -172,6 +198,17 @@ class Agent(nn.Module):
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
+
+    # Override args from YAML config if 'args' section exists
+    with open(args.env_file, 'r') as f:
+        env_config = yaml.safe_load(f)
+    if 'args' in env_config:
+        for key, value in env_config['args'].items():
+            if hasattr(args, key):
+                setattr(args, key, value)
+            else:
+                print(f"Warning: Unknown arg '{key}' in YAML config, ignoring")
+
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
@@ -192,11 +229,9 @@ if __name__ == "__main__":
         print("Suggestion: Decrease muscle_batch_size or increase num_envs/num_steps")
         sys.exit(1)
 
-    if args.run_name:
-        timestamp = time.strftime("%y%m%d_%H%M%S")
-        run_name = f"{args.run_name}/{timestamp}"
-    else:
-        run_name = f"{Path(args.env_file).stem}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    env_name = Path(args.env_file).stem
+    timestamp = time.strftime("%y%m%d_%H%M%S")
+    run_name = f"{env_name}/{timestamp}"
 
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
@@ -245,7 +280,7 @@ if __name__ == "__main__":
         print(f"Cascading mode: {use_cascading}")
 
     # Create main PPO agent
-    agent = Agent(num_states, num_actions, learn_std=args.learn_std).to(device)
+    agent = Agent(num_states, num_actions, learn_std=args.learn_std, init_log_std=args.init_log_std).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # Create muscle learner if hierarchical
@@ -452,25 +487,20 @@ if __name__ == "__main__":
 
             muscle_learn_time = (time.perf_counter() - muscle_learn_start) * 1000
 
-        # Checkpoint saving
-        if iteration % args.checkpoint_interval == 0:
+        # Checkpoint saving - either on interval or triggered by save_ckpt file
+        save_ckpt_trigger = Path(f"runs/{run_name}/save_ckpt")
+        if save_ckpt_trigger.exists():
+            save_ckpt_trigger.unlink()  # Remove trigger file
+            should_save_checkpoint = True
+        else:
+            should_save_checkpoint = iteration % args.checkpoint_interval == 0
+
+        if should_save_checkpoint:
             ckpt_timestamp = time.strftime("%m%d_%H%M%S")
-            checkpoint_name = f"{run_name.replace('/', '-')}-{iteration:05d}-{ckpt_timestamp}"
+            run_title = run_name.split('/')[0]
+            checkpoint_name = f"{run_title}-{iteration:05d}-{ckpt_timestamp}"
             checkpoint_path = f"runs/{run_name}/{checkpoint_name}"
-            os.makedirs(checkpoint_path, exist_ok=True)
-
-            # Save policy agent checkpoint
-            torch.save(agent.state_dict(), f"{checkpoint_path}/agent.pt")
-
-            # Save muscle learner checkpoint if hierarchical
-            if muscle_learner is not None:
-                muscle_learner.save(f"{checkpoint_path}/muscle.pt")
-
-            # Save metadata (copy of env config for viewer compatibility)
-            shutil.copy(args.env_file, f"{checkpoint_path}/metadata.yaml")
-
-            if not use_tqdm:
-                print(f"[Checkpoint] Saved at iteration {iteration}: {checkpoint_path}")
+            save_checkpoint(checkpoint_path, agent, muscle_learner, args.env_file)
 
         # ===== TENSORBOARD LOGGING (at end of iteration to prevent blocking) =====
         if iteration % args.log_interval == 0:
@@ -523,21 +553,8 @@ if __name__ == "__main__":
             writer.add_scalar("system/memory_percent", memory.percent, global_step)
             writer.add_scalar("system/memory_available_gb", memory.available / (1024**3), global_step)
 
-    # Save models
+    # Save final models
     model_path = f"runs/{run_name}"
-    os.makedirs(model_path, exist_ok=True)
-
-    # Save policy agent
-    torch.save(agent.state_dict(), f"{model_path}/agent.pt")
-    print(f"Policy agent saved to {model_path}/agent.pt")
-
-    # Save muscle learner if hierarchical
-    if muscle_learner is not None:
-        muscle_learner.save(f"{model_path}/muscle.pt")
-        print(f"Muscle network saved to {model_path}/muscle.pt")
-
-    # Save metadata (copy of env config for viewer compatibility)
-    shutil.copy(args.env_file, f"{model_path}/metadata.yaml")
-    print(f"Metadata saved to {model_path}/metadata.yaml")
+    save_checkpoint(model_path, agent, muscle_learner, args.env_file)
 
     writer.close()

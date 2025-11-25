@@ -30,7 +30,6 @@ environment:
   simulation:
     sim_hz: 300
     control_hz: 30
-    inference_per_sim: 1
 
   # Action and Control
   action:
@@ -38,7 +37,7 @@ environment:
     residual: true
     time_warping: 0.001  # -1 means disabled
     gait_phase_mode: "contact"  # "contact" or "phase"
-    contact_debounce_alpha: 0.25
+    contact_debounce_alpha: 0.4
   # Reward System
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
