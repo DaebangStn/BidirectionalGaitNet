@@ -1,0 +1,95 @@
+// Motion Data Flow Diagram
+// Shows the flow of data through the motion processing system
+
+digraph MotionDataFlow {
+    rankdir=LR;
+    node [shape=box, style="rounded,filled", fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Title
+    labelloc="t";
+    label="Motion Processing Data Flow";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    // ==================== INPUT FILES ====================
+    subgraph cluster_input {
+        label="Input Files";
+        style=filled;
+        fillcolor="#E8E8E8";
+
+        HDF5_File [label=".h5 / .hdf5\n(HDF Motion)", fillcolor="#FFE4B5"];
+        C3D_File [label=".c3d\n(Motion Capture)", fillcolor="#FFE4B5"];
+    }
+
+    // ==================== LOADING ====================
+    subgraph cluster_loading {
+        label="Loading Phase";
+        style=filled;
+        fillcolor="#E8F4FD";
+
+        HDF_Load [label="HDF Class\nParse HDF5\nExtract motion data\nExtract parameters", fillcolor="#87CEEB"];
+        C3D_Load [label="C3D_Reader\nParse C3D markers\nPerform IK\nGenerate skeleton poses", fillcolor="#87CEEB"];
+    }
+
+    // ==================== MOTION OBJECTS ====================
+    subgraph cluster_motion {
+        label="Motion Objects";
+        style=filled;
+        fillcolor="#E8FDE8";
+
+        HDF_Motion [label="HDF Object\n• Raw motion data\n• Parameter values\n• Timestamps", fillcolor="#90EE90"];
+        C3D_Motion [label="C3DMotion Object\n• Skeleton poses\n• Marker positions\n• IK-converted data", fillcolor="#90EE90"];
+    }
+
+    // ==================== PROCESSORS ====================
+    subgraph cluster_process {
+        label="Processing Phase";
+        style=filled;
+        fillcolor="#FFF8E8";
+
+        HDF_Proc [label="HDFMotionProcessor\n• Compute frame index\n• Interpolate pose\n• Apply offsets", fillcolor="#FFD700"];
+        C3D_Proc [label="C3DMotionProcessor\n• Compute frame index\n• Interpolate pose\n• Interpolate markers\n• Apply offsets", fillcolor="#FFD700"];
+    }
+
+    // ==================== OUTPUT ====================
+    subgraph cluster_output {
+        label="Output (Context)";
+        style=filled;
+        fillcolor="#FDE8E8";
+
+        Context [label="MotionProcessorContext\n• currentPose\n• currentMarkers (C3D only)\n• frameIndex\n• cycleAccumulation", fillcolor="#FF6B6B"];
+    }
+
+    // ==================== RENDERING ====================
+    subgraph cluster_render {
+        label="Rendering";
+        style=filled;
+        fillcolor="#E8E8FD";
+
+        Skeleton [label="GLFWApp::drawSkeleton\nRender skeleton pose", fillcolor="#9370DB"];
+        Markers [label="GLFWApp::drawPlayableMarkers\nRender marker spheres\n(C3D only)", fillcolor="#9370DB"];
+    }
+
+    // ==================== EDGES ====================
+
+    // Input to Loading
+    HDF5_File -> HDF_Load;
+    C3D_File -> C3D_Load;
+
+    // Loading to Motion Objects
+    HDF_Load -> HDF_Motion;
+    C3D_Load -> C3D_Motion;
+
+    // Motion Objects to Processors
+    HDF_Motion -> HDF_Proc;
+    C3D_Motion -> C3D_Proc;
+
+    // Processors to Context
+    HDF_Proc -> Context;
+    C3D_Proc -> Context;
+
+    // Context to Rendering
+    Context -> Skeleton [label="currentPose"];
+    Context -> Markers [label="currentMarkers\n(if hasMarkers)"];
+}

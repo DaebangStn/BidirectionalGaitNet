@@ -48,7 +48,7 @@ class Args:
     # Algorithm specific arguments
     env_file: str = "data/env/A2.yaml"
     """path to environment configuration file"""
-    total_timesteps: int = 200_000_000
+    total_timesteps: int = 100_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the initial learning rate of the optimizer"""
@@ -175,7 +175,11 @@ class Agent(nn.Module):
         )
 
         # Initialize log_std
-        log_std_init = torch.ones(num_actions) * init_log_std
+        log_std_init = torch.ones(num_actions)
+        if num_actions > 18:
+            log_std_init[18:] *= 0.5 # For upper body
+        log_std_init[-1] = 1.0 # For cascading
+        log_std_init = log_std_init * init_log_std
 
         self.learn_std = learn_std
         if learn_std:

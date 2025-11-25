@@ -40,8 +40,8 @@ public:
 
     void setRefMotion(Character* character, dart::simulation::WorldPtr world) override;
 
-    std::string getSourceType() const override { return "hdfSingle"; }
-    std::string getLogHeader() const override { return "[HDF Single]"; }
+    std::string getSourceType() const override { return "hdf"; }
+    std::string getLogHeader() const override { return "[HDF]"; }
 
     bool hasParameters() const override { return !mParameterNames.empty(); }
     std::vector<std::string> getParameterNames() const override { return mParameterNames; }

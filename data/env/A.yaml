@@ -1,6 +1,5 @@
-  args:
-    init_log_std: 0.5
-
+args:
+  init_log_std: 0.5
 
 environment:
   # Skeleton and Character

@@ -22,6 +22,19 @@ add_executable(viewer
     "GLfunctions.cpp"
     "C3D_Reader.h"
     "C3D_Reader.cpp"
+    # Motion processor infrastructure
+    "motion/IMotionProcessor.h"
+    "motion/PlaybackContext.h"
+    "motion/PlaybackController.h"
+    "motion/PlaybackController.cpp"
+    "motion/MotionProcessorFactory.h"
+    "motion/MotionProcessorFactory.cpp"
+    # HDF motion processor
+    "motion/HDFMotionProcessor.h"
+    "motion/HDFMotionProcessor.cpp"
+    # C3D motion processor
+    "motion/C3DMotionProcessor.h"
+    "motion/C3DMotionProcessor.cpp"
 )
 target_link_libraries(viewer
         ${Python3_LIBRARIES}

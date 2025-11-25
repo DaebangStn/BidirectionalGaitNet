@@ -5,12 +5,9 @@
 #include "CBufferData.h"
 #include "RenderEnvironment.h"
 #include "Character.h"
-#include "BVH_Parser.h"
 #include "Motion.h"
 #include "HDF.h"
-#include "NPZ.h"
-#include "HDFRollout.h"
-#include "C3D.h"
+#include "C3DMotion.h"  // C3D motion with markers
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -167,9 +164,8 @@ private:
     Eigen::Vector3d computeMotionCycleDistance(Motion* motion);
     Eigen::Vector3d computeMarkerCycleDistance(C3D* markerData);
 
-    void writeBVH(const dart::dynamics::Joint *jn, std::ofstream &_f, const bool isPos = false); // Pose Or Hierarchy
-    void exportBVH(const std::vector<Eigen::VectorXd> &motion, const dart::dynamics::SkeletonPtr &skel);
-    
+    // REMOVED: writeBVH(), exportBVH() - BVH format no longer supported
+
     void plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis = ImAxis_Y1,
         std::string postfix = "", bool show_stat = false, int color_ofs = 0);
 
@@ -423,7 +419,7 @@ private:
                                        Character* character,
                                        int value_per_frame);
 
-    std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads all types (npz, hdfRollout, hdfSingle, bvh)
+    std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads HDF and C3D
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
         
         // (1) Set Motion Skeleton
@@ -547,10 +543,7 @@ private:
     void loadNetworkFromPath(const std::string& path);
     void initializeMotionSkeleton();
     void loadMotionFiles();
-    void loadNPZMotion();
-    void loadHDFRolloutMotion();
-    void loadBVHMotion();
-    void loadHDFSingleMotion();
+    void loadHDFMotion();  // Renamed from loadHDFSingleMotion
     void updateUnifiedKeys();
     void updateResizablePlotsFromKeys();
     void runRollout();

@@ -590,6 +590,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
     // === Action ===
     double contactDebounceAlpha = 0.25;  // Default value
+    double stepMinRatio = 0.3;  // Default value
     if (env["action"]) {
         auto action = env["action"];
         if (action["time_warping"])
@@ -598,6 +599,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             gaitUpdateMode = action["gait_phase_mode"].as<std::string>("phase");
         if (action["contact_debounce_alpha"])
             contactDebounceAlpha = action["contact_debounce_alpha"].as<double>(0.25);
+        if (action["step_min_ratio"])
+            stepMinRatio = action["step_min_ratio"].as<double>(0.3);
     }
 
     // === mAction sizing ===
@@ -1046,6 +1049,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     GaitPhase::UpdateMode mode = (gaitUpdateMode == "contact") ? GaitPhase::CONTACT : GaitPhase::PHASE;
     mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, mode, mControlHz, mSimulationHz);
     mGaitPhase->setContactDebounceAlpha(contactDebounceAlpha);
+    mGaitPhase->setStepMinRatio(stepMinRatio);
 }
 
 void Environment::addCharacter(std::string path, bool collide_all)
