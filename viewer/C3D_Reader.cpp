@@ -26,7 +26,7 @@ Eigen::MatrixXd getRotationMatrixFromPoints(Eigen::Vector3d p0, Eigen::Vector3d 
     return R;
 }
 
-C3D_Reader::C3D_Reader(std::string marker_path, Character *character)
+C3D_Reader::C3D_Reader(std::string marker_path, RenderCharacter *character)
 {
     mCharacter = character;
     mVirtSkeleton = character->getSkeleton();  // Get skeleton from Character

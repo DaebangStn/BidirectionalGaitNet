@@ -1,6 +1,6 @@
 #include "PlaybackController.h"
 #include "Motion.h"
-#include "Character.h"
+#include "../RenderCharacter.h"
 #include "../GLFWApp.h"  // For PlaybackViewerState, PlaybackNavigationMode
 
 #include <algorithm>
@@ -146,7 +146,7 @@ void PlaybackController::updateCycleAccumulationStandard(PlaybackViewerState& st
 Eigen::VectorXd PlaybackController::interpolatePose(const Eigen::VectorXd& p1,
                                                     const Eigen::VectorXd& p2,
                                                     double weight,
-                                                    Character* character,
+                                                    RenderCharacter* character,
                                                     bool phaseOverflow)
 {
     if (!character) {
@@ -160,7 +160,7 @@ Eigen::VectorXd PlaybackController::interpolatePose(const Eigen::VectorXd& p1,
 
 Eigen::VectorXd PlaybackController::evaluatePose(Motion* motion,
                                                  double frameFloat,
-                                                 Character* character,
+                                                 RenderCharacter* character,
                                                  const Eigen::Vector3d& cycleAccumulation,
                                                  const Eigen::Vector3d& displayOffset)
 {
@@ -252,7 +252,7 @@ Eigen::Vector3d PlaybackController::computeCycleDistance(Motion* motion)
 // ==================== Height Calibration ====================
 
 double PlaybackController::computeHeightCalibration(const Eigen::VectorXd& pose,
-                                                    Character* character)
+                                                    RenderCharacter* character)
 {
     if (!character || !character->getSkeleton() || pose.size() == 0)
         return 0.0;

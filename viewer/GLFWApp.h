@@ -4,7 +4,7 @@
 #include "ShapeRenderer.h"
 #include "CBufferData.h"
 #include "RenderEnvironment.h"
-#include "Character.h"
+#include "RenderCharacter.h"
 #include "Motion.h"
 #include "HDF.h"
 #include "C3D.h"  // C3D motion with markers
@@ -183,6 +183,7 @@ private:
     void update(bool isSave = false);
     void reset();
     void updateViewerTime(double dt);  // Update viewer time, phase, and motion state
+    void computeViewerMetric();        // Compute marker error metrics for C3D playback
 
     void setWindowIcon(const char* icon_path);
 
@@ -193,13 +194,12 @@ private:
     void drawUIFrame();
     void drawSimControlPanel();
     void drawKinematicsControlPanel();
-    void drawSimVisualizationPanel();
+    void drawVisualizationPanel();
     void drawTimingPane();
     void drawTitlePanel();
     void drawResizablePlotPane();
     void drawCameraStatusSection();
     void drawPlayableMotion();
-    void drawPlayableMarkers();
 
     // Helper to check if current motion is from a specific source
     bool isCurrentMotionFromSource(const std::string& sourceType, const std::string& sourceFile);
@@ -267,7 +267,7 @@ private:
 
     GLFWwindow *mWindow;
     RenderEnvironment *mRenderEnv;
-    Character *mMotionCharacter;
+    RenderCharacter *mMotionCharacter;
 
 
     ShapeRenderer mShapeRenderer;
@@ -340,6 +340,7 @@ private:
     C3D_Reader* mC3DReader;
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
     bool mRenderC3DMarkers;
+    bool mRenderExpectedMarkers;  // Draw expected markers (computed from skeleton)
 
 
     // For GVAE
@@ -371,7 +372,7 @@ private:
     {
         Motion* motion = nullptr;
         PlaybackViewerState* state = nullptr;
-        Character* character = nullptr;
+        RenderCharacter* character = nullptr;
         double phase = 0.0;
         double frameFloat = 0.0;
         double wrappedFrameFloat = 0.0;
@@ -403,7 +404,7 @@ private:
     void updateMotionCycleAccumulation(Motion* current_motion,
                                        PlaybackViewerState& state,
                                        int current_frame_idx,
-                                       Character* character,
+                                       RenderCharacter* character,
                                        int value_per_frame);
 
     std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads HDF and C3D

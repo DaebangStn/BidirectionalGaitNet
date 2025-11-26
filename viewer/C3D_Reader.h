@@ -4,7 +4,7 @@
 #define C3D_READER_H
 #include "Environment.h"
 #include "GLfunctions.h"
-#include "Character.h"
+#include "RenderCharacter.h"
 #include "C3D.h"
 #include <ezc3d/ezc3d_all.h>
 
@@ -42,7 +42,7 @@ struct MocapMarker
 class C3D_Reader
 {
     public:
-        C3D_Reader(std::string marker_path, Character *character);
+        C3D_Reader(std::string marker_path, RenderCharacter *character);
         ~C3D_Reader();
 
         int getFrameRate() { return mFrameRate; }
@@ -156,7 +156,7 @@ class C3D_Reader
         std::vector<Eigen::VectorXd> convertFramesToSkeletonPoses(const ezc3d::c3d& c3d, size_t numFrames);
         void applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion, C3D* markerData);
 
-        Character *mCharacter;
+        RenderCharacter *mCharacter;
         SkeletonPtr mVirtSkeleton;
 
         std::vector<BoneInfo> mSkelInfos;

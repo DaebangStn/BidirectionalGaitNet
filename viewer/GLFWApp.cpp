@@ -200,6 +200,10 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mGraphData->register_key("stride_length", 1000);
     mGraphData->register_key("phase_total", 1000);
 
+    // Marker error metrics (C3D IK fitting error)
+    mGraphData->register_key("marker_error_mean", 500);
+    mGraphData->register_key("marker_error_max", 500);
+
     // Forward GaitNEt
     selected_fgn = 0;
 
@@ -210,7 +214,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mSelectedMotion = -1;
 
     mFocus = 1;
-    mRenderC3DMarkers = false;
+    mRenderC3DMarkers = true;
+    mRenderExpectedMarkers = true;
 
     mTrackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
     mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
@@ -743,7 +748,7 @@ void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
 
     // Compute statistics for current plot range if show_stat is enabled
     std::map<std::string, std::map<std::string, double>> stats;
-    if (show_stat && mRenderEnv)
+    if (show_stat)
     {
         ImPlotRect limits = ImPlot::GetPlotLimits();
         stats = statGraphData(keys, limits.X.Min, limits.X.Max);
@@ -834,19 +839,18 @@ GLFWApp::statGraphData(const std::vector<std::string>& keys, double xMin, double
 {
     std::map<std::string, std::map<std::string, double>> result;
 
-    if (!mGraphData || !mRenderEnv)
+    if (!mGraphData) {
+        LOG_WARN("[StatGraphData] mGraphData not found");
         return result;
+    }
 
-    double timeStep = mRenderEnv->getWorld()->getTimeStep();
+    const double timeStep = (mRenderEnv ? mRenderEnv->getWorld()->getTimeStep() : 1.0);
 
     for (const auto& key : keys)
     {
-        if (!mGraphData->key_exists(key))
-            continue;
-
+        if (!mGraphData->key_exists(key)) continue;
         std::vector<double> values = mGraphData->get(key);
-        if (values.empty())
-            continue;
+        if (values.empty()) continue;
 
         int bufferSize = static_cast<int>(values.size());
         std::vector<double> filteredValues;
@@ -1174,7 +1178,8 @@ void GLFWApp::initializeMotionCharacter(const std::string& metadata)
 
     try {
         mSkeletonPath = skelPath;
-        mMotionCharacter = new Character(mSkeletonPath);
+        mMotionCharacter = new RenderCharacter(mSkeletonPath);
+        mMotionCharacter->loadMarkers("data/marker_set.xml");
         LOG_INFO("[Motion] Initialized standalone motion character from: " << mSkeletonPath);
     } catch (const std::exception& e) {
         LOG_ERROR("[Motion] Failed to create motion character: " << e.what());
@@ -1541,7 +1546,9 @@ void GLFWApp::drawKinematicsControlPanel()
 
             // Show marker checkbox only when C3D motion is loaded
             if (mMotion && mMotion->getSourceType() == "c3d") {
-                ImGui::Checkbox("Draw C3D Markers", &mRenderC3DMarkers);
+                ImGui::Checkbox("Markers (data)", &mRenderC3DMarkers);
+                ImGui::SameLine();
+                ImGui::Checkbox("Markers (skel)", &mRenderExpectedMarkers);
             }
 
             ImGui::TreePop();
@@ -1713,20 +1720,52 @@ void GLFWApp::drawKinematicsControlPanel()
         mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
 }
 
-void GLFWApp::drawSimVisualizationPanel()
+void GLFWApp::drawVisualizationPanel()
 {   
     ImGui::SetNextWindowPos(ImVec2(mWidth - mPlotPanelWidth - 10, 10), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight - 80), ImGuiCond_Appearing);
+    ImGui::Begin("Visualization");
+
+    // Plot X-axis range control (available without mRenderEnv)
+    if (ImGui::Button("HS")) mXmin = getHeelStrikeTime();
+    ImGui::SameLine();
+    if (ImGui::Button("1.1")) mXmin = -1.1;
+    ImGui::SameLine();
+    mPlotHideLegend = ImGui::Button("Hide"); ImGui::SameLine();
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(30);
+    ImGui::InputDouble("X(min)", &mXmin);
+
+    // Plot title control
+    ImGui::Checkbox("Title##PlotTitleCheckbox", &mPlotTitle);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Show checkpoint name as plot titles)");
+
+    // Marker Error Plot (for C3D playback, available without mRenderEnv)
+    if (mMotion && mMotion->getSourceType() == "c3d") {
+        if (ImGui::CollapsingHeader("Marker Error", ImGuiTreeNodeFlags_DefaultOpen)) {
+            static bool showMarkerStats = true;
+            ImGui::Checkbox("Stats##MarkerError", &showMarkerStats);
+
+            std::string title_marker = mPlotTitle ? mCheckpointName : "Marker Error (m)";
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -100, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0.0, 0.3, ImGuiCond_Once);
+            if (ImPlot::BeginPlot((title_marker + "##MarkerDiff").c_str(), ImVec2(-1, 300))) {
+                ImPlot::SetupAxes("Time (s)", "Error (m)");
+                plotGraphData({"marker_error_mean", "marker_error_max"}, ImAxis_Y1, "", showMarkerStats);
+                ImPlot::EndPlot();
+            }
+        }
+    }
+
     if (!mRenderEnv)
     {
-        ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, 200), ImGuiCond_Always);
-        ImGui::Begin("Sim visualization##1", nullptr, ImGuiWindowFlags_NoCollapse);
         ImGui::Text("Environment not loaded.");
 
         ImGui::End();
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight - 80), ImGuiCond_Appearing);
-    ImGui::Begin("Sim visualization##2");
 
     // Status
     if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1787,21 +1826,6 @@ void GLFWApp::drawSimVisualizationPanel()
         else
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Rollout: %d cycles remaining", mRolloutStatus.cycle);
     }
-
-    // Plot X-axis range control
-    if (ImGui::Button("HS")) mXmin = getHeelStrikeTime();
-    ImGui::SameLine();
-    if (ImGui::Button("1.1")) mXmin = -1.1;
-    ImGui::SameLine();
-    mPlotHideLegend = ImGui::Button("Hide"); ImGui::SameLine();
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(30);
-    ImGui::InputDouble("X(min)", &mXmin);
-
-    // Plot title control
-    ImGui::Checkbox("Title##PlotTitleCheckbox", &mPlotTitle);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(Show checkpoint name as plot titles)");
 
     // Center of Mass Trajectory
     if (collapsingHeaderWithControls("COM Trajectory"))
@@ -3936,7 +3960,7 @@ void GLFWApp::drawUIFrame()
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     drawSimControlPanel();
-    drawSimVisualizationPanel();
+    drawVisualizationPanel();
     drawKinematicsControlPanel();
     drawTimingPane();
     drawTitlePanel();
@@ -4230,19 +4254,29 @@ void GLFWApp::drawPlayableMotion()
     if (mMotion == nullptr ||
         mMotionState.currentPose.size() == 0 ||
         mMotionState.render == false) return;
-    
+
     // Draw skeleton
     drawSkeleton(mMotionState.currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
 
-    // For C3D, also draw markers
-    Motion* motion = mMotion;
-    PlaybackViewerState& state = mMotionState;
+    // For C3D, draw markers
+    if (mMotion->getSourceType() == "c3d") {
+        // 1. Data markers (from C3D capture) - green
+        if (mRenderC3DMarkers && !mMotionState.currentMarkers.empty()) {
+            glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
+            for (const auto& marker : mMotionState.currentMarkers) {
+                if (!marker.array().isFinite().all()) continue;
+                GUI::DrawSphere(marker, 0.0125);
+            }
+        }
 
-    if (motion->getSourceType() == "c3d") {
-        glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
-        for (const auto& marker : state.currentMarkers) {
-            if (!marker.array().isFinite().all()) continue;
-            GUI::DrawSphere(marker, 0.0125);
+        // 2. Skeleton markers (expected from skeleton pose) - red
+        if (mRenderExpectedMarkers && mMotionCharacter && mMotionCharacter->hasMarkers()) {
+            glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+            auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
+            for (const auto& marker : expectedMarkers) {
+                if (!marker.array().isFinite().all()) continue;
+                GUI::DrawSphere(marker, 0.0125);
+            }
         }
     }
 }
@@ -4264,23 +4298,6 @@ bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std
 
     // For other types, check if getName() contains the file
     return motion->getName().find(sourceFile) != std::string::npos;
-}
-
-void GLFWApp::drawPlayableMarkers()
-{
-    // Marker positions are computed in updateViewerTime(), this function only renders
-    // Now uses mMotion's markers (C3D) instead of separate mC3DMarkers
-    if (!mMotion || mMotion->getSourceType() != "c3d") return;
-    if (!mRenderC3DMarkers || mMotionState.currentMarkers.empty()
-        || mMotionState.render == false) return;
-
-    glColor4f(1.0f, 0.4f, 0.2f, 1.0f);
-    Eigen::Vector3d offset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
-
-    for (const auto& marker : mMotionState.currentMarkers) {
-        if (!marker.array().isFinite().all()) continue;
-        GUI::DrawSphere(marker + offset, 0.0125);
-    }
 }
 
 void GLFWApp::drawSimFrame()
@@ -4401,10 +4418,6 @@ void GLFWApp::drawSimFrame()
         // Then: res = mFGN.attr("get_action")(FGN_in).cast<Eigen::VectorXd>();
         // Then: drawSkeleton with converted position
     }
-
-
-    // Draw C3D markers (parallel to drawPlayableMotion for motions)
-    drawPlayableMarkers();
 
     // BVH motions now drawn via drawPlayableMotion() (integrated into mMotions)
 
@@ -4660,7 +4673,9 @@ bool GLFWApp::computeMotionPlayback(MotionPlaybackContext& context)
 
     context.motion = mMotion;
     context.state = &mMotionState;
-    context.character = mRenderEnv ? mRenderEnv->getCharacter() : mMotionCharacter;
+    // Always use mMotionCharacter (RenderCharacter) for motion playback interpolation
+    // mRenderEnv->getCharacter() is only for simulation-specific operations
+    context.character = mMotionCharacter;
 
     if (!context.motion || !context.state || !context.character)
         return false;
@@ -4830,7 +4845,7 @@ double GLFWApp::determineMotionFrame(Motion* motion, PlaybackViewerState& state,
 void GLFWApp::updateMotionCycleAccumulation(Motion* current_motion,
                                             PlaybackViewerState& state,
                                             int current_frame_idx,
-                                            Character* character,
+                                            RenderCharacter* character,
                                             int value_per_frame)
 {
     if (!current_motion || value_per_frame <= 0)
@@ -4984,6 +4999,42 @@ double GLFWApp::computeMarkerHeightCalibration(const std::vector<Eigen::Vector3d
 // Note: alignMarkerToSimulation removed - marker alignment now handled through
 // mMotionState when C3D motion is loaded via alignMotionToSimulation()
 
+void GLFWApp::computeViewerMetric()
+{
+    // Only compute for C3D motions with markers
+    if (!mMotion || mMotion->getSourceType() != "c3d") return;
+    if (!mMotionCharacter || !mMotionCharacter->hasMarkers()) return;
+    if (mMotionState.currentMarkers.empty()) return;
+
+    // Get expected markers from skeleton pose
+    auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
+
+    // Compute per-marker difference and aggregate metrics
+    double totalError = 0.0;
+    double maxError = 0.0;
+    int validCount = 0;
+
+    size_t count = std::min(mMotionState.currentMarkers.size(), expectedMarkers.size());
+    for (size_t i = 0; i < count; ++i) {
+        const auto& dataMarker = mMotionState.currentMarkers[i];
+        const auto& skelMarker = expectedMarkers[i];
+
+        if (!dataMarker.array().isFinite().all()) continue;
+        if (!skelMarker.array().isFinite().all()) continue;
+
+        double error = (dataMarker - skelMarker).norm();
+        totalError += error;
+        maxError = std::max(maxError, error);
+        validCount++;
+    }
+
+    double meanError = (validCount > 0) ? totalError / validCount : 0.0;
+
+    // Push to graph data
+    mGraphData->push("marker_error_mean", meanError);
+    mGraphData->push("marker_error_max", maxError);
+}
+
 void GLFWApp::updateViewerTime(double dt)
 {
     ViewerClock clock = updateViewerClock(dt);
@@ -5000,6 +5051,7 @@ void GLFWApp::updateViewerTime(double dt)
     }
 
     evaluateMotionPlayback(motionContext);
+    computeViewerMetric();
 }
 
 void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)

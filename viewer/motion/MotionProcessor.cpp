@@ -4,7 +4,7 @@
 #include "HDF.h"
 #include "C3D.h"
 #include "Motion.h"
-#include "Character.h"
+#include "../RenderCharacter.h"
 #include "Environment.h"
 #include "../C3D_Reader.h"
 #include "../GLFWApp.h"  // For PlaybackViewerState, PlaybackNavigationMode, DrawFlags
@@ -43,7 +43,7 @@ std::string MotionProcessor::extractExtension(const std::string& path)
 // ==================== Core Operations ====================
 
 Motion* MotionProcessor::load(const std::string& path,
-                               Character* character,
+                               RenderCharacter* character,
                                WorldPtr world)
 {
     std::string ext = extractExtension(path);
@@ -72,11 +72,6 @@ Motion* MotionProcessor::load(const std::string& path,
         std::cerr << "[MotionProcessor::load] Unsupported file extension: " << ext << std::endl;
         return nullptr;
     }
-
-    if (motion) {
-        motion->setRefMotion(character, world);
-    }
-
     return motion;
 }
 
@@ -84,7 +79,7 @@ MotionProcessorContext MotionProcessor::computePlayback(Motion* motion,
                                                          double viewerTime,
                                                          double viewerPhase,
                                                          PlaybackViewerState& state,
-                                                         Character* character)
+                                                         RenderCharacter* character)
 {
     MotionProcessorContext context;
     context.reset();
@@ -154,7 +149,7 @@ MotionProcessorContext MotionProcessor::computePlayback(Motion* motion,
 }
 
 void MotionProcessor::render(const MotionProcessorContext& context,
-                              Character* character,
+                              RenderCharacter* character,
                               ShapeRenderer* renderer,
                               const DrawFlags& flags)
 {
@@ -242,7 +237,7 @@ std::vector<Eigen::Vector3d> MotionProcessor::getInterpolatedMarkers(Motion* mot
 // ==================== Direct Pose Evaluation (Public) ====================
 
 Eigen::VectorXd MotionProcessor::evaluatePoseAtFrame(Motion* motion, double frameFloat,
-                                                      Character* character, const PlaybackViewerState& state)
+                                                      RenderCharacter* character, const PlaybackViewerState& state)
 {
     // Delegate to private evaluatePose
     return evaluatePose(motion, frameFloat, character, state);
@@ -275,7 +270,7 @@ std::vector<Eigen::Vector3d> MotionProcessor::getMarkersAtFrameWithOffsets(Motio
 
 Eigen::VectorXd MotionProcessor::evaluatePose(Motion* motion,
                                                double frameFloat,
-                                               Character* character,
+                                               RenderCharacter* character,
                                                const PlaybackViewerState& state)
 {
     if (!motion || !character) {

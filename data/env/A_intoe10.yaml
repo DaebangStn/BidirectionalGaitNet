@@ -1,7 +1,4 @@
-# Training Configuration
-training:
-  max_epoch: 12002
-  checkpoint_freq: 1000
+# args:
 
 environment:
   # Skeleton and Character
@@ -11,19 +8,12 @@ environment:
     kp: 200
     kv: 40
     damping: 0.1
-
-  # Ground/World
-  ground:
-    file: "@data/ground.xml"
+    self_collide: true
 
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
     file: "@data/motion/walk.h5"
-    cyclic: true
-    height_calibration:
-      enabled: true
-      strict: true
 
   # Muscle System
   muscle:
@@ -37,31 +27,20 @@ environment:
 
   # Simulation Timing
   simulation:
-    sim_hz: 480
+    sim_hz: 180
     control_hz: 30
-    inference_per_sim: 1
 
   # Action and Control
   action:
     scale: 0.04
-    residual: true
     time_warping: 0.001  # -1 means disabled
-
-  # Advanced Behavior
-  advanced:
-    enforce_symmetry: true
-    hard_phase_clipping: true
-    soft_phase_clipping: false
-    torque_clipping: false
-    include_jtp_in_spd: false
-    use_normalized_param_state: false
-    learning_std: false
-    stance_learning: false
+    gait_phase_mode: "contact"  # "contact" or "phase"
+    contact_debounce_alpha: 0.4
+    step_min_ratio: 0.1
 
   # Reward System
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
-    eoe_type: "tuple"  # tuple or time
 
     # Metabolic configuration
     metabolic:
@@ -77,8 +56,21 @@ environment:
     locomotion:
       head_linear_acc_weight: 4.0
       head_rot_weight: 4.0
-      step_weight: 2.0
-      avg_vel_weight: 6.0
+      step:
+        weight: 2.0
+        clip: 0.05  # Z-axis clipping value (forward progression tolerance)
+      avg_vel:
+        weight: 4.0
+        window_mult: 1.0
+        clip: 0.2  # clip velocity difference magnitude
+        consider_x: false
+      dragX:
+        use: true
+        weight: 1.0
+        threshold: 0.2
+      phase:
+        use: false
+        weight: 1.0
 
     # Penalty/auxiliary rewards
     knee_pain:

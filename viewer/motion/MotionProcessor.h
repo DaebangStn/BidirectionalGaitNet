@@ -7,7 +7,7 @@
 
 // Forward declarations
 class Motion;
-class Character;
+class RenderCharacter;
 class Environment;
 class C3D_Reader;
 struct PlaybackViewerState;
@@ -66,7 +66,7 @@ public:
      * @param world Simulation world for calibration
      * @return Loaded Motion object (caller takes ownership), nullptr on failure
      */
-    Motion* load(const std::string& path, Character* character, WorldPtr world);
+    Motion* load(const std::string& path, RenderCharacter* character, WorldPtr world);
 
     /**
      * @brief Compute playback context for current time
@@ -81,7 +81,7 @@ public:
                                            double viewerTime,
                                            double viewerPhase,
                                            PlaybackViewerState& state,
-                                           Character* character);
+                                           RenderCharacter* character);
 
     /**
      * @brief Render motion at computed context
@@ -91,7 +91,7 @@ public:
      * @param flags Draw flags for visualization options
      */
     void render(const MotionProcessorContext& context,
-                Character* character,
+                RenderCharacter* character,
                 ShapeRenderer* renderer,
                 const DrawFlags& flags);
 
@@ -168,7 +168,7 @@ public:
      * @return Interpolated pose with position offsets applied
      */
     Eigen::VectorXd evaluatePoseAtFrame(Motion* motion, double frameFloat,
-                                        Character* character, const PlaybackViewerState& state);
+                                        RenderCharacter* character, const PlaybackViewerState& state);
 
     /**
      * @brief Update markers at specific frame (for C3D motions)
@@ -216,7 +216,7 @@ private:
      */
     Eigen::VectorXd evaluatePose(Motion* motion,
                                  double frameFloat,
-                                 Character* character,
+                                 RenderCharacter* character,
                                  const PlaybackViewerState& state);
 
     /**

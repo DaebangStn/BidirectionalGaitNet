@@ -6,7 +6,7 @@
 // Forward declarations
 class Motion;
 struct PlaybackViewerState;
-class Character;
+class RenderCharacter;
 
 /**
  * @brief Unified playback context for motion processing
@@ -24,7 +24,7 @@ struct MotionProcessorContext {
     // ==================== Source References ====================
     Motion* motion = nullptr;               ///< Motion being played
     PlaybackViewerState* state = nullptr;   ///< Associated playback state
-    Character* character = nullptr;         ///< Character for interpolation
+    RenderCharacter* character = nullptr;   ///< Character for interpolation
 
     // ==================== Time State ====================
     double viewerTime = 0.0;                ///< Current viewer time in seconds

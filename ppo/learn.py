@@ -48,7 +48,7 @@ class Args:
     # Algorithm specific arguments
     env_file: str = "data/env/A2.yaml"
     """path to environment configuration file"""
-    total_timesteps: int = 100_000_000
+    total_timesteps: int = 150_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the initial learning rate of the optimizer"""
@@ -329,7 +329,17 @@ if __name__ == "__main__":
         if not use_tqdm and iteration % args.log_interval == 0:
             elapsed = time.time() - start_time
             sps = int(global_step / elapsed) if elapsed > 0 else 0
-            print(f"[Iteration {iteration}/{args.num_iterations}] Steps: {global_step}, SPS: {sps}, Elapsed: {elapsed:.1f}s")
+            # Calculate ETA
+            remaining_iterations = args.num_iterations - iteration
+            if sps > 0:
+                remaining_steps = remaining_iterations * args.batch_size
+                eta_seconds = remaining_steps / sps
+                eta_hours = int(eta_seconds // 3600)
+                eta_minutes = int((eta_seconds % 3600) // 60)
+                eta_str = f"{eta_hours}h {eta_minutes}m"
+            else:
+                eta_str = "N/A"
+            print(f"[Iteration {iteration}/{args.num_iterations}] Steps: {global_step}, SPS: {sps}, Elapsed: {elapsed:.1f}s, ETA: {eta_str}")
 
         # Annealing the rate if instructed to do so
         if args.anneal_lr:

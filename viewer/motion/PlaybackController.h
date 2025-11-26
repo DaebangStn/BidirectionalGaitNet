@@ -7,7 +7,7 @@
 
 // Forward declarations
 class Motion;
-class Character;
+class RenderCharacter;
 struct PlaybackViewerState;
 
 /**
@@ -117,7 +117,7 @@ public:
     static Eigen::VectorXd interpolatePose(const Eigen::VectorXd& p1,
                                            const Eigen::VectorXd& p2,
                                            double weight,
-                                           Character* character,
+                                           RenderCharacter* character,
                                            bool phaseOverflow);
 
     /**
@@ -137,7 +137,7 @@ public:
      */
     static Eigen::VectorXd evaluatePose(Motion* motion,
                                         double frameFloat,
-                                        Character* character,
+                                        RenderCharacter* character,
                                         const Eigen::Vector3d& cycleAccumulation,
                                         const Eigen::Vector3d& displayOffset);
 
@@ -167,5 +167,5 @@ public:
      * @return Height offset value
      */
     static double computeHeightCalibration(const Eigen::VectorXd& pose,
-                                           Character* character);
+                                           RenderCharacter* character);
 };
