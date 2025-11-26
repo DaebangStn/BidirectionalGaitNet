@@ -50,3 +50,41 @@ python ppo/ppo_hierarchical.py \
     --total-timesteps 50000000 \
     --muscle-batch-size 4096
 ```
+
+## Checkpointing and Resume
+
+### Checkpoint Types
+
+| Mode | Files Saved | Use Case |
+|------|-------------|----------|
+| Default | agent.pt, muscle.pt, metadata.yaml | Inference/rendering only |
+| `--save_optimizer` | + optimizer.pt, muscle.opt.pt, training_state.pt | Resume training |
+
+### Resume Training
+
+```bash
+# Save resumable checkpoints during training
+python ppo/learn.py --env_file data/env/A2.yaml --save_optimizer
+
+# Resume from a checkpoint
+python ppo/learn.py --env_file data/env/A2.yaml \
+    --resume_from runs/A2/241126_120000/A2-01000-1126_130000 \
+    --save_optimizer
+```
+
+### Checkpoint Contents
+
+**Default checkpoint:**
+- `agent.pt` - PPO policy network weights
+- `muscle.pt` - Muscle network weights (if hierarchical)
+- `metadata.yaml` - Environment config (with `resumed_from` lineage if applicable)
+
+**With `--save_optimizer`:**
+- `optimizer.pt` - PPO Adam optimizer state (momentum buffers)
+- `muscle.opt.pt` - Muscle Adam optimizer state
+- `training_state.pt` - iteration, global_step, args
+
+### Notes
+- Resume creates a **new TensorBoard run** (fresh timestamp)
+- `metadata.yaml` includes `resumed_from` field for lineage tracking
+- Args compatibility is validated on resume (warnings for mismatches)

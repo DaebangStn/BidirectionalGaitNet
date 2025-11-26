@@ -106,6 +106,12 @@ class Args:
     init_log_std: float = 1.0
     """initial value for log_std (action noise)"""
 
+    # Checkpointing and resume
+    save_optimizer: bool = False
+    """if True, save full training state (optimizer, iteration) for resume"""
+    resume_from: Optional[str] = None
+    """path to checkpoint directory to resume training from"""
+
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -118,6 +124,12 @@ def save_checkpoint(
     agent: nn.Module,
     muscle_learner,
     env_file: str,
+    save_full_state: bool = False,
+    optimizer: optim.Optimizer = None,
+    iteration: int = None,
+    global_step: int = None,
+    args = None,
+    resumed_from: str = None,
 ):
     """Save a training checkpoint with agent, muscle network, and metadata.
 
@@ -126,7 +138,12 @@ def save_checkpoint(
         agent: PPO agent module
         muscle_learner: Muscle learner (or None if not hierarchical)
         env_file: Path to environment config file for metadata
-        verbose: Whether to print save messages
+        save_full_state: If True, save optimizer and training state for resume
+        optimizer: PPO optimizer (required if save_full_state=True)
+        iteration: Current iteration number (required if save_full_state=True)
+        global_step: Total environment steps (required if save_full_state=True)
+        args: Training args for validation on resume
+        resumed_from: Original checkpoint path if this is a resumed run
     """
     os.makedirs(checkpoint_path, exist_ok=True)
 
@@ -135,12 +152,30 @@ def save_checkpoint(
 
     # Save muscle learner checkpoint if hierarchical
     if muscle_learner is not None:
-        muscle_learner.save(f"{checkpoint_path}/muscle.pt")
+        muscle_learner.save(f"{checkpoint_path}/muscle.pt", save_optimizer=save_full_state)
 
-    # Save metadata (copy of env config for viewer compatibility)
-    shutil.copy(env_file, f"{checkpoint_path}/metadata.yaml")
+    # Save full training state for resume
+    if save_full_state:
+        # PPO optimizer state (includes Adam momentum buffers)
+        torch.save(optimizer.state_dict(), f"{checkpoint_path}/optimizer.pt")
 
-    print(f"Checkpoint saved to {checkpoint_path}")
+        # Training state
+        torch.save({
+            'iteration': iteration,
+            'global_step': global_step,
+            'args': vars(args),
+        }, f"{checkpoint_path}/training_state.pt")
+
+    # Save metadata with lineage info
+    with open(env_file, 'r') as f:
+        metadata = yaml.safe_load(f)
+    if resumed_from:
+        metadata['resumed_from'] = resumed_from
+    with open(f"{checkpoint_path}/metadata.yaml", 'w') as f:
+        yaml.dump(metadata, f)
+
+    print(f"Checkpoint saved to {checkpoint_path}" +
+          (" (full state)" if save_full_state else ""))
 
 
 class Agent(nn.Module):
@@ -233,16 +268,6 @@ if __name__ == "__main__":
         print("Suggestion: Decrease muscle_batch_size or increase num_envs/num_steps")
         sys.exit(1)
 
-    env_name = Path(args.env_file).stem
-    timestamp = time.strftime("%y%m%d_%H%M%S")
-    run_name = f"{env_name}/{timestamp}"
-
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
-
     # Seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -309,22 +334,74 @@ if __name__ == "__main__":
         # Initialize muscle weights in all environments
         state_dict = muscle_learner.get_state_dict()
         envs.update_muscle_weights(state_dict)
+
+    # Resume from checkpoint if specified
+    start_iteration = 1
+    global_step = 0
+    resumed_from = args.resume_from  # Track lineage for metadata
+
+    if args.resume_from:
+        ckpt = Path(args.resume_from)
+        print(f"Resuming from checkpoint: {ckpt}")
+
+        # Load agent weights
+        agent.load_state_dict(torch.load(ckpt / "agent.pt", map_location=device))
+
+        # Load muscle learner if exists
+        if muscle_learner and (ckpt / "muscle.pt").exists():
+            has_full_state = (ckpt / "training_state.pt").exists()
+            muscle_learner.load(str(ckpt / "muscle.pt"), load_optimizer=has_full_state)
+
+        # Load full training state if available
+        if (ckpt / "training_state.pt").exists():
+            state = torch.load(ckpt / "training_state.pt", map_location=device)
+
+            # Validate args compatibility
+            saved_args = state.get('args', {})
+            critical_args = ['num_envs', 'num_steps', 'learning_rate', 'lr_final']
+            for arg in critical_args:
+                if arg in saved_args and getattr(args, arg) != saved_args[arg]:
+                    print(f"Warning: {arg} differs: saved={saved_args[arg]}, current={getattr(args, arg)}")
+
+            # Load PPO optimizer
+            optimizer.load_state_dict(torch.load(ckpt / "optimizer.pt", map_location=device))
+
+            # Restore training progress
+            start_iteration = state['iteration'] + 1
+            global_step = state['global_step']
+
+            print(f"Resumed: iteration={start_iteration}, global_step={global_step}")
+        else:
+            print("Warning: No training_state.pt found, starting from iteration 1 with loaded weights")
+
     # Initialize C++ policy weights
     agent_state_cpu = {k: v.cpu() for k, v in agent.state_dict().items()}
     envs.update_policy_weights(agent_state_cpu)
+    if muscle_learner:
+        envs.update_muscle_weights(muscle_learner.get_state_dict())
 
     # Reset all environments to initial state before first rollout
     envs.reset()
 
+    # Always create fresh run_name (new TensorBoard directory)
+    env_name = Path(args.env_file).stem
+    timestamp = time.strftime("%y%m%d_%H%M%S")
+    run_name = f"{env_name}/{timestamp}"
+
+    writer = SummaryWriter(f"runs/{run_name}")
+    writer.add_text(
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    )
+
     # Training loop
-    global_step = 0
     start_time = time.time()
 
     use_tqdm = sys.stdout.isatty()
 
-    print(f"Training loop started with {args.num_iterations} iterations")
+    print(f"Training loop started with {args.num_iterations} iterations (starting from {start_iteration})")
 
-    for iteration in tqdm(range(1, args.num_iterations + 1), desc="Iterations", ncols=100, disable=not use_tqdm):
+    for iteration in tqdm(range(start_iteration, args.num_iterations + 1), desc="Iterations", ncols=100, disable=not use_tqdm):
         # Log progress periodically when tqdm is disabled (SLURM batch jobs)
         if not use_tqdm and iteration % args.log_interval == 0:
             elapsed = time.time() - start_time
@@ -514,7 +591,15 @@ if __name__ == "__main__":
             run_title = run_name.split('/')[0]
             checkpoint_name = f"{run_title}-{iteration:05d}-{ckpt_timestamp}"
             checkpoint_path = f"runs/{run_name}/{checkpoint_name}"
-            save_checkpoint(checkpoint_path, agent, muscle_learner, args.env_file)
+            save_checkpoint(
+                checkpoint_path, agent, muscle_learner, args.env_file,
+                save_full_state=args.save_optimizer,
+                optimizer=optimizer,
+                iteration=iteration,
+                global_step=global_step,
+                args=args,
+                resumed_from=resumed_from,
+            )
 
         # ===== TENSORBOARD LOGGING (at end of iteration to prevent blocking) =====
         if iteration % args.log_interval == 0:
@@ -569,6 +654,14 @@ if __name__ == "__main__":
 
     # Save final models
     model_path = f"runs/{run_name}"
-    save_checkpoint(model_path, agent, muscle_learner, args.env_file)
+    save_checkpoint(
+        model_path, agent, muscle_learner, args.env_file,
+        save_full_state=args.save_optimizer,
+        optimizer=optimizer,
+        iteration=args.num_iterations,
+        global_step=global_step,
+        args=args,
+        resumed_from=resumed_from,
+    )
 
     writer.close()

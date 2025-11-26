@@ -279,34 +279,37 @@ class MuscleLearner:
         """Load optimizer state from checkpoint."""
         self.optimizer.load_state_dict(weights)
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, save_optimizer: bool = False) -> None:
         """
-        Save model and optimizer to disk.
+        Save model and optionally optimizer to disk.
 
         Args:
             path: Path to save model weights
+            save_optimizer: If True, also save optimizer state for training resume
         """
         path = Path(path)
         torch.save(self.model.state_dict(), path)
-        torch.save(
-            self.optimizer.state_dict(),
-            path.with_suffix(".opt" + path.suffix)
-        )
+        if save_optimizer:
+            torch.save(
+                self.optimizer.state_dict(),
+                path.with_suffix(".opt" + path.suffix)
+            )
 
-    def load(self, path: str) -> None:
+    def load(self, path: str, load_optimizer: bool = False) -> None:
         """
-        Load model and optimizer from disk.
+        Load model and optionally optimizer from disk.
 
         Args:
             path: Path to saved model weights
+            load_optimizer: If True, also load optimizer state for training resume
         """
         path = Path(path)
         self.model.load_state_dict(
             torch.load(path, map_location=self.device)
         )
-        self.optimizer.load_state_dict(
-            torch.load(
-                path.with_suffix(".opt" + path.suffix),
-                map_location=self.device
-            )
-        )
+        if load_optimizer:
+            opt_path = path.with_suffix(".opt" + path.suffix)
+            if opt_path.exists():
+                self.optimizer.load_state_dict(
+                    torch.load(opt_path, map_location=self.device)
+                )
