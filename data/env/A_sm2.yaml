@@ -1,4 +1,4 @@
-args:
+# args:
 
 environment:
   # Skeleton and Character
@@ -34,8 +34,8 @@ environment:
     scale: 0.04
     time_warping: 0.001  # -1 means disabled
     gait_phase_mode: "contact"  # "contact" or "phase"
-    contact_debounce_alpha: 0.4
-    step_min_ratio: 0.5
+    contact_debounce_alpha: 0.25
+    step_min_ratio: 0.2
 
   # Reward System
   reward:

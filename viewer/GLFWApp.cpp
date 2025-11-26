@@ -14,7 +14,7 @@
 #include "dart/dynamics/FreeJoint.hpp"
 #include "Motion.h"
 #include "HDF.h"
-#include "C3DMotion.h"
+#include "C3D.h"
 #include "Log.h"
 #include <boost/program_options.hpp>
 
@@ -83,6 +83,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // Initialize single motion architecture
     mMotion = nullptr;
+    mMotionProcessor = std::make_unique<MotionProcessor>();
 
     // Load configuration from render.yaml (will override defaults if file exists)
     loadRenderConfig();
@@ -205,12 +206,11 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Backward GaitNEt
     selected_bgn = 0;
 
-    // C3D
-    mSelectedC3d = 0;
+    // Motion list
+    mSelectedMotion = -1;
 
     mFocus = 1;
     mRenderC3DMarkers = false;
-    mMarkerState = PlaybackViewerState();
 
     mTrackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
     mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
@@ -373,17 +373,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
     memset(mActivationFilterText, 0, sizeof(mActivationFilterText));
     mSelectedActivationKeys.clear();
 
-    // Initialize HDF5 selection
-    mSelectedHDF5FileIdx = -1;
-    mSelectedHDF5ParamIdx = 0;
-    mSelectedHDF5CycleIdx = 0;
-    mMaxHDF5ParamIdx = 0;
-    mMaxHDF5CycleIdx = 0;
-    mCurrentHDF5FilePath = "";
-    mMotionLoadError = "";
-    mParamFailureMessage = "";
-    mLastLoadedHDF5ParamsFile = "";
-
     py::gil_scoped_acquire gil;
     
     // Detect checkpoint format and import appropriate Python modules
@@ -394,9 +383,9 @@ GLFWApp::GLFWApp(int argc, char **argv)
             try {
                 py::object detector = py::module::import("python.checkpoint_detector");
                 checkpoint_type = detector.attr("detect_checkpoint_type")(path).cast<std::string>();
-                LOG_INFO("Detected checkpoint type: " << checkpoint_type);
+                LOG_INFO("[Checkpoint] Detected checkpoint type: " << checkpoint_type);
             } catch (const py::error_already_set& e) {
-                LOG_WARN("Warning: Failed to detect checkpoint type: " << e.what());
+                LOG_WARN("[Checkpoint] Warning: Failed to detect checkpoint type: " << e.what());
                 checkpoint_type = "ray_2.12.0";  // Default to Ray format
             }
         }
@@ -405,14 +394,12 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Import appropriate loader based on checkpoint type
     try {
         if (checkpoint_type == "cleanrl") {
-            LOG_INFO("Loading CleanRL checkpoint");
             loading_network = py::module::import("python.cleanrl_model").attr("loading_network");
         } else {
-            LOG_INFO("Loading Ray checkpoint");
             loading_network = py::module::import("python.ray_model").attr("loading_network");
         }
     } catch (const py::error_already_set& e) {
-        LOG_WARN("Warning: Failed to import checkpoint loader: " << e.what());
+        LOG_WARN("[Checkpoint] Warning: Failed to import checkpoint loader: " << e.what());
         loading_network = py::none();
     }
 
@@ -439,19 +426,38 @@ GLFWApp::GLFWApp(int argc, char **argv)
                     } else if (py::isinstance<py::dict>(py_metadata)) {
                         // Ray 2.12.0: metadata is dict (usually empty)
                         // For now, skip dict metadata as it doesn't contain XML config
-                        LOG_INFO("Checkpoint uses Ray 2.12.0 format with dict metadata (skipping)");
+                        LOG_INFO("[Checkpoint] Checkpoint uses Ray 2.12.0 format with dict metadata (skipping)");
                     }
                 }
                 // Note: Keep path in mNetworkPaths - it's used later for checkpoint name and network loading
             } catch (const py::error_already_set& e) {
-                LOG_ERROR("Error: Failed to load checkpoint from path: " << path);
-                LOG_ERROR("Reason: " << e.what());
-                LOG_ERROR("Please check that the checkpoint path exists and is in a valid format.");
+                LOG_ERROR("[Checkpoint] Error: Failed to load checkpoint from path: " << path);
+                LOG_ERROR("[Checkpoint] Reason: " << e.what());
+                LOG_ERROR("[Checkpoint] Please check that the checkpoint path exists and is in a valid format.");
                 std::exit(1);
             }
         }
     }
-    initEnv(mCachedMetadata);
+
+    // Scan motion files (independent of simulation - always available)
+    scanMotionFiles();
+
+    // Initialize motion character for standalone motion playback (independent of simulation)
+    initializeMotionCharacter(mCachedMetadata);
+
+    // Initialize C3D reader with motion character (independent of simulation environment)
+    if (!mC3DReader && mMotionCharacter) {
+        mC3DReader = new C3D_Reader("data/marker_set.xml", mMotionCharacter);
+        mMotionProcessor->setC3DReader(mC3DReader);
+        LOG_INFO("[GLFWApp] Initialized C3D reader");
+    }
+
+    // Load simulation environment on startup if enabled (default: true)
+    if (mLoadSimulationOnStartup) {
+        initEnv(mCachedMetadata);
+    } else {
+        LOG_INFO("[Config] Simulation environment loading disabled by config");
+    }
 }
 
 Eigen::Vector3d GLFWApp::computeMotionCycleDistance(Motion* motion)
@@ -559,6 +565,10 @@ void GLFWApp::loadRenderConfig()
 
             if (config["glfwapp"]["motion_load_mode"]) {
                 mMotionLoadMode = config["glfwapp"]["motion_load_mode"].as<std::string>();
+            }
+
+            if (config["glfwapp"]["load_simulation"]) {
+                mLoadSimulationOnStartup = config["glfwapp"]["load_simulation"].as<bool>();
             }
 
             if (config["glfwapp"]["resizable_plot"]) {
@@ -919,7 +929,7 @@ float GLFWApp::getHeelStrikeTime()
 {
     if (!mGraphData->key_exists("contact_phaseR"))
     {
-        std::cout << "[HeelStrike] contact_phaseR key not found in graph data" << std::endl;
+        LOG_WARN("[HeelStrike] contact_phaseR key not found in graph data");
         return 0.0;
     }
 
@@ -930,7 +940,7 @@ float GLFWApp::getHeelStrikeTime()
     // Ensure there are at least two points to compare for transitions
     if (contact_phase_buffer.size() < 2)
     {
-        std::cout << "[HeelStrike] Not enough data points for heel strike detection" << std::endl;
+        LOG_WARN("[HeelStrike] Not enough data points for heel strike detection");
         return 0.0;
     }
 
@@ -959,11 +969,11 @@ float GLFWApp::getHeelStrikeTime()
 
     if (found_heel_strike)
     {
-        std::cout << "[HeelStrike] Found heel strike at time: " << heel_strike_time << std::endl;
+        LOG_INFO("[HeelStrike] Found heel strike at time: " << heel_strike_time);
     }
     else
     {
-        std::cout << "[HeelStrike] No heel strike found in current data" << std::endl;
+        LOG_WARN("[HeelStrike] No heel strike found in current data");
     }
     return heel_strike_time;
 }
@@ -1011,11 +1021,6 @@ void GLFWApp::startLoop()
             }
 
             bool needUpdate = (navMode == PLAYBACK_MANUAL_FRAME);
-
-            // Also check marker navigation mode
-            if (mC3DMarkers && mMarkerState.navigationMode == PLAYBACK_MANUAL_FRAME) {
-                needUpdate = true;
-            }
 
             if (needUpdate) {
                 // Paused + manual mode: compute pose but don't advance time
@@ -1129,6 +1134,53 @@ void GLFWApp::initGL()
     glEnable(GL_MULTISAMPLE);
 }
 
+void GLFWApp::initializeMotionCharacter(const std::string& metadata)
+{
+    // Skip if already initialized
+    if (mMotionCharacter) return;
+
+    // Extract skeleton path from metadata and create motion character
+    // This allows motion playback without full simulation environment
+    std::string skelPath;
+
+    // Detect format by examining first non-whitespace character
+    size_t start = metadata.find_first_not_of(" \t\n\r");
+    if (start != std::string::npos && metadata[start] == '<') {
+        // XML format
+        TiXmlDocument doc;
+        doc.Parse(metadata.c_str());
+        TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
+        if (skel_elem && skel_elem->GetText()) {
+            skelPath = Trim(std::string(skel_elem->GetText()));
+        }
+    } else {
+        // YAML format
+        try {
+            YAML::Node config = YAML::Load(metadata);
+            if (config["environment"] && config["environment"]["skeleton"] && config["environment"]["skeleton"]["file"]) {
+                skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
+                skelPath = PMuscle::URIResolver::getInstance().resolve(skelPath);
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("[Motion] Failed to parse metadata for skeleton path: " << e.what());
+            return;
+        }
+    }
+
+    if (skelPath.empty()) {
+        LOG_WARN("[Motion] No skeleton path found in metadata, motion rendering unavailable");
+        return;
+    }
+
+    try {
+        mSkeletonPath = skelPath;
+        mMotionCharacter = new Character(mSkeletonPath);
+        LOG_INFO("[Motion] Initialized standalone motion character from: " << mSkeletonPath);
+    } catch (const std::exception& e) {
+        LOG_ERROR("[Motion] Failed to create motion character: " << e.what());
+    }
+}
+
 void GLFWApp::initEnv(std::string metadata)
 {
     if (mRenderEnv)
@@ -1192,55 +1244,18 @@ void GLFWApp::initEnv(std::string metadata)
 
     // Create RenderEnvironment wrapper with potentially modified metadata
     mRenderEnv = new RenderEnvironment(modified_metadata, mGraphData);
-    if (!mMotionCharacter)
-    {
-        for (const auto& muscle: mRenderEnv->getCharacter()->getMuscles()) {
-            const auto& muscle_name = muscle->GetName();
-            if(muscle_name.find("R_") != std::string::npos) {
-                std::string key = "act_" + muscle_name;
-                mGraphData->register_key(key, 1000);
-                key = "noise_" + muscle_name;
-                mGraphData->register_key(key, 1000);
-            }
-        }
 
-        // Use modified_metadata (with overrides) to extract skeleton path
-        // Detect format by examining first non-whitespace character
-        size_t start = modified_metadata.find_first_not_of(" \t\n\r");
-        if (start != std::string::npos && modified_metadata[start] == '<') {
-            // XML format - extract skeleton path
-            TiXmlDocument doc;
-            doc.Parse(modified_metadata.c_str());
-            TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
-            if (skel_elem) {
-                mSkeletonPath = Trim(std::string(skel_elem->GetText()));
-                mMotionCharacter = new Character(mSkeletonPath);
-            } else {
-                std::cerr << "No skeleton path found in XML metadata" << std::endl;
-                exit(-1);
-            }
-        } else {
-            // YAML format - extract skeleton path
-            YAML::Node config = YAML::Load(modified_metadata);
-            if (config["environment"] && config["environment"]["skeleton"]) {
-                std::string skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
-                mSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skelPath);
-                mMotionCharacter = new Character(mSkeletonPath);
-            } else {
-                std::cerr << "No skeleton path found in YAML metadata" << std::endl;
-                exit(-1);
-            }
+    // Register muscle activation keys for graphing
+    for (const auto& muscle: mRenderEnv->getCharacter()->getMuscles()) {
+        const auto& muscle_name = muscle->GetName();
+        if(muscle_name.find("R_") != std::string::npos) {
+            std::string key = "act_" + muscle_name;
+            mGraphData->register_key(key, 1000);
+            key = "noise_" + muscle_name;
+            mGraphData->register_key(key, 1000);
         }
-
-        // Initialize C3D reader with skeleton from simulator
-        if (mC3DReader) {
-            delete mC3DReader;
-            mC3DReader = nullptr;
-        }
-        mC3DReader = new C3D_Reader(mSkeletonPath, "data/marker_set.xml", mRenderEnv->GetEnvironment());
-        LOG_INFO("[GLFWApp] Initialized C3D reader with skeleton: " << mSkeletonPath);
     }
-    
+
     // Set window title
     if (!mRolloutStatus.name.empty()) {
         mCheckpointName = mRolloutStatus.name;
@@ -1282,12 +1297,8 @@ void GLFWApp::initEnv(std::string metadata)
     // Load muscle network weights into the Environment's MuscleNN
     // (The C++ MuscleNN is created automatically in initialize())
     if (!mNetworks.empty() && mNetworks.back().muscle && !mMuscleStateDict.is_none()) {
-        std::cout << "[Viewer] Loading muscle network weights into Environment..." << std::endl;
-
         // Transfer the stored Python state_dict to Environment's MuscleNN
         mRenderEnv->setMuscleNetworkWeight(mMuscleStateDict);
-
-        std::cout << "[Viewer] Muscle network weights successfully transferred to Environment!" << std::endl;
     }
 
     // Initialize DOF tracking
@@ -1320,71 +1331,8 @@ void GLFWApp::initEnv(std::string metadata)
         }
     }
 
-    // C3D files
-    path = "data/motion/c3d";
-    mC3DList.clear();
-    if (fs::exists(path) && fs::is_directory(path)) {
-        for (const auto &entry : fs::directory_iterator(path)) {
-            mC3DList.push_back(entry.path().string());
-        }
-    }
-
-    // Auto-load first C3D file as both motion and markers
-    if (!mC3DList.empty()) {
-        // Load C3DMotion (includes skeleton poses and markers)
-        if (mC3DReader) {
-            C3DConversionParams params;
-            C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[0], params);
-            if (c3dMotion) {
-                // Add to motion list
-                setMotion(c3dMotion);
-
-                // Create viewer state
-                PlaybackViewerState state;
-                state.cycleDistance = computeMotionCycleDistance(c3dMotion);
-                state.maxFrameIndex = std::max(0, c3dMotion->getNumFrames() - 1);
-
-                // Set as active motion
-
-                // Align to simulation
-                alignMotionToSimulation();
-
-                LOG_INFO("[C3D] Auto-loaded C3D motion: " << mC3DList[0]);
-            } else {
-                LOG_ERROR("[C3D] Failed to auto-load C3D motion: " << mC3DList[0]);
-            }
-        }
-
-        // Also load separate markers for legacy marker rendering system
-        auto markerData = std::make_unique<C3D>();
-        if (markerData->load(mC3DList[0])) {
-            mC3DMarkers = std::move(markerData);
-            mRenderC3DMarkers = true;
-            mMarkerState = PlaybackViewerState();
-            mMarkerState.cycleDistance = computeMarkerCycleDistance(mC3DMarkers.get());
-            mMarkerState.maxFrameIndex = std::max(0, mC3DMarkers->getNumFrames() - 1);
-            mMarkerState.currentMarkers = mC3DMarkers->getMarkers(0);
-            alignMarkerToSimulation();
-            LOG_INFO("[C3D] Auto-loaded separate markers: " << mC3DList[0]);
-        } else {
-            mC3DMarkers.reset();
-            mRenderC3DMarkers = false;
-            mMarkerState = PlaybackViewerState();
-            LOG_ERROR("[C3D] Failed to auto-load separate markers: " << mC3DList[0]);
-        }
-    }
-
-    // Load motion files (includes BVH and HDF5 scanning)
-    loadMotionFiles();
-
     mRenderEnv->setParamDefault();
     reset();
-    reset();
-
-    // Align auto-loaded markers to simulation after reset
-    if (mC3DMarkers && mRenderC3DMarkers) {
-        alignMarkerToSimulation();
-    }
 }
 
 void GLFWApp::drawAxis()
@@ -1477,65 +1425,65 @@ void GLFWApp::drawKinematicsControlPanel()
     ImGui::SetNextWindowPos(ImVec2(mControlPanelWidth + 10, 10), ImGuiCond_Once);
     ImGui::Begin("Kinematics Control");
 
-    // FGN
-    ImGui::Checkbox("Draw FGN Result\t", &mDrawFlags.fgnSkeleton);
-    if (ImGui::CollapsingHeader("FGN"))
-    {
-        int idx = 0;
-        for (const auto &ns : mFGNList)
-        {
-            std::string filename = fs::path(ns).filename().string();
-            if (ImGui::Selectable(filename.c_str(), selected_fgn == idx))
-                selected_fgn = idx;
-            if (selected_fgn)
-                ImGui::SetItemDefaultFocus();
-            idx++;
-        }
-    }
+    // // FGN
+    // ImGui::Checkbox("Draw FGN Result\t", &mDrawFlags.fgnSkeleton);
+    // if (ImGui::CollapsingHeader("FGN"))
+    // {
+    //     int idx = 0;
+    //     for (const auto &ns : mFGNList)
+    //     {
+    //         std::string filename = fs::path(ns).filename().string();
+    //         if (ImGui::Selectable(filename.c_str(), selected_fgn == idx))
+    //             selected_fgn = idx;
+    //         if (selected_fgn)
+    //             ImGui::SetItemDefaultFocus();
+    //         idx++;
+    //     }
+    // }
 
-    if (mRenderEnv)
-    {
-        if (ImGui::Button("Load FGN"))
-        {
-            mDrawFlags.fgnSkeleton = true;
-            py::tuple res = py::module::import("forward_gaitnet").attr("load_FGN")(mFGNList[selected_fgn], mRenderEnv->getNumParamState(), mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows());
-            mFGN = res[0];
-            mFGNmetadata = res[1].cast<std::string>();
+    // if (mRenderEnv)
+    // {
+    //     if (ImGui::Button("Load FGN"))
+    //     {
+    //         mDrawFlags.fgnSkeleton = true;
+    //         py::tuple res = py::module::import("forward_gaitnet").attr("load_FGN")(mFGNList[selected_fgn], mRenderEnv->getNumParamState(), mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows());
+    //         mFGN = res[0];
+    //         mFGNmetadata = res[1].cast<std::string>();
 
-            mNetworkPaths.clear();
-            mNetworks.clear();
-            std::cout << "METADATA " << std::endl
-                      << mFGNmetadata << std::endl;
-            initEnv(mFGNmetadata);
-        }
-    }
+    //         mNetworkPaths.clear();
+    //         mNetworks.clear();
+    //         std::cout << "METADATA " << std::endl
+    //                   << mFGNmetadata << std::endl;
+    //         initEnv(mFGNmetadata);
+    //     }
+    // }
 
-    // BGN
-    if (ImGui::CollapsingHeader("BGN"))
-    {
-        int idx = 0;
-        for (const auto &ns : mBGNList)
-        {
-            std::string filename = fs::path(ns).filename().string();
-            if (ImGui::Selectable(filename.c_str(), selected_bgn == idx))
-                selected_bgn = idx;
-            if (selected_bgn)
-                ImGui::SetItemDefaultFocus();
-            idx++;
-        }
-    }
-    if (mRenderEnv && ImGui::Button("Load BGN"))
-    {
-        mGVAELoaded = true;
-        py::object load_gaitvae = py::module::import("advanced_vae").attr("load_gaitvae");
-        int rows = mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows();
-        mGVAE = load_gaitvae(mBGNList[selected_fgn], rows, 60, mRenderEnv->getNumKnownParam(), mRenderEnv->getNumParamState());
+    // // BGN
+    // if (ImGui::CollapsingHeader("BGN"))
+    // {
+    //     int idx = 0;
+    //     for (const auto &ns : mBGNList)
+    //     {
+    //         std::string filename = fs::path(ns).filename().string();
+    //         if (ImGui::Selectable(filename.c_str(), selected_bgn == idx))
+    //             selected_bgn = idx;
+    //         if (selected_bgn)
+    //             ImGui::SetItemDefaultFocus();
+    //         idx++;
+    //     }
+    // }
+    // if (mRenderEnv && ImGui::Button("Load BGN"))
+    // {
+    //     mGVAELoaded = true;
+    //     py::object load_gaitvae = py::module::import("advanced_vae").attr("load_gaitvae");
+    //     int rows = mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows();
+    //     mGVAE = load_gaitvae(mBGNList[selected_fgn], rows, 60, mRenderEnv->getNumKnownParam(), mRenderEnv->getNumParamState());
 
-        // TODO: Update for Motion* interface
-        // mPredictedMotion.motion = mMotion.motion;
-        // mPredictedMotion.param = mMotion.param;
-        // mPredictedMotion.name = "Unpredicted";
-    }
+    //     // TODO: Update for Motion* interface
+    //     // mPredictedMotion.motion = mMotion.motion;
+    //     // mPredictedMotion.param = mMotion.param;
+    //     // mPredictedMotion.name = "Unpredicted";
+    // }
 
     if (ImGui::CollapsingHeader("Motions", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -1549,128 +1497,59 @@ void GLFWApp::drawKinematicsControlPanel()
             ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "No Motion Loaded");
         }
 
-        // Load/Unload motion buttons
-        if (!has_motions) {
-            if (ImGui::Button("Load Motion")) {
-                loadMotionFiles();
-            }
-        } else {
+        // Unload motion button (loading is done by clicking in the file list)
+        if (has_motions) {
             if (ImGui::Button("Unload Motion")) {
                 unloadMotion();
             }
         }
 
-        // Motion types: hdf (HDF5 single files), c3d (C3D marker files)
-        // Deprecated: bvh, npz, hdfRollout - removed for simplification
-
-        // Check currently selected motion type (only HDF and C3D supported)
-        bool hdf_selected = false;
-        if (mMotion != nullptr) {
-            if (mMotion->getSourceType() == "hdf") {
-                hdf_selected = true;
-            }
-        }
-
-        // 1. Motion clip files (HDF format)
-        bool any_motion_selected = hdf_selected;
-        if (any_motion_selected) {
+        // Unified motion file list (HDF + C3D)
+        bool motion_loaded = (mMotion != nullptr);
+        if (motion_loaded) {
             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
         }
 
-        if (ImGui::TreeNode("Motion clip files"))
+        if (ImGui::TreeNodeEx("Motion Files", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            // Supported motion types: HDF (single motion files), C3D (marker+motion)
-            ImGui::Text("Loaded Motions:");
-            if (mMotion != nullptr) {
-                std::string prefix;
-                if (mMotion->getSourceType() == "hdf") prefix = "[HDF] ";
-                else if (mMotion->getSourceType() == "C3DMotion") prefix = "[C3D] ";
-                else prefix = "[Unknown] ";
-
-                ImGui::Text("Loaded Motion: %s%s", prefix.c_str(), mMotion->getName().c_str());
-            }
-            ImGui::TreePop();
-        }
-
-        if (any_motion_selected) {
-            ImGui::PopStyleColor(3);
-        }
-
-        // 2. C3D
-        bool any_c3d_selected = false;
-        if (mMotion != nullptr) {
-            if (mMotion->getSourceType() == "C3DMotion") {
-                any_c3d_selected = true;
-            }
-        }
-        if (any_c3d_selected) {
-            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));  // Green when selected
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
-        }
-
-        if (ImGui::TreeNodeEx("C3D", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            if (mC3DList.empty())
-            {
-                ImGui::Text("No C3D files found in data/motion/c3d");
-            }
-            else
-            {
+            if (mMotionList.empty()) {
+                ImGui::Text("No motion files found");
+            } else {
                 int idx = 0;
-                for (auto ns : mC3DList)
-                {
-                    if (ImGui::Selectable(ns.c_str(), mSelectedC3d == idx)) {
-                        mSelectedC3d = idx;
+                for (const auto& file : mMotionList) {
+                    std::string filename = std::filesystem::path(file).filename().string();
+                    std::string ext = std::filesystem::path(file).extension().string();
 
-                        // Automatically load C3D motion when clicked
-                        if (mRenderEnv && mSelectedC3d < mC3DList.size()) {
-                            if (!mC3DReader) {
-                                LOG_ERROR("[C3D] C3D reader not initialized. Call initEnv first.");
-                            } else {
-                                C3DConversionParams params;
-                                C3DMotion* c3dMotion = mC3DReader->loadC3D(mC3DList[mSelectedC3d], params);
-                                if (c3dMotion) {
-                                    // Add to motion list
-                                    setMotion(c3dMotion);
-
-                                    // Create viewer state
-                                    PlaybackViewerState state;
-                                    state.cycleDistance = computeMotionCycleDistance(c3dMotion);
-                                    state.maxFrameIndex = std::max(0, c3dMotion->getNumFrames() - 1);
-
-                                    // Set as active motion
-
-                                    // Align to simulation
-                                    alignMotionToSimulation();
-
-                                    LOG_INFO("[C3D] Loaded C3D motion and markers: " << mC3DList[mSelectedC3d]);
-                                } else {
-                                    LOG_ERROR("[C3D] Failed to load C3D motion: " << mC3DList[mSelectedC3d]);
-                                }
-                            }
-                        }
+                    // Add type prefix for clarity
+                    std::string label;
+                    if (ext == ".c3d") {
+                        label = "[C3D] " + filename;
+                    } else {
+                        label = "[HDF] " + filename;
                     }
-                    if (mSelectedC3d == idx) ImGui::SetItemDefaultFocus();
+
+                    if (ImGui::Selectable(label.c_str(), mSelectedMotion == idx)) {
+                        mSelectedMotion = idx;
+                        loadMotionFile(mMotionList[mSelectedMotion]);
+                    }
+                    if (mSelectedMotion == idx) ImGui::SetItemDefaultFocus();
                     idx++;
                 }
             }
 
-            if (mC3DMarkers)
-            {
+            // Show marker checkbox only when C3D motion is loaded
+            if (mMotion && mMotion->getSourceType() == "c3d") {
                 ImGui::Checkbox("Draw C3D Markers", &mRenderC3DMarkers);
             }
+
             ImGui::TreePop();
         }
 
-        if (any_c3d_selected) {
+        if (motion_loaded) {
             ImGui::PopStyleColor(3);
         }
-
-        // REMOVED: HDF rollouts section - HDFRollout format no longer supported
-        // Only HDF (single) and C3D formats are now available
 
         // Motion Navigation Control
         ImGui::Separator();
@@ -1690,7 +1569,7 @@ void GLFWApp::drawKinematicsControlPanel()
                     std::vector<double> timestamps = mMotion->getTimestamps();
                     int manualIndex = std::clamp(motionStatePtr->manualFrameIndex, 0, motionStatePtr->maxFrameIndex);
                     if ((mMotion->getSourceType() == "hdf" ||
-                         mMotion->getSourceType() == "C3DMotion") &&
+                         mMotion->getSourceType() == "c3d") &&
                         !timestamps.empty() &&
                         manualIndex < static_cast<int>(timestamps.size())) {
                         double frame_time = timestamps[manualIndex];
@@ -1712,12 +1591,12 @@ void GLFWApp::drawKinematicsControlPanel()
             }
         }
 
-        // Marker Navigation Control (below motion navigation)
+        // Marker Navigation Control (only for C3D motions)
         ImGui::Separator();
-        if (mC3DMarkers) {
-            PlaybackUtils::drawPlaybackNavigationUI("Marker Frame Nav", mMarkerState, mMarkerState.maxFrameIndex);
+        if (mMotion && mMotion->getSourceType() == "c3d") {
+            PlaybackUtils::drawPlaybackNavigationUI("Marker Frame Nav", mMotionState, mMotionState.maxFrameIndex);
         } else {
-            ImGui::TextDisabled("Marker is not loaded");
+            ImGui::TextDisabled("No C3D motion loaded");
         }
         ImGui::Separator();
         ImGui::Spacing();
@@ -1830,8 +1709,8 @@ void GLFWApp::drawKinematicsControlPanel()
             }
         }
     ImGui::End();
-    if(mRenderEnv)
-        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
+    if(mRenderEnv && mMotionCharacter)
+        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
 }
 
 void GLFWApp::drawSimVisualizationPanel()
@@ -3567,7 +3446,8 @@ void GLFWApp::drawSimControlPanel()
             idx++;
         }
         mRenderEnv->setGroupParam(group_v.cast<double>());
-        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
+        if (mMotionCharacter)
+            mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
     }
 
     // Gait Phase Control
@@ -4350,15 +4230,15 @@ void GLFWApp::drawPlayableMotion()
     if (mMotion == nullptr ||
         mMotionState.currentPose.size() == 0 ||
         mMotionState.render == false) return;
-
+    
     // Draw skeleton
     drawSkeleton(mMotionState.currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
 
-    // For C3DMotion, also draw markers
+    // For C3D, also draw markers
     Motion* motion = mMotion;
     PlaybackViewerState& state = mMotionState;
 
-    if (motion->getSourceType() == "C3DMotion") {
+    if (motion->getSourceType() == "c3d") {
         glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
         for (const auto& marker : state.currentMarkers) {
             if (!marker.array().isFinite().all()) continue;
@@ -4376,9 +4256,9 @@ bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std
     if (motion->getSourceType() != sourceType)
         return false;
 
-    // For C3DMotion, check source file
-    if (sourceType == "C3DMotion") {
-        C3DMotion* c3dMotion = static_cast<C3DMotion*>(motion);
+    // For C3D, check source file
+    if (sourceType == "c3d") {
+        C3D* c3dMotion = static_cast<C3D*>(motion);
         return c3dMotion->getSourceFile() == sourceFile;
     }
 
@@ -4389,13 +4269,15 @@ bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std
 void GLFWApp::drawPlayableMarkers()
 {
     // Marker positions are computed in updateViewerTime(), this function only renders
-    if (!mC3DMarkers || !mRenderC3DMarkers || mMarkerState.currentMarkers.empty()
-        || mMarkerState.render == false) return;
+    // Now uses mMotion's markers (C3D) instead of separate mC3DMarkers
+    if (!mMotion || mMotion->getSourceType() != "c3d") return;
+    if (!mRenderC3DMarkers || mMotionState.currentMarkers.empty()
+        || mMotionState.render == false) return;
 
     glColor4f(1.0f, 0.4f, 0.2f, 1.0f);
-    Eigen::Vector3d offset = mMarkerState.displayOffset + mMarkerState.cycleAccumulation;
+    Eigen::Vector3d offset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
 
-    for (const auto& marker : mMarkerState.currentMarkers) {
+    for (const auto& marker : mMotionState.currentMarkers) {
         if (!marker.array().isFinite().all()) continue;
         GUI::DrawSphere(marker + offset, 0.0125);
     }
@@ -4664,20 +4546,15 @@ void GLFWApp::reset()
         mMotionState.lastFrameIdx = 0;
         mMotionState.manualFrameIndex = 0;
     }
-    // Reset marker playback tracking (preserve navigation mode to avoid losing manual mode setting)
-    mMarkerState.lastFrameIdx = 0;
-    mMarkerState.cycleAccumulation.setZero();
-    mMarkerState.displayOffset.setZero();
 
     if (mRenderEnv) {
         mRenderEnv->reset(mResetPhase);
-        
         mFGNRootOffset = mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getPositions().tail(3);
         mUseWeights = mRenderEnv->getUseWeights();
         mViewerTime = mRenderEnv->getWorld()->getTime();
         mViewerPhase = mRenderEnv->getGaitPhase()->getLocalTime() / (mRenderEnv->getMotion()->getMaxTime() / mRenderEnv->getCadence());
     }
-    alignMarkerToSimulation();
+    updateViewerTime(0);
     alignMotionToSimulation();
 }
 
@@ -4731,8 +4608,12 @@ double GLFWApp::computeFrameFloat(Motion* motion, double phase)
     return frame_float;
 }
 
+// motionPoseEval now delegates to the unified MotionProcessor
+// This eliminates ~60 lines of duplicated code
 void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
 {
+    (void)motionIdx;  // Unused parameter kept for API compatibility
+
     if (mMotion == nullptr) {
         std::cerr << "[motionPoseEval] Warning: No motion loaded" << std::endl;
         return;
@@ -4744,93 +4625,14 @@ void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
 
     PlaybackViewerState& state = mMotionState;
 
-    int frames_per_cycle = motion->getValuesPerFrame();
-    int total_frames = motion->getTotalTimesteps();
+    // Use unified MotionProcessor for pose evaluation
+    state.currentPose = mMotionProcessor->evaluatePoseAtFrame(motion, frame_float, mMotionCharacter, state);
 
-    // Clamp frame_float to valid range for this motion
-    if (frame_float < 0) frame_float = 0;
-    if (frame_float >= total_frames) frame_float = fmod(frame_float, total_frames);
-
-    int current_frame_idx = (int)frame_float;
-    current_frame_idx = std::max(0, std::min(current_frame_idx, total_frames - 1));
-
-    // 1. Extract and interpolate frame data
-    Eigen::VectorXd interpolated_frame;
-    double weight_1 = frame_float - floor(frame_float);
-
-    Eigen::VectorXd raw_motion = motion->getRawMotionData();
-
-    // Safety check: ensure motion data is large enough
-    int required_size = total_frames * frames_per_cycle;
-    if (raw_motion.size() < required_size) {
-        std::cerr << "[motionPoseEval] Warning: Motion data too small! Expected " << required_size
-                  << " but got " << raw_motion.size() << std::endl;
-        state.currentPose = Eigen::VectorXd::Zero(frames_per_cycle);
-        return;
+    // Update markers for C3D using processor
+    if (motion->getSourceType() == "c3d") {
+        int current_frame_idx = static_cast<int>(frame_float);
+        state.currentMarkers = mMotionProcessor->getMarkersAtFrameWithOffsets(motion, current_frame_idx, state);
     }
-
-    if (weight_1 > 1e-6) {
-        int next_frame_idx = (current_frame_idx + 1) % total_frames;
-        Eigen::VectorXd p1 = raw_motion.segment(current_frame_idx * frames_per_cycle, frames_per_cycle);
-        Eigen::VectorXd p2 = raw_motion.segment(next_frame_idx * frames_per_cycle, frames_per_cycle);
-
-        // HDF/C3D motion: use Character's skeleton-aware interpolation
-        bool phase_overflow = (next_frame_idx < current_frame_idx);  // Detect cycle wraparound
-        interpolated_frame = mMotionCharacter->interpolatePose(p1, p2, weight_1, phase_overflow);
-    } else {
-        // No interpolation needed, use exact frame
-        interpolated_frame = raw_motion.segment(current_frame_idx * frames_per_cycle, frames_per_cycle);
-    }
-
-    // 2. Motion data is already in angle format for HDF/C3D
-    Eigen::VectorXd motion_pos = interpolated_frame;
-
-    // 3. Apply position offset (additive for HDF/C3D)
-    motion_pos[3] += state.cycleAccumulation[0] + state.displayOffset[0];
-    motion_pos[4] += state.displayOffset[1];
-    motion_pos[5] += state.cycleAccumulation[2] + state.displayOffset[2];
-
-    // 4. Update markers for C3DMotion
-    if (motion->getSourceType() == "C3DMotion") {
-        C3DMotion* c3dMotion = static_cast<C3DMotion*>(motion);
-        state.currentMarkers = c3dMotion->getMarkers(current_frame_idx);
-
-        // Log before applying offsets
-        Eigen::Vector3d pelvisCenterBefore = (state.currentMarkers[10] + state.currentMarkers[11] + state.currentMarkers[12]) / 3.0;
-        // Extract original root position from interpolated_frame (before offsets were applied)
-        Eigen::Vector3d motionRootBefore(interpolated_frame[3], interpolated_frame[4], interpolated_frame[5]);
-
-        // Apply offsets to markers
-        for (auto& marker : state.currentMarkers) {
-            marker += state.displayOffset + state.cycleAccumulation;
-        }
-    }
-
-    // Store the computed pose
-    state.currentPose = motion_pos;
-}
-
-void GLFWApp::markerPoseEval(double frameFloat)
-{
-    if (mMarkerState.navigationMode != PLAYBACK_SYNC)
-        return;
-    if (!mRenderC3DMarkers || !mC3DMarkers || mC3DMarkers->getNumFrames() == 0)
-        return;
-
-    const double totalFrames = static_cast<double>(mC3DMarkers->getNumFrames());
-    double wrapped = frameFloat;
-    if (wrapped < 0.0) wrapped = 0.0;
-    if (wrapped >= totalFrames) wrapped = std::fmod(wrapped, totalFrames);
-
-    int currentIdx = static_cast<int>(std::floor(wrapped + 1e-8));
-    currentIdx = std::clamp(currentIdx, 0, mC3DMarkers->getNumFrames() - 1);
-    
-    auto interpolated = mC3DMarkers->getInterpolatedMarkers(wrapped);
-    if (interpolated.empty()) return;
-    if (currentIdx < mMarkerState.lastFrameIdx) mMarkerState.cycleAccumulation += mMarkerState.cycleDistance;
-
-    mMarkerState.currentMarkers = std::move(interpolated);
-    mMarkerState.lastFrameIdx = currentIdx;
 }
 
 GLFWApp::ViewerClock GLFWApp::updateViewerClock(double dt)
@@ -4887,14 +4689,19 @@ GLFWApp::MarkerPlaybackContext GLFWApp::computeMarkerPlayback(const ViewerClock&
                                                               const MotionPlaybackContext* motionContext)
 {
     MarkerPlaybackContext context;
-    context.state = &mMarkerState;
+    context.state = &mMotionState;  // Use motion state (unified with C3D markers)
     context.phase = clock.phase;
 
-    if (!mRenderC3DMarkers || !mC3DMarkers || mC3DMarkers->getNumFrames() == 0)
+    // Now uses mMotion for C3D markers instead of separate mC3DMarkers
+    if (!mRenderC3DMarkers || !mMotion || mMotion->getSourceType() != "c3d")
         return context;
 
-    context.markers = mC3DMarkers.get();
-    context.totalFrames = context.markers->getNumFrames();
+    C3D* c3dMotion = static_cast<C3D*>(mMotion);
+    if (c3dMotion->getNumFrames() == 0)
+        return context;
+
+    context.markers = c3dMotion;
+    context.totalFrames = c3dMotion->getNumFrames();
     context.valid = true;
 
     PlaybackViewerState& markerState = *context.state;
@@ -4949,10 +4756,26 @@ void GLFWApp::evaluateMarkerPlayback(const MarkerPlaybackContext& context)
         markerState.currentMarkers = context.markers->getMarkers(markerState.manualFrameIndex);
         markerState.cycleAccumulation.setZero();
         markerState.lastFrameIdx = markerState.manualFrameIndex;
-        // Note: alignMarkerToSimulation() is called on load/reset, not every frame
-        // This allows markers to move naturally when browsing frames manually
     } else {
-        markerPoseEval(context.frameFloat);
+        // Evaluate markers at frame (previously markerPoseEval)
+        if (markerState.navigationMode != PLAYBACK_SYNC)
+            return;
+
+        double frameFloat = context.frameFloat;
+        const double totalFrames = static_cast<double>(context.totalFrames);
+        double wrapped = frameFloat;
+        if (wrapped < 0.0) wrapped = 0.0;
+        if (wrapped >= totalFrames) wrapped = std::fmod(wrapped, totalFrames);
+
+        int currentIdx = static_cast<int>(std::floor(wrapped + 1e-8));
+        currentIdx = std::clamp(currentIdx, 0, context.totalFrames - 1);
+
+        auto interpolated = context.markers->getInterpolatedMarkers(wrapped);
+        if (interpolated.empty()) return;
+        if (currentIdx < markerState.lastFrameIdx) markerState.cycleAccumulation += markerState.cycleDistance;
+
+        markerState.currentMarkers = std::move(interpolated);
+        markerState.lastFrameIdx = currentIdx;
     }
 }
 
@@ -5081,14 +4904,8 @@ void GLFWApp::setMotion(Motion* motion)
 
 void GLFWApp::alignMotionToSimulation()
 {
-    // Safety check: Skip if no motions loaded or invalid index
+    // Silently skip if no motion loaded (valid state, not an error)
     if (mMotion == nullptr) {
-        LOG_ERROR("[alignMotionToSimulation] No motions loaded or invalid index");
-        return;
-    }
-
-    if (mMotion == nullptr) {
-        LOG_ERROR("[alignMotionToSimulation] No motion loaded");
         return;
     }
     
@@ -5097,8 +4914,8 @@ void GLFWApp::alignMotionToSimulation()
         state.displayOffset[1] = computeMotionHeightCalibration(state.currentPose);
     }
 
+    // Silently skip alignment when no render environment (valid state)
     if (!mRenderEnv) {
-        LOG_WARN("[alignMotionToSimulation] No render environment loaded");
         return;
     }
     
@@ -5125,10 +4942,10 @@ void GLFWApp::alignMotionToSimulation()
         state.displayOffset[0] = 1.0;
     }
 
-    // For C3DMotion, also align markers using the same displayOffset
+    // For C3D, also align markers using the same displayOffset
     Motion* motion = mMotion;
-    if (motion->getSourceType() == "C3DMotion") {
-        C3DMotion* c3dMotion = static_cast<C3DMotion*>(motion);
+    if (motion->getSourceType() == "c3d") {
+        C3D* c3dMotion = static_cast<C3D*>(motion);
         int frameIdx = static_cast<int>(std::round(frame_float));
         state.currentMarkers = c3dMotion->getMarkers(frameIdx);
     }
@@ -5164,33 +4981,8 @@ double GLFWApp::computeMarkerHeightCalibration(const std::vector<Eigen::Vector3d
     return height_offset;
 }
 
-void GLFWApp::alignMarkerToSimulation()
-{
-    if (!mRenderEnv || !mC3DMarkers || mC3DMarkers->getNumFrames() == 0)
-        return;
-
-    const auto& markers = !mMarkerState.currentMarkers.empty()
-                              ? mMarkerState.currentMarkers
-                              : mC3DMarkers->getMarkers(0);
-
-    Eigen::Vector3d centroid;
-    if (!C3D::computeCentroid(markers, centroid)) {
-        LOG_WARN("[alignMarkerToSimulation] Failed to compute marker centroid");
-        return;
-    }
-
-    mMarkerState.cycleAccumulation.setZero();
-    Eigen::Vector3d sim_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
-
-    mMarkerState.displayOffset[0] = sim_pos[0] - centroid[0] - 1.0;
-    mMarkerState.displayOffset[2] = sim_pos[2] - centroid[2];
-
-    // Apply height calibration to prevent ground collision
-    mMarkerState.displayOffset[1] = computeMarkerHeightCalibration(markers);
-
-    mMarkerState.currentMarkers = markers;
-    mMarkerState.lastFrameIdx = 0;
-}
+// Note: alignMarkerToSimulation removed - marker alignment now handled through
+// mMotionState when C3D motion is loaded via alignMotionToSimulation()
 
 void GLFWApp::updateViewerTime(double dt)
 {
@@ -5202,8 +4994,8 @@ void GLFWApp::updateViewerTime(double dt)
     MarkerPlaybackContext markerContext = computeMarkerPlayback(clock, haveMotion ? &motionContext : nullptr);
     evaluateMarkerPlayback(markerContext);
 
+    // Silently skip when motion context unavailable (e.g., no character loaded)
     if (!haveMotion) {
-        if (mMotion != nullptr) LOG_WARN("[updateViewerTime] Motion context unavailable");
         return;
     }
 
@@ -5341,10 +5133,12 @@ void GLFWApp::drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr)
 
 void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color, bool isLineSkeleton)
 {
-    mMotionSkeleton->setPositions(pos);
+    if (!mMotionCharacter) return;
+    auto skel = mMotionCharacter->getSkeleton();
+    skel->setPositions(pos);
     if (!isLineSkeleton)
     {
-        for (const auto bn : mMotionSkeleton->getBodyNodes()) drawSingleBodyNode(bn, color);
+        for (const auto bn : skel->getBodyNodes()) drawSingleBodyNode(bn, color);
     }
 }
 
@@ -5409,9 +5203,9 @@ void GLFWApp::setCamera()
         }
         else if (mFocus == 3)
         {
-            // Check if any C3DMotion exists
+            // Check if any C3D motion exists
             bool hasC3DMotion = false;
-            if (mMotion && mMotion->getSourceType() == "C3DMotion") {
+            if (mMotion && mMotion->getSourceType() == "c3d") {
                 hasC3DMotion = true;
             }
 
@@ -5435,7 +5229,7 @@ void GLFWApp::setCamera()
     else
     {
         // Motion-only viewing mode: focus on current motion position
-        if (mMotion != nullptr && mMotionSkeleton) {
+        if (mMotion != nullptr && mMotionCharacter) {
             if (mMotion == nullptr) {
                 mTrans = Eigen::Vector3d::Zero();
                 mTrans[1] = -1;
@@ -5612,7 +5406,7 @@ void GLFWApp::drawFootStep()
     glColor4d(0.2, 0.2, 0.8, 0.5);
     glPushMatrix();
     glTranslated(0, current_foot[1], current_foot[2]);
-    GUI::DrawCube(Eigen::Vector3d(1.0, 0.15, 0.15));
+    GUI::DrawCube(Eigen::Vector3d(0.75, 0.25, 0.15));
     glPopMatrix();
 
     Eigen::Vector3d target_foot = mRenderEnv->getCurrentTargetFootStep();
@@ -6014,24 +5808,15 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
 
         // Convert Python muscle state_dict to C++ MuscleNN
         if (use_muscle && !res[1].is_none()) {
-            std::cout << "[Viewer] Loading muscle network..." << std::endl;
             int num_muscles = character->getNumMuscles();
             int num_muscle_dofs = character->getNumMuscleRelatedDof();
             int num_actuator_action = mRenderEnv->getNumActuatorAction();
             bool is_cascaded = false;  // TODO: detect from network structure if needed
 
-            std::cout << "[Viewer] Creating MuscleNN: muscle_dofs=" << num_muscle_dofs
-                      << ", actuator_action=" << num_actuator_action
-                      << ", num_muscles=" << num_muscles << std::endl;
-
             // Create C++ MuscleNN
             // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
             new_elem.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded, true);
-
-            // res[1] is now a state_dict (Python dict), not a network object
-            std::cout << "[Viewer] Converting state_dict to C++ format..." << std::endl;
             py::dict state_dict = res[1].cast<py::dict>();
-            std::cout << "[Viewer] State dict has " << state_dict.size() << " entries" << std::endl;
 
             // Store the Python state_dict for transfer to Environment
             mMuscleStateDict = res[1];
@@ -6054,25 +5839,28 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
                 cpp_state_dict[key] = tensor;
             }
 
-            std::cout << "[Viewer] Loading weights into C++ MuscleNN..." << std::endl;
             new_elem.muscle->load_state_dict(cpp_state_dict);
-            std::cout << "[Viewer] Muscle network loaded successfully!" << std::endl;
         }
 
         mNetworks.push_back(new_elem);
     } catch (const std::exception& e) {
-        std::cerr << "Error loading network from " << path << ": " << e.what() << std::endl;
+        LOG_ERROR("Error loading network from " << path << ": " << e.what());
     }
 }
 
 void GLFWApp::initializeMotionSkeleton()
 {
-    mMotionSkeleton = mRenderEnv->getCharacter()->getSkeleton()->cloneSkeleton();
-    
+    // Now uses mMotionCharacter->getSkeleton() instead of creating mMotionSkeleton
+    if (!mMotionCharacter) {
+        LOG_WARN("[initializeMotionSkeleton] mMotionCharacter not initialized");
+        return;
+    }
+    auto skel = mMotionCharacter->getSkeleton();
+
     // Setup BVH joint calibration
     mJointCalibration.clear();
-    for (auto jn : mRenderEnv->getCharacter()->getSkeleton()->getJoints()) {
-        if (jn == mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()) {
+    for (auto jn : skel->getJoints()) {
+        if (jn == skel->getRootJoint()) {
             mJointCalibration.push_back(Eigen::Matrix3d::Identity());
         } else {
             mJointCalibration.push_back(
@@ -6083,138 +5871,101 @@ void GLFWApp::initializeMotionSkeleton()
 
     // Setup skeleton info for motions
     mSkelInfosForMotions.clear();
-    for (auto bn : mMotionSkeleton->getBodyNodes()) {
+    for (auto bn : skel->getBodyNodes()) {
         ModifyInfo skelInfo;
         mSkelInfosForMotions.push_back(std::make_pair(bn->getName(), skelInfo));
     }
 }
 
-// REMOVED: loadNPZMotion(), loadHDFRolloutMotion(), loadBVHMotion()
-// Only HDF and C3D formats are now supported
+// REMOVED: loadNPZMotion(), loadHDFRolloutMotion(), loadBVHMotion(), loadHDFMotion(), loadMotionFiles()
+// Motion loading is now on-demand via scanMotionFiles() + loadMotionFile()
 
-void GLFWApp::loadHDFMotion()
+void GLFWApp::scanMotionFiles()
 {
-	std::vector<std::string> hdf_single_files;
-	std::string motion_dir = "data/motion";
+    mMotionList.clear();
+    namespace fs = std::filesystem;
 
-	if (fs::exists(motion_dir) && fs::is_directory(motion_dir)) {
-		for (const auto &entry : fs::directory_iterator(motion_dir)) {
-			if (fs::is_regular_file(entry)) {
-				std::string ext = entry.path().extension().string();
-				if (ext == ".h5" || ext == ".hdf5") {
-					hdf_single_files.push_back(entry.path().string());
-				}
-			}
-		}
-	}
+    // Scan data/motion/ for HDF files (.h5, .hdf5)
+    std::string hdf_path = "data/motion";
+    if (fs::exists(hdf_path) && fs::is_directory(hdf_path)) {
+        for (const auto& entry : fs::directory_iterator(hdf_path)) {
+            if (!entry.is_regular_file()) continue;
+            std::string ext = entry.path().extension().string();
+            if (ext == ".h5" || ext == ".hdf5") {
+                mMotionList.push_back(entry.path().string());
+            }
+        }
+    }
 
-	if (!hdf_single_files.empty() && mRenderEnv) {
-		LOG_INFO("[HDF Single] Loading " << hdf_single_files.size() << " extracted HDF5 files...");
+    // Scan data/motion/c3d/ for C3D files
+    std::string c3d_path = "data/motion/c3d";
+    if (fs::exists(c3d_path) && fs::is_directory(c3d_path)) {
+        for (const auto& entry : fs::directory_iterator(c3d_path)) {
+            if (!entry.is_regular_file()) continue;
+            std::string ext = entry.path().extension().string();
+            if (ext == ".c3d") {
+                mMotionList.push_back(entry.path().string());
+            }
+        }
+    }
 
-		for (const auto& hdf_path : hdf_single_files) {
-			try {
-				// NEW ARCHITECTURE: Create HDF* and keep it alive
-				HDF* hdf = new HDF(hdf_path);
-				hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
-
-				// Store in new motion architecture
-				setMotion(hdf);
-
-				// Create viewer state
-				PlaybackViewerState state;
-				Eigen::VectorXd first_pose = hdf->getPose(0);
-				state.cycleAccumulation[0] = 1.0;
-				state.cycleDistance = computeMotionCycleDistance(hdf);
-				state.maxFrameIndex = std::max(0, hdf->getNumFrames() - 1);
-
-				if (hdf->hasParameters()) {
-					LOG_VERBOSE(hdf->getLogHeader() << " Loaded " << hdf->getName() << " with " << hdf->getNumFrames() << " frames (" << hdf->getParameterNames().size() << " parameters)");
-				} else {
-					LOG_VERBOSE(hdf->getLogHeader() << " Loaded " << hdf->getName() << " with " << hdf->getNumFrames() << " frames");
-				}
-				if (!hdf->hasParameters()) {
-					LOG_WARN("[" << hdf->getName() << "] Warning: No parameters in motion file");
-				}
-
-
-			} catch (const std::exception& e) {
-				std::cerr << "[HDF Single] Error loading " << hdf_path << ": " << e.what() << std::endl;
-			}
-		}
-	}
+    LOG_INFO("[Motion] Scanned " << mMotionList.size() << " motion files");
 }
 
-void GLFWApp::loadMotionFiles()
+void GLFWApp::loadMotionFile(const std::string& path)
 {
-	py::gil_scoped_acquire gil;
+    namespace fs = std::filesystem;
+    std::string ext = fs::path(path).extension().string();
+    Motion* motion = nullptr;
 
-	// Single motion architecture - no index needed
-
-	// Check motion load mode from config
-	if (mMotionLoadMode == "no") {
-		LOG_INFO("[Motion] Motion loading disabled");
-		return;
-	}
-
-	loadHDFMotion();
-	// Note: C3D files are loaded via loadC3DMotion() in initEnv()
-	// Deprecated motion types removed: BVH, NPZ, HDFRollout
-}
-
-void GLFWApp::scanHDF5Structure()
-{
-    mHDF5Files.clear();
-    mHDF5Params.clear();
-    mHDF5Cycles.clear();
-    mSelectedHDF5FileIdx = -1;
-    mSelectedHDF5ParamIdx = -1;
-    mSelectedHDF5CycleIdx = -1;
-
-    // Only scan sampled/ directory for hdfRollout files (nested structure)
-    // Note: hdf files (flat structure from data/motion/) are loaded separately
-    std::string search_path = "sampled";
-
-    if (!fs::exists(search_path) || !fs::is_directory(search_path)) {
-        std::cout << "[Motion] HDF5 rollout directory not found: " << search_path << std::endl;
+    if (ext == ".c3d") {
+        if (!mC3DReader) {
+            LOG_ERROR("[Motion] C3D reader not initialized");
+            return;
+        }
+        C3DConversionParams params;
+        motion = mC3DReader->loadC3D(path, params);
+    } else if (ext == ".h5" || ext == ".hdf5") {
+        motion = new HDF(path);
+    } else {
+        LOG_ERROR("[Motion] Unknown file extension: " << ext);
         return;
     }
 
-    try {
-        for (const auto &entry : fs::recursive_directory_iterator(search_path)) {
-            std::string file_name = entry.path().string();
-            if (file_name.find("rollout_data.h5") != std::string::npos) {
-                mHDF5Files.push_back(file_name);
-            }
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "Error scanning " << search_path << " for HDF5 rollout files: " << e.what() << std::endl;
+    if (motion) {
+        setMotion(motion);
+        mMotionState.cycleDistance = computeMotionCycleDistance(motion);
+        mMotionState.maxFrameIndex = std::max(0, motion->getNumFrames() - 1);
+        updateViewerTime(0);  // Initialize motion context
+        alignMotionToSimulation();
+        LOG_INFO("[Motion] Loaded: " << path);
+    } else {
+        LOG_ERROR("[Motion] Failed to load: " << path);
     }
-
-    std::cout << "[Motion] Found " << mHDF5Files.size() << " HDF5 rollout files" << std::endl;
 }
 
-// Removed: loadHDF5Parameters() - now using Motion::applyParametersToEnvironment() instead
+// REMOVED: scanHDF5Structure() - HDF5 rollout format no longer used
 
 void GLFWApp::loadParametersFromCurrentMotion()
 {
     if (!mRenderEnv) {
-        std::cerr << "Render environment not initialized" << std::endl;
+        LOG_ERROR("Render environment not initialized");
         return;
     }
 
     Motion* motion = mMotion;
 
     if (!motion) {
-        std::cerr << "No motion loaded" << std::endl;
+        LOG_ERROR("No motion loaded");
         return;
     }
 
     if (!motion->hasParameters()) {
-        std::cerr << "Current motion (" << motion->getName() << ") has no parameters" << std::endl;
+        LOG_WARN("Current motion (" + motion->getName() + ") has no parameters");
         return;
     }
 
-    std::cout << "Loading parameters from motion: " << motion->getName() << std::endl;
+    LOG_INFO("Loading parameters from motion: " << motion->getName());
 
     try {
         // Get parameters from motion
@@ -6222,8 +5973,8 @@ void GLFWApp::loadParametersFromCurrentMotion()
         std::vector<float> hdf5_param_values = motion->getParameterValues();
 
         if (hdf5_param_names.size() != hdf5_param_values.size()) {
-            std::cerr << "Error: Parameter names count (" << hdf5_param_names.size()
-                      << ") != values count (" << hdf5_param_values.size() << ")" << std::endl;
+            LOG_WARN("Parameter names count (" + std::to_string(hdf5_param_names.size())
+                      << ") != values count (" + std::to_string(hdf5_param_values.size()) + ")");
             return;
         }
 
@@ -6231,8 +5982,8 @@ void GLFWApp::loadParametersFromCurrentMotion()
         const std::vector<std::string>& sim_param_names = mRenderEnv->getParamName();
         Eigen::VectorXd current_params = mRenderEnv->getParamState();
 
-        std::cout << "  Motion has " << hdf5_param_names.size() << " parameters" << std::endl;
-        std::cout << "  Simulation has " << sim_param_names.size() << " parameters" << std::endl;
+        LOG_INFO("  Motion has " + std::to_string(hdf5_param_names.size()) + " parameters");
+        LOG_INFO("  Simulation has " + std::to_string(sim_param_names.size()) + " parameters");
 
         // Match and rebuild parameter vector
         Eigen::VectorXd new_params = current_params;  // Start with current values
@@ -6248,184 +5999,20 @@ void GLFWApp::loadParametersFromCurrentMotion()
             }
         }
 
-        std::cout << "  Matched " << matched_count << " parameters by name" << std::endl;
+        LOG_INFO("  Matched " + std::to_string(matched_count) + " parameters by name");
 
         // Apply parameters to simulation environment
         mRenderEnv->setParamState(new_params, false, true);
 
-        std::cout << "✓ Successfully loaded parameters from " << motion->getSourceType()
-                  << " motion: " << motion->getName() << std::endl;
+        LOG_INFO("✓ Successfully loaded parameters from " + motion->getSourceType()
+                  + " motion: " + motion->getName());
 
     } catch (const std::exception& e) {
-        std::cerr << "Error loading parameters from motion: " << e.what() << std::endl;
+        LOG_ERROR("Error loading parameters from motion: " + std::string(e.what()));
     }
 }
 
-#if 0  // TODO: Update for Motion* interface
-void GLFWApp::loadSelectedHDF5Motion()
-{
-    if (mSelectedHDF5FileIdx < 0) {
-        std::cerr << "No file selected" << std::endl;
-        return;
-    }
-
-    std::string file_path = mHDF5Files[mSelectedHDF5FileIdx];
-    std::string param_name = "param_" + std::to_string(mSelectedHDF5ParamIdx);
-    std::string cycle_name = "cycle_" + std::to_string(mSelectedHDF5CycleIdx);
-
-    std::cout << "Loading: " << file_path << " / " << param_name << " / " << cycle_name << std::endl;
-
-    try {
-        H5::H5File h5file(file_path, H5F_ACC_RDONLY);
-        H5::Group param_group = h5file.openGroup(param_name);
-
-        // Check parameter-level failure first
-        if (param_group.attrExists("success")) {
-            H5::Attribute success_attr = param_group.openAttribute("success");
-            bool success = true;
-            success_attr.read(H5::PredType::NATIVE_HBOOL, &success);
-            success_attr.close();
-
-            if (!success) {
-                std::string error_msg = "Parameter " + std::to_string(mSelectedHDF5ParamIdx) + " failed during rollout";
-                mParamFailureMessage = error_msg;
-                std::cerr << "Error: " << error_msg << std::endl;
-                std::cerr << "Keeping previous motion." << std::endl;
-
-                // Close HDF5 resources and return without loading
-                param_group.close();
-                h5file.close();
-                return;
-            }
-        }
-
-        // Clear parameter error on successful validation
-        mParamFailureMessage = "";
-
-        H5::Group cycle_group = param_group.openGroup(cycle_name);
-
-        // Read motions dataset
-        if (!cycle_group.nameExists("motions")) {
-            std::cerr << "No motions dataset in " << cycle_name << std::endl;
-            return;
-        }
-
-        H5::DataSet motions_dataset = cycle_group.openDataSet("motions");
-        H5::DataSpace dataspace = motions_dataset.getSpace();
-
-        // Get dimensions
-        hsize_t dims[2];
-        dataspace.getSimpleExtentDims(dims);
-        int num_steps = dims[0];
-        int motion_dim = dims[1];
-
-        // Validation: check if motion has enough timesteps for interpolation
-        const int MIN_TIMESTEPS = 20;
-        if (num_steps < MIN_TIMESTEPS) {
-            std::string error_msg = "Motion too short: " + std::to_string(num_steps) + " timesteps (minimum " + std::to_string(MIN_TIMESTEPS) + " required)";
-            mMotionLoadError = error_msg;
-            std::cerr << "Error: " << error_msg << std::endl;
-            std::cerr << "Keeping previous motion." << std::endl;
-
-            // Close HDF5 resources and return without loading
-            dataspace.close();
-            motions_dataset.close();
-            cycle_group.close();
-            param_group.close();
-            h5file.close();
-            return;
-        }
-
-        // Clear error on successful validation
-        mMotionLoadError = "";
-
-        // Read motion data
-        std::vector<double> motion_data(num_steps * motion_dim);
-        motions_dataset.read(motion_data.data(), H5::PredType::NATIVE_DOUBLE);
-
-        // Convert to Eigen matrix
-        Eigen::MatrixXd cycle_motion(num_steps, motion_dim);
-        for (int i = 0; i < num_steps; i++) {
-            for (int j = 0; j < motion_dim; j++) {
-                cycle_motion(i, j) = motion_data[i * motion_dim + j];
-            }
-        }
-
-        // Load timestamps
-        std::vector<double> cycle_timestamps;
-        if (cycle_group.nameExists("time")) {
-            H5::DataSet time_ds = cycle_group.openDataSet("time");
-            cycle_timestamps.resize(num_steps);
-            time_ds.read(cycle_timestamps.data(), H5::PredType::NATIVE_DOUBLE);
-            time_ds.close();
-        }
-
-        // Create ViewerMotion
-        ViewerMotion motion_elem;
-        motion_elem.name = file_path + "_" + param_name + "_" + cycle_name;
-        motion_elem.source_type = "hdfRollout";
-        motion_elem.values_per_frame = motion_dim;
-        motion_elem.num_frames = 1;  // Single cycle
-        motion_elem.hdf5_total_timesteps = num_steps;
-        motion_elem.hdf5_timesteps_per_cycle = num_steps;
-
-        // Flatten motion data
-        motion_elem.motion = Eigen::VectorXd::Zero(num_steps * motion_dim);
-        int offset = 0;
-        for (int i = 0; i < num_steps; i++) {
-            for (int j = 0; j < motion_dim; j++) {
-                motion_elem.motion[offset++] = cycle_motion(i, j);
-            }
-        }
-
-        // Store timestamps
-        motion_elem.timestamps = cycle_timestamps;
-
-        // Set parameters
-        motion_elem.param = Eigen::VectorXd::Zero(mRenderEnv ? mRenderEnv->getNumKnownParam() : 10);
-
-        // Extract first frame root position
-        Eigen::VectorXd first_frame = motion_elem.motion.segment(0, motion_dim);
-        motion_elem.initialRootPosition = Eigen::Vector3d(first_frame[3], first_frame[4], first_frame[5]);
-
-        // Calculate display offset
-        if (mRenderEnv && mRenderEnv->getCharacter()) {
-            Eigen::VectorXd char_positions = mRenderEnv->getCharacter()->getSkeleton()->getPositions();
-            Eigen::Vector3d char_root(char_positions[3], char_positions[4], char_positions[5]);
-            motion_elem.displayOffset = char_root - motion_elem.initialRootPosition + Eigen::Vector3d(1.0, 0, 0);
-        } else {
-            motion_elem.displayOffset = Eigen::Vector3d(1.0, 0, 0);
-        }
-
-        // Add to motions list
-        setMotion(motion_elem);
-        mMotionIdx = mMotions.size() - 1;  // Select the newly loaded motion
-
-        // Update max frame index for manual navigation
-        if (mMotion != nullptr) {
-            mMotionState.maxFrameIndex = motion_elem.hdf5_total_timesteps - 1;
-            mMotionState.manualFrameIndex = 0;  // Reset to first frame
-            mMotionState.navigationMode = PLAYBACK_SYNC;
-        }
-
-        if (!cycle_timestamps.empty()) {
-            LOG_VERBOSE("  Loaded: " << num_steps << " timesteps, " << motion_dim << " DOF, time range: [" << cycle_timestamps.front() << ", " << cycle_timestamps.back() << "] seconds");
-        } else {
-            LOG_VERBOSE("  Loaded: " << num_steps << " timesteps, " << motion_dim << " DOF");
-        }
-
-        dataspace.close();
-        motions_dataset.close();
-        cycle_group.close();
-        param_group.close();
-        h5file.close();
-
-    } catch (const std::exception& e) {
-        mMotionLoadError = std::string("Load failed: ") + e.what();
-        std::cerr << "Error loading motion: " << e.what() << std::endl;
-    }
-}
-#endif  // loadSelectedHDF5Motion
+// REMOVED: loadSelectedHDF5Motion() - HDF5 rollout format no longer used
 
 #if 0  // TODO: Update for Motion* interface
 void GLFWApp::addSimulationMotion()
@@ -6504,29 +6091,16 @@ void GLFWApp::unloadMotion()
     delete mMotion;
     mMotion = nullptr;
     mMotionState = PlaybackViewerState();  // Reset to default
+    mSelectedMotion = -1;  // Reset selection
 
-    // Reset HDF5 rollout selection indices
-    mSelectedHDF5FileIdx = -1;
-    mSelectedHDF5ParamIdx = 0;
-    mSelectedHDF5CycleIdx = 0;
-    mMaxHDF5ParamIdx = 0;
-    mMaxHDF5CycleIdx = 0;
-
-    // Clear HDF5 file lists
-    mHDF5Files.clear();
-    mHDF5Params.clear();
-    mHDF5Cycles.clear();
-
-    // Clear error messages
-    mMotionLoadError.clear();
-    mParamFailureMessage.clear();
-    mLastLoadedHDF5ParamsFile.clear();
+    // Reset motion context
+    updateViewerTime(0);
 
     // Reset simulation parameters to default from XML metadata
-    if (mRenderEnv) {
+    if (mRenderEnv && mMotionCharacter) {
         Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
         mRenderEnv->setParamState(default_params, false, true);
-        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
-        std::cout << "[Motion] All motions unloaded, parameters reset to defaults" << std::endl;
+        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
+        LOG_INFO("[Motion] Motion unloaded, parameters reset to defaults");
     }
 }

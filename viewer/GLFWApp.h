@@ -7,7 +7,7 @@
 #include "Character.h"
 #include "Motion.h"
 #include "HDF.h"
-#include "C3DMotion.h"  // C3D motion with markers
+#include "C3D.h"  // C3D motion with markers
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -17,6 +17,7 @@
 #include <backends/imgui_impl_opengl3.h>
 #include <imgui_internal.h>
 #include "C3D_Reader.h"
+#include "motion/MotionProcessor.h"
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
 #include "ImGuiFileDialog.h"
@@ -133,18 +134,18 @@ struct DrawFlags
  *
  * Fields are optional based on data type:
  * - currentPose: Used for skeleton motion playback
- * - currentMarkers: Used for C3DMotion or standalone marker playback
+ * - currentMarkers: Used for C3D or standalone marker playback
  */
 struct PlaybackViewerState
 {
     Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();        ///< World offset for display positioning
     Eigen::VectorXd currentPose;                                     ///< Last evaluated pose (cached from Motion::getPose(), optional)
-    std::vector<Eigen::Vector3d> currentMarkers;                     ///< Current marker positions (for C3DMotion or standalone markers, optional)
+    std::vector<Eigen::Vector3d> currentMarkers;                     ///< Current marker positions (for C3D or standalone markers, optional)
     Eigen::Vector3d cycleAccumulation = Eigen::Vector3d::Zero();     ///< Accumulated root translation across cycles
     Eigen::Vector3d cycleDistance = Eigen::Vector3d::Zero();         ///< Pre-computed cycle distance (for cycle wrap accumulation)
     int lastFrameIdx = 0;                                            ///< Last evaluated frame index (for wrap detection)
     int maxFrameIndex = 0;                                           ///< Maximum frame index for this data
-    bool render = false;                                              ///< Whether to render this data
+    bool render = true;                                               ///< Whether to render this data (default: enabled)
     PlaybackNavigationMode navigationMode = PLAYBACK_SYNC;           ///< Playback mode (sync or manual frame selection)
     int manualFrameIndex = 0;                                        ///< Manual frame index when navigationMode == PLAYBACK_MANUAL_FRAME
 };
@@ -278,8 +279,7 @@ private:
     Eigen::Vector3d mRelTrans;  // User's manual translation offset (preserved across focus modes)
     int mFocus;
 
-    // Skeleton for kinematic drawing
-    dart::dynamics::SkeletonPtr mMotionSkeleton;
+    // mMotionSkeleton removed - use mMotionCharacter->getSkeleton() instead
 
     std::vector<std::string> mNetworkPaths;
     std::vector<Network> mNetworks;
@@ -319,14 +319,18 @@ private:
 
     std::vector<std::string> mFGNList;
     std::vector<std::string> mBGNList;
-    std::vector<std::string> mC3DList;
 
     py::object mFGN;
     std::string mFGNmetadata;
     Eigen::Vector3d mFGNRootOffset;
     int selected_fgn;
     int selected_bgn;
-    int mSelectedC3d;
+
+    // Unified motion file list (paths only, loaded on-demand)
+    std::vector<std::string> mMotionList;  // All motion files (HDF + C3D)
+    int mSelectedMotion = -1;               // Currently selected motion index
+    void scanMotionFiles();                 // Scan directories for motion files
+    void loadMotionFile(const std::string& path);  // Load motion on-demand
 
     // Motion Buffer
     std::vector<Eigen::VectorXd> mMotionBuffer;
@@ -335,9 +339,7 @@ private:
     // C3D loading and rendering
     C3D_Reader* mC3DReader;
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
-    std::unique_ptr<C3D> mC3DMarkers;  // For marker-only rendering
     bool mRenderC3DMarkers;
-    PlaybackViewerState mMarkerState;
 
 
     // For GVAE
@@ -348,31 +350,16 @@ private:
     // Single motion architecture (new/delete pattern)
     Motion* mMotion;                            ///< Single active motion instance
     PlaybackViewerState mMotionState;           ///< Viewer state for active motion
+    std::unique_ptr<MotionProcessor> mMotionProcessor;  ///< Unified motion processor
 
     MotionData mPredictedMotion;
 
-    // HDF5 selection (for selective param/cycle loading)
-    std::vector<std::string> mHDF5Files;              // Available HDF5 files
-    std::vector<std::string> mHDF5Params;             // Available params in selected file
-    std::vector<std::string> mHDF5Cycles;             // Available cycles in selected param
-    int mSelectedHDF5FileIdx;                         // Currently selected file
-    int mSelectedHDF5ParamIdx;                        // Currently selected param (drag value)
-    int mSelectedHDF5CycleIdx;                        // Currently selected cycle (drag value)
-    int mMaxHDF5ParamIdx;                             // Maximum param index for selected file
-    int mMaxHDF5CycleIdx;                             // Maximum cycle index for selected param
-    std::string mCurrentHDF5FilePath;                 // Path to current HDF5 file
-    std::string mMotionLoadError;                     // Error message for motion loading failures
-    std::string mParamFailureMessage;                 // Error message for parameter failures
-    std::string mLastLoadedHDF5ParamsFile;            // Track which HDF5 file's parameters are loaded
-    void scanHDF5Structure();                         // Scan HDF5 file to populate params/cycles
-    void loadSelectedHDF5Motion();                    // Load specific param/cycle combination
+    // Motion management
     void unloadMotion();                              // Unload all motions and reset parameters
 
     // NEW: Load parameters from currently selected motion (works with new Motion* architecture)
     void loadParametersFromCurrentMotion();           // Load parameters from mMotionsNew[mMotionIdx] to environment
     double computeMarkerHeightCalibration(const std::vector<Eigen::Vector3d>& markers);
-    void alignMarkerToSimulation();
-    void markerPoseEval(double frameFloat);
 
     struct ViewerClock
     {
@@ -420,8 +407,11 @@ private:
                                        int value_per_frame);
 
     std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads HDF and C3D
+    bool mLoadSimulationOnStartup = true;  // Whether to load simulation environment on startup
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
-        
+        if (!mMotionCharacter || !mRenderEnv) return;
+        auto skel = mMotionCharacter->getSkeleton();
+
         // (1) Set Motion Skeleton
         double global = skel_param[2];
         for(auto& m : mSkelInfosForMotions){
@@ -433,21 +423,21 @@ private:
             }
         }
 
-        
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("FemurL")->getIndexInSkeleton()]).value[1] *= skel_param[3];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("FemurR")->getIndexInSkeleton()]).value[1] *= skel_param[4];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("TibiaL")->getIndexInSkeleton()]).value[1] *= skel_param[5];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("TibiaR")->getIndexInSkeleton()]).value[1] *= skel_param[6];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("ArmL")->getIndexInSkeleton()]).value[0] *= skel_param[7];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("ArmR")->getIndexInSkeleton()]).value[0] *= skel_param[8];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("ForeArmL")->getIndexInSkeleton()]).value[0] *= skel_param[9];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("ForeArmR")->getIndexInSkeleton()]).value[0] *= skel_param[10];
 
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("FemurL")->getIndexInSkeleton()]).value[4] = skel_param[11];
-        std::get<1>(mSkelInfosForMotions[mMotionSkeleton->getBodyNode("FemurR")->getIndexInSkeleton()]).value[4] = skel_param[12];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("FemurL")->getIndexInSkeleton()]).value[1] *= skel_param[3];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("FemurR")->getIndexInSkeleton()]).value[1] *= skel_param[4];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("TibiaL")->getIndexInSkeleton()]).value[1] *= skel_param[5];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("TibiaR")->getIndexInSkeleton()]).value[1] *= skel_param[6];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("ArmL")->getIndexInSkeleton()]).value[0] *= skel_param[7];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("ArmR")->getIndexInSkeleton()]).value[0] *= skel_param[8];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("ForeArmL")->getIndexInSkeleton()]).value[0] *= skel_param[9];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("ForeArmR")->getIndexInSkeleton()]).value[0] *= skel_param[10];
+
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("FemurL")->getIndexInSkeleton()]).value[4] = skel_param[11];
+        std::get<1>(mSkelInfosForMotions[skel->getBodyNode("FemurR")->getIndexInSkeleton()]).value[4] = skel_param[12];
 
 
-        mRenderEnv->getCharacter()->applySkeletonBodyNode(mSkelInfosForMotions, mMotionSkeleton);
+        mRenderEnv->getCharacter()->applySkeletonBodyNode(mSkelInfosForMotions, skel);
 
         int pos_dof = mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()).rows();
         if (motion.rows() != pos_dof * 60) {
@@ -458,7 +448,7 @@ private:
         // (2) Draw Skeleton according to motion
         Eigen::Vector3d pos = offset;
         glColor4f(color[0], color[1], color[2], color[3]);
-        
+
         for(int i = 0; i < 60; i++)
         {
             Eigen::VectorXd skel_pos = mRenderEnv->getCharacter()->sixDofToPos(motion.segment(i*pos_dof, pos_dof));
@@ -471,7 +461,7 @@ private:
                 drawSkeleton(skel_pos, color);
         }
 
-        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionSkeleton);
+        mRenderEnv->getCharacter()->updateRefSkelParam(skel);
     }
 
     std::vector<Eigen::VectorXd> mTestMotion;
@@ -542,15 +532,14 @@ private:
     // Helper methods for initEnv
     void loadNetworkFromPath(const std::string& path);
     void initializeMotionSkeleton();
-    void loadMotionFiles();
-    void loadHDFMotion();  // Renamed from loadHDFSingleMotion
+    void initializeMotionCharacter(const std::string& metadata);  // Standalone motion character init
     void updateUnifiedKeys();
     void updateResizablePlotsFromKeys();
     void runRollout();
 
     // Motion navigation helper - NEW: using Motion* interface
     double computeFrameFloat(Motion* motion, double phase);
-    void motionPoseEval(Motion* motion, int motionIdx, double frame_float);
+    void motionPoseEval(Motion* motion, int motionIdx, double frame_float);  // Delegates to mMotionProcessor
     double computeMotionHeightCalibration(const Eigen::VectorXd& motion_pose);
     void alignMotionToSimulation();
     void setMotion(Motion* motion);  // Helper: delete old, assign new, initialize state

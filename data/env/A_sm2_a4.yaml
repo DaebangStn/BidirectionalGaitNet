@@ -1,3 +1,5 @@
+# args:
+
 environment:
   # Skeleton and Character
   skeleton:
@@ -11,10 +13,6 @@ environment:
   motion:
     type: "h5"  # h5, bvh, npz
     file: "@data/motion/walk.h5"
-    cyclic: true
-    height_calibration:
-      enabled: true
-      strict: true
 
   # Muscle System
   muscle:
@@ -28,27 +26,25 @@ environment:
 
   # Simulation Timing
   simulation:
-    sim_hz: 120
+    sim_hz: 300
     control_hz: 30
 
   # Action and Control
   action:
     scale: 0.04
-    residual: true
     time_warping: 0.001  # -1 means disabled
     gait_phase_mode: "contact"  # "contact" or "phase"
     contact_debounce_alpha: 0.4
-    step_min_ratio: 0.1
+    step_min_ratio: 0.2
 
   # Reward System
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
-    eoe_type: "tuple"  # tuple or time
 
     # Metabolic configuration
     metabolic:
-      type: "MA2"  # A, A2, MA, MA2
-      weight: 0.03
+      type: "A"  # A, A2, MA, MA2
+      weight: 0.02
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:

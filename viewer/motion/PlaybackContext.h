@@ -36,7 +36,7 @@ struct MotionProcessorContext {
 
     // ==================== Motion Info ====================
     int totalFrames = 0;                    ///< Total frames in motion
-    int valuesPerFrame = 0;                 ///< DOF count per frame (56 for HDF, 56 for C3DMotion skeleton)
+    int valuesPerFrame = 0;                 ///< DOF count per frame (56 for HDF, 56 for C3D skeleton)
 
     // ==================== Computed Pose ====================
     Eigen::VectorXd currentPose;            ///< Evaluated skeleton pose (56 DOF)

@@ -1,9 +1,9 @@
 #include "C3D.h"
 
 #include <ezc3d/ezc3d_all.h>
+#include "Log.h"
 #include <filesystem>
 #include <algorithm>
-#include <iostream>
 #include <cmath>
 
 namespace fs = std::filesystem;
@@ -71,7 +71,7 @@ bool C3D::load(const std::string& path)
 
         if (mMarkers.empty())
         {
-            std::cerr << "[C3D] Warning: No markers loaded from " << path << std::endl;
+            LOG_WARN("[C3D] Warning: No markers loaded from " << path);
             return false;
         }
 
@@ -81,10 +81,7 @@ bool C3D::load(const std::string& path)
 
         if (lastCentroid.z() < firstCentroid.z())
         {
-            std::cout << "[C3D] Detected backward walking (last Z < first Z)" << std::endl;
-            std::cout << "[C3D]   First centroid Z: " << firstCentroid.z()
-                      << ", Last centroid Z: " << lastCentroid.z() << std::endl;
-            std::cout << "[C3D] Reversing Z-axis and mirroring X-axis to preserve left/right..." << std::endl;
+            LOG_WARN("[C3D] Detected backward walking (last Z < first Z)");
 
             // Negate both Z and X coordinates to reverse walking direction
             // while preserving left/right orientation
@@ -97,14 +94,13 @@ bool C3D::load(const std::string& path)
                 }
             }
 
-            std::cout << "[C3D] Z and X axis reversal complete" << std::endl;
         }
 
         return true;
     }
     catch (const std::exception& e)
     {
-        std::cerr << "[C3D] Failed to load " << path << ": " << e.what() << std::endl;
+        LOG_ERROR("[C3D] Failed to load " << path << ": " << e.what());
         mMarkers.clear();
         return false;
     }
@@ -210,6 +206,14 @@ Eigen::VectorXd C3D::getTargetPose(double phase)
 
 Eigen::VectorXd C3D::getPose(int frameIdx)
 {
+    // If skeleton poses are available, return those
+    if (!mSkeletonPoses.empty()) {
+        if (frameIdx < 0 || frameIdx >= static_cast<int>(mSkeletonPoses.size()))
+            return Eigen::VectorXd();
+        return mSkeletonPoses[frameIdx];
+    }
+
+    // Fallback: return flattened marker data
     if (mMarkers.empty())
         return Eigen::VectorXd();
     const auto& markers = getMarkers(frameIdx);
@@ -256,6 +260,12 @@ void C3D::setRefMotion(Character*, dart::simulation::WorldPtr)
 
 int C3D::getValuesPerFrame() const
 {
+    // If skeleton poses are available, return skeleton DOF
+    if (!mSkeletonPoses.empty()) {
+        return static_cast<int>(mSkeletonPoses.front().size());
+    }
+
+    // Fallback: marker count * 3
     if (mMarkers.empty())
         return 0;
     return static_cast<int>(mMarkers.front().size() * 3);
@@ -276,6 +286,18 @@ std::vector<double> C3D::getTimestamps() const
 
 Eigen::VectorXd C3D::getRawMotionData() const
 {
+    // If skeleton poses are available, return those
+    if (!mSkeletonPoses.empty()) {
+        const int valuesPerFrame = getValuesPerFrame();
+        const int totalFrames = static_cast<int>(mSkeletonPoses.size());
+        Eigen::VectorXd rawData(valuesPerFrame * totalFrames);
+        for (int i = 0; i < totalFrames; ++i) {
+            rawData.segment(i * valuesPerFrame, valuesPerFrame) = mSkeletonPoses[i];
+        }
+        return rawData;
+    }
+
+    // Fallback: return flattened marker data
     if (mMarkers.empty())
         return Eigen::VectorXd();
     const int valuesPerFrame = getValuesPerFrame();
@@ -344,10 +366,7 @@ bool C3D::detectAndCorrectBackwardWalking(std::vector<std::vector<Eigen::Vector3
     if (lastCentroid.z() >= firstCentroid.z())
         return false; // Forward walking, no correction needed
 
-    std::cout << "[C3D] Detected backward walking (last Z < first Z)" << std::endl;
-    std::cout << "[C3D]   First centroid Z: " << firstCentroid.z()
-              << ", Last centroid Z: " << lastCentroid.z() << std::endl;
-    std::cout << "[C3D] Reversing Z-axis and mirroring X-axis to preserve left/right..." << std::endl;
+    LOG_WARN("[C3D] Detected backward walking (last Z < first Z)");
 
     // Negate both Z and X coordinates to reverse walking direction
     // while preserving left/right orientation
@@ -360,6 +379,10 @@ bool C3D::detectAndCorrectBackwardWalking(std::vector<std::vector<Eigen::Vector3
         }
     }
 
-    std::cout << "[C3D] Z and X axis reversal complete" << std::endl;
     return true;
+}
+
+void C3D::setSkeletonPoses(const std::vector<Eigen::VectorXd>& poses)
+{
+    mSkeletonPoses = poses;
 }

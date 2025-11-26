@@ -32,6 +32,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Kill all previous MuscleSim viewer instances
+echo "Killing previous MuscleSim viewer instances..."
+pkill -f "MuscleSim" 2>/dev/null || true
+wmctrl -c "MuscleSim" 2>/dev/null || true
+# Also kill by executable name as fallback
+pkill -f "./build/release/viewer/viewer" 2>/dev/null || true
+sleep 0.5
+
 if [ -n "$FILTER" ]; then
     echo "Starting viewer processes for checkpoints containing '$FILTER' in '${CHECKPOINT_DIR}/'..."
 else

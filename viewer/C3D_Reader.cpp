@@ -3,7 +3,6 @@
 #include <tinyxml2.h>
 #include <ezc3d/ezc3d_all.h>
 #include "C3D_Reader.h"
-#include "C3DMotion.h"
 #include "C3D.h"
 #include "Log.h"
 
@@ -27,9 +26,10 @@ Eigen::MatrixXd getRotationMatrixFromPoints(Eigen::Vector3d p0, Eigen::Vector3d 
     return R;
 }
 
-C3D_Reader::C3D_Reader(std::string skel_path, std::string marker_path, Environment *env)
+C3D_Reader::C3D_Reader(std::string marker_path, Character *character)
 {
-    mEnv = env;
+    mCharacter = character;
+    mVirtSkeleton = character->getSkeleton();  // Get skeleton from Character
 
     mFrameRate = 60;
 
@@ -45,8 +45,6 @@ C3D_Reader::C3D_Reader(std::string skel_path, std::string marker_path, Environme
 
     mSkelInfos.clear();
     mMarkerSet.clear();
-
-    mVirtSkeleton = BuildFromFile(skel_path, SKEL_COLLIDE_ALL);
 
     for (auto bn : mVirtSkeleton->getBodyNodes())
     {
@@ -297,13 +295,13 @@ void C3D_Reader::applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion,
 // Main loadC3D Function
 // ============================================================================
 
-C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& params)
+C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& params)
 {
     LOG_VERBOSE("[C3D_Reader] loadC3D started for: " << path);
 
     // Step 1: Load marker data from C3D file
-    C3D* markerData = loadMarkerData(path);
-    if (!markerData) {
+    C3D* c3dData = loadMarkerData(path);
+    if (!c3dData) {
         return nullptr;
     }
 
@@ -314,7 +312,7 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
     const size_t numFrames = c3d.data().nbFrames();
     if (numFrames == 0) {
         LOG_ERROR("[C3D_Reader] No frames found in C3D file");
-        delete markerData;
+        delete c3dData;
         return nullptr;
     }
 
@@ -363,165 +361,33 @@ C3DMotion* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParam
 
     // Step 5: Apply post-processing (reordering, zeroing, marker alignment)
     // - deprecated: it is required only for give offset to 3/8 of total frames
-    // applyMotionPostProcessing(motion, markerData);
+    // applyMotionPostProcessing(motion, c3dData);
 
-    // Step 6: Create and return C3DMotion object
-    LOG_VERBOSE("[C3D_Reader] Creating C3DMotion with " << motion.size() << " frames");
+    // Step 6: Set skeleton poses on C3D object and return
+    LOG_VERBOSE("[C3D_Reader] Setting skeleton poses on C3D with " << motion.size() << " frames");
     LOG_VERBOSE("[C3D_Reader] First frame DOF: " << (motion.empty() ? 0 : motion[0].size()));
 
-    C3DMotion* result = new C3DMotion(markerData, motion, path);
+    c3dData->setSkeletonPoses(motion);
+    c3dData->setSourceFile(path);
 
-    LOG_VERBOSE("[C3D_Reader] C3DMotion created successfully");
-    LOG_VERBOSE("[C3D_Reader] - NumFrames: " << result->getNumFrames());
-    LOG_VERBOSE("[C3D_Reader] - ValuesPerFrame: " << result->getValuesPerFrame());
-    LOG_VERBOSE("[C3D_Reader] - RawMotionData size: " << result->getRawMotionData().size());
+    LOG_VERBOSE("[C3D_Reader] C3D created successfully");
+    LOG_VERBOSE("[C3D_Reader] - NumFrames: " << c3dData->getNumFrames());
+    LOG_VERBOSE("[C3D_Reader] - ValuesPerFrame: " << c3dData->getValuesPerFrame());
+    LOG_VERBOSE("[C3D_Reader] - RawMotionData size: " << c3dData->getRawMotionData().size());
 
-    return result;
+    return c3dData;
 }
 
-// std::vector<Eigen::VectorXd>
+// TODO: Re-enable when Environment dependency is resolved
+// This function requires Environment methods (getParamState, getRefStride, getRefCadence)
 MotionData
 C3D_Reader::convertToMotion()
 {
+    LOG_WARN("[C3D_Reader] convertToMotion() temporarily disabled - requires Environment");
     MotionData motion;
     motion.name = "C3D";
     motion.motion = Eigen::VectorXd::Zero(6060);
-    motion.param = mEnv->getParamState(0);
-    motion.param.setOnes();
-
-    double times = 1.0 / mFrameRate * mCurrentMotion.size();  // mMotion.size();
-
-    // Global Ratio 를 알아내야함
-
-    double globalRatio = 0.0;
-
-    // for(auto m : mSkelInfos)
-    for (int i = 0; i < mSkelInfos.size(); i++)
-    {
-        auto m = mSkelInfos[i];
-        if (i < 13 && std::get<0>(m).find("Foot") == std::string::npos && std::get<0>(m).find("Talus") == std::string::npos)
-            if (globalRatio < std::get<1>(m).value[3])
-            {   
-                std::cout << std::get<0>(m) << " : " << std::get<1>(m).value[3] << std::endl;
-                globalRatio = std::get<1>(m).value[3];
-            }
-    }
-
-    double abs_stride = mCurrentMotion.back()[5] - mCurrentMotion.front()[5];
-    
-    abs_stride /= (globalRatio * mEnv->getRefStride());
-
-    // Set Stride
-    motion.param[0] = abs_stride * 0.5;
-    // Set Cadence
-    motion.param[1] = (mEnv->getRefCadence() * sqrt(globalRatio) / (times * 0.5));
-
-    motion.param[2] = globalRatio;
-
-    // Femur L/R
-    std::cout << "Femur L : " << std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("FemurL")->getIndexInSkeleton()]).value[3] << std::endl;
-    std::cout << "Femur R : " << std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("FemurR")->getIndexInSkeleton()]).value[3] << std::endl;
-
-    motion.param[3] = std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("FemurL")->getIndexInSkeleton()]).value[3] / globalRatio;
-    motion.param[4] = std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("FemurR")->getIndexInSkeleton()]).value[3] / globalRatio;
-    
-    motion.param[3] = dart::math::clip(motion.param[3], 0.0, 1.0);
-    motion.param[4] = dart::math::clip(motion.param[4], 0.0, 1.0);
-
-    // Tibia L/R
-    // std::cout << "Tibia L : " << std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("TibiaL")->getIndexInSkeleton(0)]).value[3] << std::endl;
-    // std::cout << "Tibia R : " << std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("TibiaR")->getIndexInSkeleton(0)]).value[3] << std::endl;
-
-    motion.param[5] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getBodyNode("TibiaL")->getIndexInSkeleton()]).value[3] / globalRatio;
-    motion.param[6] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getBodyNode("TibiaR")->getIndexInSkeleton()]).value[3] / globalRatio;
-
-    motion.param[5] = dart::math::clip(motion.param[5], 0.0, 1.0);
-    motion.param[6] = dart::math::clip(motion.param[6], 0.0, 1.0);
-
-    std::cout << "Tibia L : " << std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("TibiaL")->getIndexInSkeleton()]).value[3] << std::endl;
-    std::cout << "Tibia R : " << std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("TibiaR")->getIndexInSkeleton()]).value[3] << std::endl;
-
-    // // Arm L/R
-    // motion.param[7] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ArmL")->getIndexInSkeleton(0)]).value[3] / globalRatio;
-    // motion.param[8] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ArmR")->getIndexInSkeleton(0)]).value[3] / globalRatio;
-
-    // // ForArm L/R
-    // motion.param[9] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ForeArmL")->getIndexInSkeleton(0)]).value[3] / globalRatio;
-    // motion.param[10] = std::get<1>(mSkelInfos[mEnv->getCharacter()->getSkeleton()->getJoint("ForeArmR")->getIndexInSkeleton(0)]).value[3] / globalRatio;
-
-    std::cout << "global ratio" << globalRatio << std::endl;
-
-    // Set Skeleton Parameter
-    // 가장 큰 것 기준으로 줄이고 나머지 Length 로 하나하나 추가
-    motion.param[11] = femurL_torsion;
-    motion.param[12] = femurR_torsion;
-
-    // std::vector<Eigen::VectorXd> mConvertedPos;
-    mConvertedPos.clear();
-    Eigen::VectorXd pos_backup = mEnv->getCharacter()->getSkeleton()->getPositions();
-    Eigen::VectorXd pos = pos_backup;
-    pos.setZero();
-    for(int i = 0; i < mCurrentMotion.size(); i++)
-    {
-        mVirtSkeleton->setPositions(mCurrentMotion[i]);
-        for (auto jn : mVirtSkeleton->getJoints())
-        {
-            auto skel_jn = mEnv->getCharacter()->getSkeleton()->getJoint(jn->getName());
-            if(jn->getNumDofs() > skel_jn->getNumDofs())
-                skel_jn->setPosition(0, jn->getPositions()[0]);
-            else if (jn->getNumDofs() == skel_jn->getNumDofs())
-                skel_jn->setPositions(jn->getPositions());
-        }
-
-        pos = mEnv->getCharacter()->getSkeleton()->getPositions();
-        mConvertedPos.push_back(mEnv->getCharacter()->posToSixDof(pos));
-    }
-    std::cout << "Converted Positions : " << mConvertedPos.size() << std::endl;
-
-    // Converting
-    int current_idx = 0;
-    std::vector<double> cur_phis;
-    for (int i = 0; i < mConvertedPos.size(); i++)
-        cur_phis.push_back(2.0 * i / mConvertedPos.size());
-    cur_phis[0] = -1E-6;
-
-    int phi_idx = 0;
-    std::vector<double> ref_phis;
-    for (int i = 0; i < 60; i++)
-        ref_phis.push_back(2.0 * i / 60.0);
-
-
-
-    // Converting pos to motion
-    while (phi_idx < ref_phis.size() && current_idx < mConvertedPos.size() - 1)
-    {
-        if (cur_phis[current_idx] <= ref_phis[phi_idx] && ref_phis[phi_idx] <= cur_phis[current_idx + 1])
-        {
-            Eigen::VectorXd motion_pos = mConvertedPos[current_idx];
-            double w0 = (ref_phis[phi_idx] - cur_phis[current_idx]) / (cur_phis[current_idx + 1] - cur_phis[current_idx]);
-            double w1 = (cur_phis[current_idx + 1] - ref_phis[phi_idx]) / (cur_phis[current_idx + 1] - cur_phis[current_idx]);
-
-            motion_pos.setZero();
-            motion_pos += w0 * mConvertedPos[current_idx + 1];
-            motion_pos += w1 * mConvertedPos[current_idx];
-
-            Eigen::Vector3d v0 = ((current_idx == 0) ? mConvertedPos[current_idx + 1].segment(6, 3) - mConvertedPos[current_idx].segment(6, 3) : mConvertedPos[current_idx].segment(6, 3) - mConvertedPos[current_idx - 1].segment(6, 3)) * mFrameRate / 30.0;
-            Eigen::Vector3d v1 = ((current_idx == mConvertedPos.size() - 1) ? mConvertedPos[current_idx].segment(6, 3) - mConvertedPos[current_idx - 1].segment(6, 3) : mConvertedPos[current_idx+1].segment(6, 3) - mConvertedPos[current_idx ].segment(6, 3)) * mFrameRate / 30.0;
-            Eigen::Vector3d v = w0 * v0 + w1 * v1;
-
-            motion_pos[6] = v[0];
-            motion_pos[8] = v[2];
-
-            motion.motion.segment(phi_idx * motion_pos.rows(), motion_pos.rows()) = motion_pos;
-
-
-            // std::cout << phi_idx * motion_pos.rows() << "\t" << motion_pos.rows() << std::endl;
-            phi_idx++;
-        }
-        else
-            current_idx++;
-    }
-    mEnv->getCharacter()->getSkeleton()->setPositions(pos_backup);
+    motion.param = Eigen::VectorXd::Zero(13);
     return motion;
 }
 

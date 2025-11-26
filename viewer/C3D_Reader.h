@@ -8,8 +8,6 @@
 #include "C3D.h"
 #include <ezc3d/ezc3d_all.h>
 
-// Forward declaration
-class C3DMotion;
 
 // C3D conversion parameters
 struct C3DConversionParams
@@ -44,13 +42,13 @@ struct MocapMarker
 class C3D_Reader
 {
     public:
-        C3D_Reader(std::string skel_path, std::string marker_path, Environment *env);
+        C3D_Reader(std::string marker_path, Character *character);
         ~C3D_Reader();
 
         int getFrameRate() { return mFrameRate; }
 
 
-        C3DMotion* loadC3D(const std::string& path, const C3DConversionParams& params);
+        C3D* loadC3D(const std::string& path, const C3DConversionParams& params);
         Eigen::VectorXd getPoseFromC3D(std::vector<Eigen::Vector3d>& _pos);
         // Eigen::VectorXd getPoseFromC3D_2(std::vector<Eigen::Vector3d> _pos);
         SkeletonPtr getBVHSkeleton() { return mVirtSkeleton; }
@@ -141,7 +139,9 @@ class C3D_Reader
             femurL_torsion = torsionL;
             
             // 10 , 14
-            mEnv->getCharacter()->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
+            if (mCharacter) {
+                mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
+            }
         }
         const std::vector<MocapMarker>& getMarkerSet() { return mMarkerSet; }
         MotionData convertToMotion();
@@ -156,7 +156,7 @@ class C3D_Reader
         std::vector<Eigen::VectorXd> convertFramesToSkeletonPoses(const ezc3d::c3d& c3d, size_t numFrames);
         void applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion, C3D* markerData);
 
-        Environment *mEnv;
+        Character *mCharacter;
         SkeletonPtr mVirtSkeleton;
 
         std::vector<BoneInfo> mSkelInfos;

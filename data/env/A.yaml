@@ -1,5 +1,4 @@
-args:
-  init_log_std: 0.5
+# args:
 
 environment:
   # Skeleton and Character
@@ -36,6 +35,7 @@ environment:
     time_warping: 0.001  # -1 means disabled
     gait_phase_mode: "contact"  # "contact" or "phase"
     contact_debounce_alpha: 0.4
+    step_min_ratio: 0.1
 
   # Reward System
   reward:

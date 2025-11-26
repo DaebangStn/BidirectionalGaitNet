@@ -1,177 +1,192 @@
 // Motion Processor Architecture
-// BidirectionalGaitNet Viewer - Motion Processing System
-// Generate with: dot -Tpng -o motion_processor_architecture.png motion_processor_architecture.dot
+// BidirectionalGaitNet Viewer - Unified Motion Processing System
+// Generate: dot -Tpng -o motion_processor_architecture.png motion_processor_architecture.dot
 
 digraph MotionProcessorArchitecture {
-    // Graph settings
     rankdir=TB;
-    node [shape=box, style=filled, fontname="Helvetica"];
-    edge [fontname="Helvetica", fontsize=10];
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=9];
     compound=true;
+    splines=ortho;
 
-    // Color scheme
-    // Blue: Core interfaces/abstractions
-    // Green: Concrete implementations
-    // Orange: Data structures
-    // Gray: External/Viewer components
-
-    // Title
     labelloc="t";
-    label="Motion Processor Architecture\nBidirectionalGaitNet Viewer";
-    fontsize=16;
+    label="Motion Processor Architecture";
+    fontsize=14;
     fontname="Helvetica-Bold";
 
-    // ==================== INTERFACES ====================
-    subgraph cluster_interfaces {
-        label="Interfaces";
-        style=filled;
-        fillcolor="#E8F4FD";
-
-        IMotionProcessor [
-            label="<<interface>>\nIMotionProcessor"
-            fillcolor="#4A90D9"
-            fontcolor=white
-        ];
-    }
-
-    // ==================== PROCESSORS ====================
-    subgraph cluster_processors {
-        label="Motion Processors";
-        style=filled;
+    // ==================== MOTION PROCESSOR ====================
+    subgraph cluster_processor {
+        label="MotionProcessor";
+        style="rounded,filled";
         fillcolor="#E8FDE8";
+        color="#5CB85C";
+        penwidth=2;
 
-        HDFMotionProcessor [
-            label="HDFMotionProcessor\n\n• load(path, character, world)\n• computePlayback(motion, time, phase, state, char)\n• render(context, character, renderer, flags)\n• supportsParameters() = true"
-            fillcolor="#5CB85C"
-            fontcolor=white
-        ];
-
-        C3DMotionProcessor [
-            label="C3DMotionProcessor\n\n• load(path, character, world)\n• computePlayback(motion, time, phase, state, char)\n• render(context, character, renderer, flags)\n• supportsMarkers() = true\n• setConversionParams(femurTorsion)"
-            fillcolor="#5CB85C"
-            fontcolor=white
-        ];
-    }
-
-    // ==================== SHARED UTILITIES ====================
-    subgraph cluster_utilities {
-        label="Shared Utilities";
-        style=filled;
-        fillcolor="#FFF8E8";
-
-        PlaybackController [
-            label="PlaybackController\n(Static Methods)\n\n• computePhase()\n• computeFrameFloat()\n• wrapFrameFloat()\n• determineMotionFrame()\n• detectCycleWrap()\n• updateCycleAccumulation()\n• interpolatePose()\n• computeCycleDistance()"
-            fillcolor="#F0AD4E"
-            fontcolor=black
-        ];
-
-        MotionProcessorFactory [
-            label="MotionProcessorFactory\n\n• getTypeForExtension(ext)\n• isExtensionSupported(ext)\n• getSupportedExtensions()"
-            fillcolor="#F0AD4E"
-            fontcolor=black
+        MotionProcessor [
+            shape=record
+            label="{MotionProcessor|
+                + load(path, char, world) : Motion*\l
+                + computePlayback(motion, time, phase, state, char)\l
+                + evaluatePoseAtFrame(motion, frame, char, state)\l
+                + getMarkersAtFrameWithOffsets(motion, frame, state)\l
+                + computeCycleDistance(motion)\l
+                + hasParameters(motion)\l
+                + getParameterNames(motion)\l
+                + getParameterValues(motion)\l
+                |
+                - evaluatePose()\l
+                - updateMarkers()\l
+                - mReader : C3D_Reader*\l
+                - mParams : C3DProcessorParams\l
+            }"
+            fillcolor="#90EE90"
         ];
     }
 
-    // ==================== DATA STRUCTURES ====================
-    subgraph cluster_data {
-        label="Data Structures";
-        style=filled;
-        fillcolor="#FDE8E8";
-
-        MotionProcessorContext [
-            label="MotionProcessorContext\n\n• motion, state, character\n• viewerTime, viewerPhase\n• frameFloat, frameIndex\n• totalFrames, valuesPerFrame\n• currentPose (VectorXd)\n• currentMarkers (vector<Vector3d>)\n• hasMarkers, cycleWrapped, valid\n• cycleAccumulation, displayOffset"
-            fillcolor="#D9534F"
-            fontcolor=white
-        ];
-
-        PlaybackViewerState [
-            label="PlaybackViewerState\n\n• navigationMode\n• manualFrameIndex\n• lastFrameIdx\n• cycleAccumulation\n• cycleDistance\n• displayOffset\n• currentPose, currentMarkers"
-            fillcolor="#D9534F"
-            fontcolor=white
-        ];
-    }
-
-    // ==================== MOTION CLASSES ====================
+    // ==================== MOTION HIERARCHY ====================
     subgraph cluster_motion {
-        label="Motion Data Classes";
-        style=filled;
+        label="Motion Classes";
+        style="rounded,filled";
         fillcolor="#E8E8FD";
+        color="#5B5BDF";
+        penwidth=2;
 
         Motion [
-            label="<<abstract>>\nMotion\n\n• getRawMotionData()\n• getTotalTimesteps()\n• getValuesPerFrame()\n• getPose(frameIdx)\n• getSourceType()\n• hasParameters()"
-            fillcolor="#5B5BDF"
-            fontcolor=white
+            shape=record
+            label="{{\<\<abstract\>\>\nMotion}|
+                + getRawMotionData()\l
+                + getTotalTimesteps()\l
+                + getValuesPerFrame()\l
+                + getPose(frameIdx)\l
+                + getSourceType()\l
+                + hasParameters()\l
+            }"
+            fillcolor="#B8B8FF"
         ];
 
         HDF [
-            label="HDF\n(HDF5 Single File)\n\n• sourceType = \"hdf\"\n• params, timestamps\n• Parameter support"
-            fillcolor="#7B7BEF"
-            fontcolor=white
+            shape=record
+            label="{HDF|
+                sourceType = \"hdf\"\l
+                + parameters\l
+                + timestamps\l
+            }"
+            fillcolor="#D0D0FF"
         ];
 
-        C3DMotion [
-            label="C3DMotion\n(C3D with IK)\n\n• sourceType = \"C3DMotion\"\n• skeleton poses\n• marker positions\n• getInterpolatedMarkers()"
-            fillcolor="#7B7BEF"
-            fontcolor=white
+        C3D [
+            shape=record
+            label="{C3D|
+                sourceType = \"c3d\"\l
+                + skeletonPoses\l
+                + markers\l
+                + getInterpolatedMarkers()\l
+            }"
+            fillcolor="#D0D0FF"
+        ];
+
+        Motion -> HDF [style=dashed, arrowhead=empty];
+        Motion -> C3D [style=dashed, arrowhead=empty];
+    }
+
+    // ==================== CONTEXT ====================
+    subgraph cluster_context {
+        label="Data Structures";
+        style="rounded,filled";
+        fillcolor="#FDE8E8";
+        color="#D9534F";
+        penwidth=2;
+
+        MotionProcessorContext [
+            shape=record
+            label="{MotionProcessorContext|
+                motion : Motion*\l
+                state : PlaybackViewerState*\l
+                character : Character*\l
+                currentPose : VectorXd\l
+                currentMarkers : vector\<Vector3d\>\l
+                frameIndex, totalFrames\l
+                hasMarkers, valid\l
+            }"
+            fillcolor="#FFB0B0"
+        ];
+
+        PlaybackViewerState [
+            shape=record
+            label="{PlaybackViewerState|
+                navigationMode\l
+                currentPose : VectorXd\l
+                currentMarkers\l
+                cycleAccumulation\l
+                displayOffset\l
+            }"
+            fillcolor="#FFB0B0"
+        ];
+    }
+
+    // ==================== UTILITIES ====================
+    subgraph cluster_utils {
+        label="Utilities";
+        style="rounded,filled";
+        fillcolor="#FFF8E8";
+        color="#F0AD4E";
+        penwidth=2;
+
+        PlaybackController [
+            shape=record
+            label="{PlaybackController\n(static)|
+                + interpolatePose()\l
+                + computeCycleDistance()\l
+                + determineMotionFrame()\l
+                + wrapFrameFloat()\l
+                + detectCycleWrap()\l
+            }"
+            fillcolor="#FFE0A0"
+        ];
+
+        C3D_Reader [
+            shape=record
+            label="{C3D_Reader|
+                + loadC3D(path, params)\l
+                IK conversion\l
+            }"
+            fillcolor="#FFE0A0"
         ];
     }
 
     // ==================== VIEWER ====================
     subgraph cluster_viewer {
-        label="Viewer Integration";
-        style=filled;
+        label="Viewer";
+        style="rounded,filled";
         fillcolor="#F0F0F0";
+        color="#888888";
+        penwidth=2;
 
         GLFWApp [
-            label="GLFWApp\n\n• mMotion (Motion*)\n• mMotionState (PlaybackViewerState)\n• loadHDFMotion()\n• motionPoseEval()\n• drawSkeleton()\n• drawPlayableMarkers()"
-            fillcolor="#888888"
-            fontcolor=white
-        ];
-
-        C3D_Reader [
-            label="C3D_Reader\n\n• loadC3D(path, params)\n• IK conversion\n• Marker extraction"
-            fillcolor="#888888"
-            fontcolor=white
+            shape=record
+            label="{GLFWApp|
+                mMotion : Motion*\l
+                mMotionState : PlaybackViewerState\l
+                mMotionProcessor : unique_ptr\l
+                |
+                + motionPoseEval()\l
+                + drawSkeleton()\l
+                + drawPlayableMarkers()\l
+            }"
+            fillcolor="#C0C0C0"
         ];
     }
 
     // ==================== RELATIONSHIPS ====================
-
-    // Interface implementations
-    IMotionProcessor -> HDFMotionProcessor [style=dashed, label="implements"];
-    IMotionProcessor -> C3DMotionProcessor [style=dashed, label="implements"];
-
-    // Processor uses utilities
-    HDFMotionProcessor -> PlaybackController [label="uses"];
-    C3DMotionProcessor -> PlaybackController [label="uses"];
-
-    // Processor produces context
-    HDFMotionProcessor -> MotionProcessorContext [label="produces"];
-    C3DMotionProcessor -> MotionProcessorContext [label="produces"];
-
-    // Processor uses state
-    HDFMotionProcessor -> PlaybackViewerState [label="updates"];
-    C3DMotionProcessor -> PlaybackViewerState [label="updates"];
-
-    // Processor works with motion
-    HDFMotionProcessor -> HDF [label="loads/processes"];
-    C3DMotionProcessor -> C3DMotion [label="loads/processes"];
-
-    // Motion inheritance
-    Motion -> HDF [style=dashed, label="extends"];
-    Motion -> C3DMotion [style=dashed, label="extends"];
-
-    // C3D specific
-    C3DMotionProcessor -> C3D_Reader [label="uses for IK"];
-    C3D_Reader -> C3DMotion [label="produces"];
-
-    // Viewer integration
-    GLFWApp -> MotionProcessorContext [label="consumes"];
+    GLFWApp -> MotionProcessor [label="owns", style=bold];
     GLFWApp -> PlaybackViewerState [label="owns"];
-    GLFWApp -> HDF [label="uses directly\n(current)"];
-    GLFWApp -> C3DMotion [label="uses directly\n(current)"];
+    GLFWApp -> Motion [label="uses"];
 
-    // Factory
-    MotionProcessorFactory -> HDFMotionProcessor [style=dotted, label="creates"];
-    MotionProcessorFactory -> C3DMotionProcessor [style=dotted, label="creates"];
+    MotionProcessor -> Motion [label="processes", style=dashed];
+    MotionProcessor -> MotionProcessorContext [label="produces"];
+    MotionProcessor -> PlaybackViewerState [label="updates"];
+    MotionProcessor -> PlaybackController [label="uses"];
+    MotionProcessor -> C3D_Reader [label="uses\n(for C3D)"];
+
+    C3D_Reader -> C3D [label="creates"];
 }
