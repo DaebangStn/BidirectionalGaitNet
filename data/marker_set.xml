@@ -64,8 +64,9 @@
     <marker name="RKNE" bn="FemurR" offset=" -0.46816   1.03094 0.0245748" />
     <marker name="RSHA" bn="TibiaR" offset="  0.643627 -0.0102708  -0.577522" />
     <marker name="RANK" bn="TibiaR" offset="-0.923882   1.13217  0.151928" />
+    <marker name="R.TO" bn="TalusR" offset="-0.354027  0.126658  -1.39396" /> 
+    <!-- the recorded marker order is swapped -->
     <marker name="RHEE" bn="TalusR" offset=" 0.451773 -0.103223   1.17977" />
-    <marker name="R.TO" bn="TalusR" offset="-0.354027  0.126658  -1.39396" />
 
     <!-- 19 ~ 24 -->
     <marker name="LTHI" bn="FemurL" offset="  0.35668 -0.187267   1.37362" />

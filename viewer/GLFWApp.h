@@ -341,7 +341,9 @@ private:
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
     bool mRenderC3DMarkers;
     bool mRenderExpectedMarkers;  // Draw expected markers (computed from skeleton)
-
+    bool mRenderMarkerIndices;    // Draw marker index numbers for debugging
+    std::vector<std::pair<Eigen::Vector3d, int>> mMarkerIndexLabels;      // data markers (pos, idx)
+    std::vector<std::pair<Eigen::Vector3d, int>> mSkelMarkerIndexLabels;  // skeleton markers (pos, idx)
 
     // For GVAE
     py::object mGVAE;

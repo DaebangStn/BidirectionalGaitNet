@@ -3,7 +3,7 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@data/skeleton/intoe17.yaml"
+    file: "@data/skeleton/intoe10.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
@@ -17,7 +17,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@data/muscle/intoe17.yaml"
+    file: "@data/muscle/intoe10.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
@@ -41,6 +41,9 @@ environment:
   # Reward System
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
+    clip:
+      step: 50
+      value: 0.2
 
     # Metabolic configuration
     metabolic:

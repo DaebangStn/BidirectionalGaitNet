@@ -216,6 +216,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mFocus = 1;
     mRenderC3DMarkers = true;
     mRenderExpectedMarkers = true;
+    mRenderMarkerIndices = false;
 
     mTrackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
     mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
@@ -1524,15 +1525,18 @@ void GLFWApp::drawKinematicsControlPanel()
             } else {
                 int idx = 0;
                 for (const auto& file : mMotionList) {
-                    std::string filename = std::filesystem::path(file).filename().string();
-                    std::string ext = std::filesystem::path(file).extension().string();
+                    std::filesystem::path filepath(file);
+                    std::string ext = filepath.extension().string();
 
-                    // Add type prefix for clarity
+                    // Add type prefix and show relative path for C3D files
                     std::string label;
                     if (ext == ".c3d") {
-                        label = "[C3D] " + filename;
+                        // Show relative path from c3d root (e.g., "sub1/file.c3d")
+                        std::filesystem::path c3d_root("data/motion/c3d");
+                        std::string rel_path = std::filesystem::relative(filepath, c3d_root).string();
+                        label = "[C3D] " + rel_path;
                     } else {
-                        label = "[HDF] " + filename;
+                        label = "[HDF] " + filepath.filename().string();
                     }
 
                     if (ImGui::Selectable(label.c_str(), mSelectedMotion == idx)) {
@@ -1549,6 +1553,8 @@ void GLFWApp::drawKinematicsControlPanel()
                 ImGui::Checkbox("Markers (data)", &mRenderC3DMarkers);
                 ImGui::SameLine();
                 ImGui::Checkbox("Markers (skel)", &mRenderExpectedMarkers);
+                ImGui::SameLine();
+                ImGui::Checkbox("Indices", &mRenderMarkerIndices);
             }
 
             ImGui::TreePop();
@@ -3965,6 +3971,46 @@ void GLFWApp::drawUIFrame()
     drawTimingPane();
     drawTitlePanel();
     drawResizablePlotPane();
+
+    // Draw marker index labels as screen-space text overlay
+    if (mRenderMarkerIndices && (!mMarkerIndexLabels.empty() || !mSkelMarkerIndexLabels.empty())) {
+        GLdouble modelview[16], projection[16];
+        GLint viewport[4];
+        glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+        glGetDoublev(GL_PROJECTION_MATRIX, projection);
+        glGetIntegerv(GL_VIEWPORT, viewport);
+
+        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+        ImFont* font = ImGui::GetFont();
+        float fontSize = 18.0f;  // Larger font size
+
+        // Data markers - black text (offset left)
+        for (const auto& [pos, idx] : mMarkerIndexLabels) {
+            GLdouble screenX, screenY, screenZ;
+            if (gluProject(pos.x(), pos.y(), pos.z(), modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
+                if (screenZ > 0.0 && screenZ < 1.0) {
+                    float y = mHeight - static_cast<float>(screenY);
+                    std::string label = std::to_string(idx);
+                    drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) - 20, y - 10),
+                                      IM_COL32(0, 0, 0, 255), label.c_str());
+                }
+            }
+        }
+
+        // Skeleton markers - black text (offset right)
+        for (const auto& [pos, idx] : mSkelMarkerIndexLabels) {
+            GLdouble screenX, screenY, screenZ;
+            if (gluProject(pos.x(), pos.y(), pos.z(), modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
+                if (screenZ > 0.0 && screenZ < 1.0) {
+                    float y = mHeight - static_cast<float>(screenY);
+                    std::string label = std::to_string(idx);
+                    drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) + 5, y - 10),
+                                      IM_COL32(0, 0, 0, 255), label.c_str());
+                }
+            }
+        }
+    }
+
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
@@ -4260,12 +4306,20 @@ void GLFWApp::drawPlayableMotion()
 
     // For C3D, draw markers
     if (mMotion->getSourceType() == "c3d") {
+        // Clear marker labels for this frame
+        mMarkerIndexLabels.clear();
+        mSkelMarkerIndexLabels.clear();
+
         // 1. Data markers (from C3D capture) - green
         if (mRenderC3DMarkers && !mMotionState.currentMarkers.empty()) {
             glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
-            for (const auto& marker : mMotionState.currentMarkers) {
+            for (size_t i = 0; i < mMotionState.currentMarkers.size(); ++i) {
+                const auto& marker = mMotionState.currentMarkers[i];
                 if (!marker.array().isFinite().all()) continue;
                 GUI::DrawSphere(marker, 0.0125);
+                if (mRenderMarkerIndices) {
+                    mMarkerIndexLabels.push_back({marker, static_cast<int>(i)});
+                }
             }
         }
 
@@ -4273,9 +4327,13 @@ void GLFWApp::drawPlayableMotion()
         if (mRenderExpectedMarkers && mMotionCharacter && mMotionCharacter->hasMarkers()) {
             glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
             auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
-            for (const auto& marker : expectedMarkers) {
+            for (size_t i = 0; i < expectedMarkers.size(); ++i) {
+                const auto& marker = expectedMarkers[i];
                 if (!marker.array().isFinite().all()) continue;
                 GUI::DrawSphere(marker, 0.0125);
+                if (mRenderMarkerIndices) {
+                    mSkelMarkerIndexLabels.push_back({marker, static_cast<int>(i)});
+                }
             }
         }
     }
@@ -5952,7 +6010,7 @@ void GLFWApp::scanMotionFiles()
     // Scan data/motion/c3d/ for C3D files
     std::string c3d_path = "data/motion/c3d";
     if (fs::exists(c3d_path) && fs::is_directory(c3d_path)) {
-        for (const auto& entry : fs::directory_iterator(c3d_path)) {
+        for (const auto& entry : fs::recursive_directory_iterator(c3d_path)) {
             if (!entry.is_regular_file()) continue;
             std::string ext = entry.path().extension().string();
             if (ext == ".c3d") {
