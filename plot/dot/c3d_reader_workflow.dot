@@ -1,0 +1,264 @@
+// C3D_Reader Workflow - Method Call Order from loadC3D
+// BidirectionalGaitNet - C3D Processing Pipeline
+// Generate: dot -Tpng -o c3d_reader_workflow.png c3d_reader_workflow.dot
+
+digraph C3DReaderWorkflow {
+    rankdir=TB;
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+    compound=true;
+    nodesep=0.4;
+    ranksep=0.5;
+
+    labelloc="t";
+    label="C3D_Reader Workflow - loadC3D() Call Order";
+    fontsize=16;
+    fontname="Helvetica-Bold";
+
+    // ==================== SECTION 1: Infrastructure ====================
+    subgraph cluster_infrastructure {
+        label="Section 1: Infrastructure & Configuration";
+        style="rounded,filled";
+        fillcolor="#E8F4FD";
+        color="#2196F3";
+        penwidth=2;
+
+        Constructor [
+            label="C3D_Reader()\nConstructor"
+            fillcolor="#90CAF9"
+        ];
+
+        LoadConfig [
+            label="loadSkeletonFittingConfig()\nLoad YAML config"
+            fillcolor="#90CAF9"
+        ];
+
+        ReloadConfig [
+            label="reloadFittingConfig()\nReload from disk"
+            fillcolor="#90CAF9"
+        ];
+
+        ResetSkeleton [
+            label="resetSkeletonToDefault()\nReset bone sizes"
+            fillcolor="#90CAF9"
+        ];
+
+        Constructor -> LoadConfig [style=dashed, label="init"];
+    }
+
+    // ==================== SECTION 2: Main Entry ====================
+    subgraph cluster_main {
+        label="Section 2: Main Entry Point";
+        style="rounded,filled";
+        fillcolor="#E8F5E9";
+        color="#4CAF50";
+        penwidth=3;
+
+        LoadC3D [
+            label="loadC3D()\nMain Entry Point\n━━━━━━━━━━\nOrchestrates entire\nC3D → Skeleton pipeline"
+            fillcolor="#81C784"
+            shape=box3d
+        ];
+    }
+
+    // ==================== SECTION 3-4: Load & Extract ====================
+    subgraph cluster_load_extract {
+        label="Section 3-4: Load & Extract Markers";
+        style="rounded,filled";
+        fillcolor="#FFF3E0";
+        color="#FF9800";
+        penwidth=2;
+
+        LoadMarkerData [
+            label="loadMarkerData()\nStep 1\n━━━━━━━━━━\nLoad C3D file\nReturn C3D object"
+            fillcolor="#FFE0B2"
+        ];
+
+        ExtractMarkers [
+            label="extractMarkersFromFrame()\nStep 2 (per frame)\n━━━━━━━━━━\nExtract marker positions\nApply coordinate transform"
+            fillcolor="#FFE0B2"
+        ];
+    }
+
+    // ==================== SECTION 5: Multi-Frame Fitting ====================
+    subgraph cluster_fitting {
+        label="Section 5: Multi-Frame Skeleton Fitting";
+        style="rounded,filled";
+        fillcolor="#F3E5F5";
+        color="#9C27B0";
+        penwidth=3;
+
+        FitSkeletonMultiFrame [
+            label="fitSkeletonMultiFrame()\nStep 3 - Orchestrator\n━━━━━━━━━━\nCoordinates all fitting\nsteps for skeleton"
+            fillcolor="#CE93D8"
+            shape=box3d
+        ];
+    }
+
+    // ==================== SECTION 6: Sub-Methods ====================
+    subgraph cluster_submethods {
+        label="Section 6: fitSkeletonMultiFrame Sub-Methods";
+        style="rounded,filled";
+        fillcolor="#E3F2FD";
+        color="#2196F3";
+        penwidth=2;
+
+        FitPelvis [
+            label="fitPelvis()\nStage 0 (Step 3.1)\n━━━━━━━━━━\nFit pelvis (root bone)\nMarkers: RASI, LASI, VSAC\n→ R, t, S (world coords)\n→ Store per-frame R_k, t_k"
+            fillcolor="#90CAF9"
+        ];
+
+        AugmentHipJoints [
+            label="augmentMarkersWithHipJoints()\nStage 1 (Step 3.2)\n━━━━━━━━━━\nAdd virtual hip markers\nusing Harrington method"
+            fillcolor="#90CAF9"
+        ];
+
+        ComputeHipCenter [
+            label="computeHipJointCenter()\nStep 3.2.1 (static)\n━━━━━━━━━━\nHarrington regression\nASIS + SACR → HJC"
+            fillcolor="#BBDEFB"
+        ];
+
+        FitBoneLocal [
+            label="fitBoneLocal()\nStage 2 (Step 3.3, per bone)\n━━━━━━━━━━\nFit child bones\nExtract S only (local)"
+            fillcolor="#90CAF9"
+        ];
+    }
+
+    // ==================== SECTION 7: Core Algorithm ====================
+    subgraph cluster_algorithm {
+        label="Section 7: Core Algorithm";
+        style="rounded,filled";
+        fillcolor="#FFEBEE";
+        color="#F44336";
+        penwidth=2;
+
+        EstimateScale [
+            label="estimateScaleAlternating()\nCore Algorithm\n━━━━━━━━━━\nAlternating optimization\nKabsch + axis regression\n→ Anisotropic scales"
+            fillcolor="#FFCDD2"
+            shape=doubleoctagon
+        ];
+    }
+
+    // ==================== SECTION 8: Pose Extraction ====================
+    subgraph cluster_pose {
+        label="Section 8: Pose Extraction";
+        style="rounded,filled";
+        fillcolor="#E0F2F1";
+        color="#009688";
+        penwidth=2;
+
+        GetPoseOptimized [
+            label="getPoseFromC3D_Optimized()\nStep 4 (per frame)\n━━━━━━━━━━\nUse optimizer R,t for pelvis\nIK for remaining joints"
+            fillcolor="#80CBC4"
+        ];
+    }
+
+    // ==================== SECTION 9: Legacy ====================
+    subgraph cluster_legacy {
+        label="Section 9: Legacy Methods";
+        style="rounded,filled";
+        fillcolor="#ECEFF1";
+        color="#607D8B";
+        penwidth=1;
+
+        GetPoseLegacy [
+            label="getPoseFromC3D()\nLegacy\n━━━━━━━━━━\nOld pose extraction\n(marker centroid)"
+            fillcolor="#CFD8DC"
+        ];
+
+        FitSingleFrame [
+            label="fitSkeletonToMarker()\nLegacy\n━━━━━━━━━━\nSingle-frame fitting\n(superseded)"
+            fillcolor="#CFD8DC"
+        ];
+    }
+
+    // ==================== SECTION 10: Helpers ====================
+    subgraph cluster_helpers {
+        label="Section 10: Helper & Public API";
+        style="rounded,filled";
+        fillcolor="#FFF8E1";
+        color="#FFC107";
+        penwidth=2;
+
+        GetMarkerLocal [
+            label="getMarkerLocalPos()\nHelper\n━━━━━━━━━━\nGet marker position\nin bone-local coords"
+            fillcolor="#FFECB3"
+        ];
+
+        ConvertToMotion [
+            label="convertToMotion()\nPublic API\n━━━━━━━━━━\nReturn MotionData\nfor training"
+            fillcolor="#FFECB3"
+        ];
+    }
+
+    // ==================== SECTION 11: Unused ====================
+    subgraph cluster_unused {
+        label="Section 11: Unused/Deprecated";
+        style="rounded,dashed";
+        fillcolor="#FAFAFA";
+        color="#BDBDBD";
+        penwidth=1;
+
+        InitSkelIK [
+            label="initializeSkeletonForIK()\nUnused"
+            fillcolor="#E0E0E0"
+        ];
+
+        ConvertFrames [
+            label="convertFramesToSkeletonPoses()\nUnused"
+            fillcolor="#E0E0E0"
+        ];
+
+        ApplyPostProcess [
+            label="applyMotionPostProcessing()\nDeprecated"
+            fillcolor="#E0E0E0"
+        ];
+    }
+
+    // ==================== OUTPUT ====================
+    subgraph cluster_output {
+        label="Output";
+        style="rounded,filled";
+        fillcolor="#E8F5E9";
+        color="#4CAF50";
+        penwidth=2;
+
+        C3DObject [
+            label="C3D* object\n━━━━━━━━━━\nmSkeletonPoses set\nReady for training"
+            fillcolor="#A5D6A7"
+            shape=folder
+        ];
+    }
+
+    // ==================== MAIN CALL FLOW ====================
+
+    // loadC3D orchestration
+    LoadC3D -> LoadMarkerData [label="1", penwidth=2, color="#4CAF50"];
+    LoadC3D -> ExtractMarkers [label="2 (loop)", penwidth=2, color="#4CAF50"];
+    LoadC3D -> FitSkeletonMultiFrame [label="3", penwidth=2, color="#4CAF50"];
+    LoadC3D -> GetPoseOptimized [label="4 (loop)", penwidth=2, color="#4CAF50"];
+    LoadC3D -> C3DObject [label="return", penwidth=2, color="#4CAF50", style=bold];
+
+    // fitSkeletonMultiFrame sub-calls (in order)
+    FitSkeletonMultiFrame -> FitPelvis [label="Stage 0", color="#9C27B0", penwidth=2];
+    FitSkeletonMultiFrame -> AugmentHipJoints [label="Stage 1", color="#9C27B0", penwidth=2];
+    FitSkeletonMultiFrame -> FitBoneLocal [label="Stage 2 (loop)", color="#9C27B0", penwidth=2];
+
+    // augmentMarkersWithHipJoints sub-call
+    AugmentHipJoints -> ComputeHipCenter [label="per frame", style=dashed, color="#2196F3"];
+
+    // Core algorithm calls
+    FitPelvis -> EstimateScale [label="calls", color="#F44336", penwidth=2];
+    FitBoneLocal -> EstimateScale [label="calls", color="#F44336", penwidth=2];
+
+    // Helper usage
+    FitBoneLocal -> GetMarkerLocal [style=dashed, color="#FFC107"];
+    GetPoseOptimized -> GetMarkerLocal [style=dashed, color="#FFC107"];
+
+    // Legacy alternatives (not in main flow)
+    GetPoseLegacy -> GetMarkerLocal [style=dotted, color="#607D8B"];
+    FitSingleFrame -> EstimateScale [style=dotted, color="#607D8B"];
+
+    // Infrastructure triggers
+    ReloadConfig -> ResetSkeleton [style=dashed, label="triggers"];
+}

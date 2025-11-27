@@ -373,6 +373,7 @@ dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 	bool isContact = (flags & SKEL_NO_COLLISION) == 0;  // Collision enabled unless NO_COLLISION flag set
 	bool collide_all = (flags & SKEL_COLLIDE_ALL) != 0;
 	bool isBVH = (flags & SKEL_REMOVE_JOINT_LIMIT) != 0;
+	bool allFreeJoints = (flags & SKEL_FREE_JOINTS) != 0;
 
 	TiXmlDocument doc;
 	LOG_VERBOSE("[DARTHelper] Building skeleton from file : " << resolvedPath);
@@ -462,7 +463,17 @@ dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 			parent_to_joint = parent->getTransform().inverse() * T_joint;
 
 		Eigen::Isometry3d child_to_joint = T_body.inverse() * T_joint;
-		if (type == "Free")
+
+		// SKEL_FREE_JOINTS: Force all joints to be FreeJoint (6 DOF) for debugging
+		if (allFreeJoints)
+		{
+			double damping = defaultDamping;
+			if (joint->Attribute("damping") != NULL)
+				damping = std::stod(joint->Attribute("damping"));
+			props = MakeFreeJointProperties(name, parent_to_joint, child_to_joint, damping);
+			type = "Free";
+		}
+		else if (type == "Free")
 		{
 			double damping = defaultDamping;
 			if (joint->Attribute("damping") != NULL)
@@ -591,6 +602,7 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 	bool isContact = (flags & SKEL_NO_COLLISION) == 0;
 	bool collide_all = (flags & SKEL_COLLIDE_ALL) != 0;
 	bool isBVH = (flags & SKEL_REMOVE_JOINT_LIMIT) != 0;
+	bool allFreeJoints = (flags & SKEL_FREE_JOINTS) != 0;
 
 	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
 	LOG_VERBOSE("[DARTHelper] Building skeleton from YAML file : " << resolvedPath);
@@ -658,7 +670,16 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 		Eigen::Isometry3d parent_to_joint = T_joint;
 		Eigen::Isometry3d child_to_joint = T_body.inverse() * T_joint;
 
-		if (type == "Free") {
+		// SKEL_FREE_JOINTS: Force all joints to be FreeJoint (6 DOF) for debugging
+		if (allFreeJoints) {
+			double damping = defaultDamping;
+			if (joint["kv"]) {
+				damping = joint["kv"][0].as<double>();
+			}
+			props = MakeFreeJointProperties(name, parent_to_joint, child_to_joint, damping);
+			type = "Free";
+		}
+		else if (type == "Free") {
 			double damping = defaultDamping;
 			if (joint["kv"]) {
 				damping = joint["kv"][0].as<double>();

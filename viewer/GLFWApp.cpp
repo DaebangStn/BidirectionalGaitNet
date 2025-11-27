@@ -445,9 +445,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
         }
     }
 
-    // Scan motion files (independent of simulation - always available)
-    scanMotionFiles();
-
     // Initialize motion character for standalone motion playback (independent of simulation)
     initializeMotionCharacter(mCachedMetadata);
 
@@ -457,6 +454,9 @@ GLFWApp::GLFWApp(int argc, char **argv)
         mMotionProcessor->setC3DReader(mC3DReader);
         LOG_INFO("[GLFWApp] Initialized C3D reader");
     }
+
+    // Scan motion files and auto-load test.c3d if exists (after C3D reader is initialized)
+    scanMotionFiles();
 
     // Load simulation environment on startup if enabled (default: true)
     if (mLoadSimulationOnStartup) {
@@ -1555,6 +1555,30 @@ void GLFWApp::drawKinematicsControlPanel()
                 ImGui::Checkbox("Markers (skel)", &mRenderExpectedMarkers);
                 ImGui::SameLine();
                 ImGui::Checkbox("Indices", &mRenderMarkerIndices);
+
+                // Skeleton fitting optimization buttons
+                if (mC3DReader) {
+                    if (ImGui::Button("Run Skeleton Fit")) {
+                        // Simply reload the C3D file - this will re-run fitting with updated config
+                        if (!mMotionPath.empty()) {
+                            mC3DReader->reloadFittingConfig();
+                            loadMotionFile(mMotionPath);
+                            LOG_INFO("[C3D] Skeleton fitting completed - motion reloaded");
+                        } else {
+                            LOG_WARN("[C3D] No motion path available for reload");
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Skeleton")) {
+                        mC3DReader->resetSkeletonToDefault();
+                        LOG_INFO("[C3D] Skeleton reset to default");
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(?)");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Run Fit: Reload YAML config and run optimization.\nReset: Restore skeleton to default scales.");
+                    }
+                }
             }
 
             ImGui::TreePop();
@@ -1614,9 +1638,9 @@ void GLFWApp::drawKinematicsControlPanel()
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (mMotion != nullptr) {
-            ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotion->getNumFrames() - 1));
-        }
+        // if (mMotion != nullptr) {
+            // ImGui::SliderInt("Motion Phase Offset", &mMotionPhaseOffset, 0, std::max(0, mMotion->getNumFrames() - 1));
+        // }
         // TODO: Update for Motion* interface
         // if (ImGui::Button("Convert Motion"))
         // {
@@ -1632,20 +1656,86 @@ void GLFWApp::drawKinematicsControlPanel()
         //     if(mRenderEnv) addSimulationMotion();
         // }
 
-        if (mRenderEnv && mMotion != nullptr && ImGui::Button("Set to Param of motion")) {
-            // Apply motion parameters using Motion* interface
-            if (mMotion->hasParameters()) {
-                bool success = mMotion->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
-                if (!success) {
-                    Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
-                    mRenderEnv->setParamState(default_params, false, true);
-                    std::cout << "[" << mMotion->getName() << "] Using default parameters due to mismatch" << std::endl;
+        // if (mRenderEnv && mMotion != nullptr && ImGui::Button("Set to Param of motion")) {
+        //     // Apply motion parameters using Motion* interface
+        //     if (mMotion->hasParameters()) {
+        //         bool success = mMotion->applyParametersToEnvironment(mRenderEnv->GetEnvironment());
+        //         if (!success) {
+        //             Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
+        //             mRenderEnv->setParamState(default_params, false, true);
+        //             std::cout << "[" << mMotion->getName() << "] Using default parameters due to mismatch" << std::endl;
+        //         }
+        //     } else {
+        //         std::cout << "[" << mMotion->getName() << "] Warning: No parameters in motion file" << std::endl;
+        //     }
+        // }
+
+    }
+
+    // Bone Scale Control - uses RenderCharacter's cached scale info
+    if (mMotionCharacter && ImGui::CollapsingHeader("Bone Scale"))
+    {
+        auto skel = mMotionCharacter->getSkeleton();
+        auto& skelInfos = mMotionCharacter->getSkelInfos();
+
+        if (skel && !skelInfos.empty())
+        {
+            bool anyChanged = false;
+            for (size_t i = 0; i < skelInfos.size(); ++i)
+            {
+                auto& [boneName, modInfo] = skelInfos[i];
+
+                auto* bn = skel->getBodyNode(boneName);
+                if (!bn) continue;
+
+                // Get current shape size for display
+                Eigen::Vector3d currentSize = Eigen::Vector3d::Zero();
+                auto* shapeNode = bn->getShapeNodeWith<dart::dynamics::VisualAspect>(0);
+                if (shapeNode) {
+                    const auto* boxShape = dynamic_cast<const dart::dynamics::BoxShape*>(shapeNode->getShape().get());
+                    if (boxShape) {
+                        currentSize = boxShape->getSize();
+                    }
                 }
-            } else {
-                std::cout << "[" << mMotion->getName() << "] Warning: No parameters in motion file" << std::endl;
+
+                // Create sliders for scale ratios (lx, ly, lz)
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::TreeNode(boneName.c_str()))
+                {
+                    // Display current size
+                    ImGui::Text("Size: [%.3f, %.3f, %.3f]", currentSize[0], currentSize[1], currentSize[2]);
+
+                    float scaleX = static_cast<float>(modInfo.value[0]);
+                    float scaleY = static_cast<float>(modInfo.value[1]);
+                    float scaleZ = static_cast<float>(modInfo.value[2]);
+                    float scale = static_cast<float>(modInfo.value[3]);
+
+                    bool changed = false;
+                    changed |= ImGui::SliderFloat("Scale X", &scaleX, 0.5f, 2.0f);
+                    changed |= ImGui::SliderFloat("Scale Y", &scaleY, 0.5f, 2.0f);
+                    changed |= ImGui::SliderFloat("Scale Z", &scaleZ, 0.5f, 2.0f);
+                    changed |= ImGui::SliderFloat("Uniform", &scale, 0.5f, 2.0f);
+
+                    if (changed)
+                    {
+                        modInfo.value[0] = scaleX;
+                        modInfo.value[1] = scaleY;
+                        modInfo.value[2] = scaleZ;
+                        modInfo.value[3] = scale;
+                        anyChanged = true;
+                    }
+
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+
+            // Apply all bone scales when any changed
+            if (anyChanged)
+            {
+                mMotionCharacter->applySkeletonBodyNode(skelInfos, skel);
             }
         }
-
     }
 
     // TODO: Update for Motion* interface
@@ -1689,10 +1779,10 @@ void GLFWApp::drawKinematicsControlPanel()
     //         }
     //     }
     // }
-    if (ImGui::Button("Save added motion"))
-    {
-        py::list motions;
-        py::list params;
+    // if (ImGui::Button("Save added motion"))
+    // {
+        // py::list motions;
+        // py::list params;
 
         // TODO: Update for Motion* interface
         // for (auto m : mAddedMotions)
@@ -1703,27 +1793,27 @@ void GLFWApp::drawKinematicsControlPanel()
         //
         // py::object save_motions = py::module::import("converter_to_gvae_set").attr("save_motions");
         // save_motions(motions, params);
-    }
+    // }
 
     // TODO: Update for Motion* interface
     // TODO: Implement "Save Selected Motion" feature for Motion* interface
 
-    if (mGVAELoaded)
-        if (ImGui::CollapsingHeader("Predicted Parameters"))
-        {
-            Eigen::VectorXf ParamState = mPredictedMotion.param.cast<float>();
-            Eigen::VectorXf ParamMin = mRenderEnv->getParamMin().cast<float>();
-            Eigen::VectorXf ParamMax = mRenderEnv->getParamMax().cast<float>();
-            int idx = 0;
-            for (auto c : mRenderEnv->getParamName())
-            {
-                ImGui::SliderFloat(c.c_str(), &ParamState[idx], ParamMin[idx], ParamMax[idx] + 1E-10);
-                idx++;
-            }
-        }
+    // if (mGVAELoaded)
+    //     if (ImGui::CollapsingHeader("Predicted Parameters"))
+    //     {
+    //         Eigen::VectorXf ParamState = mPredictedMotion.param.cast<float>();
+    //         Eigen::VectorXf ParamMin = mRenderEnv->getParamMin().cast<float>();
+    //         Eigen::VectorXf ParamMax = mRenderEnv->getParamMax().cast<float>();
+    //         int idx = 0;
+    //         for (auto c : mRenderEnv->getParamName())
+    //         {
+    //             ImGui::SliderFloat(c.c_str(), &ParamState[idx], ParamMin[idx], ParamMax[idx] + 1E-10);
+    //             idx++;
+    //         }
+    //     }
     ImGui::End();
-    if(mRenderEnv && mMotionCharacter)
-        mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
+    // if(mRenderEnv && mMotionCharacter)
+        // mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
 }
 
 void GLFWApp::drawVisualizationPanel()
@@ -1753,7 +1843,7 @@ void GLFWApp::drawVisualizationPanel()
             static bool showMarkerStats = true;
             ImGui::Checkbox("Stats##MarkerError", &showMarkerStats);
 
-            std::string title_marker = mPlotTitle ? mCheckpointName : "Marker Error (m)";
+            std::string title_marker = mPlotTitle ? mMotion->getName() : "Marker Error (m)";
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(ImAxis_X1, -100, 0, ImGuiCond_Once);
             ImPlot::SetNextAxisLimits(ImAxis_Y1, 0.0, 0.3, ImGuiCond_Once);
@@ -1761,6 +1851,143 @@ void GLFWApp::drawVisualizationPanel()
                 ImPlot::SetupAxes("Time (s)", "Error (m)");
                 plotGraphData({"marker_error_mean", "marker_error_max"}, ImAxis_Y1, "", showMarkerStats);
                 ImPlot::EndPlot();
+            }
+        }
+    }
+
+    // C3D Marker Info section
+    if (mMotion && mMotion->getSourceType() == "c3d" && mC3DReader) {
+        // Debug: Auto-log pelvis markers (10, 11, 12) at frame 0 for comparison with optimizer
+        static bool pelvisLogged = false;
+        auto skelMarkers = (mMotionCharacter && mMotionCharacter->hasMarkers())
+            ? mMotionCharacter->getExpectedMarkerPositions()
+            : std::vector<Eigen::Vector3d>();
+        if (!pelvisLogged && mMotionState.manualFrameIndex == 0 &&
+            skelMarkers.size() > 12 && mMotionState.currentMarkers.size() > 12) {
+            LOG_INFO("[Table] Frame 0 - Pelvis marker comparison (skel - data):");
+            for (int pidx : {10, 11, 12}) {
+                const auto& skelP = skelMarkers[pidx];
+                const auto& dataP = mMotionState.currentMarkers[pidx];
+                Eigen::Vector3d d = (skelP - dataP) * 1000.0;
+                LOG_INFO("  marker " << pidx << ": (" << d.x() << ", " << d.y() << ", " << d.z() << ") mm");
+            }
+            pelvisLogged = true;
+        }
+
+        if (ImGui::CollapsingHeader("C3D Marker Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Search filter and reset button on same line
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60);
+            ImGui::InputText("##MarkerSearch", mMarkerSearchFilter, sizeof(mMarkerSearchFilter));
+            ImGui::SameLine();
+            if (ImGui::Button("Reset")) {
+                mSelectedMarkerIndices.clear();
+                mMarkerSearchFilter[0] = '\0';
+            }
+
+            const auto& markerSet = mC3DReader->getMarkerSet();
+            std::string filterStr(mMarkerSearchFilter);
+
+            // Index/Name table with checkboxes
+            if (ImGui::BeginTable("MarkerIndexTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY, ImVec2(0, 150))) {
+                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 25.0f);  // Checkbox column
+                ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                for (size_t i = 0; i < markerSet.size(); ++i) {
+                    // Filter check: match name OR index
+                    if (!filterStr.empty()) {
+                        std::string idxStr = std::to_string(i);
+                        bool nameMatch = markerSet[i].name.find(filterStr) != std::string::npos;
+                        bool idxMatch = idxStr.find(filterStr) != std::string::npos;
+                        if (!nameMatch && !idxMatch)
+                            continue;
+                    }
+
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    bool checked = mSelectedMarkerIndices.count(i) > 0;
+                    if (ImGui::Checkbox(("##check" + std::to_string(i)).c_str(), &checked)) {
+                        if (checked)
+                            mSelectedMarkerIndices.insert(i);
+                        else
+                            mSelectedMarkerIndices.erase(i);
+                    }
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%zu", i);
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::Text("%s", markerSet[i].name.c_str());
+                }
+                ImGui::EndTable();
+            }
+
+            // Position table for selected markers
+            if (!mSelectedMarkerIndices.empty()) {
+                ImGui::Separator();
+                ImGui::Text("Selected: %zu markers", mSelectedMarkerIndices.size());
+
+                if (ImGui::BeginTable("MarkerPosTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY, ImVec2(0, 150))) {
+                    ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, 35.0f);
+                    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 35.0f);
+                    ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Z", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableHeadersRow();
+
+                    auto skelMarkersTable = (mMotionCharacter && mMotionCharacter->hasMarkers())
+                        ? mMotionCharacter->getExpectedMarkerPositions()
+                        : std::vector<Eigen::Vector3d>();
+
+                    bool firstMarker = true;
+                    for (int idx : mSelectedMarkerIndices) {
+                        if (idx < (int)mMotionState.currentMarkers.size()) {
+                            // Add separator row between markers (thick colored bar)
+                            if (!firstMarker) {
+                                ImGui::TableNextRow();
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(100, 100, 100, 255));
+                                for (int col = 0; col < 5; ++col) {
+                                    ImGui::TableSetColumnIndex(col);
+                                    ImGui::Dummy(ImVec2(0, 2));  // Thin separator
+                                }
+                            }
+                            firstMarker = false;
+
+                            // Data marker position - light green background
+                            const auto& dataPos = mMotionState.currentMarkers[idx];
+                            ImGui::TableNextRow();
+                            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(200, 255, 200, 60));
+                            ImGui::TableSetColumnIndex(0); ImGui::Text("%d", idx);
+                            ImGui::TableSetColumnIndex(1); ImGui::Text("data");
+                            ImGui::TableSetColumnIndex(2); ImGui::Text("%.4f", dataPos.x());
+                            ImGui::TableSetColumnIndex(3); ImGui::Text("%.4f", dataPos.y());
+                            ImGui::TableSetColumnIndex(4); ImGui::Text("%.4f", dataPos.z());
+
+                            // Skeleton marker position - light red background
+                            if (idx < (int)skelMarkersTable.size()) {
+                                const auto& skelPos = skelMarkersTable[idx];
+                                ImGui::TableNextRow();
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(255, 200, 200, 60));
+                                ImGui::TableSetColumnIndex(0); ImGui::Text("%d", idx);
+                                ImGui::TableSetColumnIndex(1); ImGui::Text("skel");
+                                ImGui::TableSetColumnIndex(2); ImGui::Text("%.4f", skelPos.x());
+                                ImGui::TableSetColumnIndex(3); ImGui::Text("%.4f", skelPos.y());
+                                ImGui::TableSetColumnIndex(4); ImGui::Text("%.4f", skelPos.z());
+
+                                // Diff (data - skel) in mm - light blue background
+                                Eigen::Vector3d diff = (skelPos - dataPos) * 1000.0;  // Convert to mm
+
+                                ImGui::TableNextRow();
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(200, 200, 255, 60));
+                                ImGui::TableSetColumnIndex(0); ImGui::Text("%d", idx);
+                                ImGui::TableSetColumnIndex(1); ImGui::Text("mm");
+                                ImGui::TableSetColumnIndex(2); ImGui::Text("%.2f", diff.x());
+                                ImGui::TableSetColumnIndex(3); ImGui::Text("%.2f", diff.y());
+                                ImGui::TableSetColumnIndex(4); ImGui::Text("%.2f", diff.z());
+                            }
+                        }
+                    }
+                    ImGui::EndTable();
+                }
             }
         }
     }
@@ -3990,7 +4217,7 @@ void GLFWApp::drawUIFrame()
             if (gluProject(pos.x(), pos.y(), pos.z(), modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
                 if (screenZ > 0.0 && screenZ < 1.0) {
                     float y = mHeight - static_cast<float>(screenY);
-                    std::string label = std::to_string(idx);
+                    std::string label = std::to_string(idx) + " (d)";
                     drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) - 20, y - 10),
                                       IM_COL32(0, 0, 0, 255), label.c_str());
                 }
@@ -4003,7 +4230,7 @@ void GLFWApp::drawUIFrame()
             if (gluProject(pos.x(), pos.y(), pos.z(), modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
                 if (screenZ > 0.0 && screenZ < 1.0) {
                     float y = mHeight - static_cast<float>(screenY);
-                    std::string label = std::to_string(idx);
+                    std::string label = std::to_string(idx) + " (s)";
                     drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) + 5, y - 10),
                                       IM_COL32(0, 0, 0, 255), label.c_str());
                 }
@@ -5241,15 +5468,15 @@ void GLFWApp::drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr)
     }
 }
 
-void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color, bool isLineSkeleton)
+void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color)
 {
     if (!mMotionCharacter) return;
     auto skel = mMotionCharacter->getSkeleton();
     skel->setPositions(pos);
-    if (!isLineSkeleton)
-    {
-        for (const auto bn : skel->getBodyNodes()) drawSingleBodyNode(bn, color);
-    }
+
+    glDepthMask(GL_FALSE);
+    for (const auto bn : skel->getBodyNodes()) drawSingleBodyNode(bn, color);
+    glDepthMask(GL_TRUE);
 }
 
 void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
@@ -6020,6 +6247,13 @@ void GLFWApp::scanMotionFiles()
     }
 
     LOG_INFO("[Motion] Scanned " << mMotionList.size() << " motion files");
+
+     // Auto-load test.c3d if it exists
+    std::string test_c3d = "data/motion/c3d/test.c3d";
+    if (fs::exists(test_c3d)) {
+        LOG_INFO("[Motion] Auto-loading test.c3d for development...");
+        loadMotionFile(test_c3d);
+    }
 }
 
 void GLFWApp::loadMotionFile(const std::string& path)
@@ -6044,6 +6278,7 @@ void GLFWApp::loadMotionFile(const std::string& path)
 
     if (motion) {
         setMotion(motion);
+        mMotionPath = path;  // Store path for reloading
         mMotionState.cycleDistance = computeMotionCycleDistance(motion);
         mMotionState.maxFrameIndex = std::max(0, motion->getNumFrames() - 1);
         updateViewerTime(0);  // Initialize motion context

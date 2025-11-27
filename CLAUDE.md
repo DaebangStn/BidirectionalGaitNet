@@ -3,3 +3,4 @@
 - You can build the release mode with 'ninja -C build/release'
 - If you test ray_rollout.py, you must launch tmux window like debugging since rollout takes quite long time.
 - If you should check the ppo output, run "python ppo/ppo_hierarchical.py"
+- generate the png with the render command plot/render.sh

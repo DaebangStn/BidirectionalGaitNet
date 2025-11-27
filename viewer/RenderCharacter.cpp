@@ -120,10 +120,18 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
 
 RenderCharacter::RenderCharacter(const std::string& skelPath)
 {
-    mSkeleton = BuildFromFile(skelPath, SKEL_COLLIDE_ALL);
+    // SKEL_FREE_JOINTS: All joints are FreeJoint (6 DOF) for debugging bone poses independently
+    mSkeleton = BuildFromFile(skelPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
     // Also create reference skeleton for bone scaling operations
-    mRefSkeleton = BuildFromFile(skelPath, SKEL_COLLIDE_ALL);
+    mRefSkeleton = BuildFromFile(skelPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
     mRefSkeleton->setPositions(Eigen::VectorXd::Zero(mRefSkeleton->getNumDofs()));
+
+    // Initialize mSkelInfos with default scale for all bones
+    for (size_t i = 0; i < mSkeleton->getNumBodyNodes(); ++i)
+    {
+        auto* bn = mSkeleton->getBodyNode(i);
+        mSkelInfos.push_back(std::make_tuple(bn->getName(), ModifyInfo()));
+    }
 }
 
 RenderCharacter::~RenderCharacter() {}
@@ -243,6 +251,7 @@ Eigen::Vector3d RenderMarker::getGlobalPos() const
     if (!bodyNode) return Eigen::Vector3d::Zero();
 
     // Get body bounding box size from visual shape
+    // Note: size already includes bone scale after applySkeletonBodyNode()
     auto* shapeNode = bodyNode->getShapeNodeWith<VisualAspect>(0);
     if (!shapeNode) return bodyNode->getTransform().translation();
 
@@ -274,6 +283,9 @@ std::vector<Eigen::Vector3d> RenderCharacter::getExpectedMarkerPositions() const
 
 void RenderCharacter::applySkeletonBodyNode(const std::vector<BoneInfo>& info, SkeletonPtr skel)
 {
+    // Cache the scale info
+    mSkelInfos = info;
+
     for (const auto& bone : info)
     {
         std::string name;

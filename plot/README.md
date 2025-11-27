@@ -35,13 +35,48 @@ plot/dot/ppo_rollout_learner.dot
 
 ## Build
 
+The render script supports **incremental builds** with SHA-256 hash-based caching and **parallel execution**.
+
 ```bash
-# Render all diagrams
+# Incremental render (only changed files)
 ./plot/render.sh
 
-# Or manually
+# Force rebuild all files
+./plot/render.sh --force
+
+# Preview what would be rendered
+./plot/render.sh --dry-run
+
+# Limit parallel jobs
+./plot/render.sh --jobs 2
+
+# Clear cache
+./plot/render.sh --clean
+
+# Show all options
+./plot/render.sh --help
+```
+
+### Performance
+
+| Scenario | Time |
+|----------|------|
+| First run (5 files) | ~1.0s |
+| No changes (cache hit) | ~0.04s |
+| 1 file changed | ~0.2s |
+
+### Environment Variables
+
+- `RENDER_JOBS`: Set default parallel job count (overridden by `--jobs`)
+
+```bash
+RENDER_JOBS=4 ./plot/render.sh
+```
+
+### Manual Rendering
+
+```bash
 dot -Tpng -Gdpi=300 plot/dot/ppo_hierarchical.dot -o plot/diagram/ppo_hierarchical_clean.png
-dot -Tpng -Gdpi=300 plot/dot/ppo_rollout_learner.dot -o plot/diagram/ppo_rollout_learner_clean.png
 ```
 
 ## Editing DOT Files
@@ -89,11 +124,13 @@ See `DESIGN_RULES.md` for detailed visual design guidelines.
 plot/
 ├── dot/                    # Source files (edit these)
 │   ├── ppo_hierarchical.dot
-│   └── ppo_rollout_learner.dot
-├── diagram/               # Generated PNG files
-│   ├── ppo_hierarchical_clean.png
-│   └── ppo_rollout_learner_clean.png
-├── render.sh             # Build script
+│   ├── ppo_rollout_learner.dot
+│   ├── motion_data_flow.dot
+│   ├── motion_processor_architecture.dot
+│   └── skeleton_fitting_optimization.dot
+├── diagram/               # Generated PNG files (git-ignored)
+├── .rendercache/          # Hash cache for incremental builds (git-ignored)
+├── render.sh             # Incremental parallel build script
 ├── DESIGN_RULES.md      # Visual design guidelines
 └── README.md            # This file
 ```

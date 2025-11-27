@@ -46,7 +46,8 @@ enum SkeletonLoadFlags {
 	SKEL_DEFAULT = 0,                      // Default: collision enabled, respects XML
 	SKEL_NO_COLLISION = 1 << 0,            // Disable all collision detection
 	SKEL_COLLIDE_ALL = 1 << 1,             // Force all bodies to collide (self-collision)
-	SKEL_REMOVE_JOINT_LIMIT = 1 << 2       // BVH mode - remove joint limits
+	SKEL_REMOVE_JOINT_LIMIT = 1 << 2,      // BVH mode - remove joint limits
+	SKEL_FREE_JOINTS = 1 << 3              // Debug mode - all joints become FreeJoint (6 DOF)
 };
 
 dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags = SKEL_DEFAULT);

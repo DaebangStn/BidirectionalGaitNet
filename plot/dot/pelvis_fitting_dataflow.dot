@@ -1,0 +1,224 @@
+// Pelvis Fitting Data Flow (UPDATED)
+// Shows how estimateScaleAlternating handles coordinate transforms internally
+// Generate: dot -Tpng -o pelvis_fitting_dataflow.png pelvis_fitting_dataflow.dot
+
+digraph PelvisFittingDataFlow {
+    rankdir=TB;
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+    compound=true;
+    nodesep=0.5;
+    ranksep=0.6;
+
+    labelloc="t";
+    label="Pelvis Fitting Data Flow: fitPelvis() → estimateScaleAlternating() → getPoseFromC3D_Optimized()";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    // ==================== INPUT ====================
+    subgraph cluster_input {
+        label="Input Data (fitPelvis)";
+        style="rounded,filled";
+        fillcolor="#E8F4FD";
+        color="#2196F3";
+        penwidth=2;
+
+        AllMarkers [
+            label="allMarkers[frameIdx][markerIdx]\n(WORLD coords, meters)\nK frames x N markers"
+            fillcolor="#90CAF9"
+        ];
+
+        PelvisMarkers [
+            label="pelvisMarkers = {10, 11, 12}\n(RASI, LASI, VSAC indices)"
+            fillcolor="#90CAF9"
+        ];
+
+        PelvisBn [
+            label="bn = getBodyNode(\"Pelvis\")"
+            fillcolor="#90CAF9"
+        ];
+    }
+
+    // ==================== OPTIMIZER (handles all transforms) ====================
+    subgraph cluster_optimizer {
+        label="estimateScaleAlternating(bn, markerIndices, globalP)";
+        style="rounded,filled";
+        fillcolor="#F3E5F5";
+        color="#9C27B0";
+        penwidth=3;
+
+        // Step 0: Setup
+        subgraph cluster_setup {
+            label="Step 0: Setup Transforms";
+            style="rounded,filled";
+            fillcolor="#EDE7F6";
+            color="#7B1FA2";
+
+            BnTransform [
+                label="bnTransform = bn->getTransform()\ninvTransform = bnTransform.inverse()"
+                fillcolor="#E1BEE7"
+            ];
+
+            BoneSize [
+                label="size = boxShape->getSize()"
+                fillcolor="#E1BEE7"
+            ];
+        }
+
+        // Step 1: Compute q
+        subgraph cluster_compute_q {
+            label="Step 1: Compute q (bone-local)";
+            style="rounded,filled";
+            fillcolor="#E8F5E9";
+            color="#4CAF50";
+
+            ComputeQ [
+                label="q[i] = offset * halfSize\n━━━━━━━━━━\nq[0] = RASI offset * size/2\nq[1] = LASI offset * size/2\nq[2] = VSAC offset * size/2"
+                fillcolor="#81C784"
+                shape=box3d
+            ];
+        }
+
+        // Step 2: Transform p to local
+        subgraph cluster_compute_p {
+            label="Step 2: Transform p (world → local)";
+            style="rounded,filled";
+            fillcolor="#FFF3E0";
+            color="#FF9800";
+
+            ComputeP [
+                label="p[k][i] = invTransform * globalP[k][idx]\n━━━━━━━━━━\nFor each frame k:\n  p[k][0] = invT * RASI_world\n  p[k][1] = invT * LASI_world\n  p[k][2] = invT * VSAC_world"
+                fillcolor="#FFCC80"
+                shape=box3d
+            ];
+        }
+
+        // Step 3-4: Core algorithm
+        AlternatingLoop [
+            label="Step 3-4: Alternating Optimization\n━━━━━━━━━━\nStep A: Fix S, solve R_k, t_k (Kabsch)\nStep B: Fix R_k, t_k, solve S (regression)\n\nModel: p_local[k] = R_local * diag(S) * q + t_local"
+            fillcolor="#CE93D8"
+            shape=doubleoctagon
+        ];
+
+        // Step 5: Transform back to global
+        subgraph cluster_globalize {
+            label="Step 5: Transform to GLOBAL";
+            style="rounded,filled";
+            fillcolor="#E0F7FA";
+            color="#00ACC1";
+
+            Globalize [
+                label="For each frame k:\n  localT = (R_local[k], t_local[k])\n  globalT = bnTransform * localT\n━━━━━━━━━━\nR_global[k] = globalT.linear()\nt_global[k] = globalT.translation()"
+                fillcolor="#80DEEA"
+                shape=box3d
+            ];
+        }
+
+        OptimizerOutput [
+            label="Output (BoneFitResult):\n━━━━━━━━━━\nscale: (sx, sy, sz)\nR_frames: [R_global_0, ..., R_global_{K-1}]\nt_frames: [t_global_0, ..., t_global_{K-1}]"
+            fillcolor="#BA68C8"
+            shape=box3d
+        ];
+    }
+
+    // ==================== STORAGE ====================
+    subgraph cluster_storage {
+        label="Member Variables (stored in fitPelvis)";
+        style="rounded,filled";
+        fillcolor="#FFEBEE";
+        color="#F44336";
+        penwidth=2;
+
+        StoreScale [
+            label="mSkelInfos[pelvisIdx].modInfo\n= result.scale"
+            fillcolor="#FFCDD2"
+        ];
+
+        StoreR [
+            label="mPelvisR_frames\n= result.R_frames\n[K GLOBAL rotation matrices]"
+            fillcolor="#EF9A9A"
+        ];
+
+        StoreT [
+            label="mPelvisT_frames\n= result.t_frames\n[K GLOBAL translation vectors]"
+            fillcolor="#EF9A9A"
+        ];
+    }
+
+    // ==================== USAGE ====================
+    subgraph cluster_usage {
+        label="getPoseFromC3D_Optimized(fitFrameIdx)";
+        style="rounded,filled";
+        fillcolor="#E0F2F1";
+        color="#009688";
+        penwidth=3;
+
+        ReadRT [
+            label="Read GLOBAL R, t:\nR = mPelvisR_frames[fitFrameIdx]\nt = mPelvisT_frames[fitFrameIdx]"
+            fillcolor="#80CBC4"
+        ];
+
+        BuildTransform [
+            label="Build Isometry3d:\npelvisT.linear() = R\npelvisT.translation() = t\n(Already in WORLD coords!)"
+            fillcolor="#4DB6AC"
+        ];
+
+        ConvertToPose [
+            label="FreeJoint::convertToPositions(pelvisT)\n━━━━━━━━━━\nConverts SE(3) transform to\n6-DOF joint positions:\n[rx, ry, rz, tx, ty, tz]"
+            fillcolor="#26A69A"
+            shape=box3d
+        ];
+
+        OutputPose [
+            label="pos.segment(pelvisJointIdx, 6)\n= convertToPositions(pelvisT)\n\nOther joints = 0"
+            fillcolor="#00897B"
+        ];
+    }
+
+    // ==================== RESOLVED ANNOTATION ====================
+    subgraph cluster_resolved {
+        label="RESOLVED: Coordinate Frames Consistent";
+        style="rounded,filled";
+        fillcolor="#E8F5E9";
+        color="#4CAF50";
+        penwidth=2;
+
+        Resolved [
+            label="estimateScaleAlternating now:\n1. Takes GLOBAL p as input\n2. Transforms to bone-local internally\n3. Runs optimization in local coords\n4. Transforms R,t back to GLOBAL\n5. Returns GLOBAL transforms\n\ngetPoseFromC3D_Optimized receives\nGLOBAL R,t - no conversion needed!"
+            fillcolor="#C8E6C9"
+            shape=note
+        ];
+    }
+
+    // ==================== EDGES ====================
+
+    // Input to optimizer
+    AllMarkers -> ComputeP [label="globalP", color="#FF9800", penwidth=2];
+    PelvisMarkers -> ComputeQ [label="markerIndices", color="#4CAF50"];
+    PelvisBn -> BnTransform [label="bn", color="#9C27B0"];
+    BnTransform -> ComputeP;
+    BoneSize -> ComputeQ;
+
+    // Internal optimizer flow
+    ComputeQ -> AlternatingLoop [label="q (local)", color="#4CAF50"];
+    ComputeP -> AlternatingLoop [label="p (local)", color="#FF9800"];
+    AlternatingLoop -> Globalize [label="R_local, t_local"];
+    BnTransform -> Globalize [label="bnTransform", style=dashed];
+    Globalize -> OptimizerOutput [label="R_global, t_global", color="#00ACC1", penwidth=2];
+
+    // Optimizer output to storage
+    OptimizerOutput -> StoreScale [label="scale", color="#F44336"];
+    OptimizerOutput -> StoreR [label="R_frames (GLOBAL)", color="#F44336", penwidth=2];
+    OptimizerOutput -> StoreT [label="t_frames (GLOBAL)", color="#F44336", penwidth=2];
+
+    // Storage to usage
+    StoreR -> ReadRT [label="read", style=dashed, color="#009688", penwidth=2];
+    StoreT -> ReadRT [label="read", style=dashed, color="#009688", penwidth=2];
+    ReadRT -> BuildTransform;
+    BuildTransform -> ConvertToPose;
+    ConvertToPose -> OutputPose;
+
+    // Resolved annotation
+    Globalize -> Resolved [style=dotted, color="#4CAF50"];
+    BuildTransform -> Resolved [style=dotted, color="#4CAF50"];
+}

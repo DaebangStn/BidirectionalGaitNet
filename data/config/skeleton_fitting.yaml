@@ -1,0 +1,80 @@
+# Skeleton Fitting Optimization Configuration
+# Used by C3D_Reader::fitSkeletonMultiFrame()
+#
+# IMPORTANT: Pelvis is NOT included here - it's always fitted in Stage 0
+# Stage 0 uses world coordinates and extracts R, t, S for the root body
+# Stage 2 bones (in this config) use bone-local coordinates and extract only S
+
+skeleton_fitting:
+  # Frame range for optimization
+  frame_range:
+    start: 0      # 0-based start frame
+    # -1 = all frames, or specific end frame (inclusive)
+    end: -1
+
+  # Alternating optimization parameters
+  optimization:
+    max_iterations: 10
+    convergence_threshold: 1.0e-6
+    plot_convergence: true
+
+  # Bone-marker mappings for anisotropic fitting
+  # Bones are fitted in order - Pelvis first, then limbs
+  # Hip joints (indices 25, 26) are computed using Harrington method before fitting
+  bone_mappings:
+    # Pelvis (root body) - fitted first, stores R, t, S
+    - bone: "Pelvis"
+      markers: [10, 11, 12]
+      virtual_first: false
+      comment: "RASI, LASI, VSAC"
+
+    - bone: "FemurR"
+      markers: [25, 13, 14]
+      virtual_first: false  # Hip joint computed by Harrington method
+      comment: "RHJC (computed), RTHI, RKNE"
+
+    # - bone: "TibiaR"
+    #   markers: [14, 15, 16]
+    #   virtual_first: false
+    #   comment: "RKNE, RSHA, RANK"
+
+    # - bone: "TalusR"
+    #   markers: [16, 17, 18]
+    #   virtual_first: false
+    #   comment: "RANK, R.TO, RHEE"
+
+    # - bone: "FemurL"
+    #   markers: [26, 19, 20]
+    #   virtual_first: false  # Hip joint computed by Harrington method
+    #   comment: "LHJC (computed), LTHI, LKNE"
+
+    # - bone: "TibiaL"
+    #   markers: [20, 21, 22]
+    #   virtual_first: false
+    #   comment: "LKNE, LSHA, LANK"
+
+    # - bone: "TalusL"
+    #   markers: [22, 23, 24]
+    #   virtual_first: false
+    #   comment: "LANK, LHEE, L.TO"
+
+    # # Upper body
+    # - bone: "Head"
+    #   markers: [0, 1, 2]
+    #   virtual_first: false
+    #   comment: "THEA, FHEA, RHEA"
+
+    # - bone: "Torso"
+    #   markers: [3, 4, 7]
+    #   virtual_first: false
+    #   comment: "RSHO, ROFF, LSHO"
+
+    # - bone: "ArmR"
+    #   markers: [3, 5, 6]
+    #   virtual_first: false
+    #   comment: "RSHO, RELB, RWRI"
+
+    # - bone: "ArmL"
+    #   markers: [7, 8, 9]
+    #   virtual_first: false
+    #   comment: "LSHO, LELB, LWRI"

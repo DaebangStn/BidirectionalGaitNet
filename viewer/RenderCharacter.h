@@ -43,10 +43,15 @@ public:
     // Skeleton modification (for C3D IK fitting)
     void applySkeletonBodyNode(const std::vector<BoneInfo>& info, SkeletonPtr skel);
 
+    // Bone scale cache - single source of truth for scale values
+    const std::vector<BoneInfo>& getSkelInfos() const { return mSkelInfos; }
+    std::vector<BoneInfo>& getSkelInfos() { return mSkelInfos; }
+
 private:
     SkeletonPtr mSkeleton;
     SkeletonPtr mRefSkeleton;  // Reference skeleton for bone scaling
     std::vector<RenderMarker> mMarkers;
+    std::vector<BoneInfo> mSkelInfos;  // Cached bone scale info
 };
 
 #endif

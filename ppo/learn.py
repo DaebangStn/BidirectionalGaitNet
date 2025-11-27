@@ -652,8 +652,8 @@ if __name__ == "__main__":
             writer.add_scalar("system/memory_percent", memory.percent, global_step)
             writer.add_scalar("system/memory_available_gb", memory.available / (1024**3), global_step)
 
-    # Save final models
-    model_path = f"runs/{run_name}"
+    # Save final models to 'last' subdirectory
+    model_path = f"runs/{run_name}/last"
     save_checkpoint(
         model_path, agent, muscle_learner, args.env_file,
         save_full_state=args.save_optimizer,

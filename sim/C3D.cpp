@@ -74,28 +74,6 @@ bool C3D::load(const std::string& path)
             LOG_WARN("[C3D] Warning: No markers loaded from " << path);
             return false;
         }
-
-        // Auto-detect backward walking and reverse Z-axis if needed
-        Eigen::Vector3d firstCentroid = getCentroid(0);
-        Eigen::Vector3d lastCentroid = getCentroid(getNumFrames() - 1);
-
-        if (lastCentroid.z() < firstCentroid.z())
-        {
-            LOG_WARN("[C3D] Detected backward walking (last Z < first Z)");
-
-            // Negate both Z and X coordinates to reverse walking direction
-            // while preserving left/right orientation
-            for (auto& frameMarkers : mMarkers)
-            {
-                for (auto& marker : frameMarkers)
-                {
-                    marker.z() = -marker.z();  // Reverse forward/backward
-                    marker.x() = -marker.x();  // Mirror left/right to compensate
-                }
-            }
-
-        }
-
         return true;
     }
     catch (const std::exception& e)
@@ -240,6 +218,10 @@ double C3D::getMaxTime() const
 
 int C3D::getNumFrames() const
 {
+    // When skeleton poses are available, use their count (matches getRawMotionData behavior)
+    if (!mSkeletonPoses.empty()) {
+        return static_cast<int>(mSkeletonPoses.size());
+    }
     return static_cast<int>(mMarkers.size());
 }
 

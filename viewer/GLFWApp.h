@@ -22,6 +22,7 @@
 #include <H5Cpp.h>
 #include "ImGuiFileDialog.h"
 #include <memory>
+#include <set>
 
 struct ResizablePlot {
     std::vector<std::string> keys;
@@ -217,7 +218,7 @@ private:
     void drawGround();
     void drawCollision();
 
-    void drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color, bool isLineSkeleton = false);
+    void drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color);
     
     void drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr);
 
@@ -339,11 +340,14 @@ private:
     // C3D loading and rendering
     C3D_Reader* mC3DReader;
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
+    std::string mMotionPath;    // Current motion file path for reloading
     bool mRenderC3DMarkers;
     bool mRenderExpectedMarkers;  // Draw expected markers (computed from skeleton)
     bool mRenderMarkerIndices;    // Draw marker index numbers for debugging
     std::vector<std::pair<Eigen::Vector3d, int>> mMarkerIndexLabels;      // data markers (pos, idx)
     std::vector<std::pair<Eigen::Vector3d, int>> mSkelMarkerIndexLabels;  // skeleton markers (pos, idx)
+    char mMarkerSearchFilter[64] = "";  // Search filter text for marker table
+    std::set<int> mSelectedMarkerIndices;  // Multiple selected markers for position display
 
     // For GVAE
     py::object mGVAE;

@@ -1,0 +1,236 @@
+digraph ADD_Agent_Training {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Title
+    labelloc="t";
+    label="ADD Agent PPO Training Loop\n(State/Action Interaction with Gym Environment)";
+    fontsize=16;
+
+    // Styling
+    node [shape=box, style="rounded,filled"];
+
+    // =============================================
+    // Main Training Loop Cluster
+    // =============================================
+    subgraph cluster_train_loop {
+        label="Training Iteration (_train_iter)";
+        style="rounded,dashed";
+        bgcolor="#f5f5f5";
+
+        // Initialization
+        init_iter [label="1. _init_iter()\nReset experience buffer", fillcolor="#e3f2fd"];
+
+        // Rollout Phase
+        rollout [label="2. _rollout_train(steps_per_iter)\nCollect experiences", fillcolor="#fff3e0"];
+
+        // Build Training Data
+        build_data [label="3. _build_train_data()\nCompute rewards & advantages", fillcolor="#e8f5e9"];
+
+        // Update Model
+        update_model [label="4. _update_model()\nPPO + Discriminator updates", fillcolor="#fce4ec"];
+
+        // Update Normalizers
+        update_norm [label="5. _update_normalizers()\nObs & disc_obs normalizers", fillcolor="#f3e5f5"];
+
+        init_iter -> rollout -> build_data -> update_model -> update_norm;
+    }
+
+    // =============================================
+    // Rollout Cluster (State-Action Loop)
+    // =============================================
+    subgraph cluster_rollout {
+        label="Rollout Loop (per step)";
+        style="rounded";
+        bgcolor="#fff8e1";
+
+        // State Input
+        obs [label="obs\n(current observation)", shape=ellipse, fillcolor="#bbdefb"];
+        info [label="info\n(environment info)", shape=ellipse, fillcolor="#bbdefb"];
+
+        // Action Decision
+        decide_action [label="_decide_action(obs, info)\n1. Normalize obs\n2. Actor → action distribution\n3. Sample/mode action\n4. Unnormalize action", fillcolor="#c8e6c9"];
+
+        // Record Pre-Step
+        record_pre [label="_record_data_pre_step()\nRecord: obs, action, a_logp,\nrand_action_mask", fillcolor="#dcedc8"];
+
+        // Environment Step
+        step_env [label="_step_env(action)\nenv.step(action)", fillcolor="#ffccbc", shape=octagon];
+
+        // Environment Outputs
+        next_obs [label="next_obs", shape=ellipse, fillcolor="#b3e5fc"];
+        reward [label="reward (task_r)", shape=ellipse, fillcolor="#ffecb3"];
+        done [label="done flag", shape=ellipse, fillcolor="#f8bbd0"];
+        next_info [label="next_info\n• disc_obs\n• disc_obs_demo", shape=ellipse, fillcolor="#b3e5fc"];
+
+        // Record Post-Step
+        record_post [label="_record_data_post_step()\nRecord: next_obs, reward, done,\ndisc_obs, disc_obs_demo", fillcolor="#dcedc8"];
+
+        // Reset Done Envs
+        reset_done [label="_reset_done_envs(done)\nReset terminated environments", fillcolor="#e1bee7"];
+
+        // Increment Buffer
+        inc_buffer [label="exp_buffer.inc()\nAdvance buffer pointer", fillcolor="#d7ccc8"];
+
+        // Flow
+        obs -> decide_action;
+        info -> decide_action;
+        decide_action -> record_pre;
+        record_pre -> step_env;
+        step_env -> next_obs;
+        step_env -> reward;
+        step_env -> done;
+        step_env -> next_info;
+        next_obs -> record_post;
+        reward -> record_post;
+        done -> record_post;
+        next_info -> record_post;
+        record_post -> reset_done;
+        reset_done -> inc_buffer;
+    }
+
+    // =============================================
+    // Reward Computation Cluster (ADD Specific)
+    // =============================================
+    subgraph cluster_rewards {
+        label="ADD Reward Computation (_compute_rewards)";
+        style="rounded";
+        bgcolor="#e8eaf6";
+
+        // Inputs
+        task_r_in [label="task_r\n(from env)", shape=ellipse, fillcolor="#ffecb3"];
+        disc_obs_in [label="disc_obs\n(agent state)", shape=ellipse, fillcolor="#b2ebf2"];
+        disc_obs_demo_in [label="disc_obs_demo\n(reference motion)", shape=ellipse, fillcolor="#c5e1a5"];
+
+        // Difference Computation
+        obs_diff [label="obs_diff = disc_obs_demo - disc_obs\n(ADD difference signal)", fillcolor="#fff9c4"];
+
+        // Normalize
+        norm_diff [label="norm_obs_diff =\ndisc_obs_norm.normalize(obs_diff)", fillcolor="#e1f5fe"];
+
+        // Discriminator Reward
+        disc_reward [label="_calc_disc_rewards(norm_obs_diff)\ndisc_r = -log(1 - sigmoid(D))\n× disc_reward_scale", fillcolor="#f3e5f5"];
+
+        // Final Reward
+        final_reward [label="r = task_weight × task_r\n    + disc_weight × disc_r", fillcolor="#c8e6c9", shape=box3d];
+
+        // Flow
+        disc_obs_in -> obs_diff;
+        disc_obs_demo_in -> obs_diff;
+        obs_diff -> norm_diff;
+        norm_diff -> disc_reward;
+        task_r_in -> final_reward;
+        disc_reward -> final_reward;
+    }
+
+    // =============================================
+    // Model Update Cluster
+    // =============================================
+    subgraph cluster_update {
+        label="Model Update (_update_model)";
+        style="rounded";
+        bgcolor="#efebe9";
+
+        // Sample Batch
+        sample_batch [label="batch = exp_buffer.sample(batch_size)", fillcolor="#d7ccc8"];
+
+        // Compute Loss
+        compute_loss [label="_compute_loss(batch)", fillcolor="#ffccbc"];
+
+        // Loss Components
+        subgraph cluster_losses {
+            label="Loss Components";
+            style="rounded";
+            bgcolor="#fafafa";
+
+            actor_loss [label="Actor Loss (PPO)\n-E[min(ratio×adv, clip(ratio)×adv)]", fillcolor="#c8e6c9"];
+            critic_loss [label="Critic Loss\nE[(V - V_tar)²]", fillcolor="#b3e5fc"];
+            disc_loss [label="Discriminator Loss (ADD)\n0.5×(BCE_pos + BCE_neg)\n+ grad_penalty + logit_reg\n+ weight_decay", fillcolor="#f3e5f5"];
+        }
+
+        // Total Loss
+        total_loss [label="loss = actor + critic_w×critic\n      + disc_w×disc", fillcolor="#fff9c4", shape=box3d];
+
+        // Optimizer Step
+        opt_step [label="optimizer.step(loss)\nBackprop & update weights", fillcolor="#ffab91"];
+
+        // Flow
+        sample_batch -> compute_loss;
+        compute_loss -> actor_loss;
+        compute_loss -> critic_loss;
+        compute_loss -> disc_loss;
+        actor_loss -> total_loss;
+        critic_loss -> total_loss;
+        disc_loss -> total_loss;
+        total_loss -> opt_step;
+    }
+
+    // =============================================
+    // Model Architecture
+    // =============================================
+    subgraph cluster_model {
+        label="ADD Model Architecture";
+        style="rounded";
+        bgcolor="#e0f2f1";
+
+        actor [label="Actor Network\nobs → action distribution\n(Gaussian)", fillcolor="#80cbc4"];
+        critic [label="Critic Network\nobs → value estimate", fillcolor="#80deea"];
+        discriminator [label="Discriminator Network\nnorm_diff_obs → logit\n(real vs fake)", fillcolor="#ce93d8"];
+    }
+
+    // =============================================
+    // Experience Buffer
+    // =============================================
+    subgraph cluster_buffer {
+        label="Experience Buffer";
+        style="rounded";
+        bgcolor="#e3f2fd";
+
+        exp_data [label="Stored Data:\n• obs, next_obs\n• action, a_logp\n• reward, done\n• disc_obs, disc_obs_demo\n• tar_val, adv", shape=cylinder, fillcolor="#90caf9"];
+
+        disc_buffer [label="Discriminator Replay Buffer\n(obs_diff samples)", shape=cylinder, fillcolor="#b39ddb"];
+    }
+
+    // =============================================
+    // Cross-Cluster Connections
+    // =============================================
+
+    // Training loop to rollout
+    rollout -> obs [lhead=cluster_rollout, style=dashed, color="#1565c0"];
+    inc_buffer -> exp_data [ltail=cluster_rollout, style=dashed, color="#1565c0"];
+
+    // Rollout to rewards
+    build_data -> task_r_in [lhead=cluster_rewards, style=dashed, color="#2e7d32"];
+
+    // Rewards to buffer
+    final_reward -> exp_data [style=dashed, color="#2e7d32", label="update reward"];
+
+    // Buffer to update
+    exp_data -> sample_batch [style=dashed, color="#6a1b9a"];
+
+    // Model connections
+    actor -> decide_action [style=dotted, color="#00897b"];
+    critic -> build_data [style=dotted, color="#00897b", label="compute advantages"];
+    discriminator -> disc_reward [style=dotted, color="#00897b"];
+
+    // Replay buffer
+    obs_diff -> disc_buffer [style=dashed, color="#7b1fa2", label="store replay"];
+    disc_buffer -> disc_loss [style=dashed, color="#7b1fa2", label="sample replay"];
+
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style="rounded";
+        bgcolor="white";
+        rank=sink;
+
+        leg_state [label="State/Observation", shape=ellipse, fillcolor="#bbdefb"];
+        leg_action [label="Action/Decision", fillcolor="#c8e6c9"];
+        leg_env [label="Environment", fillcolor="#ffccbc", shape=octagon];
+        leg_data [label="Data Storage", shape=cylinder, fillcolor="#90caf9"];
+        leg_output [label="Output/Result", fillcolor="#fff9c4", shape=box3d];
+    }
+}

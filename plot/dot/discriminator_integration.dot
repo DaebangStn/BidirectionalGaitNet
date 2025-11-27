@@ -1,0 +1,263 @@
+digraph Discriminator_Integration {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Title
+    labelloc="t";
+    label="ADD/AMP Discriminator Integration with PPO\n(Detailed Architecture for BidirectionalGaitNet)";
+    fontsize=16;
+
+    // Styling
+    node [shape=box, style="rounded,filled"];
+
+    // =============================================
+    // Discriminator Network Architecture
+    // =============================================
+    subgraph cluster_disc_arch {
+        label="Discriminator Network Architecture";
+        style="rounded";
+        bgcolor="#f3e5f5";
+
+        disc_input [label="Input: disc_obs\n(normalized difference or state)\ndim = disc_obs_space.shape", shape=ellipse, fillcolor="#e1bee7"];
+
+        disc_layers [label="_disc_layers\n(MLP from net_builder)\nConfigured by 'disc_net' param\nTypical: [1024, 512] + ReLU", fillcolor="#ce93d8"];
+
+        disc_logits [label="_disc_logits\nLinear(hidden_size, 1)\nOutput: logit (unbounded)", fillcolor="#ba68c8"];
+
+        disc_sigmoid [label="sigmoid(logit)\nOutput: probability [0, 1]\n1 = 'real' (demo)\n0 = 'fake' (agent)", fillcolor="#ab47bc"];
+
+        disc_input -> disc_layers -> disc_logits -> disc_sigmoid;
+    }
+
+    // =============================================
+    // Discriminator Observation Types
+    // =============================================
+    subgraph cluster_obs_types {
+        label="Discriminator Observation Types";
+        style="rounded";
+        bgcolor="#e8eaf6";
+
+        subgraph cluster_amp_obs {
+            label="AMP: Absolute Observations";
+            style="rounded,dashed";
+            bgcolor="#c5cae9";
+
+            amp_disc_obs [label="disc_obs (agent)\nAgent's current state\nfrom env next_info", fillcolor="#9fa8da"];
+            amp_disc_obs_demo [label="disc_obs_demo\nReference motion state\nfetched from dataset", fillcolor="#7986cb"];
+        }
+
+        subgraph cluster_add_obs {
+            label="ADD: Difference Signal";
+            style="rounded,dashed";
+            bgcolor="#b2dfdb";
+
+            add_disc_obs [label="disc_obs (agent)", fillcolor="#80cbc4"];
+            add_disc_obs_demo [label="disc_obs_demo (ref)", fillcolor="#4db6ac"];
+            add_diff [label="obs_diff = demo - agent\nDifference signal", fillcolor="#26a69a", shape=box3d];
+
+            add_disc_obs -> add_diff;
+            add_disc_obs_demo -> add_diff;
+        }
+    }
+
+    // =============================================
+    // Reward Computation
+    // =============================================
+    subgraph cluster_reward {
+        label="Style Reward Computation";
+        style="rounded";
+        bgcolor="#fff3e0";
+
+        reward_input [label="Input: norm_disc_obs\n(normalized observation)", shape=ellipse, fillcolor="#ffe0b2"];
+
+        eval_disc [label="eval_disc(norm_disc_obs)\nReturns: logit", fillcolor="#ffcc80"];
+
+        prob_calc [label="prob = sigmoid(logit)\n= 1 / (1 + exp(-logit))", fillcolor="#ffb74d"];
+
+        style_reward [label="disc_r = -log(max(1 - prob, 0.0001))\n× disc_reward_scale\n\nIntuition:\n- prob → 1: agent looks like demo → high reward\n- prob → 0: agent looks fake → low reward", fillcolor="#ffa726", shape=box3d];
+
+        reward_input -> eval_disc -> prob_calc -> style_reward;
+    }
+
+    // =============================================
+    // Discriminator Loss (Training)
+    // =============================================
+    subgraph cluster_disc_loss {
+        label="Discriminator Loss Computation";
+        style="rounded";
+        bgcolor="#e8f5e9";
+
+        // Positive samples (demo/real)
+        subgraph cluster_pos {
+            label="Positive Samples (Real/Demo)";
+            style="rounded,dashed";
+            bgcolor="#c8e6c9";
+
+            pos_input [label="AMP: norm_disc_obs_demo\nADD: pos_diff = zeros\n(zero difference = perfect match)", fillcolor="#a5d6a7"];
+            pos_logit [label="disc_pos_logit = eval_disc(pos_input)", fillcolor="#81c784"];
+            pos_loss [label="BCE_pos = BCE(pos_logit, target=1)\n-log(sigmoid(pos_logit))", fillcolor="#66bb6a"];
+
+            pos_input -> pos_logit -> pos_loss;
+        }
+
+        // Negative samples (agent/fake)
+        subgraph cluster_neg {
+            label="Negative Samples (Fake/Agent)";
+            style="rounded,dashed";
+            bgcolor="#ffcdd2";
+
+            neg_input [label="AMP: norm_disc_obs (agent)\nADD: norm_obs_diff (demo - agent)\n+ replay buffer samples", fillcolor="#ef9a9a"];
+            neg_logit [label="disc_neg_logit = eval_disc(neg_input)", fillcolor="#e57373"];
+            neg_loss [label="BCE_neg = BCE(neg_logit, target=0)\n-log(1 - sigmoid(neg_logit))", fillcolor="#ef5350"];
+
+            neg_input -> neg_logit -> neg_loss;
+        }
+
+        // Combined loss
+        base_loss [label="disc_loss = 0.5 × (BCE_pos + BCE_neg)", fillcolor="#4caf50"];
+
+        // Regularization terms
+        subgraph cluster_reg {
+            label="Regularization Terms";
+            style="rounded,dashed";
+            bgcolor="#f5f5f5";
+
+            grad_penalty [label="Gradient Penalty\ndisc_grad_penalty × ||∇D(x)||²\nEncourages smooth discriminator", fillcolor="#e0e0e0"];
+
+            logit_reg [label="Logit Regularization\ndisc_logit_reg × ||W_logit||²\nPrevents extreme logits", fillcolor="#e0e0e0"];
+
+            weight_decay [label="Weight Decay\ndisc_weight_decay × ||W_all||²\nPrevents overfitting", fillcolor="#e0e0e0"];
+        }
+
+        total_disc_loss [label="total_disc_loss =\ndisc_loss\n+ grad_penalty\n+ logit_reg\n+ weight_decay", fillcolor="#2e7d32", shape=box3d, fontcolor="white"];
+
+        pos_loss -> base_loss;
+        neg_loss -> base_loss;
+        base_loss -> total_disc_loss;
+        grad_penalty -> total_disc_loss;
+        logit_reg -> total_disc_loss;
+        weight_decay -> total_disc_loss;
+    }
+
+    // =============================================
+    // Integration with PPO (Your learn.py)
+    // =============================================
+    subgraph cluster_ppo_integration {
+        label="Integration with ppo/learn.py";
+        style="rounded";
+        bgcolor="#e3f2fd";
+
+        // Current PPO components
+        subgraph cluster_current {
+            label="Current PPO Components";
+            style="rounded,dashed";
+            bgcolor="#bbdefb";
+
+            current_agent [label="Agent (nn.Module)\n• actor_mean (policy)\n• critic (value)\n• actor_logstd", fillcolor="#90caf9"];
+
+            current_rollout [label="Rollout Data\n• obs, actions, rewards\n• logprobs, values\n• terminations, truncations", fillcolor="#64b5f6"];
+
+            current_losses [label="Current Losses\n• pg_loss (policy)\n• v_loss (value)\n• entropy_loss", fillcolor="#42a5f5"];
+        }
+
+        // New discriminator components
+        subgraph cluster_new {
+            label="NEW: Discriminator Components";
+            style="rounded,dashed";
+            bgcolor="#c8e6c9";
+
+            new_disc_net [label="Discriminator Network\n• disc_layers (MLP)\n• disc_logits (Linear)\nAdd to Agent class", fillcolor="#81c784"];
+
+            new_disc_norm [label="Disc Observation Normalizer\n• disc_obs_norm\nRunning mean/std", fillcolor="#66bb6a"];
+
+            new_disc_buffer [label="Discriminator Replay Buffer\n• Store past disc_obs\n• Sample for training stability", fillcolor="#4caf50"];
+
+            new_disc_obs [label="New Trajectory Data\n• disc_obs (from C++)\n• disc_obs_demo (from dataset)", fillcolor="#43a047"];
+
+            new_reward [label="Modified Reward\nr = task_w × task_r + disc_w × disc_r", fillcolor="#388e3c", fontcolor="white"];
+
+            new_loss [label="Modified Total Loss\nloss = pg_loss + vf_coef × v_loss\n      + disc_w × disc_loss", fillcolor="#2e7d32", fontcolor="white"];
+        }
+    }
+
+    // =============================================
+    // Key Hyperparameters
+    // =============================================
+    subgraph cluster_hyperparams {
+        label="Key Hyperparameters";
+        style="rounded";
+        bgcolor="#fff8e1";
+
+        hyperparams [label=<<table border="0" cellborder="1" cellspacing="0">
+            <tr><td bgcolor="#ffecb3"><b>Parameter</b></td><td bgcolor="#ffecb3"><b>Typical Value</b></td><td bgcolor="#ffecb3"><b>Description</b></td></tr>
+            <tr><td>task_reward_weight</td><td>0.5</td><td>Weight for task reward</td></tr>
+            <tr><td>disc_reward_weight</td><td>0.5</td><td>Weight for style reward</td></tr>
+            <tr><td>disc_reward_scale</td><td>2.0</td><td>Scale factor for disc_r</td></tr>
+            <tr><td>disc_loss_weight</td><td>1.0</td><td>Disc loss in total loss</td></tr>
+            <tr><td>disc_batch_size</td><td>256</td><td>Samples per disc update</td></tr>
+            <tr><td>disc_buffer_size</td><td>100000</td><td>Replay buffer capacity</td></tr>
+            <tr><td>disc_grad_penalty</td><td>10.0</td><td>Gradient penalty coef</td></tr>
+            <tr><td>disc_logit_reg</td><td>0.01</td><td>Logit regularization</td></tr>
+            <tr><td>disc_weight_decay</td><td>0.0001</td><td>Weight decay coef</td></tr>
+        </table>>, shape=plaintext];
+    }
+
+    // =============================================
+    // Training Flow
+    // =============================================
+    subgraph cluster_flow {
+        label="Training Flow (Per Iteration)";
+        style="rounded";
+        bgcolor="#fce4ec";
+
+        flow1 [label="1. C++ Rollout\nCollect trajectory with\ndisc_obs from environment", fillcolor="#f8bbd0"];
+
+        flow2 [label="2. Fetch Demo Data\nSample disc_obs_demo\nfrom motion dataset", fillcolor="#f48fb1"];
+
+        flow3 [label="3. Compute Style Reward\ndisc_r = style_reward(disc_obs)\nor style_reward(obs_diff)", fillcolor="#f06292"];
+
+        flow4 [label="4. Modify Rewards\nr = task_w × r + disc_w × disc_r", fillcolor="#ec407a"];
+
+        flow5 [label="5. GAE & PPO Update\n(same as before, but with\nmodified rewards)", fillcolor="#e91e63"];
+
+        flow6 [label="6. Discriminator Update\nTrain disc to distinguish\ndemo from agent", fillcolor="#d81b60"];
+
+        flow7 [label="7. Store Replay\nAdd disc_obs to replay\nbuffer for next iteration", fillcolor="#c2185b", fontcolor="white"];
+
+        flow1 -> flow2 -> flow3 -> flow4 -> flow5 -> flow6 -> flow7;
+    }
+
+    // =============================================
+    // Cross-cluster connections
+    // =============================================
+
+    // Disc architecture to loss
+    disc_logits -> pos_logit [style=dotted, color="#7b1fa2"];
+    disc_logits -> neg_logit [style=dotted, color="#7b1fa2"];
+
+    // Obs types to inputs
+    amp_disc_obs_demo -> pos_input [style=dashed, color="#3f51b5", label="AMP"];
+    add_diff -> neg_input [style=dashed, color="#009688", label="ADD"];
+
+    // Reward flow
+    style_reward -> new_reward [style=dashed, color="#ff5722"];
+
+    // Loss integration
+    total_disc_loss -> new_loss [style=dashed, color="#4caf50"];
+
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style="rounded";
+        bgcolor="white";
+        rank=sink;
+
+        leg_amp [label="AMP Style\n(absolute obs)", fillcolor="#c5cae9"];
+        leg_add [label="ADD Style\n(difference obs)", fillcolor="#b2dfdb"];
+        leg_new [label="NEW Component\n(to add)", fillcolor="#c8e6c9"];
+        leg_existing [label="Existing Component", fillcolor="#bbdefb"];
+    }
+}
