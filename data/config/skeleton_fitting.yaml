@@ -1,106 +1,92 @@
 # Skeleton Fitting Optimization Configuration
 # Used by C3D_Reader::fitSkeletonMultiFrame()
 #
-# Marker Format Options:
+# Marker Mapping Format:
 # ======================
-# Format 1 (Legacy): markers: [10, 11, 12]  # Direct integer indices
-# Format 2 (Named):  markers:
-#                      - {name: 'RASI', data_idx: 10}
-#                      - {name: 'LASI', data_idx: 11}
-# Format 3 (Label):  markers:
-#                      - {name: 'RASI', data_label: 'R.ASIS'}  # Resolved from C3D labels
+# marker_mappings: flat list mapping skeleton marker name → C3D data
+#   - {name: 'RASI', data_idx: 10}        # Direct index
+#   - {name: 'RASI', data_label: 'R.ASIS'} # Resolved from C3D labels
 #
-# N:1 mapping: Multiple skeleton markers can reference the same data index
-# for bone fitting (useful when 3 markers needed but only 2 physical markers available)
+# The bone association is determined from marker XML (default.xml), not here.
+# This just maps skeleton marker names to C3D data indices/labels.
 
 skeleton_fitting:
   # Frame range for optimization
   frame_range:
     start: 0      # 0-based start frame
-    # -1 = all frames, or specific end frame (inclusive)
-    end: -1
+    end: -1       # -1 = all frames, or specific end frame (inclusive)
 
-  # Alternating optimization parameters
-  optimization:
-    max_iterations: 10
-    convergence_threshold: 1.0e-6
-    plot_convergence: true
-
-  # Bone-marker mappings for anisotropic fitting
-  # Bones are fitted in order - Pelvis first, then limbs
-  # Hip joints (indices 25, 26) are computed using Harrington method before fitting
-  #
+  # Marker correspondence: skeleton marker name -> C3D data index/label
   # C3D test.c3d labels for reference:
   # [0] Top.Head  [1] Front.Head  [2] Rear.Head  [3] R.Shoulder  [4] R.Offset
   # [5] R.Elbow   [6] R.Wrist     [7] L.Shoulder [8] L.Elbow     [9] L.Wrist
   # [10] R.ASIS   [11] L.ASIS     [12] V.Sacral  [13] R.Thigh    [14] R.Knee
   # [15] R.Shank  [16] R.Ankle    [17] R.Heel    [18] R.Toe      [19] L.Thigh
   # [20] L.Knee   [21] L.Shank    [22] L.Ankle   [23] L.Heel     [24] L.Toe
-  # [27] V_R.Hip_JC  [28] V_L.Hip_JC (virtual hip joint centers)
+  marker_mappings:
+    # Pelvis markers
+    - {name: 'RASI', data_label: 'R.ASIS'}
+    - {name: 'LASI', data_label: 'L.ASIS'}
+    - {name: 'VSAC', data_label: 'V.Sacral'}
+    # Virtual hip joint centers (computed by Harrington method, indices 25, 26, do not specify by data_label because it is computed automatically)
+    - {name: 'R_Hip', data_idx: 25}
+    - {name: 'L_Hip', data_idx: 26}
 
-  bone_mappings:
-    # Pelvis (root body) - fitted first, stores R, t, S
-    # Format 2 example: named markers with direct indices
-    - bone: "Pelvis"
-      markers:
-        - {name: 'RASI', data_idx: 10}
-        - {name: 'LASI', data_idx: 11}
-        - {name: 'VSAC', data_idx: 12}
-      virtual_first: false
+    # FemurR markers
+    - {name: 'RTHI', data_label: 'R.Thigh'}
+    - {name: 'RKNE_fem', data_label: 'R.Knee'}
 
-    # FemurR - using label-based resolution
-    # Format 3 example: markers resolved from C3D labels
-    - bone: "FemurR"
-      markers:
-        - {name: 'R_Hip', data_label: 'V_R.Hip_JC'}
-        - {name: 'RTHI', data_label: 'R.Thigh'}
-        - {name: 'RKNE', data_label: 'R.Knee'}
-      virtual_first: false
+    # TibiaR markers
+    - {name: 'RKNE_tib', data_label: 'R.Knee'}
+    - {name: 'RSHA', data_label: 'R.Shank'}
+    - {name: 'RANK_tib', data_label: 'R.Ankle'}
 
-    # - bone: "TibiaR"
-    #   markers: [14, 15, 16]
-    #   virtual_first: false
-    #   comment: "RKNE, RSHA, RANK"
+    # TalusR markers
+    - {name: 'RANK_tal', data_label: 'R.Ankle'}
+    - {name: 'RHEE', data_label: 'R.Heel'}
+    - {name: 'R.TO', data_label: 'R.Toe'}
 
-    # - bone: "TalusR"
-    #   markers: [16, 17, 18]
-    #   virtual_first: false
-    #   comment: "RANK, R.TO, RHEE"
+    # FemurL markers
+    - {name: 'LTHI', data_label: 'L.Thigh'}
+    - {name: 'LKNE_fem', data_label: 'L.Knee'}
 
-    # - bone: "FemurL"
-    #   markers:
-    #     - {name: 'L_Hip', data_label: 'V_L.Hip_JC'}
-    #     - {name: 'LTHI', data_label: 'L.Thigh'}
-    #     - {name: 'LKNE', data_label: 'L.Knee'}
-    #   virtual_first: false
+    # TibiaL markers
+    - {name: 'LKNE_tib', data_label: 'L.Knee'}
+    - {name: 'LSHA', data_label: 'L.Shank'}
+    - {name: 'LANK_tib', data_label: 'L.Ankle'}
 
-    # - bone: "TibiaL"
-    #   markers: [20, 21, 22]
-    #   virtual_first: false
-    #   comment: "LKNE, LSHA, LANK"
+    # TalusL markers
+    - {name: 'LANK_tal', data_label: 'L.Ankle'}
+    - {name: 'LHEE', data_label: 'L.Heel'}
+    - {name: 'L.TO', data_label: 'L.Toe'}
 
-    # - bone: "TalusL"
-    #   markers: [22, 23, 24]
-    #   virtual_first: false
-    #   comment: "LANK, LHEE, L.TO"
+    # Upper body markers
+    - {name: 'THEA', data_label: 'Top.Head'}
+    - {name: 'FHEA', data_label: 'Front.Head'}
+    - {name: 'RHEA', data_label: 'Rear.Head'}
+    
+    - {name: 'RSHO', data_label: 'R.Shoulder'}
+    - {name: 'RELB', data_label: 'R.Elbow'}
+    - {name: 'RWRI', data_label: 'R.Wrist'}
+    - {name: 'LSHO', data_label: 'L.Shoulder'}
+    - {name: 'LELB', data_label: 'L.Elbow'}
+    - {name: 'LWRI', data_label: 'L.Wrist'}
+    
+    - {name: 'ROFF', data_label: 'R.Offset'}
 
-    # # Upper body
-    # - bone: "Head"
-    #   markers: [0, 1, 2]
-    #   virtual_first: false
-    #   comment: "THEA, FHEA, RHEA"
-
-    # - bone: "Torso"
-    #   markers: [3, 4, 7]
-    #   virtual_first: false
-    #   comment: "RSHO, ROFF, LSHO"
-
-    # - bone: "ArmR"
-    #   markers: [3, 5, 6]
-    #   virtual_first: false
-    #   comment: "RSHO, RELB, RWRI"
-
-    # - bone: "ArmL"
-    #   markers: [7, 8, 9]
-    #   virtual_first: false
-    #   comment: "LSHO, LELB, LWRI"
+  optimization:
+    max_iterations: 20
+    convergence_threshold: 1.0e-6
+    plot_convergence: true
+    upper_body: true  # Enable upper body scaling/rotation (2-marker bones)
+    # Bones to optimize (bone names from skeleton)
+    # Bone-marker association is determined from marker XML, not here
+    target:
+      - Pelvis
+      - FemurR
+      - TibiaR
+      - TalusR
+      - FemurL
+      - TibiaL
+      - TalusL
+      - Head

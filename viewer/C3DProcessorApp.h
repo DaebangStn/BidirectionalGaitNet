@@ -8,6 +8,7 @@
 #include "C3D_Reader.h"
 #include "C3D.h"
 #include "Motion.h"
+#include "CBufferData.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -19,6 +20,11 @@
 #include <string>
 #include <vector>
 #include <set>
+
+/**
+ * @brief Skeleton render mode
+ */
+enum class RenderMode { Primitive, Mesh, Wireframe };
 
 /**
  * @brief Playback navigation mode for C3D marker data
@@ -44,15 +50,6 @@ struct C3DViewerState
     bool render = true;
     C3DNavigationMode navigationMode = C3D_SYNC;
     int manualFrameIndex = 0;
-};
-
-/**
- * @brief Marker label for rendering with name display
- */
-struct C3DMarkerLabel {
-    Eigen::Vector3d position;
-    int index;
-    std::string name;
 };
 
 /**
@@ -87,6 +84,7 @@ private:
     double mZoom;
     double mPersp;
     dart::gui::Trackball mTrackball;
+    int mFocus;  // Camera follow mode (0=free, 1=follow skeleton COM)
 
     // Mouse state
     bool mMouseDown;
@@ -114,12 +112,35 @@ private:
     bool mRenderC3DMarkers;
     bool mRenderExpectedMarkers;
     bool mRenderMarkerIndices;
+    bool mRenderJointPositions = false;
+    float mMarkerLabelFontSize = 18.0f;
 
-    // Marker label data
-    std::vector<C3DMarkerLabel> mMarkerIndexLabels;
-    std::vector<C3DMarkerLabel> mSkelMarkerIndexLabels;
+    // Axis rendering flags
+    bool mRenderWorldAxis = false;
+    bool mRenderSkeletonAxis = false;
+    bool mCameraMoving = false;  // True while camera is being manipulated
+    double mCameraMovingTimer = 0.0;  // Timer for scroll-based axis display
+    float mAxisLength = 0.3f;
+
+    // Skeleton render mode
+    RenderMode mRenderMode = RenderMode::Wireframe;
+
+    // Rendering panel
+    bool mShowRenderingPanel = false;
+
+    // Per-marker visibility (empty = all visible)
+    std::set<int> mHiddenC3DMarkers;
+    std::set<int> mHiddenSkelMarkers;
+
+    // Marker search/selection
     char mMarkerSearchFilter[64] = "";
-    std::set<int> mSelectedMarkerIndices;
+    char mRenderingMarkerFilter[64] = "";
+
+    // Motion pose inspection
+    int mPoseInspectFrame = 0;
+    bool mPoseUseCurrentFrame = true;
+    char mJointFilter[64] = "";
+    int mSelectedJointIdx = -1;
 
     // Playback state
     C3DViewerState mMotionState;
@@ -132,6 +153,7 @@ private:
     double mViewerCycleDuration;
     double mLastRealTime;
     bool mIsPlaying;
+    bool mProgressForward = false;  // Whether character progresses forward with cycle distance
 
     // Plot control
     double mXmin;
@@ -149,14 +171,8 @@ private:
         bool valid = false;
     };
 
-    // Cached matrices for label drawing
-    GLdouble mModelview[16];
-    GLdouble mProjection[16];
-    GLint mViewport[4];
-
-    // Graph data buffer for plots
-    std::map<std::string, std::vector<double>> mGraphData;
-    std::map<std::string, std::vector<double>> mGraphTime;
+    // Graph data buffer for plots (cyclic buffer)
+    CBufferData<double>* mGraphData;
 
     // Configuration
     std::set<std::string> mDefaultOpenPanels;
@@ -173,18 +189,20 @@ private:
     void drawFrame();
     void drawSkeleton();
     void drawMarkers();
-    void drawMarkerLabels();
     void drawGround();
+    void drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label);
+    void drawOriginAxisGizmo();
 
     // UI panels
     void drawControlPanel();
     void drawMotionListSection();
     void drawPlaybackSection();
-    void drawMarkerVisibilitySection();
     void drawMarkerFittingSection();
     void drawVisualizationPanel();
+    void drawRenderingPanel();
     void drawMarkerDiffPlot();
     void drawMarkerCorrespondenceTable();
+    void drawMotionPoseSection();
 
     // Helper for collapsing header
     bool collapsingHeaderWithControls(const std::string& title);
@@ -199,10 +217,6 @@ private:
     void updateViewerTime(double dt);
     void computeViewerMetric();
 
-    // Plot helpers
-    void plotGraphData(const std::vector<std::string>& keys);
-    void recordGraphData(const std::string& key, double time, double value);
-    void clearGraphData();
 
     // Input callbacks
     static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
@@ -216,6 +230,8 @@ private:
     void mouseMove(double x, double y);
     void mouseScroll(double xoff, double yoff);
     void keyPress(int key, int scancode, int action, int mods);
+    void alignCameraToPlane(int plane);
+    void reset();
 };
 
 #endif // C3D_PROCESSOR_APP_H

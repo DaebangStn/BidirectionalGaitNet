@@ -1,5 +1,6 @@
 #include "RenderCharacter.h"
 #include "DARTHelper.h"
+#include "UriResolver.h"
 #include "Log.h"
 #include <tinyxml2.h>
 #include <iomanip>
@@ -120,12 +121,11 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
     rtgBody->setInertia(inertia);
 }
 
-RenderCharacter::RenderCharacter(const std::string& skelPath)
+RenderCharacter::RenderCharacter(const std::string& skelPath, int skelFlags)
 {
-    // SKEL_FREE_JOINTS: All joints are FreeJoint (6 DOF) for debugging bone poses independently
-    mSkeleton = BuildFromFile(skelPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
+    mSkeleton = BuildFromFile(skelPath, skelFlags);
     // Also create reference skeleton for bone scaling operations
-    mRefSkeleton = BuildFromFile(skelPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
+    mRefSkeleton = BuildFromFile(skelPath, skelFlags);
     mRefSkeleton->setPositions(Eigen::VectorXd::Zero(mRefSkeleton->getNumDofs()));
 
     // Initialize mSkelInfos with default scale for all bones
@@ -201,8 +201,11 @@ void RenderCharacter::loadMarkers(const std::string& markerPath)
 {
     mMarkers.clear();
 
+    // Resolve URI scheme (e.g., @data/ -> absolute path)
+    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(markerPath);
+
     tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(markerPath.c_str()) != tinyxml2::XML_SUCCESS) {
+    if (doc.LoadFile(resolvedPath.c_str()) != tinyxml2::XML_SUCCESS) {
         LOG_WARN("[RenderCharacter] Failed to load marker file: " << markerPath);
         return;
     }
@@ -407,4 +410,19 @@ std::vector<std::string> RenderCharacter::getBodyNodeNames() const
         names.push_back(mSkeleton->getBodyNode(i)->getName());
     }
     return names;
+}
+
+
+void RenderCharacter::resetSkeletonToDefault()
+{
+    // Reset all bone parameters to default (scale = 1.0)
+    for (auto& info : mSkelInfos) {
+        std::get<1>(info) = ModifyInfo();
+    }
+    applySkeletonBodyNode(mSkelInfos, mSkeleton);
+    // Set skeleton to zero pose
+    if (mSkeleton) {
+        mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
+    }
+    LOG_INFO("[RenderCharacter] Skeleton reset to default scales and zero pose");
 }

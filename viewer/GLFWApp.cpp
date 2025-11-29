@@ -571,10 +571,10 @@ void GLFWApp::loadRenderConfig()
             }
 
             // Load default open panels configuration
-            if (config["glfwapp"]["default_open_panels"]) {
+            if (config["default_open_panels"]) {
                 mDefaultOpenPanels.clear();
-                if (config["glfwapp"]["default_open_panels"].IsSequence()) {
-                    for (const auto& panel : config["glfwapp"]["default_open_panels"]) {
+                if (config["default_open_panels"].IsSequence()) {
+                    for (const auto& panel : config["default_open_panels"]) {
                         mDefaultOpenPanels.insert(panel.as<std::string>());
                     }
                     LOG_VERBOSE("[Config] Default open panels: " << mDefaultOpenPanels.size() << " panels");

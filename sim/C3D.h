@@ -27,6 +27,8 @@ public:
     // Marker access methods
     const std::vector<Eigen::Vector3d>& getMarkers(int frameIdx) const;
     void setMarkers(int frameIdx, const std::vector<Eigen::Vector3d>& markers);
+    std::vector<std::vector<Eigen::Vector3d>>& getAllMarkers() { return mMarkers; }
+    const std::vector<std::vector<Eigen::Vector3d>>& getAllMarkers() const { return mMarkers; }
     std::vector<Eigen::Vector3d> getInterpolatedMarkers(double frameFloat) const;
     Eigen::Vector3d getCentroid(int frameIdx) const;
     Eigen::Vector3d getCentroid(double frameFloat) const;
@@ -51,7 +53,9 @@ public:
 
     // Label access (from C3D POINT/LABELS parameter)
     const std::vector<std::string>& getLabels() const { return mLabels; }
+    std::vector<std::string>& getLabels() { return mLabels; }
     int getNumLabels() const { return static_cast<int>(mLabels.size()); }
+    void addLabel(const std::string& label) { mLabels.push_back(label); }
 
     // Motion interface --------------------------------------------------
     Eigen::VectorXd getTargetPose(double phase) override;

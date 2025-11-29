@@ -74,7 +74,8 @@
       "stop_token": "cpp",
       "streambuf": "cpp",
       "thread": "cpp",
-      "charconv": "cpp"
+      "charconv": "cpp",
+      "future": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",
