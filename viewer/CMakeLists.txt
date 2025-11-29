@@ -45,3 +45,34 @@ target_link_libraries(viewer
         ezc3d
         Boost::program_options
 )
+
+# Marker Editor - Standalone application for editing marker positions
+add_executable(marker_editor
+    "marker_editor_main.cpp"
+    "MarkerEditorApp.h"
+    "MarkerEditorApp.cpp"
+    "RenderCharacter.h"
+    "RenderCharacter.cpp"
+    "ShapeRenderer.h"
+    "ShapeRenderer.cpp"
+    "GLfunctions.h"
+    "GLfunctions.cpp"
+)
+target_link_libraries(marker_editor
+    tinyxml2::tinyxml2
+    GL GLU glut glad glfw imgui
+    sim
+    dart-gui
+)
+
+# Test for marker save cyclic consistency
+add_executable(test_marker_save
+    "test_marker_save.cpp"
+    "RenderCharacter.h"
+    "RenderCharacter.cpp"
+)
+target_link_libraries(test_marker_save
+    tinyxml2::tinyxml2
+    sim
+    dart-gui
+)

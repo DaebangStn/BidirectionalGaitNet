@@ -450,7 +450,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // Initialize C3D reader with motion character (independent of simulation environment)
     if (!mC3DReader && mMotionCharacter) {
-        mC3DReader = new C3D_Reader("data/marker_set.xml", mMotionCharacter);
+        mC3DReader = new C3D_Reader("data/marker/default.xml", mMotionCharacter);
         mMotionProcessor->setC3DReader(mC3DReader);
         LOG_INFO("[GLFWApp] Initialized C3D reader");
     }
@@ -1180,7 +1180,7 @@ void GLFWApp::initializeMotionCharacter(const std::string& metadata)
     try {
         mSkeletonPath = skelPath;
         mMotionCharacter = new RenderCharacter(mSkeletonPath);
-        mMotionCharacter->loadMarkers("data/marker_set.xml");
+        mMotionCharacter->loadMarkers("data/marker/default.xml");
         LOG_INFO("[Motion] Initialized standalone motion character from: " << mSkeletonPath);
     } catch (const std::exception& e) {
         LOG_ERROR("[Motion] Failed to create motion character: " << e.what());
@@ -3374,6 +3374,40 @@ void GLFWApp::loadCameraPreset(int index) {
     mCurrentCameraPreset = index;
 }
 
+void GLFWApp::alignCameraToPlane(int plane) {
+    // Align camera to view a specific plane
+    // 1 = XY plane (view from +Z, looking at -Z, up is +Y)
+    // 2 = YZ plane (view from +X, looking at -X, up is +Z)
+    // 3 = ZX plane (view from +Y, looking at -Y, up is +Z)
+
+    Eigen::Quaterniond quat;
+    const char* planeName = "";
+
+    switch (plane) {
+        case 1: // XY plane - view from +Z axis
+            // Looking along -Z, up is +Y → identity rotation (default OpenGL view)
+            quat = Eigen::Quaterniond::Identity();
+            planeName = "XY";
+            break;
+        case 2: // YZ plane - view from +X axis
+            // Rotate -90° around Y axis to look along -X
+            quat = Eigen::AngleAxisd(-M_PI / 2.0, Eigen::Vector3d::UnitY());
+            planeName = "YZ";
+            break;
+        case 3: // ZX plane - view from +Y axis (top-down)
+            // Rotate +90° around X axis to look along -Y
+            quat = Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitX());
+            planeName = "ZX";
+            break;
+        default:
+            LOG_WARN("[Camera] Invalid plane index: " << plane);
+            return;
+    }
+
+    mTrackball.setQuaternion(quat);
+    LOG_INFO("[Camera] Aligned to " << planeName << " plane");
+}
+
 void GLFWApp::drawSimControlPanel()
 {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
@@ -5402,11 +5436,17 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         case GLFW_KEY_1:
         case GLFW_KEY_KP_1:
             loadCameraPreset(1);
+            // alignCameraToPlane(1);  // XY plane
             break;
         case GLFW_KEY_2:
         case GLFW_KEY_KP_2:
             loadCameraPreset(2);
+            // alignCameraToPlane(2);  // YZ plane
             break;
+        // case GLFW_KEY_3:
+        // case GLFW_KEY_KP_3:
+        //     alignCameraToPlane(3);  // ZX plane
+        //     break;
 
 
         default:

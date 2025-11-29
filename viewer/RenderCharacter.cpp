@@ -2,6 +2,8 @@
 #include "DARTHelper.h"
 #include "Log.h"
 #include <tinyxml2.h>
+#include <iomanip>
+#include <fstream>
 
 using namespace dart::dynamics;
 
@@ -251,7 +253,6 @@ Eigen::Vector3d RenderMarker::getGlobalPos() const
     if (!bodyNode) return Eigen::Vector3d::Zero();
 
     // Get body bounding box size from visual shape
-    // Note: size already includes bone scale after applySkeletonBodyNode()
     auto* shapeNode = bodyNode->getShapeNodeWith<VisualAspect>(0);
     if (!shapeNode) return bodyNode->getTransform().translation();
 
@@ -319,4 +320,91 @@ void RenderCharacter::applySkeletonBodyNode(const std::vector<BoneInfo>& info, S
             rtgJoint->setTransformFromParentBodyNode(modifyIsometry3d(down, modInfo, axis, false));
         }
     }
+}
+
+// Marker editing methods
+void RenderCharacter::addMarker(const std::string& name, const std::string& bodyNodeName, const Eigen::Vector3d& offset)
+{
+    BodyNode* bn = mSkeleton->getBodyNode(bodyNodeName);
+    if (!bn) {
+        LOG_WARN("[RenderCharacter] Cannot add marker - body node not found: " << bodyNodeName);
+        return;
+    }
+
+    RenderMarker marker;
+    marker.name = name;
+    marker.offset = offset;
+    marker.bodyNode = bn;
+    mMarkers.push_back(marker);
+}
+
+void RenderCharacter::removeMarker(size_t index)
+{
+    if (index < mMarkers.size()) {
+        mMarkers.erase(mMarkers.begin() + index);
+    }
+}
+
+void RenderCharacter::duplicateMarker(size_t index)
+{
+    if (index < mMarkers.size()) {
+        RenderMarker copy = mMarkers[index];
+        copy.name = copy.name + "_copy";
+        mMarkers.insert(mMarkers.begin() + index + 1, copy);
+    }
+}
+
+bool RenderCharacter::saveMarkersToXml(const std::string& path) const
+{
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        LOG_WARN("[RenderCharacter] Failed to open file for writing: " << path);
+        return false;
+    }
+
+    // Find max lengths for alignment
+    size_t maxNameLen = 4;  // minimum "name"
+    size_t maxBnLen = 2;    // minimum "bn"
+    for (const auto& marker : mMarkers) {
+        maxNameLen = std::max(maxNameLen, marker.name.length());
+        maxBnLen = std::max(maxBnLen, marker.bodyNode->getName().length());
+    }
+
+    // Write XML with aligned columns
+    file << "<?xml version=\"1.0\"?>\n";
+    file << "<!-- Marker set - offset is relative scale (not meter) -->\n";
+    file << "<Markers>\n";
+
+    for (const auto& marker : mMarkers) {
+        // Format offset with fixed width for each component (handle negative sign)
+        std::ostringstream ossX, ossY, ossZ;
+        ossX << std::fixed << std::setprecision(6) << std::setw(10) << marker.offset[0];
+        ossY << std::fixed << std::setprecision(6) << std::setw(10) << marker.offset[1];
+        ossZ << std::fixed << std::setprecision(6) << std::setw(10) << marker.offset[2];
+
+        // Build padded name and bn strings (padding after closing quote)
+        std::string nameAttr = "name=\"" + marker.name + "\"";
+        std::string bnAttr = "bn=\"" + marker.bodyNode->getName() + "\"";
+        size_t nameAttrLen = 7 + maxNameLen + 1;  // name="..."
+        size_t bnAttrLen = 4 + maxBnLen + 1;      // bn="..."
+
+        file << "  <marker " << std::left << std::setw(nameAttrLen) << nameAttr << "  "
+             << std::left << std::setw(bnAttrLen) << bnAttr << "  "
+             << "offset=\"" << ossX.str() << " " << ossY.str() << " " << ossZ.str() << "\"/>\n";
+    }
+
+    file << "</Markers>\n";
+    file.close();
+
+    LOG_INFO("[RenderCharacter] Saved " << mMarkers.size() << " markers to: " << path);
+    return true;
+}
+
+std::vector<std::string> RenderCharacter::getBodyNodeNames() const
+{
+    std::vector<std::string> names;
+    for (size_t i = 0; i < mSkeleton->getNumBodyNodes(); ++i) {
+        names.push_back(mSkeleton->getBodyNode(i)->getName());
+    }
+    return names;
 }

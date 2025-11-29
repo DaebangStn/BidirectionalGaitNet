@@ -215,6 +215,7 @@ private:
     void printCameraInfo();
     void initializeCameraPresets();
     void loadCameraPreset(int index);
+    void alignCameraToPlane(int plane);  // 1=XY, 2=YZ, 3=ZX
     void drawGround();
     void drawCollision();
 

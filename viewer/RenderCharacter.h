@@ -40,6 +40,14 @@ public:
     const std::vector<RenderMarker>& getMarkers() const { return mMarkers; }
     bool hasMarkers() const { return !mMarkers.empty(); }
 
+    // Marker editing
+    std::vector<RenderMarker>& getMarkersForEdit() { return mMarkers; }
+    void addMarker(const std::string& name, const std::string& bodyNodeName, const Eigen::Vector3d& offset);
+    void removeMarker(size_t index);
+    void duplicateMarker(size_t index);
+    bool saveMarkersToXml(const std::string& path) const;
+    std::vector<std::string> getBodyNodeNames() const;
+
     // Skeleton modification (for C3D IK fitting)
     void applySkeletonBodyNode(const std::vector<BoneInfo>& info, SkeletonPtr skel);
 
