@@ -49,6 +49,10 @@ public:
 
     double getFrameRate() const { return mFrameRate; }
 
+    // Label access (from C3D POINT/LABELS parameter)
+    const std::vector<std::string>& getLabels() const { return mLabels; }
+    int getNumLabels() const { return static_cast<int>(mLabels.size()); }
+
     // Motion interface --------------------------------------------------
     Eigen::VectorXd getTargetPose(double phase) override;
     Eigen::VectorXd getPose(int frameIdx) override;

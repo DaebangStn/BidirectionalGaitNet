@@ -1990,6 +1990,55 @@ void GLFWApp::drawVisualizationPanel()
                 }
             }
         }
+
+        // Marker Correspondence table (shows skeleton marker ↔ C3D data marker mapping)
+        if (ImGui::CollapsingHeader("Marker Correspondence")) {
+            C3D* c3dMotion = static_cast<C3D*>(mMotion);
+            const auto& dataLabels = c3dMotion->getLabels();
+            const auto& skelMarkers = mMotionCharacter ? mMotionCharacter->getMarkers() : std::vector<RenderMarker>();
+
+            if (ImGui::BeginTable("MarkerCorrespondenceTable", 4,
+                    ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable |
+                    ImGuiTableFlags_ScrollY, ImVec2(0, 200))) {
+                ImGui::TableSetupColumn("Skel Idx", ImGuiTableColumnFlags_WidthFixed, 60);
+                ImGui::TableSetupColumn("Skel Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Data Idx", ImGuiTableColumnFlags_WidthFixed, 60);
+                ImGui::TableSetupColumn("Data Label", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                // Show correspondence for all skeleton markers
+                size_t maxRows = std::max(skelMarkers.size(), dataLabels.size());
+                for (size_t i = 0; i < maxRows; ++i) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    if (i < skelMarkers.size()) {
+                        ImGui::Text("%zu", i);
+                    } else {
+                        ImGui::TextDisabled("--");
+                    }
+                    ImGui::TableNextColumn();
+                    if (i < skelMarkers.size()) {
+                        ImGui::Text("%s", skelMarkers[i].name.c_str());
+                    } else {
+                        ImGui::TextDisabled("--");
+                    }
+                    ImGui::TableNextColumn();
+                    if (i < dataLabels.size()) {
+                        ImGui::Text("%zu", i);
+                    } else {
+                        ImGui::TextDisabled("--");
+                    }
+                    ImGui::TableNextColumn();
+                    if (i < dataLabels.size()) {
+                        ImGui::Text("%s", dataLabels[i].c_str());
+                    } else {
+                        ImGui::TextDisabled("--");
+                    }
+                }
+
+                ImGui::EndTable();
+            }
+        }
     }
 
     if (!mRenderEnv)
@@ -4233,7 +4282,7 @@ void GLFWApp::drawUIFrame()
     drawTitlePanel();
     drawResizablePlotPane();
 
-    // Draw marker index labels as screen-space text overlay
+    // Draw marker index labels as screen-space text overlay (format: "Index: Name")
     if (mRenderMarkerIndices && (!mMarkerIndexLabels.empty() || !mSkelMarkerIndexLabels.empty())) {
         GLdouble modelview[16], projection[16];
         GLint viewport[4];
@@ -4245,28 +4294,30 @@ void GLFWApp::drawUIFrame()
         ImFont* font = ImGui::GetFont();
         float fontSize = 18.0f;  // Larger font size
 
-        // Data markers - black text (offset left)
-        for (const auto& [pos, idx] : mMarkerIndexLabels) {
+        // Data markers - black text (offset left) - format "10: R.ASIS"
+        for (const auto& label : mMarkerIndexLabels) {
             GLdouble screenX, screenY, screenZ;
-            if (gluProject(pos.x(), pos.y(), pos.z(), modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
+            if (gluProject(label.position.x(), label.position.y(), label.position.z(),
+                          modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
                 if (screenZ > 0.0 && screenZ < 1.0) {
                     float y = mHeight - static_cast<float>(screenY);
-                    std::string label = std::to_string(idx) + " (d)";
+                    std::string text = std::to_string(label.index) + ": " + label.name;
                     drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) - 20, y - 10),
-                                      IM_COL32(0, 0, 0, 255), label.c_str());
+                                      IM_COL32(0, 0, 0, 255), text.c_str());
                 }
             }
         }
 
-        // Skeleton markers - black text (offset right)
-        for (const auto& [pos, idx] : mSkelMarkerIndexLabels) {
+        // Skeleton markers - black text (offset right) - format "10: RASI"
+        for (const auto& label : mSkelMarkerIndexLabels) {
             GLdouble screenX, screenY, screenZ;
-            if (gluProject(pos.x(), pos.y(), pos.z(), modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
+            if (gluProject(label.position.x(), label.position.y(), label.position.z(),
+                          modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
                 if (screenZ > 0.0 && screenZ < 1.0) {
                     float y = mHeight - static_cast<float>(screenY);
-                    std::string label = std::to_string(idx) + " (s)";
+                    std::string text = std::to_string(label.index) + ": " + label.name;
                     drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) + 5, y - 10),
-                                      IM_COL32(0, 0, 0, 255), label.c_str());
+                                      IM_COL32(0, 0, 0, 255), text.c_str());
                 }
             }
         }
@@ -4571,6 +4622,9 @@ void GLFWApp::drawPlayableMotion()
         mMarkerIndexLabels.clear();
         mSkelMarkerIndexLabels.clear();
 
+        C3D* c3dMotion = static_cast<C3D*>(mMotion);
+        const auto& dataLabels = c3dMotion->getLabels();
+
         // 1. Data markers (from C3D capture) - green
         if (mRenderC3DMarkers && !mMotionState.currentMarkers.empty()) {
             glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
@@ -4579,7 +4633,8 @@ void GLFWApp::drawPlayableMotion()
                 if (!marker.array().isFinite().all()) continue;
                 GUI::DrawSphere(marker, 0.0125);
                 if (mRenderMarkerIndices) {
-                    mMarkerIndexLabels.push_back({marker, static_cast<int>(i)});
+                    std::string name = (i < dataLabels.size()) ? dataLabels[i] : "";
+                    mMarkerIndexLabels.push_back({marker, static_cast<int>(i), name});
                 }
             }
         }
@@ -4587,13 +4642,15 @@ void GLFWApp::drawPlayableMotion()
         // 2. Skeleton markers (expected from skeleton pose) - red
         if (mRenderExpectedMarkers && mMotionCharacter && mMotionCharacter->hasMarkers()) {
             glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+            const auto& skelMarkers = mMotionCharacter->getMarkers();
             auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
             for (size_t i = 0; i < expectedMarkers.size(); ++i) {
                 const auto& marker = expectedMarkers[i];
                 if (!marker.array().isFinite().all()) continue;
                 GUI::DrawSphere(marker, 0.0125);
                 if (mRenderMarkerIndices) {
-                    mSkelMarkerIndexLabels.push_back({marker, static_cast<int>(i)});
+                    std::string name = (i < skelMarkers.size()) ? skelMarkers[i].name : "";
+                    mSkelMarkerIndexLabels.push_back({marker, static_cast<int>(i), name});
                 }
             }
         }

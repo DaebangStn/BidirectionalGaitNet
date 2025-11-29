@@ -84,6 +84,72 @@ C3D_Reader::~C3D_Reader()
 {
 }
 
+// ============================================================================
+// MarkerResolver Implementation
+// ============================================================================
+
+void MarkerResolver::setC3DLabels(const std::vector<std::string>& labels) {
+    mC3DLabels = labels;
+    mLabelToIndex.clear();
+    for (size_t i = 0; i < labels.size(); ++i) {
+        mLabelToIndex[labels[i]] = static_cast<int>(i);
+    }
+}
+
+int MarkerResolver::resolve(const MarkerReference& ref) const {
+    if (ref.type == MarkerReference::Type::DataIndex) {
+        return ref.dataIndex;
+    }
+    // Type::DataLabel - lookup in C3D labels
+    auto it = mLabelToIndex.find(ref.dataLabel);
+    if (it != mLabelToIndex.end()) {
+        return it->second;
+    }
+    return -1;  // Not found
+}
+
+bool MarkerResolver::resolveAll(std::vector<MarkerReference>& refs, std::vector<int>& out) const {
+    out.clear();
+    out.reserve(refs.size());
+    bool allResolved = true;
+    for (auto& ref : refs) {
+        int idx = resolve(ref);
+        if (idx < 0) {
+            allResolved = false;
+            LOG_WARN("[MarkerResolver] Failed to resolve marker: name='" << ref.name
+                     << "' label='" << ref.dataLabel << "'");
+        } else {
+            ref.dataIndex = idx;  // Cache resolved index
+        }
+        out.push_back(idx);
+    }
+    return allResolved;
+}
+
+// ============================================================================
+// C3D_Reader: Marker Resolution
+// ============================================================================
+
+void C3D_Reader::resolveMarkerReferences(const std::vector<std::string>& c3dLabels) {
+    mResolver.setC3DLabels(c3dLabels);
+
+    for (auto& mapping : mFittingConfig.boneMappings) {
+        if (!mapping.markerRefs.empty()) {
+            // Resolve label-based references
+            if (!mResolver.resolveAll(mapping.markerRefs, mapping.resolvedIndices)) {
+                LOG_WARN("[C3D_Reader] Some markers not resolved for bone: " << mapping.boneName);
+            }
+            // Update legacy markerIndices for backward compatibility
+            if (!mapping.resolvedIndices.empty()) {
+                mapping.markerIndices = mapping.resolvedIndices;
+            }
+        }
+    }
+
+    LOG_INFO("[C3D_Reader] Marker reference resolution complete");
+}
+
+// ============================================================================
 // Load default bone mappings
 void SkeletonFittingConfig::loadDefaults() {
     frameStart = 0;
@@ -93,19 +159,33 @@ void SkeletonFittingConfig::loadDefaults() {
     plotConvergence = true;
 
     boneMappings.clear();
+
+    // Helper lambda to create BoneMapping with legacy markerIndices
+    auto makeBoneMapping = [](const std::string& name, std::vector<int> indices, bool hasVirtual) {
+        BoneMapping m;
+        m.boneName = name;
+        m.markerIndices = indices;
+        m.hasVirtualMarker = hasVirtual;
+        // Also populate markerRefs for consistency
+        for (int idx : indices) {
+            m.markerRefs.push_back(MarkerReference::fromIndex(idx));
+        }
+        return m;
+    };
+
     // Lower body
-    boneMappings.push_back({"Pelvis",  {10, 11, 12}, false});
-    boneMappings.push_back({"FemurR",  {25, 13, 14}, true});
-    boneMappings.push_back({"TibiaR",  {14, 15, 16}, false});
-    boneMappings.push_back({"TalusR",  {16, 17, 18}, false});
-    boneMappings.push_back({"FemurL",  {26, 19, 20}, true});
-    boneMappings.push_back({"TibiaL",  {20, 21, 22}, false});
-    boneMappings.push_back({"TalusL",  {22, 23, 24}, false});
+    boneMappings.push_back(makeBoneMapping("Pelvis",  {10, 11, 12}, false));
+    boneMappings.push_back(makeBoneMapping("FemurR",  {25, 13, 14}, true));
+    boneMappings.push_back(makeBoneMapping("TibiaR",  {14, 15, 16}, false));
+    boneMappings.push_back(makeBoneMapping("TalusR",  {16, 17, 18}, false));
+    boneMappings.push_back(makeBoneMapping("FemurL",  {26, 19, 20}, true));
+    boneMappings.push_back(makeBoneMapping("TibiaL",  {20, 21, 22}, false));
+    boneMappings.push_back(makeBoneMapping("TalusL",  {22, 23, 24}, false));
     // Upper body
-    boneMappings.push_back({"Head",    {0, 1, 2}, false});
-    boneMappings.push_back({"Torso",   {3, 4, 7}, false});
-    boneMappings.push_back({"ArmR",    {3, 5, 6}, false});
-    boneMappings.push_back({"ArmL",    {7, 8, 9}, false});
+    boneMappings.push_back(makeBoneMapping("Head",    {0, 1, 2}, false));
+    boneMappings.push_back(makeBoneMapping("Torso",   {3, 4, 7}, false));
+    boneMappings.push_back(makeBoneMapping("ArmR",    {3, 5, 6}, false));
+    boneMappings.push_back(makeBoneMapping("ArmL",    {7, 8, 9}, false));
 }
 
 // Load skeleton fitting config from YAML
@@ -137,8 +217,37 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
             for (const auto& bm : sf["bone_mappings"]) {
                 SkeletonFittingConfig::BoneMapping mapping;
                 mapping.boneName = bm["bone"].as<std::string>();
-                mapping.markerIndices = bm["markers"].as<std::vector<int>>();
                 mapping.hasVirtualMarker = bm["virtual_first"].as<bool>(false);
+
+                // Parse markers with format detection
+                const auto& markers = bm["markers"];
+                if (markers && markers.IsSequence()) {
+                    for (const auto& m : markers) {
+                        if (m.IsScalar()) {
+                            // Format 1: Integer index (backward compatible)
+                            int idx = m.as<int>();
+                            mapping.markerRefs.push_back(MarkerReference::fromIndex(idx));
+                            mapping.markerIndices.push_back(idx);
+                        } else if (m.IsMap()) {
+                            // Format 2 or 3: Object with name
+                            std::string name = m["name"].as<std::string>("");
+                            if (m["data_idx"]) {
+                                // Format 2: name + direct index
+                                int idx = m["data_idx"].as<int>();
+                                mapping.markerRefs.push_back(MarkerReference::fromNameAndIndex(name, idx));
+                                mapping.markerIndices.push_back(idx);
+                            } else if (m["data_label"]) {
+                                // Format 3: name + C3D label (needs resolution)
+                                std::string label = m["data_label"].as<std::string>();
+                                mapping.markerRefs.push_back(MarkerReference::fromNameAndLabel(name, label));
+                                // markerIndices will be populated during resolution
+                            } else {
+                                LOG_WARN("[C3D_Reader] Marker entry missing data_idx or data_label for bone: " << mapping.boneName);
+                            }
+                        }
+                    }
+                }
+
                 config.boneMappings.push_back(mapping);
             }
         }
@@ -195,6 +304,16 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
     // Step 2: Load ezc3d data and setup
     ezc3d::c3d c3d(path);
     mFrameRate = static_cast<int>(std::lround(c3d.header().frameRate()));
+
+    // Print C3D marker labels for debugging
+    const auto& labels = c3dData->getLabels();
+    LOG_INFO("[C3D_Reader] C3D Marker Labels (" << labels.size() << " markers):");
+    for (size_t i = 0; i < labels.size(); ++i) {
+        LOG_INFO("  [" << i << "] " << labels[i]);
+    }
+
+    // Resolve any label-based marker references in config
+    resolveMarkerReferences(labels);
 
     const size_t numFrames = c3d.data().nbFrames();
     if (numFrames == 0) {

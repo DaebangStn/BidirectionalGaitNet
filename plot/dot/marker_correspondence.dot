@@ -1,0 +1,205 @@
+digraph MarkerCorrespondence {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", shape=box, style="rounded,filled"];
+    edge [fontname="Helvetica"];
+
+    // Title
+    labelloc="t";
+    label="Marker Correspondence Resolution System\nSkeleton Markers ↔ C3D Data Markers";
+    fontsize=20;
+
+    // Subgraph: Data Sources
+    subgraph cluster_sources {
+        label="Data Sources";
+        style="rounded,filled";
+        fillcolor="#E8F4FD";
+
+        skeleton_xml [label="calib.xml\n(Skeleton Markers)", fillcolor="#B3E0FF"];
+        c3d_file [label="*.c3d\n(Motion Capture Data)", fillcolor="#B3E0FF"];
+        yaml_config [label="skeleton_fitting.yaml\n(Configuration)", fillcolor="#B3E0FF"];
+    }
+
+    // Subgraph: Skeleton Markers (from XML)
+    subgraph cluster_skeleton {
+        label="Skeleton Markers\n(mMarkerSet from XML)";
+        style="rounded,filled";
+        fillcolor="#E8F8E8";
+
+        skel_markers [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="3" BGCOLOR="#90EE90"><B>mMarkerSet[27]</B></TD></TR>
+            <TR><TD><B>Idx</B></TD><TD><B>Name</B></TD><TD><B>BodyNode</B></TD></TR>
+            <TR><TD>0</TD><TD>THEA</TD><TD>Head</TD></TR>
+            <TR><TD>1</TD><TD>FHEA</TD><TD>Head</TD></TR>
+            <TR><TD>...</TD><TD>...</TD><TD>...</TD></TR>
+            <TR><TD>10</TD><TD>RASI</TD><TD>Pelvis</TD></TR>
+            <TR><TD>11</TD><TD>LASI</TD><TD>Pelvis</TD></TR>
+            <TR><TD>12</TD><TD>VSAC</TD><TD>Pelvis</TD></TR>
+            <TR><TD>...</TD><TD>...</TD><TD>...</TD></TR>
+            <TR><TD>25</TD><TD>R_Hip</TD><TD>FemurR</TD></TR>
+            <TR><TD>26</TD><TD>L_Hip</TD><TD>FemurL</TD></TR>
+            </TABLE>
+        >, shape=none, fillcolor=white];
+    }
+
+    // Subgraph: C3D Data Markers
+    subgraph cluster_c3d {
+        label="C3D Data Markers\n(from POINT/LABELS)";
+        style="rounded,filled";
+        fillcolor="#FFF8E8";
+
+        c3d_labels [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2" BGCOLOR="#FFD700"><B>C3D Labels[41]</B></TD></TR>
+            <TR><TD><B>Idx</B></TD><TD><B>Label</B></TD></TR>
+            <TR><TD>0</TD><TD>Top.Head</TD></TR>
+            <TR><TD>1</TD><TD>Front.Head</TD></TR>
+            <TR><TD>...</TD><TD>...</TD></TR>
+            <TR><TD>10</TD><TD>R.ASIS</TD></TR>
+            <TR><TD>11</TD><TD>L.ASIS</TD></TR>
+            <TR><TD>12</TD><TD>V.Sacral</TD></TR>
+            <TR><TD>13</TD><TD>R.Thigh</TD></TR>
+            <TR><TD>14</TD><TD>R.Knee</TD></TR>
+            <TR><TD>...</TD><TD>...</TD></TR>
+            <TR><TD>27</TD><TD>V_R.Hip_JC</TD></TR>
+            <TR><TD>28</TD><TD>V_L.Hip_JC</TD></TR>
+            </TABLE>
+        >, shape=none, fillcolor=white];
+    }
+
+    // Subgraph: YAML Config Formats
+    subgraph cluster_yaml {
+        label="YAML Configuration Formats";
+        style="rounded,filled";
+        fillcolor="#F8E8F8";
+
+        format1 [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD BGCOLOR="#DDA0DD"><B>Format 1: Legacy</B></TD></TR>
+            <TR><TD ALIGN="LEFT">markers: [10, 11, 12]</TD></TR>
+            </TABLE>
+        >, shape=none];
+
+        format2 [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD BGCOLOR="#DDA0DD"><B>Format 2: Named + Index</B></TD></TR>
+            <TR><TD ALIGN="LEFT">markers:<BR/>  - {name: 'RASI', data_idx: 10}<BR/>  - {name: 'LASI', data_idx: 11}</TD></TR>
+            </TABLE>
+        >, shape=none];
+
+        format3 [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD BGCOLOR="#DDA0DD"><B>Format 3: Named + Label</B></TD></TR>
+            <TR><TD ALIGN="LEFT">markers:<BR/>  - {name: 'R_Hip', data_label: 'V_R.Hip_JC'}<BR/>  - {name: 'RTHI', data_label: 'R.Thigh'}</TD></TR>
+            </TABLE>
+        >, shape=none];
+    }
+
+    // Subgraph: MarkerReference
+    subgraph cluster_ref {
+        label="MarkerReference Struct";
+        style="rounded,filled";
+        fillcolor="#FFE4E1";
+
+        marker_ref [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2" BGCOLOR="#FA8072"><B>MarkerReference</B></TD></TR>
+            <TR><TD>type</TD><TD>DataIndex | DataLabel</TD></TR>
+            <TR><TD>name</TD><TD>Skeleton marker name</TD></TR>
+            <TR><TD>dataIndex</TD><TD>Resolved C3D index</TD></TR>
+            <TR><TD>dataLabel</TD><TD>C3D label string</TD></TR>
+            </TABLE>
+        >, shape=none];
+    }
+
+    // Subgraph: MarkerResolver
+    subgraph cluster_resolver {
+        label="MarkerResolver Class";
+        style="rounded,filled";
+        fillcolor="#E0FFFF";
+
+        resolver [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2" BGCOLOR="#40E0D0"><B>MarkerResolver</B></TD></TR>
+            <TR><TD COLSPAN="2">mLabelToIndex (hash map)</TD></TR>
+            <TR><TD>"R.ASIS"</TD><TD>→ 10</TD></TR>
+            <TR><TD>"L.ASIS"</TD><TD>→ 11</TD></TR>
+            <TR><TD>"V_R.Hip_JC"</TD><TD>→ 27</TD></TR>
+            <TR><TD>"R.Thigh"</TD><TD>→ 13</TD></TR>
+            <TR><TD>...</TD><TD>...</TD></TR>
+            </TABLE>
+        >, shape=none];
+
+        resolve_func [label="resolve(ref)\nO(1) lookup", fillcolor="#40E0D0"];
+    }
+
+    // Subgraph: BoneMapping
+    subgraph cluster_bone {
+        label="BoneMapping (after resolution)";
+        style="rounded,filled";
+        fillcolor="#F0FFF0";
+
+        bone_mapping [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD COLSPAN="2" BGCOLOR="#98FB98"><B>BoneMapping: "Pelvis"</B></TD></TR>
+            <TR><TD>markerRefs[0]</TD><TD>{name:'RASI', idx:10}</TD></TR>
+            <TR><TD>markerRefs[1]</TD><TD>{name:'LASI', idx:11}</TD></TR>
+            <TR><TD>markerRefs[2]</TD><TD>{name:'VSAC', idx:12}</TD></TR>
+            <TR><TD COLSPAN="2">resolvedIndices: [10, 11, 12]</TD></TR>
+            </TABLE>
+        >, shape=none];
+    }
+
+    // Subgraph: Fitting Algorithm
+    subgraph cluster_fitting {
+        label="Skeleton Fitting Algorithm";
+        style="rounded,filled";
+        fillcolor="#FFFACD";
+
+        fitting [label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD BGCOLOR="#F0E68C"><B>estimateScaleAlternating()</B></TD></TR>
+            <TR><TD ALIGN="LEFT">q[i] = mMarkerSet[idx].offset<BR/>(skeleton reference)</TD></TR>
+            <TR><TD ALIGN="LEFT">p[k][i] = allMarkers[frame][idx]<BR/>(C3D measured data)</TD></TR>
+            <TR><TD ALIGN="LEFT">Minimize: ||R·S·q + t - p||²</TD></TR>
+            </TABLE>
+        >, shape=none];
+    }
+
+    // Edges: Data flow
+    skeleton_xml -> skel_markers [label="XML parse"];
+    c3d_file -> c3d_labels [label="ezc3d load"];
+    yaml_config -> format1 [style=dashed];
+    yaml_config -> format2 [style=dashed];
+    yaml_config -> format3 [style=dashed];
+
+    format1 -> marker_ref [label="fromIndex()"];
+    format2 -> marker_ref [label="fromNameAndIndex()"];
+    format3 -> marker_ref [label="fromNameAndLabel()"];
+
+    c3d_labels -> resolver [label="setC3DLabels()"];
+    marker_ref -> resolve_func [label="needs resolution?"];
+    resolver -> resolve_func;
+    resolve_func -> bone_mapping [label="resolvedIndices"];
+
+    bone_mapping -> fitting [label="getResolvedIndices()"];
+    skel_markers -> fitting [label="reference q"];
+    c3d_labels -> fitting [label="measured p"];
+
+    // Legend
+    subgraph cluster_legend {
+        label="Resolution Flow";
+        style="rounded";
+        fillcolor="#F5F5F5";
+
+        legend [label=<
+            <TABLE BORDER="0" CELLSPACING="4">
+            <TR><TD ALIGN="LEFT"><B>1.</B> Load YAML config → MarkerReference</TD></TR>
+            <TR><TD ALIGN="LEFT"><B>2.</B> Load C3D → build label→index map</TD></TR>
+            <TR><TD ALIGN="LEFT"><B>3.</B> resolveMarkerReferences() → resolve labels</TD></TR>
+            <TR><TD ALIGN="LEFT"><B>4.</B> Fitting uses resolved indices</TD></TR>
+            </TABLE>
+        >, shape=none];
+    }
+}

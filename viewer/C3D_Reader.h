@@ -9,6 +9,7 @@
 #include <ezc3d/ezc3d_all.h>
 #include <yaml-cpp/yaml.h>
 #include <map>
+#include <unordered_map>
 
 
 // C3D conversion parameters
@@ -28,6 +29,55 @@ struct BoneFitResult {
     double finalRMS;  // Final reprojection RMS
 };
 
+// Marker reference for skeleton-to-data correspondence
+// Supports: direct index, or C3D label-based resolution
+struct MarkerReference {
+    enum class Type { DataIndex, DataLabel };
+
+    Type type = Type::DataIndex;
+    std::string name;       // Skeleton marker name (e.g., "RASI") - for documentation
+    int dataIndex = -1;     // Resolved index or direct index into C3D data
+    std::string dataLabel;  // C3D label for Type::DataLabel (e.g., "R.ASIS")
+
+    bool needsResolution() const { return type == Type::DataLabel && dataIndex < 0; }
+
+    static MarkerReference fromIndex(int idx) {
+        MarkerReference ref;
+        ref.type = Type::DataIndex;
+        ref.dataIndex = idx;
+        return ref;
+    }
+
+    static MarkerReference fromNameAndIndex(const std::string& n, int idx) {
+        MarkerReference ref;
+        ref.type = Type::DataIndex;
+        ref.name = n;
+        ref.dataIndex = idx;
+        return ref;
+    }
+
+    static MarkerReference fromNameAndLabel(const std::string& n, const std::string& lbl) {
+        MarkerReference ref;
+        ref.type = Type::DataLabel;
+        ref.name = n;
+        ref.dataLabel = lbl;
+        return ref;
+    }
+};
+
+// Resolves marker labels to indices using C3D label lookup
+class MarkerResolver {
+public:
+    void setC3DLabels(const std::vector<std::string>& labels);
+    int resolve(const MarkerReference& ref) const;
+    bool resolveAll(std::vector<MarkerReference>& refs, std::vector<int>& out) const;
+    bool hasC3DLabels() const { return !mC3DLabels.empty(); }
+
+private:
+    std::vector<std::string> mC3DLabels;
+    std::unordered_map<std::string, int> mLabelToIndex;
+};
+
 // Skeleton fitting configuration (loaded from YAML)
 struct SkeletonFittingConfig {
     int frameStart = 0;
@@ -38,8 +88,15 @@ struct SkeletonFittingConfig {
 
     struct BoneMapping {
         std::string boneName;
-        std::vector<int> markerIndices;
+        std::vector<MarkerReference> markerRefs;   // New: marker references with names/labels
+        std::vector<int> resolvedIndices;          // Cached after resolution
+        std::vector<int> markerIndices;            // Legacy field for backward compat
         bool hasVirtualMarker = false;
+
+        // Get resolved indices (uses resolvedIndices if available, else markerIndices for legacy)
+        const std::vector<int>& getResolvedIndices() const {
+            return resolvedIndices.empty() ? markerIndices : resolvedIndices;
+        }
     };
     std::vector<BoneMapping> boneMappings;
 
@@ -133,6 +190,9 @@ class C3D_Reader
         void reloadFittingConfig();
         void resetSkeletonToDefault();
 
+        // Marker label resolution
+        void resolveMarkerReferences(const std::vector<std::string>& c3dLabels);
+
         // Accessors for fitted frame range
         int getFitFrameStart() const { return mFitFrameStart; }
         int getFitFrameEnd() const { return mFitFrameEnd; }
@@ -169,6 +229,9 @@ class C3D_Reader
 
         // Skeleton fitting configuration
         SkeletonFittingConfig mFittingConfig;
+
+        // Marker label resolver
+        MarkerResolver mResolver;
 
         // Pelvis transform from Stage 0 fitting (frame 0 only - legacy)
         Eigen::Matrix3d mPelvisRotation = Eigen::Matrix3d::Identity();

@@ -1,9 +1,17 @@
 # Skeleton Fitting Optimization Configuration
 # Used by C3D_Reader::fitSkeletonMultiFrame()
 #
-# IMPORTANT: Pelvis is NOT included here - it's always fitted in Stage 0
-# Stage 0 uses world coordinates and extracts R, t, S for the root body
-# Stage 2 bones (in this config) use bone-local coordinates and extract only S
+# Marker Format Options:
+# ======================
+# Format 1 (Legacy): markers: [10, 11, 12]  # Direct integer indices
+# Format 2 (Named):  markers:
+#                      - {name: 'RASI', data_idx: 10}
+#                      - {name: 'LASI', data_idx: 11}
+# Format 3 (Label):  markers:
+#                      - {name: 'RASI', data_label: 'R.ASIS'}  # Resolved from C3D labels
+#
+# N:1 mapping: Multiple skeleton markers can reference the same data index
+# for bone fitting (useful when 3 markers needed but only 2 physical markers available)
 
 skeleton_fitting:
   # Frame range for optimization
@@ -21,17 +29,33 @@ skeleton_fitting:
   # Bone-marker mappings for anisotropic fitting
   # Bones are fitted in order - Pelvis first, then limbs
   # Hip joints (indices 25, 26) are computed using Harrington method before fitting
+  #
+  # C3D test.c3d labels for reference:
+  # [0] Top.Head  [1] Front.Head  [2] Rear.Head  [3] R.Shoulder  [4] R.Offset
+  # [5] R.Elbow   [6] R.Wrist     [7] L.Shoulder [8] L.Elbow     [9] L.Wrist
+  # [10] R.ASIS   [11] L.ASIS     [12] V.Sacral  [13] R.Thigh    [14] R.Knee
+  # [15] R.Shank  [16] R.Ankle    [17] R.Heel    [18] R.Toe      [19] L.Thigh
+  # [20] L.Knee   [21] L.Shank    [22] L.Ankle   [23] L.Heel     [24] L.Toe
+  # [27] V_R.Hip_JC  [28] V_L.Hip_JC (virtual hip joint centers)
+
   bone_mappings:
     # Pelvis (root body) - fitted first, stores R, t, S
+    # Format 2 example: named markers with direct indices
     - bone: "Pelvis"
-      markers: [10, 11, 12]
+      markers:
+        - {name: 'RASI', data_idx: 10}
+        - {name: 'LASI', data_idx: 11}
+        - {name: 'VSAC', data_idx: 12}
       virtual_first: false
-      comment: "RASI, LASI, VSAC"
 
+    # FemurR - using label-based resolution
+    # Format 3 example: markers resolved from C3D labels
     - bone: "FemurR"
-      markers: [25, 13, 14]
-      virtual_first: false  # Hip joint computed by Harrington method
-      comment: "RHJC (computed), RTHI, RKNE"
+      markers:
+        - {name: 'R_Hip', data_label: 'V_R.Hip_JC'}
+        - {name: 'RTHI', data_label: 'R.Thigh'}
+        - {name: 'RKNE', data_label: 'R.Knee'}
+      virtual_first: false
 
     # - bone: "TibiaR"
     #   markers: [14, 15, 16]
@@ -44,9 +68,11 @@ skeleton_fitting:
     #   comment: "RANK, R.TO, RHEE"
 
     # - bone: "FemurL"
-    #   markers: [26, 19, 20]
-    #   virtual_first: false  # Hip joint computed by Harrington method
-    #   comment: "LHJC (computed), LTHI, LKNE"
+    #   markers:
+    #     - {name: 'L_Hip', data_label: 'V_L.Hip_JC'}
+    #     - {name: 'LTHI', data_label: 'L.Thigh'}
+    #     - {name: 'LKNE', data_label: 'L.Knee'}
+    #   virtual_first: false
 
     # - bone: "TibiaL"
     #   markers: [20, 21, 22]

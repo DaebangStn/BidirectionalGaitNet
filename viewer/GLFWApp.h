@@ -345,8 +345,15 @@ private:
     bool mRenderC3DMarkers;
     bool mRenderExpectedMarkers;  // Draw expected markers (computed from skeleton)
     bool mRenderMarkerIndices;    // Draw marker index numbers for debugging
-    std::vector<std::pair<Eigen::Vector3d, int>> mMarkerIndexLabels;      // data markers (pos, idx)
-    std::vector<std::pair<Eigen::Vector3d, int>> mSkelMarkerIndexLabels;  // skeleton markers (pos, idx)
+
+    // Marker label data for rendering (includes names for "Index: Name" display)
+    struct MarkerLabel {
+        Eigen::Vector3d position;
+        int index;
+        std::string name;
+    };
+    std::vector<MarkerLabel> mMarkerIndexLabels;      // data markers (pos, idx, name)
+    std::vector<MarkerLabel> mSkelMarkerIndexLabels;  // skeleton markers (pos, idx, name)
     char mMarkerSearchFilter[64] = "";  // Search filter text for marker table
     std::set<int> mSelectedMarkerIndices;  // Multiple selected markers for position display
 
