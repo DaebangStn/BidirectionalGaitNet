@@ -7,7 +7,7 @@
 #include "RenderCharacter.h"
 #include "Motion.h"
 #include "HDF.h"
-#include "C3D.h"  // C3D motion with markers
+// NOTE: C3D processing moved to c3d_processor executable
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -16,7 +16,7 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <imgui_internal.h>
-#include "C3D_Reader.h"
+// C3D_Reader moved to c3d_processor
 #include "motion/MotionProcessor.h"
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
@@ -164,7 +164,6 @@ private:
 
     // Helper functions for pre-computing cycle distances
     Eigen::Vector3d computeMotionCycleDistance(Motion* motion);
-    Eigen::Vector3d computeMarkerCycleDistance(C3D* markerData);
 
     // REMOVED: writeBVH(), exportBVH() - BVH format no longer supported
 
@@ -184,7 +183,6 @@ private:
     void update(bool isSave = false);
     void reset();
     void updateViewerTime(double dt);  // Update viewer time, phase, and motion state
-    void computeViewerMetric();        // Compute marker error metrics for C3D playback
 
     void setWindowIcon(const char* icon_path);
 
@@ -207,7 +205,7 @@ private:
 
     void drawFGNControl();
     void drawBGNControl();
-    void drawC3DControl();
+    // C3D controls moved to c3d_processor
     void drawMotionControl();
     void drawGVAEControl();
     void addSimulationMotion();
@@ -338,24 +336,9 @@ private:
     std::vector<Eigen::VectorXd> mMotionBuffer;
     std::vector<Eigen::Matrix3d> mJointCalibration;
 
-    // C3D loading and rendering
-    C3D_Reader* mC3DReader;
+    // C3D processing moved to c3d_processor executable
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
     std::string mMotionPath;    // Current motion file path for reloading
-    bool mRenderC3DMarkers;
-    bool mRenderExpectedMarkers;  // Draw expected markers (computed from skeleton)
-    bool mRenderMarkerIndices;    // Draw marker index numbers for debugging
-
-    // Marker label data for rendering (includes names for "Index: Name" display)
-    struct MarkerLabel {
-        Eigen::Vector3d position;
-        int index;
-        std::string name;
-    };
-    std::vector<MarkerLabel> mMarkerIndexLabels;      // data markers (pos, idx, name)
-    std::vector<MarkerLabel> mSkelMarkerIndexLabels;  // skeleton markers (pos, idx, name)
-    char mMarkerSearchFilter[64] = "";  // Search filter text for marker table
-    std::set<int> mSelectedMarkerIndices;  // Multiple selected markers for position display
 
     // For GVAE
     py::object mGVAE;
@@ -374,7 +357,6 @@ private:
 
     // NEW: Load parameters from currently selected motion (works with new Motion* architecture)
     void loadParametersFromCurrentMotion();           // Load parameters from mMotionsNew[mMotionIdx] to environment
-    double computeMarkerHeightCalibration(const std::vector<Eigen::Vector3d>& markers);
 
     struct ViewerClock
     {
@@ -395,22 +377,10 @@ private:
         int valuesPerFrame = 0;
     };
 
-    struct MarkerPlaybackContext
-    {
-        C3D* markers = nullptr;
-        PlaybackViewerState* state = nullptr;
-        double phase = 0.0;
-        double frameFloat = 0.0;
-        int frameIndex = 0;
-        int totalFrames = 0;
-        bool valid = false;
-    };
+    // MarkerPlaybackContext moved to c3d_processor
 
     ViewerClock updateViewerClock(double dt);
     bool computeMotionPlayback(MotionPlaybackContext& context);
-    MarkerPlaybackContext computeMarkerPlayback(const ViewerClock& clock,
-                                                const MotionPlaybackContext* motionContext);
-    void evaluateMarkerPlayback(const MarkerPlaybackContext& context);
     void evaluateMotionPlayback(const MotionPlaybackContext& context);
 
     double computeMotionPhase();
@@ -480,7 +450,7 @@ private:
     }
 
     std::vector<Eigen::VectorXd> mTestMotion;
-    Eigen::Vector3d mC3DCOM;
+    // mC3DCOM moved to c3d_processor
     bool mRenderConditions;
 
     // Viewer independent time management

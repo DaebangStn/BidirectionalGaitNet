@@ -65,6 +65,30 @@ target_link_libraries(marker_editor
     dart-gui
 )
 
+# C3D Processor - Standalone C3D processing application
+# NOTE: No HDF5 linking - C3D processor does NOT support HDF
+add_executable(c3d_processor
+    "c3d_processor_main.cpp"
+    "C3DProcessorApp.h"
+    "C3DProcessorApp.cpp"
+    "RenderCharacter.h"
+    "RenderCharacter.cpp"
+    "ShapeRenderer.h"
+    "ShapeRenderer.cpp"
+    "GLfunctions.h"
+    "GLfunctions.cpp"
+    "C3D_Reader.h"
+    "C3D_Reader.cpp"
+)
+target_link_libraries(c3d_processor
+    tinyxml2::tinyxml2
+    GL GLU glut glad glfw imgui
+    sim
+    dart-gui
+    ezc3d
+    Boost::program_options
+)
+
 # Test for marker save cyclic consistency
 add_executable(test_marker_save
     "test_marker_save.cpp"
