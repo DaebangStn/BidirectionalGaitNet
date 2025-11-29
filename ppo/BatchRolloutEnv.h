@@ -9,6 +9,7 @@
 #include "ThreadPool.h"
 #include "PolicyNet.h"
 #include "TrajectoryBuffer.h"
+#include "DiscriminatorNN.h"
 
 namespace py = pybind11;
 
@@ -93,11 +94,26 @@ public:
     void update_muscle_weights(py::dict state_dict);
 
     /**
+     * Update discriminator network weights from Python training.
+     *
+     * @param state_dict Python dict with discriminator network weights
+     */
+    void update_discriminator_weights(py::dict state_dict);
+
+    /**
      * Get muscle training tuples (hierarchical control).
      *
      * @return list of muscle tuple buffers, one per environment
      */
     py::list get_muscle_tuples();
+
+    /**
+     * Get disc_obs (muscle activations) collected during rollout.
+     * Used for training the discriminator in Python.
+     *
+     * @return numpy array of shape (num_envs * num_steps, num_muscles)
+     */
+    py::array_t<float> get_disc_obs();
 
     // Metadata accessors
     int numEnvs() const { return num_envs_; }
@@ -111,6 +127,10 @@ public:
     int getNumActuatorAction() const;
     int getNumMuscles() const;
     int getNumMuscleDof() const;
+
+    // Discriminator query methods
+    bool use_discriminator() const;
+    float getDiscRewardScale() const;
 
 private:
     // Environment instances
@@ -146,4 +166,10 @@ private:
     std::vector<double> episode_returns_;  // Current episode return for each env
     std::vector<uint8_t> next_done_;       // Cached done status (matches Python's next_done semantics)
     std::vector<int> episode_lengths_;     // Current episode length for each env
+
+    // Discriminator observation buffer
+    // Stores muscle activations (disc_obs) for each step, flattened across all envs
+    // Shape: (num_steps * num_envs, num_muscles) when converted to numpy
+    std::vector<std::vector<Eigen::VectorXf>> disc_obs_buffers_;  // Per-env buffers
+    int num_muscles_;  // Number of muscles (discriminator input dimension)
 };

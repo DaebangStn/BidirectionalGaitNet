@@ -1045,6 +1045,23 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mNumKnownParam++;
     }
 
+    // === Discriminator configuration ===
+    if (env["discriminator"]) {
+        auto disc = env["discriminator"];
+        mDiscConfig.enabled = disc["enabled"].as<bool>(false);
+        mDiscConfig.normalize = disc["normalize"].as<bool>(false);
+        mDiscConfig.reward_scale = disc["reward_scale"].as<double>(1.0);
+
+        if (mDiscConfig.enabled && mUseMuscle) {
+            // Create C++ DiscriminatorNN (libtorch) for thread-safe inference
+            // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
+            int num_muscles = mCharacter->getNumMuscles();
+            mDiscriminatorNN = make_discriminator_nn(num_muscles, true);
+            mRandomDiscObs = Eigen::VectorXf::Zero(num_muscles);
+            LOG_INFO("[Environment] Created DiscriminatorNN with " << num_muscles << " muscles");
+        }
+    }
+
     // Initialize GaitPhase after all configuration is loaded
     GaitPhase::UpdateMode mode = (gaitUpdateMode == "contact") ? GaitPhase::CONTACT : GaitPhase::PHASE;
     mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, mode, mControlHz, mSimulationHz);
@@ -1584,6 +1601,15 @@ void Environment::calcActivation()
         }
         mTupleFilled = true;
     }
+
+    // Sample disc_obs (muscle activations) per control step, same as muscle tuples
+    if (mDiscConfig.enabled) {
+        if (thread_safe_uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mDiscObsFilled) {
+            mRandomDiscObs = activations;  // Current muscle activations
+            mMeanActivation = activations.cwiseAbs().mean();  // For tensorboard logging
+            mDiscObsFilled = true;
+        }
+    }
 }
 
 void Environment::postMuscleStep()
@@ -1648,6 +1674,14 @@ void Environment::postStep()
     mCharacter->evalStep();
     mKneeLoadingMaxCycle = std::max(mKneeLoadingMaxCycle, mCharacter->getKneeLoadingMax());
     mReward = calcReward();
+
+    // Add mean_activation to info map for tensorboard logging (discriminator training)
+    if (mDiscConfig.enabled) {
+        mInfoMap["mean_activation"] = mMeanActivation;
+    }
+
+    // Reset disc_obs filled flag for next control step
+    mDiscObsFilled = false;
 
     // Check and cache termination/truncation status
     checkTerminated();
@@ -1775,6 +1809,8 @@ void Environment::reset(double phase)
     mInfoMap.clear();
 
     mTupleFilled = false;
+    mDiscObsFilled = false;
+    mMeanActivation = 0.0;
     mSimulationStep = 0;
     mPhaseCount = 0;
     mWorldPhaseCount = 0;

@@ -6,6 +6,7 @@
 #include "GaitPhase.h"
 #include "NoiseInjector.h"
 #include "MuscleNN.h"
+#include "DiscriminatorNN.h"
 #include "dart/collision/bullet/bullet.hpp"
 #include "export.h"
 #include <map>
@@ -94,6 +95,14 @@ struct RewardConfig
     // Reward clipping for initial simulation steps
     int clip_step = 0;
     double clip_value = 0.0;
+};
+
+// ADD-style discriminator configuration (energy efficiency via muscle activation minimization)
+struct DiscriminatorConfig
+{
+    bool enabled = false;           // Whether discriminator is enabled
+    bool normalize = false;         // Whether to normalize disc_obs (optional)
+    double reward_scale = 1.0;      // Scale factor for discriminator reward
 };
 
 class DLL_PUBLIC Environment
@@ -230,6 +239,26 @@ public:
     bool getUseMuscle() { return mUseMuscle; }
     bool isTwoLevelController() { return mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower; }
     MuscleNN* getMuscleNN() { return &mMuscleNN; }
+
+    // Discriminator accessors
+    bool getUseDiscriminator() const { return mDiscConfig.enabled; }
+    DiscriminatorConfig& getDiscConfig() { return mDiscConfig; }
+    const DiscriminatorConfig& getDiscConfig() const { return mDiscConfig; }
+    DiscriminatorNN* getDiscriminatorNN() { return &mDiscriminatorNN; }
+
+    /**
+     * Get randomly sampled disc_obs (muscle activations) for this control step.
+     * Sampled per control step (like muscle tuples), not per substep.
+     *
+     * @return Muscle activations as VectorXf (num_muscles dimensions)
+     */
+    Eigen::VectorXf getRandomDiscObs() const { return mRandomDiscObs; }
+
+    /**
+     * Get mean activation for tensorboard logging.
+     * @return Mean of absolute muscle activations
+     */
+    double getMeanActivation() const { return mMeanActivation; }
 
     // get Reward Term
     Eigen::Vector3d getCurrentFootStep() { return mGaitPhase->getCurrentFoot(); }
@@ -462,6 +491,14 @@ private:
 
     // Network (C++ libtorch for thread-safe inference)
     MuscleNN mMuscleNN;
+
+    // Discriminator for energy-efficient muscle activation (ADD-style)
+    DiscriminatorConfig mDiscConfig;
+    DiscriminatorNN mDiscriminatorNN;
+    bool mLoadedDiscriminatorNN = false;
+    Eigen::VectorXf mRandomDiscObs;     // Sampled disc_obs per control step (like muscle tuples)
+    bool mDiscObsFilled = false;        // Whether disc_obs has been sampled this step
+    double mMeanActivation = 0.0;       // Mean activation for tensorboard logging
 
     // Reward Type (Deep Mimic or GaitNet)
     RewardType mRewardType;

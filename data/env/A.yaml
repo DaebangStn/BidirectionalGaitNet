@@ -80,6 +80,12 @@ environment:
       use_max: false
       max_weight: 0.1
 
+  # Discriminator for energy-efficient muscle activation (ADD-style)
+  discriminator:
+    enabled: false  # Set to true to enable discriminator
+    normalize: false  # Optional: normalize disc_obs before forward pass
+    reward_scale: 1.0  # Scale factor for discriminator reward
+
   # Parameterization for training
   parameters:
     gait:

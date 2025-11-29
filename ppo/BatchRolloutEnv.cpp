@@ -85,6 +85,14 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
         muscle_tuple_buffers_.resize(num_envs_);
     }
 
+    // Initialize discriminator observation buffers if discriminator enabled
+    if (envs_[0]->getUseDiscriminator()) {
+        num_muscles_ = envs_[0]->getCharacter()->getNumMuscles();
+        disc_obs_buffers_.resize(num_envs_);
+    } else {
+        num_muscles_ = 0;
+    }
+
     // Initialize episode tracking
     episode_returns_.resize(num_envs_, 0.0);
     episode_lengths_.resize(num_envs_, 0);
@@ -163,6 +171,11 @@ void BatchRolloutEnv::collect_rollout_nogil() {
                         muscle_tuple_buffers_[i].weight.push_back(envs_[i]->getRandomWeight());
                     }
                 }
+
+                // Collect disc_obs (muscle activations) for discriminator training
+                if (!disc_obs_buffers_.empty()) {
+                    disc_obs_buffers_[i].push_back(envs_[i]->getRandomDiscObs());
+                }
             }
 
             // Capture final next_obs for GAE bootstrap (AFTER all steps complete)
@@ -224,6 +237,75 @@ void BatchRolloutEnv::update_muscle_weights(py::dict state_dict) {
         pool_->wait();
     }
     // GIL automatically reacquired here
+}
+
+void BatchRolloutEnv::update_discriminator_weights(py::dict state_dict) {
+    // Similar to update_muscle_weights: Pre-convert Python dict to C++ format
+    // PHASE 1: Convert Python dict to C++ format (with GIL, sequential)
+    std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
+
+    for (auto item : state_dict) {
+        std::string key = item.first.cast<std::string>();
+        py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+
+        auto buf = np_array.request();
+        std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+
+        torch::Tensor tensor = torch::from_blob(
+            buf.ptr,
+            shape,
+            torch::TensorOptions().dtype(torch::kFloat32)
+        ).clone();
+
+        cpp_state_dict[key] = tensor;
+    }
+
+    // PHASE 2: Parallel broadcast to all environments (WITHOUT GIL)
+    {
+        py::gil_scoped_release release;
+
+        for (int i = 0; i < num_envs_; ++i) {
+            pool_->enqueue([this, i, &cpp_state_dict]() {
+                if (envs_[i]->getUseDiscriminator()) {
+                    (*envs_[i]->getDiscriminatorNN())->load_state_dict(cpp_state_dict);
+                }
+            });
+        }
+
+        pool_->wait();
+    }
+}
+
+py::array_t<float> BatchRolloutEnv::get_disc_obs() {
+    // Return disc_obs buffer as numpy array, then clear buffers
+    if (disc_obs_buffers_.empty() || num_muscles_ == 0) {
+        // Return empty array if discriminator not enabled
+        return py::array_t<float>(std::vector<ssize_t>{0, 0});
+    }
+
+    // Calculate total samples
+    int total_samples = 0;
+    for (const auto& buf : disc_obs_buffers_) {
+        total_samples += buf.size();
+    }
+
+    // Allocate numpy array: shape (total_samples, num_muscles)
+    py::array_t<float> result(std::vector<ssize_t>{total_samples, num_muscles_});
+    auto buf = result.request();
+    float* ptr = static_cast<float*>(buf.ptr);
+
+    // Copy data: flatten across all environments
+    int idx = 0;
+    for (int i = 0; i < num_envs_; ++i) {
+        for (const auto& obs : disc_obs_buffers_[i]) {
+            std::memcpy(ptr + idx * num_muscles_, obs.data(), num_muscles_ * sizeof(float));
+            idx++;
+        }
+        // Clear buffer after copying
+        disc_obs_buffers_[i].clear();
+    }
+
+    return result;
 }
 
 py::list BatchRolloutEnv::get_muscle_tuples() {
@@ -312,6 +394,16 @@ int BatchRolloutEnv::getNumMuscleDof() const {
     return envs_[0]->getCharacter()->getNumMuscleRelatedDof();
 }
 
+// ===== DISCRIMINATOR QUERY METHODS =====
+
+bool BatchRolloutEnv::use_discriminator() const {
+    return envs_[0]->getUseDiscriminator();
+}
+
+float BatchRolloutEnv::getDiscRewardScale() const {
+    return static_cast<float>(envs_[0]->getDiscConfig().reward_scale);
+}
+
 // ===== PYBIND11 MODULE =====
 
 PYBIND11_MODULE(batchrolloutenv, m) {
@@ -383,6 +475,17 @@ PYBIND11_MODULE(batchrolloutenv, m) {
              "Returns:\n"
              "    list: List of muscle tuple buffers, one per environment")
 
+        .def("update_discriminator_weights", &BatchRolloutEnv::update_discriminator_weights,
+             py::arg("state_dict"),
+             "Update discriminator network weights from PyTorch state_dict\n\n"
+             "Args:\n"
+             "    state_dict (dict): PyTorch state_dict with discriminator network weights")
+
+        .def("get_disc_obs", &BatchRolloutEnv::get_disc_obs,
+             "Get disc_obs (muscle activations) collected during rollout\n\n"
+             "Returns:\n"
+             "    numpy.ndarray: shape (num_steps*num_envs, num_muscles)")
+
         .def("num_envs", &BatchRolloutEnv::numEnvs, "Get number of parallel environments")
         .def("num_steps", &BatchRolloutEnv::numSteps, "Get rollout length")
         .def("obs_size", &BatchRolloutEnv::obsSize, "Get observation dimension")
@@ -398,5 +501,11 @@ PYBIND11_MODULE(batchrolloutenv, m) {
         .def("getNumMuscles", &BatchRolloutEnv::getNumMuscles,
              "Get number of muscles in the character")
         .def("getNumMuscleDof", &BatchRolloutEnv::getNumMuscleDof,
-             "Get number of muscle-related degrees of freedom");
+             "Get number of muscle-related degrees of freedom")
+
+        // Discriminator query methods
+        .def("use_discriminator", &BatchRolloutEnv::use_discriminator,
+             "Check if discriminator is enabled for this environment")
+        .def("getDiscRewardScale", &BatchRolloutEnv::getDiscRewardScale,
+             "Get discriminator reward scale factor");
 }

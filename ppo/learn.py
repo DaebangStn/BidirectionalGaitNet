@@ -34,6 +34,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from ppo.muscle_learner import MuscleLearner
+from ppo.discriminator import DiscriminatorLearner
 
 
 @dataclass
@@ -90,6 +91,24 @@ class Args:
     """muscle network training epochs"""
     muscle_batch_size: int = 64
     """muscle network batch size"""
+
+    # Discriminator learning specific arguments (ADD-style energy efficiency)
+    disc_lr: float = 1e-4
+    """discriminator network learning rate"""
+    disc_num_epochs: int = 3
+    """discriminator training epochs per update"""
+    disc_batch_size: int = 256
+    """discriminator minibatch size"""
+    disc_buffer_size: int = 100000
+    """discriminator replay buffer size"""
+    disc_grad_penalty: float = 10.0
+    """discriminator gradient penalty coefficient"""
+    disc_logit_reg: float = 0.01
+    """discriminator logit regularization coefficient"""
+    disc_weight_decay: float = 0.0001
+    """discriminator weight decay"""
+    disc_reward_weight: float = 0.5
+    """weight for discriminator reward in total reward (additive)"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -335,6 +354,30 @@ if __name__ == "__main__":
         state_dict = muscle_learner.get_state_dict()
         envs.update_muscle_weights(state_dict)
 
+    # Create discriminator learner if enabled
+    disc_learner = None
+    use_discriminator = envs.use_discriminator()
+    if use_discriminator:
+        num_muscles = envs.getNumMuscles()
+        disc_reward_scale = envs.getDiscRewardScale()
+
+        print(f"Discriminator enabled: {num_muscles} muscles, reward_scale={disc_reward_scale}")
+
+        disc_learner = DiscriminatorLearner(
+            num_muscles=num_muscles,
+            learning_rate=args.disc_lr,
+            num_epochs=args.disc_num_epochs,
+            batch_size=args.disc_batch_size,
+            buffer_size=args.disc_buffer_size,
+            grad_penalty=args.disc_grad_penalty,
+            logit_reg=args.disc_logit_reg,
+            weight_decay=args.disc_weight_decay,
+        )
+
+        # Initialize discriminator weights in all environments
+        disc_state_dict = disc_learner.get_state_dict()
+        envs.update_discriminator_weights(disc_state_dict)
+
     # Resume from checkpoint if specified
     start_iteration = 1
     global_step = 0
@@ -578,6 +621,25 @@ if __name__ == "__main__":
 
             muscle_learn_time = (time.perf_counter() - muscle_learn_start) * 1000
 
+        # ===== DISCRIMINATOR LEARNING (if enabled) =====
+        disc_loss = None
+        disc_learn_time = 0.0
+        if disc_learner is not None:
+            disc_learn_start = time.perf_counter()
+
+            # Get disc_obs (muscle activations) from C++
+            disc_obs = envs.get_disc_obs()
+
+            if disc_obs.shape[0] > 0:
+                # Train discriminator
+                disc_loss = disc_learner.learn(disc_obs)
+
+                # Update discriminator weights in C++
+                disc_state_dict = disc_learner.get_state_dict()
+                envs.update_discriminator_weights(disc_state_dict)
+
+            disc_learn_time = (time.perf_counter() - disc_learn_start) * 1000
+
         # Checkpoint saving - either on interval or triggered by save_ckpt file
         save_ckpt_trigger = Path(f"runs/{run_name}/save_ckpt")
         if save_ckpt_trigger.exists():
@@ -613,6 +675,15 @@ if __name__ == "__main__":
                 writer.add_scalar("muscle/loss_reg", muscle_loss['loss_reg'], global_step)
                 writer.add_scalar("muscle/loss_act", muscle_loss['loss_act'], global_step)
                 writer.add_scalar("perf/muscle_time_ms", muscle_learn_time, global_step)
+
+            if disc_loss is not None:
+                writer.add_scalar("disc/loss", disc_loss['loss_disc'], global_step)
+                writer.add_scalar("disc/loss_pos", disc_loss['loss_pos'], global_step)
+                writer.add_scalar("disc/loss_neg", disc_loss['loss_neg'], global_step)
+                writer.add_scalar("disc/loss_gp", disc_loss['loss_gp'], global_step)
+                writer.add_scalar("disc/accuracy", disc_loss['accuracy'], global_step)
+                writer.add_scalar("disc/replay_buffer_size", disc_loss['replay_buffer_size'], global_step)
+                writer.add_scalar("perf/disc_time_ms", disc_learn_time, global_step)
 
             # Logging
             y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
