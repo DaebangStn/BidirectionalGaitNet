@@ -17,6 +17,7 @@ struct C3DConversionParams
 {
     double femurTorsionL = 0.0;
     double femurTorsionR = 0.0;
+    bool doCalibration = false;  // Enable skeleton calibration (anisotropic bone scale fitting)
 };
 
 // Result of alternating bone fitting (anisotropic scale estimation)
@@ -91,7 +92,6 @@ struct SkeletonFittingConfig {
         std::vector<MarkerReference> markerRefs;   // New: marker references with names/labels
         std::vector<int> resolvedIndices;          // Cached after resolution
         std::vector<int> markerIndices;            // Legacy field for backward compat
-        bool hasVirtualMarker = false;
 
         // Get resolved indices (uses resolvedIndices if available, else markerIndices for legacy)
         const std::vector<int>& getResolvedIndices() const {
@@ -137,20 +137,20 @@ class C3D_Reader
 
 
         C3D* loadC3D(const std::string& path, const C3DConversionParams& params);
-        Eigen::VectorXd getPoseFromC3D(std::vector<Eigen::Vector3d>& _pos);
+        Eigen::VectorXd buildFramePoseLegacy(std::vector<Eigen::Vector3d>& _pos);
         // New: Use optimizer's R, t for pelvis instead of marker centroid
-        Eigen::VectorXd getPoseFromC3D_Optimized(int fitFrameIdx, std::vector<Eigen::Vector3d>& markers);
+        Eigen::VectorXd buildFramePose(int fitFrameIdx, std::vector<Eigen::Vector3d>& markers);
         // Eigen::VectorXd getPoseFromC3D_2(std::vector<Eigen::Vector3d> _pos);
         SkeletonPtr getBVHSkeleton() { return mVirtSkeleton; }
 
         // get Original Markers
-        std::vector<Eigen::Vector3d> getMarkerPos(int idx) {return mOriginalMarkers[idx];}
-        const std::vector<std::vector<Eigen::Vector3d>>& getAllOriginalMarkers() const { return mOriginalMarkers; }
+        std::vector<Eigen::Vector3d> getMarkerPos(int idx) {return mMarkers[idx];}
+        const std::vector<std::vector<Eigen::Vector3d>>& getAllOriginalMarkers() const { return mMarkers; }
 
         void fitSkeletonToMarker(std::vector<Eigen::Vector3d> init_marker, double torsionL = 0.0, double torsionR = 0.0);
 
         // New multi-frame anisotropic fitting methods
-        void fitSkeletonMultiFrame(const std::vector<std::vector<Eigen::Vector3d>>& allMarkers,
+        void calibrateSkeleton(const std::vector<std::vector<Eigen::Vector3d>>& allMarkers,
                                    const C3DConversionParams& params,
                                    bool plotConvergence = false);
 
@@ -160,18 +160,17 @@ class C3D_Reader
             const Eigen::Vector3d& RASI,
             const Eigen::Vector3d& SACR,
             bool isLeft);
-        void augmentMarkersWithHipJoints(std::vector<std::vector<Eigen::Vector3d>>& allMarkers);
+        void computeHipJointCenters(std::vector<std::vector<Eigen::Vector3d>>& allMarkers);
 
         // Stage 2: Fit bones - extracts S (scale) and stores R, t (global transforms)
-        void fitBoneLocal(const std::string& boneName,
+        void calibrateBone(const std::string& boneName,
                           const std::vector<int>& markerIndices,
-                          bool hasVirtualMarker,
                           const std::vector<std::vector<Eigen::Vector3d>>& allMarkers,
                           bool plotConvergence = false);
 
         // Core algorithm: accepts BodyNode, marker indices, and GLOBAL marker positions
         // Internally handles world-to-local transformation and returns GLOBAL transforms
-        BoneFitResult estimateScaleAlternating(
+        BoneFitResult optimizeBoneScale(
             BodyNode* bn,                                    // BodyNode for coordinate transforms
             const std::vector<int>& markerIndices,           // Marker indices to use
             const std::vector<std::vector<Eigen::Vector3d>>& globalP,  // Measured markers [K frames][N markers] in WORLD coords
@@ -187,8 +186,7 @@ class C3D_Reader
         // Config loading
         SkeletonFittingConfig loadSkeletonFittingConfig(const std::string& configPath);
         const SkeletonFittingConfig& getFittingConfig() const { return mFittingConfig; }
-        void reloadFittingConfig();
-        void resetSkeletonToDefault();
+        void fitSkeletonToCurrentC3D();
 
         // Marker label resolution
         void resolveMarkerReferences(const std::vector<std::string>& c3dLabels);
@@ -199,8 +197,8 @@ class C3D_Reader
 
     private:
         // Helper methods for loadC3D refactoring
-        C3D* loadMarkerData(const std::string& path);
-        std::vector<Eigen::Vector3d> extractMarkersFromFrame(const ezc3d::c3d& c3d, size_t frameIdx);
+        C3D* parseC3DFile(const std::string& path);
+        std::vector<Eigen::Vector3d> extractFrameMarkers(const ezc3d::c3d& c3d, size_t frameIdx);
         void initializeSkeletonForIK(const std::vector<Eigen::Vector3d>& firstFrameMarkers,
                                       const C3DConversionParams& params);
         std::vector<Eigen::VectorXd> convertFramesToSkeletonPoses(const ezc3d::c3d& c3d, size_t numFrames);
@@ -217,14 +215,13 @@ class C3D_Reader
         std::vector<Eigen::Isometry3d> mRefBnTransformation;
 
         // std::vector<Eigen::VectorXd> mMarkerPos;
-        std::vector<std::vector<Eigen::Vector3d>> mOriginalMarkers;
+        std::vector<std::vector<Eigen::Vector3d>> mMarkers;
         int mMarkerIdx;
         int mFrameRate;
 
         double femurR_torsion;
         double femurL_torsion;
 
-        std::vector<Eigen::VectorXd> mCurrentMotion;
         std::vector<double> mCurrentPhi;
 
         // Skeleton fitting configuration

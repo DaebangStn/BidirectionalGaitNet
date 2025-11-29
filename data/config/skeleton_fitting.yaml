@@ -50,12 +50,12 @@ skeleton_fitting:
 
     # FemurR - using label-based resolution
     # Format 3 example: markers resolved from C3D labels
-    - bone: "FemurR"
-      markers:
-        - {name: 'R_Hip', data_label: 'V_R.Hip_JC'}
-        - {name: 'RTHI', data_label: 'R.Thigh'}
-        - {name: 'RKNE', data_label: 'R.Knee'}
-      virtual_first: false
+    # - bone: "FemurR"
+    #   markers:
+    #     - {name: 'R_Hip', data_label: 'V_R.Hip_JC'}
+    #     - {name: 'RTHI', data_label: 'R.Thigh'}
+    #     - {name: 'RKNE', data_label: 'R.Knee'}
+    #   virtual_first: false
 
     # - bone: "TibiaR"
     #   markers: [14, 15, 16]

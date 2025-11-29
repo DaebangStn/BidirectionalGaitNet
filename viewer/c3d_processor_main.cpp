@@ -12,8 +12,8 @@ int main(int argc, char** argv)
         ("help,h", "Show this help message")
         ("skeleton,s", po::value<std::string>()->default_value("@data/skeleton/base.xml"),
             "Skeleton XML path (supports @data/ URI scheme)")
-        ("marker,m", po::value<std::string>()->required(),
-            "Marker configuration XML/YAML path (required, supports @data/ URI scheme)");
+        ("marker,m", po::value<std::string>()->default_value("@data/marker/calib.xml"),
+            "Marker configuration XML/YAML path (supports @data/ URI scheme)");
 
     po::variables_map vm;
 
@@ -23,16 +23,19 @@ int main(int argc, char** argv)
         if (vm.count("help")) {
             std::cout << desc << std::endl;
             std::cout << "\nUsage examples:\n"
+                      << "  c3d_processor                    # Uses default skeleton and marker config\n"
                       << "  c3d_processor -m data/marker/skeleton_fitting.yaml\n"
                       << "  c3d_processor -s @data/skeleton/custom.xml -m @data/marker/config.xml\n"
                       << "\nControls:\n"
                       << "  Space         Play/Pause\n"
                       << "  R             Reset to frame 0\n"
                       << "  L             Toggle marker labels\n"
+                      << "  F             Toggle camera follow\n"
                       << "  Left drag     Rotate camera\n"
                       << "  Right drag    Pan camera\n"
                       << "  Scroll        Zoom\n"
-                      << "  1             Align camera to XY plane\n"
+                      << "  1/2/3         Align camera to XY/YZ/ZX plane\n"
+                      << "  C             Reset camera position\n"
                       << "  ESC           Quit\n"
                       << std::endl;
             return 0;

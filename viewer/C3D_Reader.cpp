@@ -5,6 +5,7 @@
 #include <ezc3d/ezc3d_all.h>
 #include "C3D_Reader.h"
 #include "C3D.h"
+#include "UriResolver.h"
 #include "Log.h"
 #include "ascii.h"
 
@@ -39,8 +40,11 @@ C3D_Reader::C3D_Reader(std::string marker_path, RenderCharacter *character)
 
     mFrameRate = 60;
 
+    // Resolve URI scheme (e.g., @data/ -> absolute path)
+    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(marker_path);
+
     tinyxml2::XMLDocument doc;
-    doc.LoadFile(marker_path.c_str());
+    doc.LoadFile(resolvedPath.c_str());
     if (doc.Error())
     {
         std::cout << "Error loading marker set file: " << marker_path << std::endl;
@@ -75,9 +79,6 @@ C3D_Reader::C3D_Reader(std::string marker_path, RenderCharacter *character)
 
     femurL_torsion = 0.0;
     femurR_torsion = 0.0;
-
-    // Load skeleton fitting config
-    mFittingConfig = loadSkeletonFittingConfig("data/config/skeleton_fitting.yaml");
 }
 
 C3D_Reader::~C3D_Reader()
@@ -161,11 +162,10 @@ void SkeletonFittingConfig::loadDefaults() {
     boneMappings.clear();
 
     // Helper lambda to create BoneMapping with legacy markerIndices
-    auto makeBoneMapping = [](const std::string& name, std::vector<int> indices, bool hasVirtual) {
+    auto makeBoneMapping = [](const std::string& name, std::vector<int> indices) {
         BoneMapping m;
         m.boneName = name;
         m.markerIndices = indices;
-        m.hasVirtualMarker = hasVirtual;
         // Also populate markerRefs for consistency
         for (int idx : indices) {
             m.markerRefs.push_back(MarkerReference::fromIndex(idx));
@@ -174,18 +174,18 @@ void SkeletonFittingConfig::loadDefaults() {
     };
 
     // Lower body
-    boneMappings.push_back(makeBoneMapping("Pelvis",  {10, 11, 12}, false));
-    boneMappings.push_back(makeBoneMapping("FemurR",  {25, 13, 14}, true));
-    boneMappings.push_back(makeBoneMapping("TibiaR",  {14, 15, 16}, false));
-    boneMappings.push_back(makeBoneMapping("TalusR",  {16, 17, 18}, false));
-    boneMappings.push_back(makeBoneMapping("FemurL",  {26, 19, 20}, true));
-    boneMappings.push_back(makeBoneMapping("TibiaL",  {20, 21, 22}, false));
-    boneMappings.push_back(makeBoneMapping("TalusL",  {22, 23, 24}, false));
+    boneMappings.push_back(makeBoneMapping("Pelvis",  {10, 11, 12}));
+    boneMappings.push_back(makeBoneMapping("FemurR",  {25, 13, 14}));
+    boneMappings.push_back(makeBoneMapping("TibiaR",  {14, 15, 16}));
+    boneMappings.push_back(makeBoneMapping("TalusR",  {16, 17, 18}));
+    boneMappings.push_back(makeBoneMapping("FemurL",  {26, 19, 20}));
+    boneMappings.push_back(makeBoneMapping("TibiaL",  {20, 21, 22}));
+    boneMappings.push_back(makeBoneMapping("TalusL",  {22, 23, 24}));
     // Upper body
-    boneMappings.push_back(makeBoneMapping("Head",    {0, 1, 2}, false));
-    boneMappings.push_back(makeBoneMapping("Torso",   {3, 4, 7}, false));
-    boneMappings.push_back(makeBoneMapping("ArmR",    {3, 5, 6}, false));
-    boneMappings.push_back(makeBoneMapping("ArmL",    {7, 8, 9}, false));
+    boneMappings.push_back(makeBoneMapping("Head",    {0, 1, 2}));
+    boneMappings.push_back(makeBoneMapping("Torso",   {3, 4, 7}));
+    boneMappings.push_back(makeBoneMapping("ArmR",    {3, 5, 6}));
+    boneMappings.push_back(makeBoneMapping("ArmL",    {7, 8, 9}));
 }
 
 // Load skeleton fitting config from YAML
@@ -217,7 +217,6 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
             for (const auto& bm : sf["bone_mappings"]) {
                 SkeletonFittingConfig::BoneMapping mapping;
                 mapping.boneName = bm["bone"].as<std::string>();
-                mapping.hasVirtualMarker = bm["virtual_first"].as<bool>(false);
 
                 // Parse markers with format detection
                 const auto& markers = bm["markers"];
@@ -268,23 +267,45 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
     return config;
 }
 
-void C3D_Reader::reloadFittingConfig() {
-    mFittingConfig = loadSkeletonFittingConfig("data/config/skeleton_fitting.yaml");
-}
-
-void C3D_Reader::resetSkeletonToDefault() {
-    // Reset all bone parameters to default (scale = 1.0)
-    for (auto& info : mSkelInfos) {
-        std::get<1>(info) = ModifyInfo();
+void C3D_Reader::fitSkeletonToCurrentC3D() {
+    if (mMarkers.empty()) {
+        LOG_ERROR("[C3D_Reader] No C3D data loaded, cannot fit skeleton");
+        return;
     }
+
+    // Get current conversion params (using defaults for femur torsion)
+    C3DConversionParams params;
+    params.femurTorsionL = 0.0;
+    params.femurTorsionR = 0.0;
+
+    // Set skeleton to zero pose before fitting
+    Eigen::VectorXd pos = mVirtSkeleton->getPositions();
+    pos.setZero();
+    pos[mVirtSkeleton->getJoint("ForeArmR")->getIndexInSkeleton(0)] = M_PI * 0.5;
+    pos[mVirtSkeleton->getJoint("ForeArmL")->getIndexInSkeleton(0)] = M_PI * 0.5;
+    mVirtSkeleton->setPositions(pos);
+
+    // Perform multi-frame fitting
+    LOG_INFO("[C3D_Reader] Starting skeleton fitting to C3D markers...");
+    calibrateSkeleton(mMarkers, params, true);  // true = show convergence plots
+
+    // Update reference markers and transformations after fitting
+    mRefMarkers.clear();
+    for (auto m : mMarkerSet) {
+        mRefMarkers.push_back(m.getGlobalPos());
+    }
+
+    mRefBnTransformation.clear();
+    for (auto bn : mVirtSkeleton->getBodyNodes()) {
+        mRefBnTransformation.push_back(bn->getTransform());
+    }
+
+    // Apply fitted skeleton to character
     if (mCharacter) {
         mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
     }
-    // Set skeleton to zero pose
-    if (mVirtSkeleton) {
-        mVirtSkeleton->setPositions(Eigen::VectorXd::Zero(mVirtSkeleton->getNumDofs()));
-    }
-    LOG_INFO("[C3D_Reader] Skeleton reset to default scales and zero pose");
+
+    LOG_INFO("[C3D_Reader] Skeleton fitting complete");
 }
 
 // ============================================================================
@@ -295,25 +316,17 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
 {
     LOG_VERBOSE("[C3D_Reader] loadC3D started for: " << path);
 
-    // Step 1: Load marker data from C3D file
-    C3D* c3dData = loadMarkerData(path);
+    // ========== 0. Load skeleton fitting config ==========
+    mFittingConfig = loadSkeletonFittingConfig("data/config/skeleton_fitting.yaml");
+
+    // ========== 1. Load C3D file ==========
+    C3D* c3dData = parseC3DFile(path);
     if (!c3dData) {
         return nullptr;
     }
 
-    // Step 2: Load ezc3d data and setup
     ezc3d::c3d c3d(path);
     mFrameRate = static_cast<int>(std::lround(c3d.header().frameRate()));
-
-    // Print C3D marker labels for debugging
-    const auto& labels = c3dData->getLabels();
-    LOG_INFO("[C3D_Reader] C3D Marker Labels (" << labels.size() << " markers):");
-    for (size_t i = 0; i < labels.size(); ++i) {
-        LOG_INFO("  [" << i << "] " << labels[i]);
-    }
-
-    // Resolve any label-based marker references in config
-    resolveMarkerReferences(labels);
 
     const size_t numFrames = c3d.data().nbFrames();
     if (numFrames == 0) {
@@ -322,94 +335,78 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
         return nullptr;
     }
 
-    // Step 2.5: Extract all markers and apply backward walking correction before IK
-    std::vector<std::vector<Eigen::Vector3d>> allMarkers;
-    allMarkers.reserve(numFrames);
+    resolveMarkerReferences(c3dData->getLabels());
+
+    // ========== 2. Extract markers into mMarkers ==========
+    // mMarkers: measured marker positions from C3D capture [frame][marker] → world position
+    mMarkers.clear();
+    mMarkers.reserve(numFrames);
     for (size_t frameIdx = 0; frameIdx < numFrames; ++frameIdx) {
-        allMarkers.push_back(extractMarkersFromFrame(c3d, frameIdx));
+        mMarkers.push_back(extractFrameMarkers(c3d, frameIdx));
     }
+    C3D::detectAndCorrectBackwardWalking(mMarkers);
 
-    // Detect and correct backward walking (matches sim/C3D.cpp behavior)
-    C3D::detectAndCorrectBackwardWalking(allMarkers);
+    mFitFrameStart = 0;
+    mFitFrameEnd = static_cast<int>(mMarkers.size()) - 1;
 
-    // Step 3: Initialize skeleton pose for IK
-    // First, set skeleton to zero pose
+    // ========== 3. Initialize skeleton to T-pose ==========
     Eigen::VectorXd pos = mVirtSkeleton->getPositions();
     pos.setZero();
-    pos[mVirtSkeleton->getJoint("ForeArmR")->getIndexInSkeleton(0)] = M_PI * 0.5;
-    pos[mVirtSkeleton->getJoint("ForeArmL")->getIndexInSkeleton(0)] = M_PI * 0.5;
     mVirtSkeleton->setPositions(pos);
 
-    // Use multi-frame fitting for anisotropic bone scales
-    // This handles: lower body, head, torso, arms with alternating optimization
-    // Plus: ForeArm and Spine with naive uniform scale approach
-    fitSkeletonMultiFrame(allMarkers, params, true);  // true = show convergence plots in terminal
-
-    // Update c3dData markers with augmented hip joint data from mOriginalMarkers
-    // fitSkeletonMultiFrame() computed hip joints (indices 25, 26) via Harrington method
-    for (size_t frameIdx = 0; frameIdx < mOriginalMarkers.size(); ++frameIdx) {
-        c3dData->setMarkers(static_cast<int>(frameIdx), mOriginalMarkers[frameIdx]);
+    // Skeleton calibration (anisotropic bone scale fitting)
+    if (params.doCalibration) {
+        calibrateSkeleton(mMarkers, params, true);
     }
 
-    // Store reference markers and transformations
+    // ========== 4. Store reference state ==========
+    // mRefMarkers: expected marker positions from skeleton in T-pose
+    //   - Computed from mMarkerSet (marker definitions with bone + offset)
+    //   - Used by IK to compare: measured (mMarkers) vs expected (mRefMarkers)
+    //   - Rotation = how measured markers rotated relative to expected
     mRefMarkers.clear();
-    for (auto m : mMarkerSet)
+    for (auto& m : mMarkerSet) {
         mRefMarkers.push_back(m.getGlobalPos());
+    }
 
+    // mRefBnTransformation: body node transforms in T-pose (for IK reference)
     mRefBnTransformation.clear();
-    for (auto bn : mVirtSkeleton->getBodyNodes())
+    for (auto bn : mVirtSkeleton->getBodyNodes()) {
         mRefBnTransformation.push_back(bn->getTransform());
+    }
 
-    // Step 4: Convert all frames to skeleton poses via IK using corrected markers
-    // NOTE: mOriginalMarkers is already populated by fitSkeletonMultiFrame() with augmented hip joints
-    // Use mOriginalMarkers (which has hip joint data at indices 25, 26) instead of allMarkers
-    // Only generate poses for fitted frame range (mFitFrameStart to mFitFrameEnd)
-    mCurrentMotion.clear();
+    // [DEBUG] Update c3dData markers with computed hip joints after fitting
+    // for (size_t frameIdx = 0; frameIdx < mMarkers.size(); ++frameIdx) {
+    //     c3dData->setMarkers(static_cast<int>(frameIdx), mMarkers[frameIdx]);
+    // }
+
+    // ========== 5. Convert to skeleton poses (IK) ==========
     std::vector<Eigen::VectorXd> motion;
-
     int numFitFrames = mFitFrameEnd - mFitFrameStart + 1;
     motion.reserve(numFitFrames);
 
-    for (int i = 0; i < numFitFrames; ++i)
-    {
+    for (int i = 0; i < numFitFrames; ++i) {
         int globalFrame = mFitFrameStart + i;
-        // Use new function with optimizer's R, t for pelvis
-        Eigen::VectorXd pose = getPoseFromC3D_Optimized(i, mOriginalMarkers[globalFrame]);
-
-        // Log first 3 frames for debugging marker-skeleton alignment
-        if (i < 3) {
-            Eigen::Vector3d rootPos(pose[3], pose[4], pose[5]);
-            Eigen::Vector3d pelvisCenter = (mOriginalMarkers[globalFrame][10] + mOriginalMarkers[globalFrame][11] + mOriginalMarkers[globalFrame][12]) / 3.0;
-
-            LOG_VERBOSE("[C3D_Reader] Fit frame " << i << " (global " << globalFrame << "):");
-            LOG_VERBOSE("  - Root position (skeleton): [" << rootPos[0] << ", " << rootPos[1] << ", " << rootPos[2] << "]");
-            LOG_VERBOSE("  - Pelvis center (markers): [" << pelvisCenter[0] << ", " << pelvisCenter[1] << ", " << pelvisCenter[2] << "]");
-            LOG_VERBOSE("  - Difference (root - pelvis): [" << (rootPos[0] - pelvisCenter[0]) << ", "
-                        << (rootPos[1] - pelvisCenter[1]) << ", " << (rootPos[2] - pelvisCenter[2]) << "]");
-        }
-
+        Eigen::VectorXd pose = buildFramePose(i, mMarkers[globalFrame]);
         motion.push_back(pose);
     }
-    // Step 5: Apply post-processing (reordering, zeroing, marker alignment)
-    // - deprecated: it is required only for give offset to 3/8 of total frames
+
+    // [DISABLED] Post-processing for cycle offset (deprecated)
     // applyMotionPostProcessing(motion, c3dData);
 
-    // Step 6: Set skeleton poses on C3D object and return
-
+    // ========== 6. Finalize ==========
     c3dData->setSkeletonPoses(motion);
     c3dData->setSourceFile(path);
 
-    LOG_VERBOSE("[C3D_Reader] C3D created successfully");
-    LOG_VERBOSE("[C3D_Reader] - NumFrames: " << c3dData->getNumFrames());
-
+    LOG_VERBOSE("[C3D_Reader] Loaded " << c3dData->getNumFrames() << " frames");
     return c3dData;
 }
 
 // ============================================================================
-// SECTION 3: loadC3D Step 1 - Load Marker Data
+// SECTION 3: parseC3DFile - Parse C3D file structure
 // ============================================================================
 
-C3D* C3D_Reader::loadMarkerData(const std::string& path)
+C3D* C3D_Reader::parseC3DFile(const std::string& path)
 {
     LOG_VERBOSE("[C3D_Reader] Loading marker data from: " << path);
 
@@ -425,10 +422,10 @@ C3D* C3D_Reader::loadMarkerData(const std::string& path)
 }
 
 // ============================================================================
-// SECTION 4: loadC3D Step 2 - Extract Markers from Frame
+// SECTION 4: extractFrameMarkers - Extract markers from single frame
 // ============================================================================
 
-std::vector<Eigen::Vector3d> C3D_Reader::extractMarkersFromFrame(const ezc3d::c3d& c3d, size_t frameIdx)
+std::vector<Eigen::Vector3d> C3D_Reader::extractFrameMarkers(const ezc3d::c3d& c3d, size_t frameIdx)
 {
     const auto& frame = c3d.data().frame(frameIdx);
     const auto& points = frame.points();
@@ -452,7 +449,8 @@ std::vector<Eigen::Vector3d> C3D_Reader::extractMarkersFromFrame(const ezc3d::c3
 }
 
 // ============================================================================
-// SECTION 5: loadC3D Step 3 - Multi-Frame Skeleton Fitting (Orchestrator)
+// SECTION 5: calibrateSkeleton - Orchestrate skeleton calibration
+//   Pipeline: computeHipJointCenters → calibrateBone (per bone)
 // ============================================================================
 
 // Multi-frame skeleton fitting with anisotropic scales
@@ -461,7 +459,7 @@ std::vector<Eigen::Vector3d> C3D_Reader::extractMarkersFromFrame(const ezc3d::c3
 //   Stage 1: Compute hip joint centers using Harrington method
 //   Stage 2: Fit remaining bones using bone-local coordinates (S only)
 //   Stage 3: Apply all scales to skeleton
-void C3D_Reader::fitSkeletonMultiFrame(
+void C3D_Reader::calibrateSkeleton(
     const std::vector<std::vector<Eigen::Vector3d>>& allMarkersConst,
     const C3DConversionParams& params,
     bool plotConvergence)
@@ -496,22 +494,17 @@ void C3D_Reader::fitSkeletonMultiFrame(
     if (plotConvergence) {
         std::cout << "\n=== Stage 1: Computing Hip Joint Centers (Harrington) ===\n" << std::endl;
     }
-    augmentMarkersWithHipJoints(allMarkers);
+    computeHipJointCenters(allMarkers);
 
-    // Store augmented markers back to mOriginalMarkers so viewer can display them
-    mOriginalMarkers = allMarkers;
+    // Store augmented markers back to mMarkers so viewer can display them
+    mMarkers = allMarkers;
 
     // ============ STAGE 2: Fit ALL Bones from Config ============
     // All bones (including Pelvis) are now in the config and fitted uniformly
     // Each bone extracts S (scale) and stores R, t (global transforms)
 
     for (const auto& mapping : mFittingConfig.boneMappings) {
-        // FemurR/FemurL now have real hip joint data (indices 25, 26)
-        // No more virtual marker workaround needed!
-        bool hasVirtual = (mapping.boneName != "FemurR" && mapping.boneName != "FemurL")
-                           && mapping.hasVirtualMarker;
-
-        fitBoneLocal(mapping.boneName, mapping.markerIndices, hasVirtual, allMarkers, plotConvergence);
+        calibrateBone(mapping.boneName, mapping.markerIndices, allMarkers, plotConvergence);
 
         // Apply scale immediately so bone transforms are correct for subsequent bones
         if (mCharacter) {
@@ -562,11 +555,14 @@ void C3D_Reader::fitSkeletonMultiFrame(
 }
 
 // ============================================================================
-// SECTION 6: fitSkeletonMultiFrame Sub-Methods (in call order)
+// SECTION 6: Calibration Sub-Methods
+//   - computeHipJointCenters: Harrington hip joint estimation
+//   - computeHipJointCenter: Single hip joint calculation
+//   - calibrateBone: Calibrate single bone scale
 // ============================================================================
 
 // Augment marker data with computed hip joint centers
-void C3D_Reader::augmentMarkersWithHipJoints(
+void C3D_Reader::computeHipJointCenters(
     std::vector<std::vector<Eigen::Vector3d>>& allMarkers)
 {
     // Marker indices from marker_set.xml
@@ -652,10 +648,9 @@ Eigen::Vector3d C3D_Reader::computeHipJointCenter(
 
 // Unified bone fitting - extracts S (scale) and stores R, t (global transforms)
 // Works for all bones including Pelvis
-void C3D_Reader::fitBoneLocal(
+void C3D_Reader::calibrateBone(
     const std::string& boneName,
     const std::vector<int>& markerIndices,
-    bool /* hasVirtualMarker - no longer used, hip joints computed by Harrington */,
     const std::vector<std::vector<Eigen::Vector3d>>& allMarkers,
     bool plotConvergence)
 {
@@ -677,7 +672,7 @@ void C3D_Reader::fitBoneLocal(
         K = 1;
     }
 
-    // Store frame range (needed for getPoseFromC3D_Optimized)
+    // Store frame range (needed for buildFramePose)
     mFitFrameStart = startFrame;
     mFitFrameEnd = endFrame - 1;  // Convert to inclusive end
 
@@ -688,13 +683,13 @@ void C3D_Reader::fitBoneLocal(
         globalP[k] = allMarkers[frameIdx];  // Pass all markers for the frame
     }
 
-    // Run optimization - estimateScaleAlternating handles coordinate transforms
+    // Run optimization - optimizeBoneScale handles coordinate transforms
     bool shouldPlot = mFittingConfig.plotConvergence && plotConvergence;
     if (shouldPlot) {
         std::cout << "\n=== Fitting " << boneName << " ===" << std::endl;
     }
 
-    auto result = estimateScaleAlternating(bn, markerIndices, globalP,
+    auto result = optimizeBoneScale(bn, markerIndices, globalP,
         mFittingConfig.maxIterations,
         mFittingConfig.convergenceThreshold,
         shouldPlot);
@@ -727,13 +722,14 @@ void C3D_Reader::fitBoneLocal(
 }
 
 // ============================================================================
-// SECTION 7: Core Algorithm - Alternating Scale Estimation
+// SECTION 7: optimizeBoneScale - Core optimization algorithm
+//   Alternating optimization: fix S → solve R,t | fix R,t → solve S
 // ============================================================================
 
 // Alternating optimization for anisotropic scale estimation
 // Accepts BodyNode, marker indices, and GLOBAL marker positions
 // Internally handles world-to-local transformation and returns GLOBAL transforms
-BoneFitResult C3D_Reader::estimateScaleAlternating(
+BoneFitResult C3D_Reader::optimizeBoneScale(
     BodyNode* bn,
     const std::vector<int>& markerIndices,
     const std::vector<std::vector<Eigen::Vector3d>>& globalP,
@@ -1016,12 +1012,12 @@ BoneFitResult C3D_Reader::estimateScaleAlternating(
 }
 
 // ============================================================================
-// SECTION 8: loadC3D Step 4 - Pose Extraction
+// SECTION 8: buildFramePose - Build skeleton pose for one frame
 // ============================================================================
 
 // Use optimizer's global R, t for all fitted bones
 // With SKEL_FREE_JOINTS, each bone is independent (6 DOF)
-Eigen::VectorXd C3D_Reader::getPoseFromC3D_Optimized(int fitFrameIdx, std::vector<Eigen::Vector3d>& _pos)
+Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx, std::vector<Eigen::Vector3d>& _pos)
 {
     // Initialize with zero pose
     Eigen::VectorXd pos = mVirtSkeleton->getPositions();
@@ -1096,10 +1092,10 @@ Eigen::VectorXd C3D_Reader::getPoseFromC3D_Optimized(int fitFrameIdx, std::vecto
 }
 
 // ============================================================================
-// SECTION 9: Legacy Methods (kept for reference/compatibility)
+// SECTION 9: buildFramePoseLegacy - Legacy IK method (kept for reference)
 // ============================================================================
 
-Eigen::VectorXd C3D_Reader::getPoseFromC3D(std::vector<Eigen::Vector3d>& _pos)
+Eigen::VectorXd C3D_Reader::buildFramePoseLegacy(std::vector<Eigen::Vector3d>& _pos)
 {
     int jn_idx = 0;
     int jn_dof = 0;
@@ -1462,13 +1458,13 @@ std::vector<Eigen::VectorXd> C3D_Reader::convertFramesToSkeletonPoses(const ezc3
     std::vector<Eigen::VectorXd> motion;
     motion.reserve(numFrames);
 
-    mOriginalMarkers.clear();
-    mOriginalMarkers.reserve(numFrames);
+    mMarkers.clear();
+    mMarkers.reserve(numFrames);
 
     for (size_t frameIdx = 0; frameIdx < numFrames; ++frameIdx)
     {
-        std::vector<Eigen::Vector3d> markers = extractMarkersFromFrame(c3d, frameIdx);
-        Eigen::VectorXd pose = getPoseFromC3D(markers);
+        std::vector<Eigen::Vector3d> markers = extractFrameMarkers(c3d, frameIdx);
+        Eigen::VectorXd pose = buildFramePoseLegacy(markers);
 
         // Log first 3 frames for debugging marker-skeleton alignment (before moving markers)
         if (frameIdx < 3) {
@@ -1483,7 +1479,7 @@ std::vector<Eigen::VectorXd> C3D_Reader::convertFramesToSkeletonPoses(const ezc3
         }
 
         motion.push_back(pose);
-        mOriginalMarkers.push_back(std::move(markers));
+        mMarkers.push_back(std::move(markers));
     }
 
     LOG_VERBOSE("[C3D_Reader] Conversion complete: " << motion.size() << " poses");
@@ -1522,15 +1518,11 @@ void C3D_Reader::applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion,
     std::vector<std::vector<Eigen::Vector3d>> new_markers;
     new_markers.reserve(motion.size());
 
-    mCurrentMotion.clear();
-    mCurrentMotion.reserve(motion.size());
-
     // Copy frames from offset to end
     for (size_t i = offset; i < motion.size(); i++)
     {
         new_motion.push_back(motion[i]);
-        new_markers.push_back(mOriginalMarkers[i]);
-        mCurrentMotion.push_back(motion[i]);
+        new_markers.push_back(mMarkers[i]);
     }
 
     // Calculate position offset for continuity
@@ -1542,8 +1534,7 @@ void C3D_Reader::applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion,
     {
         motion[i].segment(3,3) += offset_pos;
         new_motion.push_back(motion[i]);
-        new_markers.push_back(mOriginalMarkers[i]);
-        mCurrentMotion.push_back(motion[i]);
+        new_markers.push_back(mMarkers[i]);
     }
 
     // Step 3: Zero positions relative to new frame 0
@@ -1553,15 +1544,10 @@ void C3D_Reader::applyMotionPostProcessing(std::vector<Eigen::VectorXd>& motion,
     {
         new_motion[i][3] -= new_motion[0][3];
         new_motion[i][5] -= new_motion[0][5];
-
-        mCurrentMotion[i][3] -= mCurrentMotion[0][3];
-        mCurrentMotion[i][5] -= mCurrentMotion[0][5];
     }
 
     new_motion[0][3] = 0;
     new_motion[0][5] = 0;
-    mCurrentMotion[0][3] = 0;
-    mCurrentMotion[0][5] = 0;
 
     // Step 4: Apply same offset to markers for alignment AND reorder them
     Eigen::Vector3d total_marker_offset = initial_skeleton_offset + final_skeleton_offset;

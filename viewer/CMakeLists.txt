@@ -79,6 +79,8 @@ add_executable(c3d_processor
     "GLfunctions.cpp"
     "C3D_Reader.h"
     "C3D_Reader.cpp"
+    "PlotUtils.h"
+    "PlotUtils.cpp"
 )
 target_link_libraries(c3d_processor
     tinyxml2::tinyxml2

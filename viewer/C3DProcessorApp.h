@@ -47,15 +47,6 @@ struct C3DViewerState
 };
 
 /**
- * @brief Marker label for rendering with name display
- */
-struct C3DMarkerLabel {
-    Eigen::Vector3d position;
-    int index;
-    std::string name;
-};
-
-/**
  * @brief Standalone C3D processor application
  *
  * Features:
@@ -87,6 +78,7 @@ private:
     double mZoom;
     double mPersp;
     dart::gui::Trackball mTrackball;
+    int mFocus;  // Camera follow mode (0=free, 1=follow skeleton COM)
 
     // Mouse state
     bool mMouseDown;
@@ -114,12 +106,18 @@ private:
     bool mRenderC3DMarkers;
     bool mRenderExpectedMarkers;
     bool mRenderMarkerIndices;
+    float mMarkerLabelFontSize = 18.0f;
 
-    // Marker label data
-    std::vector<C3DMarkerLabel> mMarkerIndexLabels;
-    std::vector<C3DMarkerLabel> mSkelMarkerIndexLabels;
+    // Rendering panel
+    bool mShowRenderingPanel = false;
+
+    // Per-marker visibility (empty = all visible)
+    std::set<int> mHiddenC3DMarkers;
+    std::set<int> mHiddenSkelMarkers;
+
+    // Marker search/selection
     char mMarkerSearchFilter[64] = "";
-    std::set<int> mSelectedMarkerIndices;
+    char mRenderingMarkerFilter[64] = "";
 
     // Playback state
     C3DViewerState mMotionState;
@@ -149,11 +147,6 @@ private:
         bool valid = false;
     };
 
-    // Cached matrices for label drawing
-    GLdouble mModelview[16];
-    GLdouble mProjection[16];
-    GLint mViewport[4];
-
     // Graph data buffer for plots
     std::map<std::string, std::vector<double>> mGraphData;
     std::map<std::string, std::vector<double>> mGraphTime;
@@ -173,16 +166,15 @@ private:
     void drawFrame();
     void drawSkeleton();
     void drawMarkers();
-    void drawMarkerLabels();
     void drawGround();
 
     // UI panels
     void drawControlPanel();
     void drawMotionListSection();
     void drawPlaybackSection();
-    void drawMarkerVisibilitySection();
     void drawMarkerFittingSection();
     void drawVisualizationPanel();
+    void drawRenderingPanel();
     void drawMarkerDiffPlot();
     void drawMarkerCorrespondenceTable();
 
@@ -216,6 +208,7 @@ private:
     void mouseMove(double x, double y);
     void mouseScroll(double xoff, double yoff);
     void keyPress(int key, int scancode, int action, int mods);
+    void alignCameraToPlane(int plane);
 };
 
 #endif // C3D_PROCESSOR_APP_H

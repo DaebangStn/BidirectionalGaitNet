@@ -8,6 +8,7 @@
 #include <Eigen/Dense>
 #include "dart/dynamics/dynamics.hpp"
 #include "Character.h"  // For ModifyInfo and BoneInfo types
+#include "DARTHelper.h" // For skeleton flags
 
 using namespace dart::dynamics;
 
@@ -21,7 +22,7 @@ struct RenderMarker {
 
 class RenderCharacter {
 public:
-    RenderCharacter(const std::string& skelPath);
+    RenderCharacter(const std::string& skelPath, int skelFlags = SKEL_COLLIDE_ALL);
     ~RenderCharacter();
 
     // Skeleton access (same interface as Character)
@@ -54,6 +55,9 @@ public:
     // Bone scale cache - single source of truth for scale values
     const std::vector<BoneInfo>& getSkelInfos() const { return mSkelInfos; }
     std::vector<BoneInfo>& getSkelInfos() { return mSkelInfos; }
+
+    // Reset skeleton to default bone scales and zero pose
+    void resetSkeletonToDefault();
 
 private:
     SkeletonPtr mSkeleton;

@@ -2,6 +2,7 @@
 #include "DARTHelper.h"
 #include "UriResolver.h"
 #include "Log.h"
+#include "PlotUtils.h"
 #include <cstring>
 #include <algorithm>
 #include <fstream>
@@ -10,6 +11,26 @@
 
 using namespace dart::dynamics;
 namespace fs = std::filesystem;
+
+// Helper function for outlined text rendering (black edge + white fill)
+static void drawOutlinedText(ImDrawList* drawList, ImFont* font, float fontSize,
+                             const ImVec2& pos, const std::string& text,
+                             ImU32 fillColor = IM_COL32(255, 255, 255, 255),
+                             ImU32 outlineColor = IM_COL32(0, 0, 0, 255))
+{
+    // Draw outline (8 directions for clean edge)
+    const float offset = 1.0f;
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (dx == 0 && dy == 0) continue;
+            drawList->AddText(font, fontSize,
+                ImVec2(pos.x + dx * offset, pos.y + dy * offset),
+                outlineColor, text.c_str());
+        }
+    }
+    // Draw fill
+    drawList->AddText(font, fontSize, pos, fillColor, text.c_str());
+}
 
 // =============================================================================
 // Constructor / Destructor
@@ -23,6 +44,7 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     , mWindowYPos(0)
     , mZoom(1.0)
     , mPersp(45.0)
+    , mFocus(0)
     , mMouseDown(false)
     , mRotate(false)
     , mTranslate(false)
@@ -69,8 +91,9 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
-
-    mWindow = glfwCreateWindow(mWidth, mHeight, "C3D Processor", nullptr, nullptr);
+    glfwWindowHintString(GLFW_X11_CLASS_NAME,    "C3Dprocessor");
+    glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "C3Dprocessor"); 
+    mWindow = glfwCreateWindow(mWidth, mHeight, "C3Dprocessor", nullptr, nullptr);
     if (!mWindow) {
         LOG_ERROR("[C3DProcessor] Failed to create GLFW window");
         glfwTerminate();
@@ -99,7 +122,8 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     initImGui();
 
     // Load skeleton and create character
-    mMotionCharacter = std::make_unique<RenderCharacter>(mSkeletonPath);
+    // SKEL_FREE_JOINTS: All joints are FreeJoint (6 DOF) for debugging bone poses independently
+    mMotionCharacter = std::make_unique<RenderCharacter>(mSkeletonPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
     if (mMotionCharacter) {
         mMotionCharacter->loadMarkers(mMarkerConfigPath);
     }
@@ -116,6 +140,20 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     }
 
     mLastRealTime = glfwGetTime();
+
+    // Reset to initial state
+    mViewerTime = 0.0;
+    mViewerPhase = 0.0;
+    mMotionState.lastFrameIdx = 0;
+    mMotionState.cycleAccumulation.setZero();
+    mMotionState.manualFrameIndex = 0;
+    clearGraphData();
+
+    // Refresh marker and skeleton data if motion was loaded
+    if (mMotion) {
+        MarkerPlaybackContext context = computeMarkerPlayback();
+        evaluateMarkerPlayback(context);
+    }
 
     LOG_INFO("[C3DProcessor] Initialized with skeleton: " << mSkeletonPath << ", markers: " << mMarkerConfigPath);
 }
@@ -157,57 +195,18 @@ void C3DProcessorApp::startLoop()
             updateViewerTime(dt * mViewerPlaybackSpeed);
         }
 
-        // OpenGL rendering
-        drawFrame();
-
-        // ImGui rendering
+        // Start ImGui frame (needed for marker label rendering in drawFrame)
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // OpenGL rendering
+        drawFrame();
+
+        // ImGui panels
         drawControlPanel();
         drawVisualizationPanel();
-
-        // Draw marker labels
-        if (mRenderMarkerIndices && (!mMarkerIndexLabels.empty() || !mSkelMarkerIndexLabels.empty())) {
-            GLdouble modelview[16], projection[16];
-            GLint viewport[4];
-            glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
-            glGetDoublev(GL_PROJECTION_MATRIX, projection);
-            glGetIntegerv(GL_VIEWPORT, viewport);
-
-            ImDrawList* drawList = ImGui::GetForegroundDrawList();
-            ImFont* font = ImGui::GetFont();
-            float fontSize = 18.0f;
-
-            // Data markers - black text
-            for (const auto& label : mMarkerIndexLabels) {
-                GLdouble screenX, screenY, screenZ;
-                if (gluProject(label.position.x(), label.position.y(), label.position.z(),
-                              modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
-                    if (screenZ > 0.0 && screenZ < 1.0) {
-                        float y = mHeight - static_cast<float>(screenY);
-                        std::string text = std::to_string(label.index) + ": " + label.name;
-                        drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) - 20, y - 10),
-                                          IM_COL32(0, 0, 0, 255), text.c_str());
-                    }
-                }
-            }
-
-            // Skeleton markers - black text
-            for (const auto& label : mSkelMarkerIndexLabels) {
-                GLdouble screenX, screenY, screenZ;
-                if (gluProject(label.position.x(), label.position.y(), label.position.z(),
-                              modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
-                    if (screenZ > 0.0 && screenZ < 1.0) {
-                        float y = mHeight - static_cast<float>(screenY);
-                        std::string text = std::to_string(label.index) + ": " + label.name;
-                        drawList->AddText(font, fontSize, ImVec2(static_cast<float>(screenX) + 5, y - 10),
-                                          IM_COL32(0, 0, 0, 255), text.c_str());
-                    }
-                }
-            }
-        }
+        drawRenderingPanel();
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -324,8 +323,41 @@ void C3DProcessorApp::drawFrame()
 {
     initGL();
     initLighting();
-    setCamera();
 
+    // Camera follow character (update mTrans before setCamera applies it)
+    if (mFocus == 1 && mMotion != nullptr && mMotionCharacter) {
+        // Calculate current position based on cycle accumulation
+        double phase = mViewerPhase;
+        Motion* current_motion = mMotion;
+        C3DViewerState& state = mMotionState;
+
+        double frame_float;
+        if (state.navigationMode == C3D_SYNC) {
+            // Use viewer time to compute frame
+            frame_float = (mViewerTime / mViewerCycleDuration) * current_motion->getTotalTimesteps();
+        } else {
+            frame_float = static_cast<double>(state.manualFrameIndex);
+        }
+
+        int current_frame_idx = static_cast<int>(frame_float);
+        int total_frames = current_motion->getTotalTimesteps();
+        current_frame_idx = current_frame_idx % total_frames;
+
+        Eigen::VectorXd raw_motion = current_motion->getRawMotionData();
+        int value_per_frame = current_motion->getValuesPerFrame();
+        Eigen::VectorXd current_frame = raw_motion.segment(
+            current_frame_idx * value_per_frame, value_per_frame);
+
+        // Motion data is already in angle format (positions 3,4,5 are root translation)
+        Eigen::VectorXd current_pos = current_frame;
+
+        // Follow root position with cycle accumulation and display offset
+        mTrans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
+        mTrans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
+        mTrans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
+    }
+
+    setCamera();
     drawGround();
     drawSkeleton();
     drawMarkers();
@@ -362,7 +394,7 @@ void C3DProcessorApp::drawSkeleton()
     glEnable(GL_LIGHTING);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_COLOR_MATERIAL);
-    glColor4f(0.8f, 0.8f, 0.2f, 0.7f);
+    glColor4f(1.0f, 1.0f, 1.0f, 0.7f);
 
     for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
         const BodyNode* bn = skel->getBodyNode(i);
@@ -405,9 +437,6 @@ void C3DProcessorApp::drawMarkers()
 {
     if (!mMotion || mMotion->getSourceType() != "c3d") return;
 
-    mMarkerIndexLabels.clear();
-    mSkelMarkerIndexLabels.clear();
-
     glDisable(GL_LIGHTING);
 
     C3D* c3dMotion = static_cast<C3D*>(mMotion);
@@ -417,17 +446,47 @@ void C3DProcessorApp::drawMarkers()
     // Apply cycleAccumulation + displayOffset so markers move forward with skeleton
     Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
 
+    // Get matrices and ImGui context for label rendering
+    GLdouble modelview[16], projection[16];
+    GLint viewport[4];
+    ImDrawList* drawList = nullptr;
+    ImFont* font = nullptr;
+
+    if (mRenderMarkerIndices) {
+        glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+        glGetDoublev(GL_PROJECTION_MATRIX, projection);
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        drawList = ImGui::GetBackgroundDrawList();  // Behind ImGui panels
+        font = ImGui::GetFont();
+    }
+
+    // Lambda for rendering a marker label
+    auto renderLabel = [&](const Eigen::Vector3d& pos, int index, const std::string& name, float xOffset) {
+        if (!mRenderMarkerIndices || !drawList) return;
+        GLdouble screenX, screenY, screenZ;
+        if (gluProject(pos.x(), pos.y(), pos.z(),
+                      modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
+            if (screenZ > 0.0 && screenZ < 1.0) {
+                float y = mHeight - static_cast<float>(screenY);
+                std::string text = std::to_string(index) + ": " + name;
+                drawOutlinedText(drawList, font, mMarkerLabelFontSize,
+                    ImVec2(static_cast<float>(screenX) + xOffset, y - 10), text);
+            }
+        }
+    };
+
     if (mRenderC3DMarkers && !mMotionState.currentMarkers.empty()) {
         glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
         for (size_t i = 0; i < mMotionState.currentMarkers.size(); ++i) {
+            // Skip hidden markers
+            if (mHiddenC3DMarkers.find(static_cast<int>(i)) != mHiddenC3DMarkers.end())
+                continue;
             const auto& marker = mMotionState.currentMarkers[i];
             if (!marker.array().isFinite().all()) continue;
             Eigen::Vector3d offsetMarker = marker + markerOffset;
             GUI::DrawSphere(offsetMarker, 0.0125);
-            if (mRenderMarkerIndices) {
-                std::string name = (i < dataLabels.size()) ? dataLabels[i] : "";
-                mMarkerIndexLabels.push_back({offsetMarker, static_cast<int>(i), name});
-            }
+            std::string name = (i < dataLabels.size()) ? dataLabels[i] : "";
+            renderLabel(offsetMarker, static_cast<int>(i), name, -20.0f);
         }
     }
 
@@ -437,22 +496,18 @@ void C3DProcessorApp::drawMarkers()
         const auto& skelMarkers = mMotionCharacter->getMarkers();
         auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
         for (size_t i = 0; i < expectedMarkers.size(); ++i) {
+            // Skip hidden markers
+            if (mHiddenSkelMarkers.find(static_cast<int>(i)) != mHiddenSkelMarkers.end())
+                continue;
             const auto& marker = expectedMarkers[i];
             if (!marker.array().isFinite().all()) continue;
             GUI::DrawSphere(marker, 0.0125);
-            if (mRenderMarkerIndices) {
-                std::string name = (i < skelMarkers.size()) ? skelMarkers[i].name : "";
-                mSkelMarkerIndexLabels.push_back({marker, static_cast<int>(i), name});
-            }
+            std::string name = (i < skelMarkers.size()) ? skelMarkers[i].name : "";
+            renderLabel(marker, static_cast<int>(i), name, 5.0f);
         }
     }
 
     glEnable(GL_LIGHTING);
-}
-
-void C3DProcessorApp::drawMarkerLabels()
-{
-    // Labels are drawn in startLoop after ImGui::NewFrame
 }
 
 // =============================================================================
@@ -483,11 +538,6 @@ void C3DProcessorApp::drawControlPanel()
 
     // Playback Section
     drawPlaybackSection();
-
-    ImGui::Separator();
-
-    // Marker Visibility Section
-    drawMarkerVisibilitySection();
 
     ImGui::Separator();
 
@@ -545,6 +595,10 @@ void C3DProcessorApp::drawPlaybackSection()
             mViewerPhase = 0.0;
             mMotionState.lastFrameIdx = 0;
             mMotionState.cycleAccumulation.setZero();
+            // Reset camera pose
+            mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
+            mZoom = 1.0;
+            mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
         }
 
         // Playback speed
@@ -573,49 +627,180 @@ void C3DProcessorApp::drawPlaybackSection()
     }
 }
 
-void C3DProcessorApp::drawMarkerVisibilitySection()
-{
-    if (collapsingHeaderWithControls("Marker Visibility")) {
-        ImGui::Checkbox("Data Markers (C3D)", &mRenderC3DMarkers);
-        ImGui::Checkbox("Skeleton Markers", &mRenderExpectedMarkers);
-        ImGui::Checkbox("Marker Labels", &mRenderMarkerIndices);
-    }
-}
-
 void C3DProcessorApp::drawMarkerFittingSection()
 {
     if (collapsingHeaderWithControls("Marker Fitting")) {
-        if (ImGui::Button("Reload Config")) {
-            if (mC3DReader) {
-                mC3DReader->reloadFittingConfig();
-                LOG_INFO("[C3DProcessor] Reloaded fitting config");
-            }
+        if (ImGui::Button("Fit Skeleton to C3D")) {
+            if (mC3DReader && mMotion) mC3DReader->fitSkeletonToCurrentC3D();
         }
         ImGui::SameLine();
         if (ImGui::Button("Reset Skeleton")) {
-            if (mC3DReader) {
-                mC3DReader->resetSkeletonToDefault();
-                LOG_INFO("[C3DProcessor] Reset skeleton to default");
-            }
+            if (mMotionCharacter) mMotionCharacter->resetSkeletonToDefault();
         }
-
-        // Marker error plot
-        drawMarkerDiffPlot();
     }
 }
 
 void C3DProcessorApp::drawVisualizationPanel()
 {
     ImGui::SetNextWindowPos(ImVec2(mWidth - 400, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 400), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(400, 600), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("Visualization")) {
         ImGui::End();
         return;
     }
 
-    // Marker Correspondence Table
+    // File Paths
+    if (ImGui::CollapsingHeader("File Paths", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("Skeleton: %s", mSkeletonPath.c_str());
+        ImGui::TextWrapped("Markers: %s", mMarkerConfigPath.c_str());
+    }
+
+    // Camera Information
+    if (ImGui::CollapsingHeader("Camera Info")) {
+        ImGui::Text("Position:");
+        ImGui::Text("  X: %.3f", mTrans[0]);
+        ImGui::Text("  Y: %.3f", mTrans[1]);
+        ImGui::Text("  Z: %.3f", mTrans[2]);
+        ImGui::Separator();
+        ImGui::Text("Zoom: %.3f", mZoom);
+        ImGui::Text("Perspective: %.1f deg", mPersp);
+        ImGui::Separator();
+        ImGui::Text("Follow Mode: %s", mFocus == 1 ? "ON" : "OFF");
+        ImGui::Text("Trackball Rotation:");
+        Eigen::Matrix3d rotMat = mTrackball.getRotationMatrix();
+        Eigen::Vector3d euler = rotMat.eulerAngles(2, 1, 0) * 180.0 / M_PI;
+        ImGui::Text("  Yaw:   %.1f deg", euler[0]);
+        ImGui::Text("  Pitch: %.1f deg", euler[1]);
+        ImGui::Text("  Roll:  %.1f deg", euler[2]);
+    }
+
+    // Marker Error Plot
+    if (ImGui::CollapsingHeader("Marker Error", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawMarkerDiffPlot();
+    }
+
     drawMarkerCorrespondenceTable();
+
+    ImGui::End();
+}
+
+void C3DProcessorApp::drawRenderingPanel()
+{
+    if (!mShowRenderingPanel) return;
+
+    ImGui::SetNextWindowSize(ImVec2(350, 500), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Rendering", &mShowRenderingPanel)) {
+        ImGui::End();
+        return;
+    }
+
+    // Marker Visibility section
+    if (ImGui::CollapsingHeader("Marker Visibility", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Data Markers (C3D)", &mRenderC3DMarkers);
+        ImGui::Checkbox("Skeleton Markers", &mRenderExpectedMarkers);
+        ImGui::Checkbox("Marker Labels", &mRenderMarkerIndices);
+        ImGui::SliderFloat("Label Font Size", &mMarkerLabelFontSize, 10.0f, 32.0f, "%.0f");
+    }
+
+    // Per-marker visibility list
+    if (ImGui::CollapsingHeader("Individual Markers")) {
+        // Filter input
+        ImGui::InputText("Filter##RenderMarker", mRenderingMarkerFilter, sizeof(mRenderingMarkerFilter));
+
+        // Show/Hide all buttons
+        if (ImGui::Button("Show All")) {
+            mHiddenC3DMarkers.clear();
+            mHiddenSkelMarkers.clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Hide All")) {
+            if (mMotion && mMotion->getSourceType() == "c3d") {
+                C3D* c3dMotion = static_cast<C3D*>(mMotion);
+                for (size_t i = 0; i < c3dMotion->getLabels().size(); ++i)
+                    mHiddenC3DMarkers.insert(static_cast<int>(i));
+            }
+            if (mMotionCharacter && mMotionCharacter->hasMarkers()) {
+                for (size_t i = 0; i < mMotionCharacter->getMarkers().size(); ++i)
+                    mHiddenSkelMarkers.insert(static_cast<int>(i));
+            }
+        }
+
+        ImGui::Separator();
+
+        // Get marker data
+        std::vector<std::string> c3dLabels;
+        std::vector<std::string> skelLabels;
+
+        if (mMotion && mMotion->getSourceType() == "c3d") {
+            C3D* c3dMotion = static_cast<C3D*>(mMotion);
+            c3dLabels = c3dMotion->getLabels();
+        }
+        if (mMotionCharacter && mMotionCharacter->hasMarkers()) {
+            const auto& markers = mMotionCharacter->getMarkers();
+            for (const auto& m : markers)
+                skelLabels.push_back(m.name);
+        }
+
+        // Filter string (lowercase)
+        std::string filterStr(mRenderingMarkerFilter);
+        std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
+
+        // Scrollable list
+        if (ImGui::BeginChild("MarkerList", ImVec2(0, 300), true)) {
+            // C3D Markers
+            if (!c3dLabels.empty() && ImGui::TreeNode("C3D Markers")) {
+                for (size_t i = 0; i < c3dLabels.size(); ++i) {
+                    const std::string& label = c3dLabels[i];
+
+                    // Apply filter
+                    if (!filterStr.empty()) {
+                        std::string labelLower = label;
+                        std::transform(labelLower.begin(), labelLower.end(), labelLower.begin(), ::tolower);
+                        if (labelLower.find(filterStr) == std::string::npos)
+                            continue;
+                    }
+
+                    bool visible = (mHiddenC3DMarkers.find(static_cast<int>(i)) == mHiddenC3DMarkers.end());
+                    std::string checkboxLabel = std::to_string(i) + ": " + label + "##c3d";
+                    if (ImGui::Checkbox(checkboxLabel.c_str(), &visible)) {
+                        if (visible)
+                            mHiddenC3DMarkers.erase(static_cast<int>(i));
+                        else
+                            mHiddenC3DMarkers.insert(static_cast<int>(i));
+                    }
+                }
+                ImGui::TreePop();
+            }
+
+            // Skeleton Markers
+            if (!skelLabels.empty() && ImGui::TreeNode("Skeleton Markers")) {
+                for (size_t i = 0; i < skelLabels.size(); ++i) {
+                    const std::string& label = skelLabels[i];
+
+                    // Apply filter
+                    if (!filterStr.empty()) {
+                        std::string labelLower = label;
+                        std::transform(labelLower.begin(), labelLower.end(), labelLower.begin(), ::tolower);
+                        if (labelLower.find(filterStr) == std::string::npos)
+                            continue;
+                    }
+
+                    bool visible = (mHiddenSkelMarkers.find(static_cast<int>(i)) == mHiddenSkelMarkers.end());
+                    std::string checkboxLabel = std::to_string(i) + ": " + label + "##skel";
+                    if (ImGui::Checkbox(checkboxLabel.c_str(), &visible)) {
+                        if (visible)
+                            mHiddenSkelMarkers.erase(static_cast<int>(i));
+                        else
+                            mHiddenSkelMarkers.insert(static_cast<int>(i));
+                    }
+                }
+                ImGui::TreePop();
+            }
+        }
+        ImGui::EndChild();
+    }
 
     ImGui::End();
 }
@@ -623,28 +808,7 @@ void C3DProcessorApp::drawVisualizationPanel()
 void C3DProcessorApp::drawMarkerDiffPlot()
 {
     if (!mMotion || mMotion->getSourceType() != "c3d") return;
-    if (mGraphData.find("marker_error_mean") == mGraphData.end()) return;
-
-    const auto& times = mGraphTime["marker_error_mean"];
-    const auto& values = mGraphData["marker_error_mean"];
-
-    if (times.empty() || values.empty()) return;
-
-    ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
-    ImPlot::SetNextAxisLimits(ImAxis_Y1, 0.0, 0.3, ImGuiCond_Once);
-
-    if (ImPlot::BeginPlot("Marker Error##MarkerDiff", ImVec2(-1, 200))) {
-        ImPlot::SetupAxes("Time (s)", "Error (m)");
-
-        std::vector<double> t(times.end() - std::min(times.size(), size_t(500)), times.end());
-        std::vector<double> v(values.end() - std::min(values.size(), size_t(500)), values.end());
-
-        if (!t.empty()) {
-            ImPlot::PlotLine("Mean Error", t.data(), v.data(), t.size());
-        }
-
-        ImPlot::EndPlot();
-    }
+    PlotUtils::plotMarkerError(mGraphData, mGraphTime, mXmin, 200.0f);
 }
 
 void C3DProcessorApp::drawMarkerCorrespondenceTable()
@@ -662,11 +826,15 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
         // Search filter
         ImGui::InputText("Filter", mMarkerSearchFilter, sizeof(mMarkerSearchFilter));
 
-        if (ImGui::BeginTable("MarkerTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 200))) {
+        // Get expected marker positions once
+        auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
+        Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
+
+        if (ImGui::BeginTable("MarkerTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 300))) {
             ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, 40);
-            ImGui::TableSetupColumn("Data Label", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Skel Label", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Error", ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableSetupColumn("Data", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Skel", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Diff", ImGuiTableColumnFlags_WidthFixed, 80);
             ImGui::TableHeadersRow();
 
             size_t count = std::max(dataLabels.size(), skelMarkers.size());
@@ -689,6 +857,16 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
                     }
                 }
 
+                // Get marker positions
+                bool hasDataM = i < mMotionState.currentMarkers.size();
+                bool hasSkelM = i < expectedMarkers.size();
+                Eigen::Vector3d dataM = hasDataM ? mMotionState.currentMarkers[i] : Eigen::Vector3d::Zero();
+                Eigen::Vector3d skelM = hasSkelM ? expectedMarkers[i] : Eigen::Vector3d::Zero();
+                Eigen::Vector3d offsetDataM = dataM + markerOffset;
+                bool dataValid = hasDataM && dataM.array().isFinite().all();
+                bool skelValid = hasSkelM && skelM.array().isFinite().all();
+
+                // Row 1: Labels and error norm
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("%zu", i);
@@ -700,24 +878,41 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
                 ImGui::Text("%s", skelLabel.c_str());
 
                 ImGui::TableNextColumn();
-                // Compute error if we have both markers
-                if (i < mMotionState.currentMarkers.size() && mMotionCharacter && i < skelMarkers.size()) {
-                    auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
-                    if (i < expectedMarkers.size()) {
-                        const auto& dataM = mMotionState.currentMarkers[i];
-                        const auto& skelM = expectedMarkers[i];
-                        if (dataM.array().isFinite().all() && skelM.array().isFinite().all()) {
-                            // Apply offset to data marker for comparison
-                            Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
-                            Eigen::Vector3d offsetDataM = dataM + markerOffset;
-                            double err = (offsetDataM - skelM).norm() * 1000;  // mm
-                            ImGui::Text("%.1f", err);
-                        } else {
-                            ImGui::Text("-");
-                        }
-                    }
+                if (dataValid && skelValid) {
+                    double err = (offsetDataM - skelM).norm() * 1000;  // mm
+                    ImGui::Text("%.1f mm", err);
                 } else {
                     ImGui::Text("-");
+                }
+
+                // Row 2: XYZ positions and diff
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                // Empty index cell
+
+                ImGui::TableNextColumn();
+                if (dataValid) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%.3f %.3f %.3f",
+                        offsetDataM.x(), offsetDataM.y(), offsetDataM.z());
+                } else {
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "-");
+                }
+
+                ImGui::TableNextColumn();
+                if (skelValid) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%.3f %.3f %.3f",
+                        skelM.x(), skelM.y(), skelM.z());
+                } else {
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "-");
+                }
+
+                ImGui::TableNextColumn();
+                if (dataValid && skelValid) {
+                    Eigen::Vector3d diff = offsetDataM - skelM;
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%.3f %.3f %.3f",
+                        diff.x(), diff.y(), diff.z());
+                } else {
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "-");
                 }
             }
             ImGui::EndTable();
@@ -790,9 +985,9 @@ void C3DProcessorApp::loadC3DFile(const std::string& path)
 
         // Compute cycle distance
         C3D* c3dMotion = static_cast<C3D*>(mMotion);
-        mMotionState.cycleDistance = computeMarkerCycleDistance(c3dMotion);
+        // mMotionState.cycleDistance = computeMarkerCycleDistance(c3dMotion); // Character does not progress forward
 
-        // Compute height calibration
+        // Height calibration at first loading
         if (c3dMotion->getNumFrames() > 0) {
             auto markers = c3dMotion->getMarkers(0);
             double heightOffset = computeMarkerHeightCalibration(markers);
@@ -803,7 +998,7 @@ void C3DProcessorApp::loadC3DFile(const std::string& path)
         mViewerTime = 0.0;
         mViewerPhase = 0.0;
 
-        LOG_INFO("[C3DProcessor] Loaded: " << path);
+        LOG_INFO("[C3DProcessor] Loaded: " << path << " (" << mMotion->getNumFrames() << " frames)");
     } else {
         LOG_ERROR("[C3DProcessor] Failed to load: " << path);
     }
@@ -1103,8 +1298,10 @@ void C3DProcessorApp::mouseMove(double x, double y)
         mTrackball.updateBall(x, mHeight - y);
     }
     if (mTranslate) {
-        mTrans[0] += dx * 0.005;
-        mTrans[1] -= dy * 0.005;
+        double scale = 0.005 / mZoom;  // Scale with zoom level
+        Eigen::Matrix3d rot = mTrackball.getRotationMatrix();
+        Eigen::Vector3d delta = rot.transpose() * Eigen::Vector3d(dx * scale, -dy * scale, 0.0);
+        mTrans += delta;
     }
 }
 
@@ -1134,22 +1331,58 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                 }
                 break;
             case GLFW_KEY_R:
-                // Reset and refresh rendered view
-                mViewerTime = 0.0;
-                mViewerPhase = 0.0;
-                mMotionState.lastFrameIdx = 0;
-                mMotionState.cycleAccumulation.setZero();
-                mMotionState.manualFrameIndex = 0;
-                clearGraphData();
-                // Refresh marker and skeleton data
-                {
+                if (mods & GLFW_MOD_CONTROL) {
+                    // Ctrl+R: Toggle Rendering panel
+                    mShowRenderingPanel = !mShowRenderingPanel;
+                } else {
+                    // Reset and refresh rendered view
+                    mViewerTime = 0.0;
+                    mViewerPhase = 0.0;
+                    mMotionState.lastFrameIdx = 0;
+                    mMotionState.cycleAccumulation.setZero();
+                    mMotionState.manualFrameIndex = 0;
+                    clearGraphData();
+
+                    // Refresh marker and skeleton data
                     MarkerPlaybackContext context = computeMarkerPlayback();
                     evaluateMarkerPlayback(context);
+
+                    // Reset camera position
+                    mZoom = 1.0;
+                    mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
+                    mTrackball = dart::gui::Trackball();
+
+                    if (mMotionCharacter) mMotionCharacter->resetSkeletonToDefault();
                 }
                 break;
             case GLFW_KEY_1:
-                // Align to XY plane
-                mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
+            case GLFW_KEY_KP_1:
+                alignCameraToPlane(1);  // XY plane
+                break;
+            case GLFW_KEY_2:
+            case GLFW_KEY_KP_2:
+                alignCameraToPlane(2);  // YZ plane
+                break;
+            case GLFW_KEY_3:
+            case GLFW_KEY_KP_3:
+                alignCameraToPlane(3);  // ZX plane
+                break;
+            case GLFW_KEY_C:
+                if (mC3DReader && mMotion && mSelectedMotion >= 0) {
+                    C3DConversionParams params;
+                    params.doCalibration = true;
+                    mMotion = mC3DReader->loadC3D(mMotionList[mSelectedMotion], params);
+                    LOG_INFO("[C3DProcessor] Reloaded with calibration");
+                }
+                break;
+            case GLFW_KEY_F:
+                // Toggle camera follow
+                mFocus = (mFocus == 1) ? 0 : 1;
+                if (mFocus == 1) {
+                    LOG_INFO("[C3DProcessor] Camera follow enabled");
+                } else {
+                    LOG_INFO("[C3DProcessor] Camera follow disabled");
+                }
                 break;
             case GLFW_KEY_L:
                 mRenderMarkerIndices = !mRenderMarkerIndices;
@@ -1159,4 +1392,21 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                 break;
         }
     }
+}
+
+void C3DProcessorApp::alignCameraToPlane(int plane)
+{
+    Eigen::Quaterniond quat;
+    switch (plane) {
+        case 1: // XY plane - view from +Z
+            quat = Eigen::Quaterniond::Identity();
+            break;
+        case 2: // YZ plane - view from +X
+            quat = Eigen::AngleAxisd(-M_PI / 2.0, Eigen::Vector3d::UnitY());
+            break;
+        case 3: // ZX plane - view from +Y (top-down)
+            quat = Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitX());
+            break;
+    }
+    mTrackball.setQuaternion(quat);
 }
