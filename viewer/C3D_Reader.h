@@ -87,6 +87,23 @@ struct SkeletonFittingConfig {
     double convergenceThreshold = 1e-6;
     bool plotConvergence = true;
 
+    // Flat marker mappings: skeleton marker name -> C3D data index/label
+    std::vector<MarkerReference> markerMappings;
+
+    // Optimization targets: list of bone names to optimize
+    std::vector<std::string> optimizationTargets;
+
+    // Helper: get data index for a skeleton marker name (-1 if not found)
+    int getDataIndexForMarker(const std::string& markerName) const {
+        for (const auto& ref : markerMappings) {
+            if (ref.name == markerName) {
+                return ref.dataIndex;
+            }
+        }
+        return -1;
+    }
+
+    // Legacy support: BoneMapping for backward compatibility
     struct BoneMapping {
         std::string boneName;
         std::vector<MarkerReference> markerRefs;   // New: marker references with names/labels
@@ -98,7 +115,7 @@ struct SkeletonFittingConfig {
             return resolvedIndices.empty() ? markerIndices : resolvedIndices;
         }
     };
-    std::vector<BoneMapping> boneMappings;
+    std::vector<BoneMapping> boneMappings;  // Legacy: kept for backward compat
 
     // Load default bone mappings if config file not found
     void loadDefaults();

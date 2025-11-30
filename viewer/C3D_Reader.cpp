@@ -211,8 +211,34 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
             config.maxIterations = sf["optimization"]["max_iterations"].as<int>(50);
             config.convergenceThreshold = sf["optimization"]["convergence_threshold"].as<double>(1e-6);
             config.plotConvergence = sf["optimization"]["plot_convergence"].as<bool>(true);
+
+            // New: Parse optimization targets (list of bone names)
+            if (sf["optimization"]["target"]) {
+                for (const auto& t : sf["optimization"]["target"]) {
+                    config.optimizationTargets.push_back(t.as<std::string>());
+                }
+            }
         }
 
+        // New format: marker_mappings (flat list)
+        if (sf["marker_mappings"]) {
+            for (const auto& m : sf["marker_mappings"]) {
+                if (m.IsMap()) {
+                    std::string name = m["name"].as<std::string>("");
+                    if (m["data_idx"]) {
+                        int idx = m["data_idx"].as<int>();
+                        config.markerMappings.push_back(MarkerReference::fromNameAndIndex(name, idx));
+                    } else if (m["data_label"]) {
+                        std::string label = m["data_label"].as<std::string>();
+                        config.markerMappings.push_back(MarkerReference::fromNameAndLabel(name, label));
+                    } else {
+                        LOG_WARN("[C3D_Reader] marker_mappings entry missing data_idx or data_label for: " << name);
+                    }
+                }
+            }
+        }
+
+        // Legacy format: bone_mappings (for backward compatibility)
         if (sf["bone_mappings"]) {
             for (const auto& bm : sf["bone_mappings"]) {
                 SkeletonFittingConfig::BoneMapping mapping;
@@ -256,7 +282,9 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
         LOG_INFO("  - maxIterations: " << config.maxIterations);
         LOG_INFO("  - convergenceThreshold: " << config.convergenceThreshold);
         LOG_INFO("  - plotConvergence: " << (config.plotConvergence ? "true" : "false"));
-        LOG_INFO("  - boneMappings: " << config.boneMappings.size() << " bones");
+        LOG_INFO("  - markerMappings: " << config.markerMappings.size() << " markers");
+        LOG_INFO("  - optimizationTargets: " << config.optimizationTargets.size() << " bones");
+        LOG_INFO("  - boneMappings (legacy): " << config.boneMappings.size() << " bones");
 
     } catch (const std::exception& e) {
         LOG_WARN("[C3D_Reader] Failed to load config from " << configPath << ": " << e.what());
@@ -503,12 +531,43 @@ void C3D_Reader::calibrateSkeleton(
     // All bones (including Pelvis) are now in the config and fitted uniformly
     // Each bone extracts S (scale) and stores R, t (global transforms)
 
-    for (const auto& mapping : mFittingConfig.boneMappings) {
-        calibrateBone(mapping.boneName, mapping.markerIndices, allMarkers, plotConvergence);
+    // Use new format (optimizationTargets) if available, else fall back to legacy boneMappings
+    if (!mFittingConfig.optimizationTargets.empty()) {
+        // New format: iterate over optimization targets
+        for (const auto& boneName : mFittingConfig.optimizationTargets) {
+            // Find markers belonging to this bone from mMarkerSet
+            std::vector<int> markerDataIndices;
+            for (size_t i = 0; i < mMarkerSet.size(); ++i) {
+                if (mMarkerSet[i].bn && mMarkerSet[i].bn->getName() == boneName) {
+                    // Find data index for this marker from markerMappings
+                    int dataIdx = mFittingConfig.getDataIndexForMarker(mMarkerSet[i].name);
+                    if (dataIdx >= 0) {
+                        markerDataIndices.push_back(dataIdx);
+                    }
+                }
+            }
 
-        // Apply scale immediately so bone transforms are correct for subsequent bones
-        if (mCharacter) {
-            mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
+            if (markerDataIndices.empty()) {
+                LOG_WARN("[C3D_Reader] No marker mappings found for bone: " << boneName);
+                continue;
+            }
+
+            calibrateBone(boneName, markerDataIndices, allMarkers, plotConvergence);
+
+            // Apply scale immediately so bone transforms are correct for subsequent bones
+            if (mCharacter) {
+                mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
+            }
+        }
+    } else {
+        // Legacy format: iterate over bone_mappings
+        for (const auto& mapping : mFittingConfig.boneMappings) {
+            calibrateBone(mapping.boneName, mapping.markerIndices, allMarkers, plotConvergence);
+
+            // Apply scale immediately so bone transforms are correct for subsequent bones
+            if (mCharacter) {
+                mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
+            }
         }
     }
 

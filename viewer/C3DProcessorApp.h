@@ -108,6 +108,11 @@ private:
     bool mRenderMarkerIndices;
     float mMarkerLabelFontSize = 18.0f;
 
+    // Axis rendering flags
+    bool mRenderWorldAxis = false;
+    bool mRenderSkeletonAxis = false;
+    float mAxisLength = 0.3f;
+
     // Rendering panel
     bool mShowRenderingPanel = false;
 
@@ -118,6 +123,12 @@ private:
     // Marker search/selection
     char mMarkerSearchFilter[64] = "";
     char mRenderingMarkerFilter[64] = "";
+
+    // Motion pose inspection
+    int mPoseInspectFrame = 0;
+    bool mPoseUseCurrentFrame = true;
+    char mJointFilter[64] = "";
+    int mSelectedJointIdx = -1;
 
     // Playback state
     C3DViewerState mMotionState;
@@ -167,6 +178,7 @@ private:
     void drawSkeleton();
     void drawMarkers();
     void drawGround();
+    void drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label);
 
     // UI panels
     void drawControlPanel();
@@ -177,6 +189,7 @@ private:
     void drawRenderingPanel();
     void drawMarkerDiffPlot();
     void drawMarkerCorrespondenceTable();
+    void drawMotionPoseSection();
 
     // Helper for collapsing header
     bool collapsingHeaderWithControls(const std::string& title);
