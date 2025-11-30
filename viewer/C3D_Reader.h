@@ -116,9 +116,6 @@ struct SkeletonFittingConfig {
         }
     };
     std::vector<BoneMapping> boneMappings;  // Legacy: kept for backward compat
-
-    // Load default bone mappings if config file not found
-    void loadDefaults();
 };
 
 // Marker Structure

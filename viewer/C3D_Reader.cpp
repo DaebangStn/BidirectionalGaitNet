@@ -150,44 +150,6 @@ void C3D_Reader::resolveMarkerReferences(const std::vector<std::string>& c3dLabe
     LOG_INFO("[C3D_Reader] Marker reference resolution complete");
 }
 
-// ============================================================================
-// Load default bone mappings
-void SkeletonFittingConfig::loadDefaults() {
-    frameStart = 0;
-    frameEnd = 0;
-    maxIterations = 50;
-    convergenceThreshold = 1e-6;
-    plotConvergence = true;
-
-    boneMappings.clear();
-
-    // Helper lambda to create BoneMapping with legacy markerIndices
-    auto makeBoneMapping = [](const std::string& name, std::vector<int> indices) {
-        BoneMapping m;
-        m.boneName = name;
-        m.markerIndices = indices;
-        // Also populate markerRefs for consistency
-        for (int idx : indices) {
-            m.markerRefs.push_back(MarkerReference::fromIndex(idx));
-        }
-        return m;
-    };
-
-    // Lower body
-    boneMappings.push_back(makeBoneMapping("Pelvis",  {10, 11, 12}));
-    boneMappings.push_back(makeBoneMapping("FemurR",  {25, 13, 14}));
-    boneMappings.push_back(makeBoneMapping("TibiaR",  {14, 15, 16}));
-    boneMappings.push_back(makeBoneMapping("TalusR",  {16, 17, 18}));
-    boneMappings.push_back(makeBoneMapping("FemurL",  {26, 19, 20}));
-    boneMappings.push_back(makeBoneMapping("TibiaL",  {20, 21, 22}));
-    boneMappings.push_back(makeBoneMapping("TalusL",  {22, 23, 24}));
-    // Upper body
-    boneMappings.push_back(makeBoneMapping("Head",    {0, 1, 2}));
-    boneMappings.push_back(makeBoneMapping("Torso",   {3, 4, 7}));
-    boneMappings.push_back(makeBoneMapping("ArmR",    {3, 5, 6}));
-    boneMappings.push_back(makeBoneMapping("ArmL",    {7, 8, 9}));
-}
-
 // Load skeleton fitting config from YAML
 SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& configPath) {
     SkeletonFittingConfig config;
@@ -197,8 +159,7 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
         auto sf = yaml["skeleton_fitting"];
 
         if (!sf) {
-            LOG_WARN("[C3D_Reader] No skeleton_fitting section in config, using defaults");
-            config.loadDefaults();
+            LOG_ERROR("[C3D_Reader] No skeleton_fitting section in config file");
             return config;
         }
 
@@ -287,9 +248,7 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
         LOG_INFO("  - boneMappings (legacy): " << config.boneMappings.size() << " bones");
 
     } catch (const std::exception& e) {
-        LOG_WARN("[C3D_Reader] Failed to load config from " << configPath << ": " << e.what());
-        LOG_WARN("[C3D_Reader] Using default configuration");
-        config.loadDefaults();
+        LOG_ERROR("[C3D_Reader] Failed to load config from " << configPath << ": " << e.what());
     }
 
     return config;
@@ -424,6 +383,7 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
 
     // ========== 6. Finalize ==========
     c3dData->setSkeletonPoses(motion);
+    c3dData->setSkeletonPoses(motion);
     c3dData->setSourceFile(path);
 
     LOG_VERBOSE("[C3D_Reader] Loaded " << c3dData->getNumFrames() << " frames");
@@ -531,43 +491,33 @@ void C3D_Reader::calibrateSkeleton(
     // All bones (including Pelvis) are now in the config and fitted uniformly
     // Each bone extracts S (scale) and stores R, t (global transforms)
 
-    // Use new format (optimizationTargets) if available, else fall back to legacy boneMappings
-    if (!mFittingConfig.optimizationTargets.empty()) {
-        // New format: iterate over optimization targets
-        for (const auto& boneName : mFittingConfig.optimizationTargets) {
-            // Find markers belonging to this bone from mMarkerSet
-            std::vector<int> markerDataIndices;
-            for (size_t i = 0; i < mMarkerSet.size(); ++i) {
-                if (mMarkerSet[i].bn && mMarkerSet[i].bn->getName() == boneName) {
-                    // Find data index for this marker from markerMappings
-                    int dataIdx = mFittingConfig.getDataIndexForMarker(mMarkerSet[i].name);
-                    if (dataIdx >= 0) {
-                        markerDataIndices.push_back(dataIdx);
-                    }
-                }
-            }
-
-            if (markerDataIndices.empty()) {
-                LOG_WARN("[C3D_Reader] No marker mappings found for bone: " << boneName);
-                continue;
-            }
-
-            calibrateBone(boneName, markerDataIndices, allMarkers, plotConvergence);
-
-            // Apply scale immediately so bone transforms are correct for subsequent bones
-            if (mCharacter) {
-                mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
+    // Build bone -> marker data indices map from markerMappings + mMarkerSet
+    // markerMappings: skeleton marker name -> C3D data index
+    // mMarkerSet: skeleton marker name -> bone association
+    std::map<std::string, std::vector<int>> boneToMarkerIndices;
+    for (const auto& ref : mFittingConfig.markerMappings) {
+        // Find which bone this marker belongs to (from mMarkerSet)
+        for (const auto& m : mMarkerSet) {
+            if (m.name == ref.name && m.bn) {
+                boneToMarkerIndices[m.bn->getName()].push_back(ref.dataIndex);
+                break;
             }
         }
-    } else {
-        // Legacy format: iterate over bone_mappings
-        for (const auto& mapping : mFittingConfig.boneMappings) {
-            calibrateBone(mapping.boneName, mapping.markerIndices, allMarkers, plotConvergence);
+    }
 
-            // Apply scale immediately so bone transforms are correct for subsequent bones
-            if (mCharacter) {
-                mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
-            }
+    // Iterate over optimization targets and fit each bone
+    for (const auto& boneName : mFittingConfig.optimizationTargets) {
+        auto it = boneToMarkerIndices.find(boneName);
+        if (it == boneToMarkerIndices.end() || it->second.empty()) {
+            LOG_WARN("[C3D_Reader] No marker mappings found for bone: " << boneName);
+            continue;
+        }
+
+        calibrateBone(boneName, it->second, allMarkers, plotConvergence);
+
+        // Apply scale immediately so bone transforms are correct for subsequent bones
+        if (mCharacter) {
+            mCharacter->applySkeletonBodyNode(mSkelInfos, mVirtSkeleton);
         }
     }
 
@@ -599,15 +549,12 @@ void C3D_Reader::calibrateSkeleton(
 
     // Print summary
     LOG_INFO("[C3D_Reader] Multi-stage skeleton fitting complete. Final scales:");
-    LOG_INFO("  Pelvis: [" << std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("Pelvis")->getIndexInSkeleton()]).value[0]
-             << ", " << std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("Pelvis")->getIndexInSkeleton()]).value[1]
-             << ", " << std::get<1>(mSkelInfos[mVirtSkeleton->getBodyNode("Pelvis")->getIndexInSkeleton()]).value[2] << "]");
-    for (const auto& mapping : mFittingConfig.boneMappings) {
-        BodyNode* bn = mVirtSkeleton->getBodyNode(mapping.boneName);
+    for (const auto& boneName : mFittingConfig.optimizationTargets) {
+        BodyNode* bn = mVirtSkeleton->getBodyNode(boneName);
         if (bn) {
             int idx = bn->getIndexInSkeleton();
             auto& modInfo = std::get<1>(mSkelInfos[idx]);
-            LOG_INFO("  " << mapping.boneName << ": [" << modInfo.value[0] << ", "
+            LOG_INFO("  " << boneName << ": [" << modInfo.value[0] << ", "
                      << modInfo.value[1] << ", " << modInfo.value[2] << "]");
         }
     }
