@@ -870,7 +870,7 @@ void C3DProcessorApp::drawMarkerDiffPlot()
 void C3DProcessorApp::drawMarkerCorrespondenceTable()
 {
     if (collapsingHeaderWithControls("Marker Correspondence")) {
-        if (!mMotion || mMotion->getSourceType() != "c3d" || !mMotionCharacter) {
+        if (!mMotion || mMotion->getSourceType() != "c3d" || !mMotionCharacter || !mC3DReader) {
             ImGui::Text("Load a C3D file to see correspondence");
             return;
         }
@@ -878,6 +878,15 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
         C3D* c3dMotion = static_cast<C3D*>(mMotion);
         const auto& dataLabels = c3dMotion->getLabels();
         const auto& skelMarkers = mMotionCharacter->getMarkers();
+
+        // Get marker mappings from config
+        const auto& config = mC3DReader->getFittingConfig();
+        const auto& mappings = config.markerMappings;
+
+        if (mappings.empty()) {
+            ImGui::Text("No marker mappings defined in skeleton_fitting.yaml");
+            return;
+        }
 
         // Search filter
         ImGui::InputText("Filter", mMarkerSearchFilter, sizeof(mMarkerSearchFilter));
@@ -893,10 +902,23 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
             ImGui::TableSetupColumn("Diff", ImGuiTableColumnFlags_WidthFixed, 80);
             ImGui::TableHeadersRow();
 
-            size_t count = std::max(dataLabels.size(), skelMarkers.size());
-            for (size_t i = 0; i < count; ++i) {
-                std::string dataLabel = (i < dataLabels.size()) ? dataLabels[i] : "";
-                std::string skelLabel = (i < skelMarkers.size()) ? skelMarkers[i].name : "";
+            // Iterate over marker_mappings only
+            for (size_t i = 0; i < mappings.size(); ++i) {
+                const auto& mapping = mappings[i];
+                int dataIdx = mapping.dataIndex;
+
+                // Find skeleton marker by name
+                int skelIdx = -1;
+                for (size_t j = 0; j < skelMarkers.size(); ++j) {
+                    if (skelMarkers[j].name == mapping.name) {
+                        skelIdx = static_cast<int>(j);
+                        break;
+                    }
+                }
+
+                std::string dataLabel = (dataIdx >= 0 && dataIdx < (int)dataLabels.size())
+                    ? dataLabels[dataIdx] : "-";
+                std::string skelLabel = mapping.name;
 
                 // Apply filter
                 if (strlen(mMarkerSearchFilter) > 0) {
@@ -913,11 +935,11 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
                     }
                 }
 
-                // Get marker positions
-                bool hasDataM = i < mMotionState.currentMarkers.size();
-                bool hasSkelM = i < expectedMarkers.size();
-                Eigen::Vector3d dataM = hasDataM ? mMotionState.currentMarkers[i] : Eigen::Vector3d::Zero();
-                Eigen::Vector3d skelM = hasSkelM ? expectedMarkers[i] : Eigen::Vector3d::Zero();
+                // Get marker positions using mapping indices
+                bool hasDataM = dataIdx >= 0 && dataIdx < (int)mMotionState.currentMarkers.size();
+                bool hasSkelM = skelIdx >= 0 && skelIdx < (int)expectedMarkers.size();
+                Eigen::Vector3d dataM = hasDataM ? mMotionState.currentMarkers[dataIdx] : Eigen::Vector3d::Zero();
+                Eigen::Vector3d skelM = hasSkelM ? expectedMarkers[skelIdx] : Eigen::Vector3d::Zero();
                 Eigen::Vector3d offsetDataM = dataM + markerOffset;
                 bool dataValid = hasDataM && dataM.array().isFinite().all();
                 bool skelValid = hasSkelM && skelM.array().isFinite().all();
@@ -925,7 +947,7 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
                 // Row 1: Labels and error norm
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Text("%zu", i);
+                ImGui::Text("%d", dataIdx);
 
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", dataLabel.c_str());
