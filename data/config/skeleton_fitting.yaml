@@ -65,11 +65,15 @@ skeleton_fitting:
     - {name: 'FHEA', data_label: 'Front.Head'}
     - {name: 'RHEA', data_label: 'Rear.Head'}
     
-    - {name: 'RSHO', data_label: 'R.Shoulder'}
-    - {name: 'RELB', data_label: 'R.Elbow'}
+    - {name: 'RSHO_shoul', data_label: 'R.Shoulder'}
+    - {name: 'RSHO_arm', data_label: 'R.Shoulder'}
+    - {name: 'RELB_arm', data_label: 'R.Elbow'}
+    - {name: 'RELB_farm', data_label: 'R.Elbow'}
     - {name: 'RWRI', data_label: 'R.Wrist'}
-    - {name: 'LSHO', data_label: 'L.Shoulder'}
-    - {name: 'LELB', data_label: 'L.Elbow'}
+    - {name: 'LSHO_shoul', data_label: 'L.Shoulder'}
+    - {name: 'LSHO_arm', data_label: 'L.Shoulder'}
+    - {name: 'LELB_arm', data_label: 'L.Elbow'}
+    - {name: 'LELB_farm', data_label: 'L.Elbow'}
     - {name: 'LWRI', data_label: 'L.Wrist'}
     
     - {name: 'ROFF', data_label: 'R.Offset'}
@@ -78,10 +82,11 @@ skeleton_fitting:
     max_iterations: 20
     convergence_threshold: 1.0e-6
     plot_convergence: true
-    upper_body: true  # Enable upper body scaling/rotation (2-marker bones)
-    # Bones to optimize (bone names from skeleton)
-    # Bone-marker association is determined from marker XML, not here
-    target:
+    lambda_rot: 10.0           # Rotation regularization weight for Ceres optimizer
+    upper_body: true           # Enable upper body scaling (Torso/Spine/Neck/Shoulder only)
+
+    # SVD-based optimizer targets (requires 3+ markers)
+    target_svd:
       - Pelvis
       - FemurR
       - TibiaR
@@ -90,3 +95,10 @@ skeleton_fitting:
       - TibiaL
       - TalusL
       - Head
+
+    # Ceres-based optimizer targets (handles 2+ markers with regularization)
+    target_ceres:
+      - ArmR
+      - ForeArmR
+      - ArmL
+      - ForeArmL

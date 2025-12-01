@@ -36,7 +36,7 @@
     "binaryDir": "${sourceDir}/build/a6000",
     "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "SERVER_BUILD": false,
+        "SERVER_BUILD": true,
         "CUDAToolkit_ROOT": "/usr/local/cuda",
         "CUDA_TOOLKIT_ROOT_DIR": "/usr/local/cuda",
         "CMAKE_CUDA_COMPILER": "/usr/local/cuda/bin/nvcc"

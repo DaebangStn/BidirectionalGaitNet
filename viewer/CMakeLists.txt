@@ -11,7 +11,8 @@ find_package(DART REQUIRED COMPONENTS gui)
 find_package(ezc3d CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
 
-add_executable(viewer
+# Viewer sources
+set(VIEWER_SOURCES
     "main.cpp"
     "GLFWApp.h"
     "GLFWApp.cpp"
@@ -35,6 +36,14 @@ add_executable(viewer
     "motion/MotionProcessor.h"
     "motion/MotionProcessor.cpp"
 )
+
+# Conditionally add Ceres optimizer
+if(USE_CERES)
+    list(APPEND VIEWER_SOURCES "CeresOptimizer.h" "CeresOptimizer.cpp")
+endif()
+
+add_executable(viewer ${VIEWER_SOURCES})
+
 target_link_libraries(viewer
         ${Python3_LIBRARIES}
         tinyxml2::tinyxml2
@@ -45,6 +54,12 @@ target_link_libraries(viewer
         ezc3d
         Boost::program_options
 )
+
+# Conditionally link Ceres and add compile definition
+if(USE_CERES)
+    target_compile_definitions(viewer PRIVATE USE_CERES)
+    target_link_libraries(viewer ceres)
+endif()
 
 # Marker Editor - Standalone application for editing marker positions
 add_executable(marker_editor
@@ -67,7 +82,7 @@ target_link_libraries(marker_editor
 
 # C3D Processor - Standalone C3D processing application
 # NOTE: No HDF5 linking - C3D processor does NOT support HDF
-add_executable(c3d_processor
+set(C3D_PROCESSOR_SOURCES
     "c3d_processor_main.cpp"
     "C3DProcessorApp.h"
     "C3DProcessorApp.cpp"
@@ -82,6 +97,14 @@ add_executable(c3d_processor
     "PlotUtils.h"
     "PlotUtils.cpp"
 )
+
+# Conditionally add Ceres optimizer
+if(USE_CERES)
+    list(APPEND C3D_PROCESSOR_SOURCES "CeresOptimizer.h" "CeresOptimizer.cpp")
+endif()
+
+add_executable(c3d_processor ${C3D_PROCESSOR_SOURCES})
+
 target_link_libraries(c3d_processor
     tinyxml2::tinyxml2
     GL GLU glut glad glfw imgui
@@ -90,6 +113,12 @@ target_link_libraries(c3d_processor
     ezc3d
     Boost::program_options
 )
+
+# Conditionally link Ceres and add compile definition
+if(USE_CERES)
+    target_compile_definitions(c3d_processor PRIVATE USE_CERES)
+    target_link_libraries(c3d_processor ceres)
+endif()
 
 # Test for marker save cyclic consistency
 add_executable(test_marker_save

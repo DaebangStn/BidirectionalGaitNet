@@ -125,13 +125,17 @@ struct SkeletonFittingConfig {
     int maxIterations = 50;
     double convergenceThreshold = 1e-6;
     bool plotConvergence = true;
-    bool upperBody = false;  // Enable upper body scaling/rotation (2-marker bones)
+    bool upperBody = false;   // Enable upper body scaling (Torso/Spine/Neck/Shoulder only)
 
     // Flat marker mappings: skeleton marker name -> C3D data index/label
     std::vector<MarkerReference> markerMappings;
 
-    // Optimization targets: list of bone names to optimize
-    std::vector<std::string> optimizationTargets;
+    // SVD-based optimizer targets (requires 3+ markers)
+    std::vector<std::string> targetSvd;
+
+    double lambdaRot = 10.0;  // Ceres rotation regularization weight
+    // Ceres-based optimizer targets (handles 2+ markers with regularization)
+    std::vector<std::string> targetCeres;
 
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
@@ -157,7 +161,7 @@ class C3D_Reader
         C3D* loadC3D(const std::string& path, const C3DConversionParams& params);
         // buildFramePoseLegacy removed - kept as commented code in .cpp for reference
         Eigen::VectorXd buildFramePose(int fitFrameIdx);
-
+        Eigen::VectorXd buildFramePoseLegacy(std::vector<Eigen::Vector3d>& _pos);
         void fitSkeletonToMarker(std::vector<Eigen::Vector3d> init_marker, double torsionL = 0.0, double torsionR = 0.0);
 
         // New multi-frame anisotropic fitting methods
@@ -176,12 +180,17 @@ class C3D_Reader
                           const std::vector<const MarkerReference*>& markers,
                           const std::vector<std::vector<Eigen::Vector3d>>& allMarkers);
 
-        // Core algorithm: uses MarkerReference for both offset and data index
+        // Core algorithm (SVD-based): uses MarkerReference for both offset and data index
         // Internally handles world-to-local transformation and returns GLOBAL transforms
+        // Requires 3+ markers per bone
         BoneFitResult optimizeBoneScale(
             BodyNode* bn,                                    // BodyNode for coordinate transforms
             const std::vector<const MarkerReference*>& markers,  // Markers with offset and dataIndex
             const std::vector<std::vector<Eigen::Vector3d>>& globalP);  // Measured markers [K frames][N markers] in WORLD coords
+
+        // Note: Ceres-based optimizer (optimizeBoneScaleCeres) is in CeresOptimizer.h/cpp
+        // and is only available when USE_CERES is defined
+
         Eigen::Vector3d getMarkerLocalPos(int markerIdx);
 
         const std::vector<MocapMarker>& getMarkerSet() { return mMarkerSet; }

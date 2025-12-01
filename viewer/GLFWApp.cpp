@@ -5059,9 +5059,9 @@ void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &co
     auto skel = mMotionCharacter->getSkeleton();
     skel->setPositions(pos);
 
-    glDepthMask(GL_FALSE);
+    // glDepthMask(GL_FALSE);
     for (const auto bn : skel->getBodyNodes()) drawSingleBodyNode(bn, color);
-    glDepthMask(GL_TRUE);
+    // glDepthMask(GL_TRUE);
 }
 
 void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)

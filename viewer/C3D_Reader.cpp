@@ -4,6 +4,9 @@
 #include <tinyxml2.h>
 #include <ezc3d/ezc3d_all.h>
 #include "C3D_Reader.h"
+#ifdef USE_CERES
+#include "CeresOptimizer.h"
+#endif
 #include "C3D.h"
 #include "UriResolver.h"
 #include "Log.h"
@@ -197,10 +200,19 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
             config.plotConvergence = sf["optimization"]["plot_convergence"].as<bool>(true);
             config.upperBody = sf["optimization"]["upper_body"].as<bool>(false);
 
-            // New: Parse optimization targets (list of bone names)
-            if (sf["optimization"]["target"]) {
-                for (const auto& t : sf["optimization"]["target"]) {
-                    config.optimizationTargets.push_back(t.as<std::string>());
+            // SVD-based optimizer targets (3+ markers)
+            if (sf["optimization"]["target_svd"]) {
+                for (const auto& t : sf["optimization"]["target_svd"]) {
+                    config.targetSvd.push_back(t.as<std::string>());
+                }
+            }
+
+            config.lambdaRot = sf["optimization"]["lambda_rot"].as<double>(10.0);
+
+            // Ceres-based optimizer targets (2+ markers with regularization)
+            if (sf["optimization"]["target_ceres"]) {
+                for (const auto& t : sf["optimization"]["target_ceres"]) {
+                    config.targetCeres.push_back(t.as<std::string>());
                 }
             }
         }
@@ -230,7 +242,9 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
         LOG_INFO("  - plotConvergence: " << (config.plotConvergence ? "true" : "false"));
         LOG_INFO("  - upperBody: " << (config.upperBody ? "true" : "false"));
         LOG_INFO("  - markerMappings: " << config.markerMappings.size() << " markers");
-        LOG_INFO("  - optimizationTargets: " << config.optimizationTargets.size() << " bones");
+        LOG_INFO("  - targetSvd: " << config.targetSvd.size() << " bones");
+        LOG_INFO("  - lambdaRot: " << config.lambdaRot);
+        LOG_INFO("  - targetCeres: " << config.targetCeres.size() << " bones");
 
     } catch (const std::exception& e) {
         LOG_ERROR("[C3D_Reader] Failed to load config from " << configPath << ": " << e.what());
@@ -385,8 +399,9 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         }
     }
 
-    // Iterate over optimization targets and fit each bone
-    for (const auto& boneName : mFittingConfig.optimizationTargets) {
+    // ============ STAGE 2a: SVD-based bones (3+ markers) ============
+    std::cout << "\n=== Stage 2a: SVD-based bone fitting (3+ markers) ===\n" << std::endl;
+    for (const auto& boneName : mFittingConfig.targetSvd) {
         auto it = boneToMarkers.find(boneName);
         if (it == boneToMarkers.end() || it->second.empty()) {
             LOG_WARN("[C3D_Reader] No marker mappings found for bone: " << boneName);
@@ -396,8 +411,14 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         calibrateBone(boneName, it->second, mCurrentC3D->getAllMarkers());
     }
 
-    // ============ STAGE 2b: Upper Body Scaling ============
-    // Upper body bones have <3 markers, use segment length ratios for scaling
+#ifdef USE_CERES
+    // ============ STAGE 2b: Ceres-based bones (2+ markers with regularization) ============
+    runCeresBoneFitting(mFittingConfig, boneToMarkers, mCurrentC3D->getAllMarkers(),
+                        mCharacter, mSkelInfos, mBoneR_frames, mBoneT_frames);
+#endif
+
+    // ============ STAGE 2c: Upper Body Scaling (Torso/Spine/Neck/Shoulder only) ============
+    // Arms/ForeArms are now handled by Ceres optimizer, only scale trunk/shoulder here
     if (mFittingConfig.upperBody) {
         // Get reference markers from marker set (T-pose)
         std::vector<Eigen::Vector3d> ref_markers;
@@ -411,80 +432,15 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         // Lookup marker indices (C3D data)
         int RSHO = mFittingConfig.getDataIndexForMarker("RSHO");
         int LSHO = mFittingConfig.getDataIndexForMarker("LSHO");
-        int RELB = mFittingConfig.getDataIndexForMarker("RELB");
-        int RWRI = mFittingConfig.getDataIndexForMarker("RWRI");
-        int LELB = mFittingConfig.getDataIndexForMarker("LELB");
-        int LWRI = mFittingConfig.getDataIndexForMarker("LWRI");
 
         // Find skeleton marker indices for reference
         int rsho_ref = -1, lsho_ref = -1;
-        int relb_ref = -1, rwri_ref = -1;
-        int lelb_ref = -1, lwri_ref = -1;
         for (size_t i = 0; i < mMarkerSet.size(); ++i) {
             if (mMarkerSet[i].name == "RSHO") rsho_ref = i;
             else if (mMarkerSet[i].name == "LSHO") lsho_ref = i;
-            else if (mMarkerSet[i].name == "RELB") relb_ref = i;
-            else if (mMarkerSet[i].name == "RWRI") rwri_ref = i;
-            else if (mMarkerSet[i].name == "LELB") lelb_ref = i;
-            else if (mMarkerSet[i].name == "LWRI") lwri_ref = i;
         }
 
-        // Collect scales for summary log
-        double armR = 1.0, armL = 1.0, forearmR = 1.0, forearmL = 1.0, torso = 1.0;
-
-        // Arm scaling: SHO-ELB distance ratio
-        if (RSHO >= 0 && RELB >= 0 && rsho_ref >= 0 && relb_ref >= 0) {
-            double init_arm = (init[RELB] - init[RSHO]).norm();
-            double ref_arm = (ref_markers[relb_ref] - ref_markers[rsho_ref]).norm();
-            armR = init_arm / ref_arm;
-
-            auto* bn = mCharacter->getSkeleton()->getBodyNode("ArmR");
-            if (bn) {
-                int idx = bn->getIndexInSkeleton();
-                std::get<1>(mSkelInfos[idx]).value[3] = armR;
-            }
-        }
-
-        if (LSHO >= 0 && LELB >= 0 && lsho_ref >= 0 && lelb_ref >= 0) {
-            double init_arm = (init[LELB] - init[LSHO]).norm();
-            double ref_arm = (ref_markers[lelb_ref] - ref_markers[lsho_ref]).norm();
-            armL = init_arm / ref_arm;
-
-            auto* bn = mCharacter->getSkeleton()->getBodyNode("ArmL");
-            if (bn) {
-                int idx = bn->getIndexInSkeleton();
-                std::get<1>(mSkelInfos[idx]).value[3] = armL;
-            }
-        }
-
-        // ForeArm/Hand scaling: ELB-WRI distance ratio
-        if (RELB >= 0 && RWRI >= 0 && relb_ref >= 0 && rwri_ref >= 0) {
-            double init_forearm = (init[RWRI] - init[RELB]).norm();
-            double ref_forearm = (ref_markers[rwri_ref] - ref_markers[relb_ref]).norm();
-            forearmR = init_forearm / ref_forearm;
-
-            for (const char* bone : {"ForeArmR", "HandR"}) {
-                auto* bn = mCharacter->getSkeleton()->getBodyNode(bone);
-                if (bn) {
-                    int idx = bn->getIndexInSkeleton();
-                    std::get<1>(mSkelInfos[idx]).value[3] = forearmR;
-                }
-            }
-        }
-
-        if (LELB >= 0 && LWRI >= 0 && lelb_ref >= 0 && lwri_ref >= 0) {
-            double init_forearm = (init[LWRI] - init[LELB]).norm();
-            double ref_forearm = (ref_markers[lwri_ref] - ref_markers[lelb_ref]).norm();
-            forearmL = init_forearm / ref_forearm;
-
-            for (const char* bone : {"ForeArmL", "HandL"}) {
-                auto* bn = mCharacter->getSkeleton()->getBodyNode(bone);
-                if (bn) {
-                    int idx = bn->getIndexInSkeleton();
-                    std::get<1>(mSkelInfos[idx]).value[3] = forearmL;
-                }
-            }
-        }
+        double torso = 1.0;
 
         // Torso/Spine/Neck/Shoulder: use shoulder width ratio as proxy
         if (RSHO >= 0 && LSHO >= 0 && rsho_ref >= 0 && lsho_ref >= 0) {
@@ -501,8 +457,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
             }
         }
 
-        LOG_INFO("[Stage 2b] Upper body scales: ArmR=" << armR << " ArmL=" << armL
-                 << " ForeArmR=" << forearmR << " ForeArmL=" << forearmL << " Torso=" << torso);
+        LOG_INFO("[Stage 2c] Upper body (trunk) scale: Torso=" << torso);
     }
 
     // ============ STAGE 3: Apply All Scales ============
@@ -527,7 +482,11 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
 
     // Print summary
     LOG_INFO("[C3D_Reader] Multi-stage skeleton fitting complete. Final scales:");
-    for (const auto& boneName : mFittingConfig.optimizationTargets) {
+    // Combine SVD and Ceres targets for summary
+    std::vector<std::string> allTargets;
+    allTargets.insert(allTargets.end(), mFittingConfig.targetSvd.begin(), mFittingConfig.targetSvd.end());
+    allTargets.insert(allTargets.end(), mFittingConfig.targetCeres.begin(), mFittingConfig.targetCeres.end());
+    for (const auto& boneName : allTargets) {
         BodyNode* bn = mCharacter->getSkeleton()->getBodyNode(boneName);
         if (bn) {
             int idx = bn->getIndexInSkeleton();
@@ -931,6 +890,9 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
     return out;
 }
 
+// Note: optimizeBoneScaleCeres has been moved to CeresOptimizer.cpp
+// It is only available when USE_CERES is defined
+
 // ============================================================================
 // SECTION 8: buildFramePose - Build skeleton pose for one frame
 // ============================================================================
@@ -944,9 +906,10 @@ Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx)
     pos.setZero();
     mCharacter->getSkeleton()->setPositions(pos);
 
-    // Process bones in config order (pelvis first, then children)
+    // Process SVD-fitted bones (pelvis first, then children)
     // This ensures parent transforms are set before computing child joint positions
-    for (const auto& boneName : mFittingConfig.optimizationTargets) {
+    // Note: Ceres-fitted bones (arms) are handled in updateUpperBodyFromMarkers
+    for (const auto& boneName : mFittingConfig.targetSvd) {
 
         // Check if we have transforms for this bone
         auto it = mBoneR_frames.find(boneName);
@@ -1059,12 +1022,12 @@ void C3D_Reader::updateUpperBodyFromMarkers(
     auto skel = mCharacter->getSkeleton();
 
     // Marker indices from config
-    int RSHO = mFittingConfig.getDataIndexForMarker("RSHO");
+    int RSHO = mFittingConfig.getDataIndexForMarker("RSHO_shoul");
     int ROFF = mFittingConfig.getDataIndexForMarker("ROFF");
-    int RELB = mFittingConfig.getDataIndexForMarker("RELB");
+    int RELB = mFittingConfig.getDataIndexForMarker("RELB_arm");
     int RWRI = mFittingConfig.getDataIndexForMarker("RWRI");
-    int LSHO = mFittingConfig.getDataIndexForMarker("LSHO");
-    int LELB = mFittingConfig.getDataIndexForMarker("LELB");
+    int LSHO = mFittingConfig.getDataIndexForMarker("LSHO_shoul");
+    int LELB = mFittingConfig.getDataIndexForMarker("LELB_arm");
     int LWRI = mFittingConfig.getDataIndexForMarker("LWRI");
 
     if (RSHO < 0 || LSHO < 0) {
@@ -1131,212 +1094,141 @@ void C3D_Reader::updateUpperBodyFromMarkers(
         }
     }
 
-    // ========== Arm rotation (FreeJoint) ==========
-    // Right arm: RSHO → RELB → RWRI triangle
-    if (RELB >= 0 && RWRI >= 0) {
-        auto* armBn = skel->getBodyNode("ArmR");
-        if (armBn) {
-            auto* joint = armBn->getParentJoint();
-            if (joint && joint->getNumDofs() == 6) {
-                // FreeJoint - compute full transform
-                Eigen::Matrix3d origin_arm = getRotationMatrixFromPoints(refMarkers[RSHO], refMarkers[RELB], refMarkers[RWRI]);
-                Eigen::Matrix3d current_arm = getRotationMatrixFromPoints(markers[RSHO], markers[RELB], markers[RWRI]);
-                Eigen::Matrix3d T = current_arm * origin_arm.transpose();
-
-                Eigen::Isometry3d armT = Eigen::Isometry3d::Identity();
-                armT.linear() = T;
-                // Translation computed from parent chain (zero here since we only care about rotation)
-
-                int jn_idx = joint->getIndexInSkeleton(0);
-                Eigen::VectorXd jointPos = FreeJoint::convertToPositions(armT);
-                pos.segment(jn_idx, 6) = jointPos;
-            }
-        }
-
-        // ForeArm: elbow angle from marker triangle
-        auto* forearmBn = skel->getBodyNode("ForeArmR");
-        if (forearmBn) {
-            auto* joint = forearmBn->getParentJoint();
-            if (joint && joint->getNumDofs() == 6) {
-                // Compute elbow bend angle
-                Eigen::Vector3d v1 = markers[RSHO] - markers[RELB];
-                Eigen::Vector3d v2 = markers[RWRI] - markers[RELB];
-                double angle = std::abs(std::atan2(v1.cross(v2).norm(), v1.dot(v2)));
-                if (angle > M_PI * 0.5) angle = M_PI - angle;
-
-                Eigen::Isometry3d forearmT = Eigen::Isometry3d::Identity();
-                forearmT.linear() = Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitX()).toRotationMatrix();
-
-                int jn_idx = joint->getIndexInSkeleton(0);
-                Eigen::VectorXd jointPos = FreeJoint::convertToPositions(forearmT);
-                pos.segment(jn_idx, 6) = jointPos;
-            }
-        }
-    }
-
-    // Left arm: LSHO → LELB → LWRI triangle
-    if (LELB >= 0 && LWRI >= 0) {
-        auto* armBn = skel->getBodyNode("ArmL");
-        if (armBn) {
-            auto* joint = armBn->getParentJoint();
-            if (joint && joint->getNumDofs() == 6) {
-                Eigen::Matrix3d origin_arm = getRotationMatrixFromPoints(refMarkers[LSHO], refMarkers[LELB], refMarkers[LWRI]);
-                Eigen::Matrix3d current_arm = getRotationMatrixFromPoints(markers[LSHO], markers[LELB], markers[LWRI]);
-                Eigen::Matrix3d T = current_arm * origin_arm.transpose();
-
-                Eigen::Isometry3d armT = Eigen::Isometry3d::Identity();
-                armT.linear() = T;
-
-                int jn_idx = joint->getIndexInSkeleton(0);
-                Eigen::VectorXd jointPos = FreeJoint::convertToPositions(armT);
-                pos.segment(jn_idx, 6) = jointPos;
-            }
-        }
-
-        // ForeArm left
-        auto* forearmBn = skel->getBodyNode("ForeArmL");
-        if (forearmBn) {
-            auto* joint = forearmBn->getParentJoint();
-            if (joint && joint->getNumDofs() == 6) {
-                Eigen::Vector3d v1 = markers[LSHO] - markers[LELB];
-                Eigen::Vector3d v2 = markers[LWRI] - markers[LELB];
-                double angle = std::abs(std::atan2(v1.cross(v2).norm(), v1.dot(v2)));
-                if (angle > M_PI * 0.5) angle = M_PI - angle;
-
-                Eigen::Isometry3d forearmT = Eigen::Isometry3d::Identity();
-                forearmT.linear() = Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitX()).toRotationMatrix();
-
-                int jn_idx = joint->getIndexInSkeleton(0);
-                Eigen::VectorXd jointPos = FreeJoint::convertToPositions(forearmT);
-                pos.segment(jn_idx, 6) = jointPos;
-            }
-        }
-    }
+#ifdef USE_CERES
+    // ========== Arm rotation from Ceres optimizer ==========
+    applyCeresArmRotations(mFittingConfig, mBoneR_frames, mBoneT_frames, fitFrameIdx, skel, pos);
+#endif
 }
 
 // ============================================================================
 // SECTION 9: buildFramePoseLegacy - Legacy IK method (kept for reference)
 // ============================================================================
 //
-// Eigen::VectorXd C3D_Reader::buildFramePoseLegacy(std::vector<Eigen::Vector3d>& _pos)
-// {
-//     int jn_idx = 0;
-//     int jn_dof = 0;
-//     Eigen::Matrix3d T = Eigen::Matrix3d::Identity();
-//
-//     Eigen::VectorXd pos = mCharacter->getSkeleton()->getPositions();
-//     pos.setZero();
-//     mCharacter->getSkeleton()->setPositions(pos);
-//
-//     // Pelvis
-//     jn_idx = mCharacter->getSkeleton()->getJoint("Pelvis")->getIndexInSkeleton(0);
-//     jn_dof = mCharacter->getSkeleton()->getJoint("Pelvis")->getNumDofs();
-//
-//     Eigen::Matrix3d origin_pelvis = getRotationMatrixFromPoints(mRefMarkers[10], mRefMarkers[11], mRefMarkers[12]);
-//     Eigen::Matrix3d current_pelvis = getRotationMatrixFromPoints(_pos[10], _pos[11], _pos[12]);
-//     Eigen::Isometry3d current_pelvis_T = Eigen::Isometry3d::Identity();
-//     current_pelvis_T.linear() = current_pelvis * origin_pelvis.transpose();
-//     current_pelvis_T.translation() = (_pos[10] + _pos[11] + _pos[12]) / 3.0 - (mRefMarkers[10] + mRefMarkers[11] + mRefMarkers[12]) / 3.0;
-//
-//     pos.segment(jn_idx, jn_dof) = FreeJoint::convertToPositions(current_pelvis_T);
-//     mCharacter->getSkeleton()->getJoint("Pelvis")->setPositions(FreeJoint::convertToPositions(current_pelvis_T));
-//
-//     // Right Leg - FemurR
-//     jn_idx = mCharacter->getSkeleton()->getJoint("FemurR")->getIndexInSkeleton(0);
-//     jn_dof = mCharacter->getSkeleton()->getJoint("FemurR")->getNumDofs();
-//     Eigen::Matrix3d origin_femurR = getRotationMatrixFromPoints(mMarkerSet[25].getGlobalPos(), mMarkerSet[13].getGlobalPos(), mMarkerSet[14].getGlobalPos());
-//     Eigen::Matrix3d current_femurR = getRotationMatrixFromPoints(mMarkerSet[25].getGlobalPos(), _pos[13], _pos[14]);
-//     Eigen::Isometry3d pT = mCharacter->getSkeleton()->getJoint("FemurR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("FemurR")->getTransformFromParentBodyNode();
-//     T = current_femurR * (origin_femurR.transpose());
-//     mCharacter->getSkeleton()->getJoint("FemurR")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//
-//     // TibiaR
-//     jn_idx = mCharacter->getSkeleton()->getJoint("TibiaR")->getIndexInSkeleton(0);
-//     jn_dof = mCharacter->getSkeleton()->getJoint("TibiaR")->getNumDofs();
-//     Eigen::Matrix3d origin_kneeR = getRotationMatrixFromPoints(mMarkerSet[14].getGlobalPos(), mMarkerSet[15].getGlobalPos(), mMarkerSet[16].getGlobalPos());
-//     Eigen::Matrix3d current_kneeR = getRotationMatrixFromPoints(_pos[14], _pos[15], _pos[16]);
-//     T = (current_kneeR * origin_kneeR.transpose());
-//     pT = mCharacter->getSkeleton()->getJoint("TibiaR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TibiaR")->getTransformFromParentBodyNode();
-//     Eigen::VectorXd kneeR_angles = pT.linear().transpose() * BallJoint::convertToPositions(T);
-//     mCharacter->getSkeleton()->getJoint("TibiaR")->setPosition(0, kneeR_angles[0]);
-//
-//     // TalusR
-//     jn_idx = mCharacter->getSkeleton()->getJoint("TalusR")->getIndexInSkeleton(0);
-//     jn_dof = mCharacter->getSkeleton()->getJoint("TalusR")->getNumDofs();
-//     Eigen::Matrix3d origin_talusR = getRotationMatrixFromPoints(mMarkerSet[16].getGlobalPos(), mMarkerSet[17].getGlobalPos(), mMarkerSet[18].getGlobalPos());
-//     Eigen::Matrix3d current_talusR = getRotationMatrixFromPoints(_pos[16], _pos[17], _pos[18]);
-//     T = (current_talusR * origin_talusR.transpose());
-//     pT = mCharacter->getSkeleton()->getJoint("TalusR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TalusR")->getTransformFromParentBodyNode();
-//     mCharacter->getSkeleton()->getJoint("TalusR")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//
-//     // Left Leg - FemurL
-//     jn_idx = mCharacter->getSkeleton()->getJoint("FemurL")->getIndexInSkeleton(0);
-//     jn_dof = mCharacter->getSkeleton()->getJoint("FemurL")->getNumDofs();
-//     Eigen::Matrix3d origin_femurL = getRotationMatrixFromPoints(mMarkerSet[26].getGlobalPos(), mMarkerSet[19].getGlobalPos(), mMarkerSet[20].getGlobalPos());
-//     Eigen::Matrix3d current_femurL = getRotationMatrixFromPoints(mMarkerSet[26].getGlobalPos(), _pos[19], _pos[20]);
-//     T = current_femurL * origin_femurL.transpose();
-//     pT = mCharacter->getSkeleton()->getJoint("FemurL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("FemurL")->getTransformFromParentBodyNode();
-//     mCharacter->getSkeleton()->getJoint("FemurL")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//
-//     // TibiaL
-//     jn_idx = mCharacter->getSkeleton()->getJoint("TibiaL")->getIndexInSkeleton(0);
-//     jn_dof = mCharacter->getSkeleton()->getJoint("TibiaL")->getNumDofs();
-//     Eigen::Matrix3d origin_kneeL = getRotationMatrixFromPoints(mMarkerSet[20].getGlobalPos(), mMarkerSet[21].getGlobalPos(), mMarkerSet[22].getGlobalPos());
-//     Eigen::Matrix3d current_kneeL = getRotationMatrixFromPoints(_pos[20], _pos[21], _pos[22]);
-//     T = current_kneeL * origin_kneeL.transpose();
-//     pT = mCharacter->getSkeleton()->getJoint("TibiaL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TibiaL")->getTransformFromParentBodyNode();
-//     Eigen::VectorXd kneeL_angles = pT.linear().transpose() * BallJoint::convertToPositions(T);
-//     mCharacter->getSkeleton()->getJoint("TibiaL")->setPosition(0, kneeL_angles[0]);
-//
-//     // TalusL
-//     jn_idx = mCharacter->getSkeleton()->getJoint("TalusL")->getIndexInSkeleton(0);
-//     jn_dof = mCharacter->getSkeleton()->getJoint("TalusL")->getNumDofs();
-//     Eigen::Matrix3d origin_talusL = getRotationMatrixFromPoints(mMarkerSet[22].getGlobalPos(), mMarkerSet[23].getGlobalPos(), mMarkerSet[24].getGlobalPos());
-//     Eigen::Matrix3d current_talusL = getRotationMatrixFromPoints(_pos[22], _pos[23], _pos[24]);
-//     T = current_talusL * origin_talusL.transpose();
-//     pT = mCharacter->getSkeleton()->getJoint("TalusL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TalusL")->getTransformFromParentBodyNode();
-//     mCharacter->getSkeleton()->getJoint("TalusL")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//
-//     // Spine and Torso
-//     Eigen::Matrix3d origin_torso = getRotationMatrixFromPoints(mMarkerSet[3].getGlobalPos(), mMarkerSet[4].getGlobalPos(), mMarkerSet[7].getGlobalPos());
-//     Eigen::Matrix3d current_torso = getRotationMatrixFromPoints(_pos[3], _pos[4], _pos[7]);
-//     T = current_torso * origin_torso.transpose();
-//     pT = mCharacter->getSkeleton()->getJoint("Torso")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("Torso")->getTransformFromParentBodyNode();
-//     Eigen::Quaterniond tmp_T = Eigen::Quaterniond(T).slerp(0.5, Eigen::Quaterniond::Identity());
-//     T = tmp_T.toRotationMatrix();
-//     mCharacter->getSkeleton()->getJoint("Spine")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//     mCharacter->getSkeleton()->getJoint("Torso")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//
-//     // Arms - ArmR
-//     Eigen::Vector3d v1 = _pos[3] - _pos[5];
-//     Eigen::Vector3d v2 = _pos[6] - _pos[5];
-//     double angle = abs(atan2(v1.cross(v2).norm(), v1.dot(v2)));
-//     if (angle > M_PI * 0.5) angle = M_PI - angle;
-//     jn_idx = mCharacter->getSkeleton()->getJoint("ForeArmR")->getIndexInSkeleton(0);
-//     pos[jn_idx] = angle;
-//     mCharacter->getSkeleton()->getJoint("ForeArmR")->setPosition(0, angle);
-//     Eigen::Matrix3d origin_armR = getRotationMatrixFromPoints(mMarkerSet[3].getGlobalPos(), mMarkerSet[5].getGlobalPos(), mMarkerSet[6].getGlobalPos());
-//     Eigen::Matrix3d current_armR = getRotationMatrixFromPoints(mMarkerSet[3].getGlobalPos(), _pos[5], _pos[6]);
-//     T = current_armR * origin_armR.transpose();
-//     pT = mCharacter->getSkeleton()->getJoint("ArmR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("ArmR")->getTransformFromParentBodyNode();
-//     mCharacter->getSkeleton()->getJoint("ArmR")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//
-//     // ArmL
-//     v1 = _pos[8] - _pos[7];
-//     v2 = _pos[8] - _pos[9];
-//     angle = abs(atan2(v1.cross(v2).norm(), v1.dot(v2)));
-//     if (angle > M_PI * 0.5) angle = M_PI - angle;
-//     jn_idx = mCharacter->getSkeleton()->getJoint("ForeArmL")->getIndexInSkeleton(0);
-//     pos[jn_idx] = angle;
-//     mCharacter->getSkeleton()->getJoint("ForeArmL")->setPosition(0, angle);
-//     Eigen::Matrix3d origin_armL = getRotationMatrixFromPoints(mMarkerSet[7].getGlobalPos(), mMarkerSet[8].getGlobalPos(), mMarkerSet[9].getGlobalPos());
-//     Eigen::Matrix3d current_armL = getRotationMatrixFromPoints(mMarkerSet[7].getGlobalPos(), _pos[8], _pos[9]);
-//     T = current_armL * origin_armL.transpose();
-//     pT = mCharacter->getSkeleton()->getJoint("ArmL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("ArmL")->getTransformFromParentBodyNode();
-//     mCharacter->getSkeleton()->getJoint("ArmL")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
-//
-//     return mCharacter->getSkeleton()->getPositions();
-// }
+Eigen::VectorXd C3D_Reader::buildFramePoseLegacy(std::vector<Eigen::Vector3d>& _pos)
+{
+    int jn_idx = 0;
+    int jn_dof = 0;
+    Eigen::Matrix3d T = Eigen::Matrix3d::Identity();
+
+    // Build reference markers from marker set (T-pose)
+    std::vector<Eigen::Vector3d> mRefMarkers;
+    for (const auto& m : mMarkerSet) {
+        mRefMarkers.push_back(m.getGlobalPos());
+    }
+
+    Eigen::VectorXd pos = mCharacter->getSkeleton()->getPositions();
+    pos.setZero();
+    mCharacter->getSkeleton()->setPositions(pos);
+
+    // Pelvis
+    jn_idx = mCharacter->getSkeleton()->getJoint("Pelvis")->getIndexInSkeleton(0);
+    jn_dof = mCharacter->getSkeleton()->getJoint("Pelvis")->getNumDofs();
+
+    Eigen::Matrix3d origin_pelvis = getRotationMatrixFromPoints(mRefMarkers[10], mRefMarkers[11], mRefMarkers[12]);
+    Eigen::Matrix3d current_pelvis = getRotationMatrixFromPoints(_pos[10], _pos[11], _pos[12]);
+    Eigen::Isometry3d current_pelvis_T = Eigen::Isometry3d::Identity();
+    current_pelvis_T.linear() = current_pelvis * origin_pelvis.transpose();
+    current_pelvis_T.translation() = (_pos[10] + _pos[11] + _pos[12]) / 3.0 - (mRefMarkers[10] + mRefMarkers[11] + mRefMarkers[12]) / 3.0;
+
+    pos.segment(jn_idx, jn_dof) = FreeJoint::convertToPositions(current_pelvis_T);
+    mCharacter->getSkeleton()->getJoint("Pelvis")->setPositions(FreeJoint::convertToPositions(current_pelvis_T));
+
+    // Right Leg - FemurR
+    jn_idx = mCharacter->getSkeleton()->getJoint("FemurR")->getIndexInSkeleton(0);
+    jn_dof = mCharacter->getSkeleton()->getJoint("FemurR")->getNumDofs();
+    Eigen::Matrix3d origin_femurR = getRotationMatrixFromPoints(mMarkerSet[25].getGlobalPos(), mMarkerSet[13].getGlobalPos(), mMarkerSet[14].getGlobalPos());
+    Eigen::Matrix3d current_femurR = getRotationMatrixFromPoints(mMarkerSet[25].getGlobalPos(), _pos[13], _pos[14]);
+    Eigen::Isometry3d pT = mCharacter->getSkeleton()->getJoint("FemurR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("FemurR")->getTransformFromParentBodyNode();
+    T = current_femurR * (origin_femurR.transpose());
+    mCharacter->getSkeleton()->getJoint("FemurR")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+
+    // TibiaR
+    jn_idx = mCharacter->getSkeleton()->getJoint("TibiaR")->getIndexInSkeleton(0);
+    jn_dof = mCharacter->getSkeleton()->getJoint("TibiaR")->getNumDofs();
+    Eigen::Matrix3d origin_kneeR = getRotationMatrixFromPoints(mMarkerSet[14].getGlobalPos(), mMarkerSet[15].getGlobalPos(), mMarkerSet[16].getGlobalPos());
+    Eigen::Matrix3d current_kneeR = getRotationMatrixFromPoints(_pos[14], _pos[15], _pos[16]);
+    T = (current_kneeR * origin_kneeR.transpose());
+    pT = mCharacter->getSkeleton()->getJoint("TibiaR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TibiaR")->getTransformFromParentBodyNode();
+    Eigen::VectorXd kneeR_angles = pT.linear().transpose() * BallJoint::convertToPositions(T);
+    mCharacter->getSkeleton()->getJoint("TibiaR")->setPosition(0, kneeR_angles[0]);
+
+    // TalusR
+    jn_idx = mCharacter->getSkeleton()->getJoint("TalusR")->getIndexInSkeleton(0);
+    jn_dof = mCharacter->getSkeleton()->getJoint("TalusR")->getNumDofs();
+    Eigen::Matrix3d origin_talusR = getRotationMatrixFromPoints(mMarkerSet[16].getGlobalPos(), mMarkerSet[17].getGlobalPos(), mMarkerSet[18].getGlobalPos());
+    Eigen::Matrix3d current_talusR = getRotationMatrixFromPoints(_pos[16], _pos[17], _pos[18]);
+    T = (current_talusR * origin_talusR.transpose());
+    pT = mCharacter->getSkeleton()->getJoint("TalusR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TalusR")->getTransformFromParentBodyNode();
+    mCharacter->getSkeleton()->getJoint("TalusR")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+
+    // Left Leg - FemurL
+    jn_idx = mCharacter->getSkeleton()->getJoint("FemurL")->getIndexInSkeleton(0);
+    jn_dof = mCharacter->getSkeleton()->getJoint("FemurL")->getNumDofs();
+    Eigen::Matrix3d origin_femurL = getRotationMatrixFromPoints(mMarkerSet[26].getGlobalPos(), mMarkerSet[19].getGlobalPos(), mMarkerSet[20].getGlobalPos());
+    Eigen::Matrix3d current_femurL = getRotationMatrixFromPoints(mMarkerSet[26].getGlobalPos(), _pos[19], _pos[20]);
+    T = current_femurL * origin_femurL.transpose();
+    pT = mCharacter->getSkeleton()->getJoint("FemurL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("FemurL")->getTransformFromParentBodyNode();
+    mCharacter->getSkeleton()->getJoint("FemurL")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+
+    // TibiaL
+    jn_idx = mCharacter->getSkeleton()->getJoint("TibiaL")->getIndexInSkeleton(0);
+    jn_dof = mCharacter->getSkeleton()->getJoint("TibiaL")->getNumDofs();
+    Eigen::Matrix3d origin_kneeL = getRotationMatrixFromPoints(mMarkerSet[20].getGlobalPos(), mMarkerSet[21].getGlobalPos(), mMarkerSet[22].getGlobalPos());
+    Eigen::Matrix3d current_kneeL = getRotationMatrixFromPoints(_pos[20], _pos[21], _pos[22]);
+    T = current_kneeL * origin_kneeL.transpose();
+    pT = mCharacter->getSkeleton()->getJoint("TibiaL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TibiaL")->getTransformFromParentBodyNode();
+    Eigen::VectorXd kneeL_angles = pT.linear().transpose() * BallJoint::convertToPositions(T);
+    mCharacter->getSkeleton()->getJoint("TibiaL")->setPosition(0, kneeL_angles[0]);
+
+    // TalusL
+    jn_idx = mCharacter->getSkeleton()->getJoint("TalusL")->getIndexInSkeleton(0);
+    jn_dof = mCharacter->getSkeleton()->getJoint("TalusL")->getNumDofs();
+    Eigen::Matrix3d origin_talusL = getRotationMatrixFromPoints(mMarkerSet[22].getGlobalPos(), mMarkerSet[23].getGlobalPos(), mMarkerSet[24].getGlobalPos());
+    Eigen::Matrix3d current_talusL = getRotationMatrixFromPoints(_pos[22], _pos[23], _pos[24]);
+    T = current_talusL * origin_talusL.transpose();
+    pT = mCharacter->getSkeleton()->getJoint("TalusL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("TalusL")->getTransformFromParentBodyNode();
+    mCharacter->getSkeleton()->getJoint("TalusL")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+
+    // Spine and Torso
+    Eigen::Matrix3d origin_torso = getRotationMatrixFromPoints(mMarkerSet[3].getGlobalPos(), mMarkerSet[4].getGlobalPos(), mMarkerSet[7].getGlobalPos());
+    Eigen::Matrix3d current_torso = getRotationMatrixFromPoints(_pos[3], _pos[4], _pos[7]);
+    T = current_torso * origin_torso.transpose();
+    pT = mCharacter->getSkeleton()->getJoint("Torso")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("Torso")->getTransformFromParentBodyNode();
+    Eigen::Quaterniond tmp_T = Eigen::Quaterniond(T).slerp(0.5, Eigen::Quaterniond::Identity());
+    T = tmp_T.toRotationMatrix();
+    mCharacter->getSkeleton()->getJoint("Spine")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+    mCharacter->getSkeleton()->getJoint("Torso")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+
+    // Arms - ArmR
+    Eigen::Vector3d v1 = _pos[3] - _pos[5];
+    Eigen::Vector3d v2 = _pos[6] - _pos[5];
+    double angle = abs(atan2(v1.cross(v2).norm(), v1.dot(v2)));
+    if (angle > M_PI * 0.5) angle = M_PI - angle;
+    jn_idx = mCharacter->getSkeleton()->getJoint("ForeArmR")->getIndexInSkeleton(0);
+    pos[jn_idx] = angle;
+    mCharacter->getSkeleton()->getJoint("ForeArmR")->setPosition(0, angle);
+    Eigen::Matrix3d origin_armR = getRotationMatrixFromPoints(mMarkerSet[3].getGlobalPos(), mMarkerSet[5].getGlobalPos(), mMarkerSet[6].getGlobalPos());
+    Eigen::Matrix3d current_armR = getRotationMatrixFromPoints(mMarkerSet[3].getGlobalPos(), _pos[5], _pos[6]);
+    T = current_armR * origin_armR.transpose();
+    pT = mCharacter->getSkeleton()->getJoint("ArmR")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("ArmR")->getTransformFromParentBodyNode();
+    mCharacter->getSkeleton()->getJoint("ArmR")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+
+    // ArmL
+    v1 = _pos[8] - _pos[7];
+    v2 = _pos[8] - _pos[9];
+    angle = abs(atan2(v1.cross(v2).norm(), v1.dot(v2)));
+    if (angle > M_PI * 0.5) angle = M_PI - angle;
+    jn_idx = mCharacter->getSkeleton()->getJoint("ForeArmL")->getIndexInSkeleton(0);
+    pos[jn_idx] = angle;
+    mCharacter->getSkeleton()->getJoint("ForeArmL")->setPosition(0, angle);
+    Eigen::Matrix3d origin_armL = getRotationMatrixFromPoints(mMarkerSet[7].getGlobalPos(), mMarkerSet[8].getGlobalPos(), mMarkerSet[9].getGlobalPos());
+    Eigen::Matrix3d current_armL = getRotationMatrixFromPoints(mMarkerSet[7].getGlobalPos(), _pos[8], _pos[9]);
+    T = current_armL * origin_armL.transpose();
+    pT = mCharacter->getSkeleton()->getJoint("ArmL")->getParentBodyNode()->getTransform() * mCharacter->getSkeleton()->getJoint("ArmL")->getTransformFromParentBodyNode();
+    mCharacter->getSkeleton()->getJoint("ArmL")->setPositions(pT.linear().transpose() * BallJoint::convertToPositions(T));
+
+    return mCharacter->getSkeleton()->getPositions();
+}
 
 void C3D_Reader::fitSkeletonToMarker(std::vector<Eigen::Vector3d> init_marker, double torsionL, double torsionR)
 {

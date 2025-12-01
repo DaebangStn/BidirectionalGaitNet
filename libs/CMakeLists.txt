@@ -1,6 +1,16 @@
 find_package(glfw3 REQUIRED)
 find_package(glad REQUIRED)
 
+# Conditionally build Ceres Solver (gradient-based optimization for bone fitting)
+if(USE_CERES)
+  set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(MINIGLOG ON CACHE BOOL "" FORCE)  # Use bundled miniglog instead of glog
+  add_subdirectory(ceres-solver)
+endif()
+
 # Build imgui / implot library
 add_definitions(-DIMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 include_directories(imgui)
