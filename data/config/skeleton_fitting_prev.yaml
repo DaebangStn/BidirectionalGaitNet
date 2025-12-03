@@ -1,4 +1,14 @@
 # Skeleton Fitting Optimization Configuration
+# Used by C3D_Reader::fitSkeletonMultiFrame()
+#
+# Marker Mapping Format:
+# ======================
+# marker_mappings: flat list mapping skeleton marker name → C3D data
+#   - {name: 'RASI', data_idx: 10}        # Direct index
+#   - {name: 'RASI', data_label: 'R.ASIS'} # Resolved from C3D labels
+#
+# The bone association is determined from marker XML (default.xml), not here.
+# This just maps skeleton marker names to C3D data indices/labels.
 
 skeleton_fitting:
   # Frame range for optimization
@@ -55,12 +65,12 @@ skeleton_fitting:
     - {name: 'FHEA', data_label: 'Front.Head'}
     - {name: 'RHEA', data_label: 'Rear.Head'}
     
-    - {name: 'RSHO', data_label: 'R.Shoulder'}
+    - {name: 'RSHO_shoul', data_label: 'R.Shoulder'}
     - {name: 'RSHO_arm', data_label: 'R.Shoulder'}
     - {name: 'RELB_arm', data_label: 'R.Elbow'}
     - {name: 'RELB_farm', data_label: 'R.Elbow'}
     - {name: 'RWRI', data_label: 'R.Wrist'}
-    - {name: 'LSHO', data_label: 'L.Shoulder'}
+    - {name: 'LSHO_shoul', data_label: 'L.Shoulder'}
     - {name: 'LSHO_arm', data_label: 'L.Shoulder'}
     - {name: 'LELB_arm', data_label: 'L.Elbow'}
     - {name: 'LELB_farm', data_label: 'L.Elbow'}
@@ -69,11 +79,12 @@ skeleton_fitting:
     - {name: 'ROFF', data_label: 'R.Offset'}
 
   optimization:
-    max_iterations: 100
+    max_iterations: 20
     convergence_threshold: 1.0e-6
     plot_convergence: true
     lambda_rot: 10.0           # Rotation regularization weight for Ceres optimizer
-    interpolate_ratio: 0.5
+    interpolate_ratio: 0.5     # Interpolation ratio for dependent bones (Spine, Neck)
+    skel_ratio_bound: 1.5      # Max scale ratio constraint: max(s)/min(s) <= 1.5
 
     # SVD-based optimizer targets (requires 3+ markers)
     target_svd:
@@ -84,7 +95,6 @@ skeleton_fitting:
       - FemurL
       - TibiaL
       - TalusL
-      - Torso
       - Head
 
     # Ceres-based optimizer targets (handles 2+ markers with regularization)

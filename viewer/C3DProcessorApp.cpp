@@ -36,7 +36,8 @@ static void drawOutlinedText(ImDrawList* drawList, ImFont* font, float fontSize,
 // Constructor / Destructor
 // =============================================================================
 
-C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath)
+C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath,
+                                 const std::string& configPath)
     : mWindow(nullptr)
     , mWidth(1280)
     , mHeight(720)
@@ -52,11 +53,12 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     , mMouseY(0)
     , mSkeletonPath(skeletonPath)
     , mMarkerConfigPath(markerPath)
+    , mFittingConfigPath(configPath)
     , mC3DReader(nullptr)
     , mMotion(nullptr)
     , mRenderC3DMarkers(true)
     , mRenderExpectedMarkers(true)
-    , mRenderMarkerIndices(true)
+    , mRenderMarkerIndices(false)
     , mViewerTime(0.0)
     , mViewerPhase(0.0)
     , mViewerPlaybackSpeed(1.0f)
@@ -134,6 +136,7 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
 
     // Create C3D Reader
     mC3DReader = new C3D_Reader(mMarkerConfigPath, mMotionCharacter.get());
+    mC3DReader->setFittingConfigPath(mFittingConfigPath);
 
     // Scan for C3D files and autoload first one
     scanC3DFiles();
@@ -752,13 +755,22 @@ void C3DProcessorApp::drawPlaybackSection()
         }
 
         // Playback speed
-        ImGui::SliderFloat("Speed", &mViewerPlaybackSpeed, 0.1f, 3.0f, "%.1fx");
+        if (ImGui::Button("0.3")) mViewerPlaybackSpeed = 0.3;
+        ImGui::SameLine();
+        if (ImGui::Button("0.5")) mViewerPlaybackSpeed = 0.5;
+        ImGui::SameLine();
+        if (ImGui::Button("1.0")) mViewerPlaybackSpeed = 1.0;
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(150);
+        ImGui::SliderFloat("Speed", &mViewerPlaybackSpeed, 0.1f, 1.5f, "%.2fx");
 
         // Frame navigation
         if (mMotion) {
             int maxFrame = std::max(0, mMotion->getNumFrames() - 1);
             int currentFrame = mMotionState.lastFrameIdx;
 
+            ImGui::SetNextItemWidth(150);
             if (ImGui::SliderInt("Frame", &currentFrame, 0, maxFrame)) {
                 mMotionState.navigationMode = C3D_MANUAL_FRAME;
                 mMotionState.manualFrameIndex = currentFrame;
@@ -1462,7 +1474,6 @@ void C3DProcessorApp::updateViewerTime(double dt)
 
 void C3DProcessorApp::computeViewerMetric()
 {
-    // Compute marker error for markers specified in skeleton_fitting.yaml
     if (!mMotion || mMotion->getSourceType() != "c3d" || !mMotionCharacter || !mC3DReader) return;
 
     const auto& skelMarkers = mMotionCharacter->getMarkers();
@@ -1660,6 +1671,9 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
             case GLFW_KEY_O:
                 mRenderMode = static_cast<RenderMode>((static_cast<int>(mRenderMode) + 1) % 3);
                 break;
+            case GLFW_KEY_V:
+                hideVirtualMarkers();
+                break;
             case GLFW_KEY_ESCAPE:
                 glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
                 break;
@@ -1711,4 +1725,24 @@ void C3DProcessorApp::reset()
             skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
         }
     }
+}
+
+void C3DProcessorApp::hideVirtualMarkers()
+{
+    if (!mMotion || mMotion->getSourceType() != "c3d") return;
+
+    C3D* c3dMotion = static_cast<C3D*>(mMotion);
+    const auto& labels = c3dMotion->getLabels();
+
+    int hiddenCount = 0;
+    for (size_t i = 0; i < labels.size(); ++i) {
+        const std::string& label = labels[i];
+        // Check if label starts with "V_"
+        if (label.size() >= 2 && label[0] == 'V' && label[1] == '_') {
+            mHiddenC3DMarkers.insert(static_cast<int>(i));
+            hiddenCount++;
+        }
+    }
+
+    LOG_INFO("[C3DProcessor] Hidden " << hiddenCount << " virtual markers (V_*)");
 }

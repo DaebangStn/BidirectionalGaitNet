@@ -65,7 +65,8 @@ struct C3DViewerState
 class C3DProcessorApp
 {
 public:
-    C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath);
+    C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath,
+                    const std::string& configPath = "@data/config/skeleton_fitting.yaml");
     ~C3DProcessorApp();
 
     void startLoop();
@@ -97,6 +98,7 @@ private:
     ShapeRenderer mShapeRenderer;
     std::string mSkeletonPath;
     std::string mMarkerConfigPath;
+    std::string mFittingConfigPath;
 
     // C3D Processing
     C3D_Reader* mC3DReader;
@@ -232,6 +234,7 @@ private:
     void keyPress(int key, int scancode, int action, int mods);
     void alignCameraToPlane(int plane);
     void reset();
+    void hideVirtualMarkers();
 };
 
 #endif // C3D_PROCESSOR_APP_H

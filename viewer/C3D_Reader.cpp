@@ -198,8 +198,6 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
             config.maxIterations = sf["optimization"]["max_iterations"].as<int>(50);
             config.convergenceThreshold = sf["optimization"]["convergence_threshold"].as<double>(1e-6);
             config.plotConvergence = sf["optimization"]["plot_convergence"].as<bool>(true);
-            config.upperBody = sf["optimization"]["upper_body"].as<bool>(false);
-
             // SVD-based optimizer targets (3+ markers)
             if (sf["optimization"]["target_svd"]) {
                 for (const auto& t : sf["optimization"]["target_svd"]) {
@@ -208,6 +206,8 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
             }
 
             config.lambdaRot = sf["optimization"]["lambda_rot"].as<double>(10.0);
+            config.interpolateRatio = sf["optimization"]["interpolate_ratio"].as<double>(0.5);
+            config.skelRatioBound = sf["optimization"]["skel_ratio_bound"].as<double>(1.5);
 
             // Ceres-based optimizer targets (2+ markers with regularization)
             if (sf["optimization"]["target_ceres"]) {
@@ -240,10 +240,11 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
         LOG_INFO("  - maxIterations: " << config.maxIterations);
         LOG_INFO("  - convergenceThreshold: " << config.convergenceThreshold);
         LOG_INFO("  - plotConvergence: " << (config.plotConvergence ? "true" : "false"));
-        LOG_INFO("  - upperBody: " << (config.upperBody ? "true" : "false"));
         LOG_INFO("  - markerMappings: " << config.markerMappings.size() << " markers");
         LOG_INFO("  - targetSvd: " << config.targetSvd.size() << " bones");
         LOG_INFO("  - lambdaRot: " << config.lambdaRot);
+        LOG_INFO("  - interpolateRatio: " << config.interpolateRatio);
+        LOG_INFO("  - skelRatioBound: " << config.skelRatioBound);
         LOG_INFO("  - targetCeres: " << config.targetCeres.size() << " bones");
 
     } catch (const std::exception& e) {
@@ -262,7 +263,9 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
     LOG_VERBOSE("[C3D_Reader] loadC3D started for: " << path);
 
     // ========== 0. Load skeleton fitting config ==========
-    mFittingConfig = loadSkeletonFittingConfig("data/config/skeleton_fitting.yaml");
+    // Resolve URI scheme if present
+    std::string resolvedConfigPath = PMuscle::URIResolver::getInstance().resolve(mFittingConfigPath);
+    mFittingConfig = loadSkeletonFittingConfig(resolvedConfigPath);
 
     // ========== 1. Load C3D file ==========
     // C3D::load() parses the file and stores markers directly in c3dData->mMarkers
@@ -379,6 +382,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     // Clear previous fitting results
     mBoneR_frames.clear();
     mBoneT_frames.clear();
+    mBoneOrder.clear();
 
     // ============ STAGE 1: Compute Hip Joint Centers ============
     // Uses Harrington anthropometric regression based on ASIS/SACR markers
@@ -409,56 +413,27 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         }
 
         calibrateBone(boneName, it->second, mCurrentC3D->getAllMarkers());
+        mBoneOrder.push_back(boneName);
     }
 
 #ifdef USE_CERES
     // ============ STAGE 2b: Ceres-based bones (2+ markers with regularization) ============
     runCeresBoneFitting(mFittingConfig, boneToMarkers, mCurrentC3D->getAllMarkers(),
                         mCharacter, mSkelInfos, mBoneR_frames, mBoneT_frames);
+    for (const auto& boneName : mFittingConfig.targetCeres) {
+        mBoneOrder.push_back(boneName);
+    }
+#else
+    // ============ STAGE 2b Fallback: Marker-distance scaling for arms ============
+    scaleArmsFallback();
 #endif
 
-    // ============ STAGE 2c: Upper Body Scaling (Torso/Spine/Neck/Shoulder only) ============
-    // Arms/ForeArms are now handled by Ceres optimizer, only scale trunk/shoulder here
-    if (mFittingConfig.upperBody) {
-        // Get reference markers from marker set (T-pose)
-        std::vector<Eigen::Vector3d> ref_markers;
-        for (const auto& m : mMarkerSet) {
-            ref_markers.push_back(m.getGlobalPos());
-        }
+    // ============ STAGE 2b-2: Copy dependent scales ============
+    // Hand = ForeArm, Neck = Head (if Head in target_svd)
+    copyDependentScales();
 
-        // Get initial frame markers
-        const auto& init = mCurrentC3D->getMarkers(mFitFrameStart);
-
-        // Lookup marker indices (C3D data)
-        int RSHO = mFittingConfig.getDataIndexForMarker("RSHO");
-        int LSHO = mFittingConfig.getDataIndexForMarker("LSHO");
-
-        // Find skeleton marker indices for reference
-        int rsho_ref = -1, lsho_ref = -1;
-        for (size_t i = 0; i < mMarkerSet.size(); ++i) {
-            if (mMarkerSet[i].name == "RSHO") rsho_ref = i;
-            else if (mMarkerSet[i].name == "LSHO") lsho_ref = i;
-        }
-
-        double torso = 1.0;
-
-        // Torso/Spine/Neck/Shoulder: use shoulder width ratio as proxy
-        if (RSHO >= 0 && LSHO >= 0 && rsho_ref >= 0 && lsho_ref >= 0) {
-            double init_dist = (init[LSHO] - init[RSHO]).norm();
-            double ref_dist = (ref_markers[lsho_ref] - ref_markers[rsho_ref]).norm();
-            torso = init_dist / ref_dist;
-
-            for (const char* bone : {"Spine", "Torso", "Neck", "ShoulderR", "ShoulderL"}) {
-                auto* bn = mCharacter->getSkeleton()->getBodyNode(bone);
-                if (bn) {
-                    int idx = bn->getIndexInSkeleton();
-                    std::get<1>(mSkelInfos[idx]).value[3] = torso;
-                }
-            }
-        }
-
-        LOG_INFO("[Stage 2c] Upper body (trunk) scale: Torso=" << torso);
-    }
+    // ============ STAGE 2b-3: Interpolate dependent bone transforms ============
+    interpolateDependent();
 
     // ============ STAGE 3: Apply All Scales ============
     // LOG_INFO("[Stage 3] Applying scales to skeleton...");
@@ -642,6 +617,44 @@ void C3D_Reader::calibrateBone(
 //   Alternating optimization: fix S → solve R,t | fix R,t → solve S
 // ============================================================================
 
+// Apply scale ratio bound constraint using harmonic mean projection
+// Ensures max(S) / min(S) <= ratioBound
+// Uses simple (unweighted) harmonic mean with equal weights
+static Eigen::Vector3d applyScaleRatioBound(
+    const Eigen::Vector3d& u,      // Unconstrained scale from LS
+    double ratioBound)             // Max allowed ratio c
+{
+    const double eps = 1e-12;
+
+    // Ensure positive scales
+    Eigen::Vector3d uPos = u.cwiseMax(eps);
+
+    // Check if constraint already satisfied
+    double uMax = uPos.maxCoeff();
+    double uMin = uPos.minCoeff();
+    if (uMax / uMin <= ratioBound) {
+        return uPos;  // Already within bounds
+    }
+
+    // Compute simple harmonic mean: m = 3 / (1/u_x + 1/u_y + 1/u_z)
+    // Equal weights (w=1 for all axes)
+    double invSum = 1.0 / uPos(0) + 1.0 / uPos(1) + 1.0 / uPos(2);
+    double m = 3.0 / std::max(invSum, eps);
+
+    // Symmetric interval around m in ratio-space: [m/sqrt(c), m*sqrt(c)]
+    double sqrtC = std::sqrt(ratioBound);
+    double lo = m / sqrtC;
+    double hi = m * sqrtC;
+
+    // Clamp each axis to the interval
+    Eigen::Vector3d S;
+    for (int a = 0; a < 3; ++a) {
+        S(a) = std::clamp(uPos(a), lo, hi);
+    }
+
+    return S;
+}
+
 // Alternating optimization for anisotropic scale estimation
 // Accepts BodyNode, marker indices, and GLOBAL marker positions
 // Internally handles world-to-local transformation and returns GLOBAL transforms
@@ -817,6 +830,9 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
             S(a) = (den(a) < eps) ? 1.0 : num(a) / den(a);
         }
 
+        // Apply scale ratio bound constraint (unweighted harmonic mean)
+        S = applyScaleRatioBound(S, mFittingConfig.skelRatioBound);
+
         // =====================================================
         // Compute Scale-change norm (metric 2)
         // =====================================================
@@ -897,6 +913,33 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
 // SECTION 8: buildFramePose - Build skeleton pose for one frame
 // ============================================================================
 
+// Helper: Compute FreeJoint positions from global bodynode transform
+// Formula: joint_angle = parent_to_joint.inverse() * parent_bn_global.inverse() * child_global * child_to_joint
+// Returns joint positions (6 DOF) if successful, empty vector otherwise
+static Eigen::VectorXd computeJointPositions(
+    BodyNode* bn,
+    const Eigen::Isometry3d& bodynodeGlobalT)
+{
+    if (!bn) return Eigen::VectorXd();
+
+    auto* joint = bn->getParentJoint();
+    if (!joint || joint->getNumDofs() != 6) return Eigen::VectorXd();
+
+    Eigen::Isometry3d parentToJoint = joint->getTransformFromParentBodyNode();
+    Eigen::Isometry3d childToJoint = joint->getTransformFromChildBodyNode();
+
+    Eigen::Isometry3d parentBnGlobal = Eigen::Isometry3d::Identity();
+    auto* parentBn = bn->getParentBodyNode();
+    if (parentBn) {
+        parentBnGlobal = parentBn->getTransform();
+    }
+
+    Eigen::Isometry3d jointT = parentToJoint.inverse() * parentBnGlobal.inverse() *
+                               bodynodeGlobalT * childToJoint;
+
+    return FreeJoint::convertToPositions(jointT);
+}
+
 // Use optimizer's global R, t for all fitted bones
 // With SKEL_FREE_JOINTS, each bone is independent (6 DOF)
 Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx)
@@ -906,17 +949,23 @@ Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx)
     pos.setZero();
     mCharacter->getSkeleton()->setPositions(pos);
 
-    // Process SVD-fitted bones (pelvis first, then children)
-    // This ensures parent transforms are set before computing child joint positions
-    // Note: Ceres-fitted bones (arms) are handled in updateUpperBodyFromMarkers
-    for (const auto& boneName : mFittingConfig.targetSvd) {
+    // Print iteration order (only on first frame)
+    if (fitFrameIdx == 0) {
+        std::ostringstream oss;
+        oss << "[buildFramePose] mBoneOrder: ";
+        for (const auto& name : mBoneOrder) {
+            oss << name << " -> ";
+        }
+        LOG_INFO(oss.str());
+    }
+
+    // Process all fitted bones in mBoneOrder (preserves config order)
+    for (const auto& boneName : mBoneOrder) {
 
         // Check if we have transforms for this bone
         auto it = mBoneR_frames.find(boneName);
-        if (it == mBoneR_frames.end()) continue;
-
-        const auto& R_frames = it->second;
-        if (fitFrameIdx >= (int)R_frames.size()) continue;
+        if (it == mBoneR_frames.end() || it->second.empty()) continue;
+        if (fitFrameIdx >= (int)it->second.size()) continue;
 
         auto* bn = mCharacter->getSkeleton()->getBodyNode(boneName);
         if (!bn) {
@@ -924,69 +973,283 @@ Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx)
             continue;
         }
 
-        auto* joint = bn->getParentJoint();
-        if (!joint) {
-            LOG_WARN("[Fitting] Joint not found: " << boneName);
-            continue;
-        }
-
         // Get stored global transform (bodynode world position/orientation from fitting)
         Eigen::Isometry3d bodynodeGlobalT = Eigen::Isometry3d::Identity();
-        bodynodeGlobalT.linear() = R_frames[fitFrameIdx];
+        bodynodeGlobalT.linear() = it->second[fitFrameIdx];
         bodynodeGlobalT.translation() = mBoneT_frames.at(boneName)[fitFrameIdx];
 
-        Eigen::Isometry3d jointT;
-
-        // Formula:
-        // joint_global = parent_bn_global * parent_to_joint * joint_angle
-        // child_global * child_to_joint = joint_global
-        //
-        // Therefore:
-        // child_global * child_to_joint = parent_bn_global * parent_to_joint * joint_angle
-        // joint_angle = parent_to_joint.inverse() * parent_bn_global.inverse() * child_global * child_to_joint
-
-        Eigen::Isometry3d parentToJoint = joint->getTransformFromParentBodyNode();
-        Eigen::Isometry3d childToJoint = joint->getTransformFromChildBodyNode();
-
-        // Get parent bodynode global transform
-        Eigen::Isometry3d parentBnGlobal = Eigen::Isometry3d::Identity();
-        auto* parentBn = bn->getParentBodyNode();
-        if (parentBn) {
-            parentBnGlobal = parentBn->getTransform();
-        }
-
-        // Compute joint angle (local rotation/translation)
-        jointT = parentToJoint.inverse() * parentBnGlobal.inverse() * bodynodeGlobalT * childToJoint;
-
-        // Convert joint transform to FreeJoint positions and update skeleton
-        int jn_idx = joint->getIndexInSkeleton(0);
-        int jn_dof = joint->getNumDofs();
-        if (jn_idx >= 0 && jn_idx + jn_dof <= pos.size()) {
-            Eigen::VectorXd jointPos = FreeJoint::convertToPositions(jointT);
-            pos.segment(jn_idx, jn_dof) = jointPos;
-
-            // Update skeleton so next bone can get correct joint global position
+        // Compute joint positions from global transform
+        Eigen::VectorXd jointPos = computeJointPositions(bn, bodynodeGlobalT);
+        if (jointPos.size() > 0) {
+            int jn_idx = bn->getParentJoint()->getIndexInSkeleton(0);
+            pos.segment(jn_idx, jointPos.size()) = jointPos;
             mCharacter->getSkeleton()->setPositions(pos);
         }
     }
 
-    // ========== Upper body rotation from markers ==========
-    if (mFittingConfig.upperBody && mCurrentC3D) {
-        // Get current frame markers
-        const auto& markers = mCurrentC3D->getMarkers(mFitFrameStart + fitFrameIdx);
-
-        // Get reference markers from marker set (T-pose)
-        std::vector<Eigen::Vector3d> refMarkers;
-        for (const auto& m : mMarkerSet) {
-            refMarkers.push_back(m.getGlobalPos());
-        }
-
-        // Update upper body joint positions from markers
-        updateUpperBodyFromMarkers(fitFrameIdx, pos, markers, refMarkers);
-        mCharacter->getSkeleton()->setPositions(pos);
-    }
+    // Compute arm rotations from marker heuristics
+    computeArmRotations(fitFrameIdx, pos);
 
     return pos;
+}
+
+// ============================================================================
+// SECTION 8a: Arm Rotation from Marker Heuristics
+// ============================================================================
+
+void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
+{
+    if (!mCurrentC3D) return;
+
+    int frameIdx = mFitFrameStart + fitFrameIdx;
+    const auto& allMarkers = mCurrentC3D->getAllMarkers();
+    if (frameIdx >= (int)allMarkers.size()) return;
+
+    const auto& markers = allMarkers[frameIdx];
+
+    // Marker indices - separate elbow markers for upper arm and forearm
+    int RSHO_idx = mFittingConfig.getDataIndexForMarker("RSHO_arm");
+    int RELB_arm_idx = mFittingConfig.getDataIndexForMarker("RELB_arm");
+    int RELB_farm_idx = mFittingConfig.getDataIndexForMarker("RELB_farm");
+    int RWRI_idx = mFittingConfig.getDataIndexForMarker("RWRI");
+    int LSHO_idx = mFittingConfig.getDataIndexForMarker("LSHO_arm");
+    int LELB_arm_idx = mFittingConfig.getDataIndexForMarker("LELB_arm");
+    int LELB_farm_idx = mFittingConfig.getDataIndexForMarker("LELB_farm");
+    int LWRI_idx = mFittingConfig.getDataIndexForMarker("LWRI");
+
+    auto skel = mCharacter->getSkeleton();
+
+    // Helper: get marker local position on bone from mMarkerSet
+    auto getMarkerLocalPos = [&](const std::string& markerName) -> Eigen::Vector3d {
+        for (const auto& m : mMarkerSet) {
+            if (m.name == markerName && m.bn) {
+                auto* shape = m.bn->getShapeNodeWith<VisualAspect>(0);
+                if (shape) {
+                    auto* box = dynamic_cast<const BoxShape*>(shape->getShape().get());
+                    if (box) {
+                        Eigen::Vector3d size = box->getSize();
+                        return Eigen::Vector3d(
+                            std::abs(size[0]) * 0.5 * m.offset[0],
+                            std::abs(size[1]) * 0.5 * m.offset[1],
+                            std::abs(size[2]) * 0.5 * m.offset[2]);
+                    }
+                }
+            }
+        }
+        return Eigen::Vector3d::Zero();
+    };
+
+    // Process both arms
+    for (int side = 0; side < 2; ++side) {
+        bool isRight = (side == 0);
+
+        // Get marker indices for this arm
+        int sho_idx = isRight ? RSHO_idx : LSHO_idx;
+        int elb_arm_idx = isRight ? RELB_arm_idx : LELB_arm_idx;
+        int elb_farm_idx = isRight ? RELB_farm_idx : LELB_farm_idx;
+        int wri_idx = isRight ? RWRI_idx : LWRI_idx;
+
+        // Check valid markers
+        if (sho_idx < 0 || elb_arm_idx < 0 || elb_farm_idx < 0 || wri_idx < 0) continue;
+        if (sho_idx >= (int)markers.size() || elb_arm_idx >= (int)markers.size() ||
+            elb_farm_idx >= (int)markers.size() || wri_idx >= (int)markers.size()) continue;
+
+        // 1. Get marker positions
+        Eigen::Vector3d S = markers[sho_idx];
+        Eigen::Vector3d E_arm = markers[elb_arm_idx];
+        Eigen::Vector3d E_farm = markers[elb_farm_idx];
+        Eigen::Vector3d W = markers[wri_idx];
+
+        // 2. Compute segment directions
+        Eigen::Vector3d u = (E_arm - S).normalized();
+        Eigen::Vector3d l = (W - E_farm).normalized();
+
+        // 3. Compute bending plane normal n = normalize(cross(u,l))
+        Eigen::Vector3d n_raw = u.cross(l);
+        double n_norm = n_raw.norm();
+
+        // Handle degeneracy: if arm is nearly straight, use previous frame's normal
+        const double DEGENERACY_THRESHOLD = 0.1;
+        Eigen::Vector3d& prevNormal = isRight ? mPrevArmNormalR : mPrevArmNormalL;
+
+        Eigen::Vector3d n;
+        if (n_norm < DEGENERACY_THRESHOLD) {
+            n = prevNormal;
+        } else {
+            n = n_raw / n_norm;
+            prevNormal = n;
+        }
+
+        // 4. Build orthonormal frames for upper arm and forearm
+        Eigen::Vector3d ua_x = u;
+        Eigen::Vector3d ua_y = n;
+        Eigen::Vector3d ua_z = ua_x.cross(ua_y).normalized();
+        ua_y = ua_z.cross(ua_x).normalized();
+
+        Eigen::Matrix3d R_upper_world;
+        R_upper_world.col(0) = ua_x;
+        R_upper_world.col(1) = ua_y;
+        R_upper_world.col(2) = ua_z;
+
+        Eigen::Vector3d fa_x = l;
+        Eigen::Vector3d fa_y = n;
+        Eigen::Vector3d fa_z = fa_x.cross(fa_y).normalized();
+        fa_y = fa_z.cross(fa_x).normalized();
+
+        Eigen::Matrix3d R_lower_world;
+        R_lower_world.col(0) = fa_x;
+        R_lower_world.col(1) = fa_y;
+        R_lower_world.col(2) = fa_z;
+
+        // 5. Apply to FreeJoint positions
+        std::string upperBoneName = isRight ? "ArmR" : "ArmL";
+        std::string lowerBoneName = isRight ? "ForeArmR" : "ForeArmL";
+
+        // Upper arm: average translation from shoulder and elbow markers
+        auto* upperBn = skel->getBodyNode(upperBoneName);
+        if (upperBn) {
+            std::string shoName = isRight ? "RSHO_arm" : "LSHO_arm";
+            std::string elbName = isRight ? "RELB_arm" : "LELB_arm";
+
+            Eigen::Vector3d localSho = getMarkerLocalPos(shoName);
+            Eigen::Vector3d localElb = getMarkerLocalPos(elbName);
+
+            Eigen::Vector3d t_sho = S - R_upper_world * localSho;
+            Eigen::Vector3d t_elb = E_arm - R_upper_world * localElb;
+            Eigen::Vector3d t_upper = (t_sho + t_elb) * 0.5;
+
+            Eigen::Isometry3d bodynodeGlobalT = Eigen::Isometry3d::Identity();
+            bodynodeGlobalT.linear() = R_upper_world;
+            bodynodeGlobalT.translation() = t_upper;
+
+            Eigen::VectorXd jointPos = computeJointPositions(upperBn, bodynodeGlobalT);
+            if (jointPos.size() > 0) {
+                pos.segment(upperBn->getParentJoint()->getIndexInSkeleton(0), jointPos.size()) = jointPos;
+                skel->setPositions(pos);
+            }
+        }
+
+        // Forearm: average translation from elbow and wrist markers
+        auto* lowerBn = skel->getBodyNode(lowerBoneName);
+        if (lowerBn) {
+            std::string elbFarmName = isRight ? "RELB_farm" : "LELB_farm";
+            std::string wriName = isRight ? "RWRI" : "LWRI";
+
+            Eigen::Vector3d localElbFarm = getMarkerLocalPos(elbFarmName);
+            Eigen::Vector3d localWri = getMarkerLocalPos(wriName);
+
+            Eigen::Vector3d t_elb = E_farm - R_lower_world * localElbFarm;
+            Eigen::Vector3d t_wri = W - R_lower_world * localWri;
+            Eigen::Vector3d t_lower = (t_elb + t_wri) * 0.5;
+
+            Eigen::Isometry3d bodynodeGlobalT = Eigen::Isometry3d::Identity();
+            bodynodeGlobalT.linear() = R_lower_world;
+            bodynodeGlobalT.translation() = t_lower;
+
+            Eigen::VectorXd jointPos = computeJointPositions(lowerBn, bodynodeGlobalT);
+            if (jointPos.size() > 0) {
+                pos.segment(lowerBn->getParentJoint()->getIndexInSkeleton(0), jointPos.size()) = jointPos;
+                skel->setPositions(pos);
+            }
+        }
+
+        // ========== Distance-based flip detection (pose-invariant) ==========
+        // After applying tentative transform, check if skeleton joints align with markers
+        // If skeleton elbow is closer to wrist marker than elbow marker, arm is flipped
+
+        std::string forearmBone = isRight ? "ForeArmR" : "ForeArmL";
+        std::string handBone = isRight ? "HandR" : "HandL";
+
+        // Get skeleton joint positions (after tentative transform applied)
+        auto* forearmBn = skel->getBodyNode(forearmBone);
+        auto* handBn = skel->getBodyNode(handBone);
+
+        if (forearmBn && handBn) {
+            Eigen::Vector3d J_E = forearmBn->getTransform().translation();  // Skeleton elbow
+            Eigen::Vector3d J_W = handBn->getTransform().translation();     // Skeleton wrist
+
+            // Marker positions (avoid M_E which conflicts with Euler's constant from <cmath>)
+            Eigen::Vector3d marker_elbow = E_arm;   // Elbow marker
+            Eigen::Vector3d marker_wrist = W;       // Wrist marker
+
+            // Compute distances
+            double dEE = (J_E - marker_elbow).norm();  // Skeleton elbow -> elbow marker
+            double dEW = (J_E - marker_wrist).norm();  // Skeleton elbow -> wrist marker
+            double dWW = (J_W - marker_wrist).norm();  // Skeleton wrist -> wrist marker
+            double dWE = (J_W - marker_elbow).norm();  // Skeleton wrist -> elbow marker
+
+            // Symmetric flip detection: skeleton joints closer to wrong markers
+            bool armFlipped = (dEE + dWW) > (dEW + dWE);
+
+            if (armFlipped) {
+                // Negate both directions
+                u = -u;
+                l = -l;
+
+                // Recompute bending plane normal
+                Eigen::Vector3d n_raw_flip = u.cross(l);
+                double n_norm_flip = n_raw_flip.norm();
+                Eigen::Vector3d n_flip = (n_norm_flip < 0.1) ? prevNormal : (n_raw_flip / n_norm_flip);
+                if (n_norm_flip >= 0.1) prevNormal = n_flip;
+
+                // Rebuild rotation matrices
+                Eigen::Vector3d ua_x = u;
+                Eigen::Vector3d ua_y = n_flip;
+                Eigen::Vector3d ua_z = ua_x.cross(ua_y).normalized();
+                ua_y = ua_z.cross(ua_x).normalized();
+                R_upper_world.col(0) = ua_x;
+                R_upper_world.col(1) = ua_y;
+                R_upper_world.col(2) = ua_z;
+
+                Eigen::Vector3d fa_x = l;
+                Eigen::Vector3d fa_y = n_flip;
+                Eigen::Vector3d fa_z = fa_x.cross(fa_y).normalized();
+                fa_y = fa_z.cross(fa_x).normalized();
+                R_lower_world.col(0) = fa_x;
+                R_lower_world.col(1) = fa_y;
+                R_lower_world.col(2) = fa_z;
+
+                // Recompute translations with corrected rotations
+                // Upper arm
+                if (upperBn) {
+                    Eigen::Vector3d localSho = getMarkerLocalPos(isRight ? "RSHO_arm" : "LSHO_arm");
+                    Eigen::Vector3d localElb = getMarkerLocalPos(isRight ? "RELB_arm" : "LELB_arm");
+                    Eigen::Vector3d t_sho = S - R_upper_world * localSho;
+                    Eigen::Vector3d t_elb = E_arm - R_upper_world * localElb;
+                    Eigen::Vector3d t_upper = (t_sho + t_elb) * 0.5;
+
+                    Eigen::Isometry3d bodynodeGlobalT = Eigen::Isometry3d::Identity();
+                    bodynodeGlobalT.linear() = R_upper_world;
+                    bodynodeGlobalT.translation() = t_upper;
+
+                    Eigen::VectorXd jointPos = computeJointPositions(upperBn, bodynodeGlobalT);
+                    if (jointPos.size() > 0) {
+                        pos.segment(upperBn->getParentJoint()->getIndexInSkeleton(0), jointPos.size()) = jointPos;
+                        skel->setPositions(pos);
+                    }
+                }
+
+                // Forearm
+                if (lowerBn) {
+                    Eigen::Vector3d localElbFarm = getMarkerLocalPos(isRight ? "RELB_farm" : "LELB_farm");
+                    Eigen::Vector3d localWri = getMarkerLocalPos(isRight ? "RWRI" : "LWRI");
+                    Eigen::Vector3d t_elb_flip = E_farm - R_lower_world * localElbFarm;
+                    Eigen::Vector3d t_wri_flip = W - R_lower_world * localWri;
+                    Eigen::Vector3d t_lower = (t_elb_flip + t_wri_flip) * 0.5;
+
+                    Eigen::Isometry3d bodynodeGlobalT = Eigen::Isometry3d::Identity();
+                    bodynodeGlobalT.linear() = R_lower_world;
+                    bodynodeGlobalT.translation() = t_lower;
+
+                    Eigen::VectorXd jointPos = computeJointPositions(lowerBn, bodynodeGlobalT);
+                    if (jointPos.size() > 0) {
+                        pos.segment(lowerBn->getParentJoint()->getIndexInSkeleton(0), jointPos.size()) = jointPos;
+                        skel->setPositions(pos);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1022,76 +1285,17 @@ void C3D_Reader::updateUpperBodyFromMarkers(
     auto skel = mCharacter->getSkeleton();
 
     // Marker indices from config
-    int RSHO = mFittingConfig.getDataIndexForMarker("RSHO_shoul");
+    int RSHO = mFittingConfig.getDataIndexForMarker("RSHO");
     int ROFF = mFittingConfig.getDataIndexForMarker("ROFF");
     int RELB = mFittingConfig.getDataIndexForMarker("RELB_arm");
     int RWRI = mFittingConfig.getDataIndexForMarker("RWRI");
-    int LSHO = mFittingConfig.getDataIndexForMarker("LSHO_shoul");
+    int LSHO = mFittingConfig.getDataIndexForMarker("LSHO");
     int LELB = mFittingConfig.getDataIndexForMarker("LELB_arm");
     int LWRI = mFittingConfig.getDataIndexForMarker("LWRI");
 
     if (RSHO < 0 || LSHO < 0) {
         LOG_WARN("[UpperBody] Missing shoulder markers, skipping upper body");
         return;
-    }
-
-    // ========== Torso/Spine rotation ==========
-    // Compute rotation from shoulder triangle (RSHO, ROFF, LSHO)
-    if (ROFF >= 0) {
-        Eigen::Matrix3d origin = getRotationMatrixFromPoints(refMarkers[RSHO], refMarkers[ROFF], refMarkers[LSHO]);
-        Eigen::Matrix3d current = getRotationMatrixFromPoints(markers[RSHO], markers[ROFF], markers[LSHO]);
-        Eigen::Matrix3d T = current * origin.transpose();
-
-        // Apply half rotation using slerp (damping)
-        Eigen::Quaterniond q(T);
-        Eigen::Quaterniond q_half = Eigen::Quaterniond::Identity().slerp(0.5, q);
-        T = q_half.toRotationMatrix();
-
-        // Apply to Torso and Spine (split rotation)
-        for (const char* boneName : {"Torso", "Spine"}) {
-            auto* bn = skel->getBodyNode(boneName);
-            if (!bn) continue;
-
-            auto* joint = bn->getParentJoint();
-            if (!joint) continue;
-
-            // Compute joint-local rotation
-            Eigen::Isometry3d parentToJoint = joint->getTransformFromParentBodyNode();
-            auto* parentBn = bn->getParentBodyNode();
-            Eigen::Isometry3d parentBnGlobal = parentBn ? parentBn->getTransform() : Eigen::Isometry3d::Identity();
-
-            // Get parent-local rotation
-            Eigen::Matrix3d jointR = parentToJoint.linear().transpose() * parentBnGlobal.linear().transpose() * T;
-
-            // Convert to joint positions
-            int jn_idx = joint->getIndexInSkeleton(0);
-            int jn_dof = joint->getNumDofs();
-
-            if (jn_dof == 3) {
-                // BallJoint
-                Eigen::Vector3d jointPos = BallJoint::convertToPositions(jointR);
-                pos.segment(jn_idx, 3) = jointPos;
-            }
-        }
-
-        // Apply to Neck (same as Torso rotation)
-        auto* neckBn = skel->getBodyNode("Neck");
-        if (neckBn) {
-            auto* joint = neckBn->getParentJoint();
-            if (joint) {
-                Eigen::Isometry3d parentToJoint = joint->getTransformFromParentBodyNode();
-                auto* parentBn = neckBn->getParentBodyNode();
-                Eigen::Isometry3d parentBnGlobal = parentBn ? parentBn->getTransform() : Eigen::Isometry3d::Identity();
-
-                Eigen::Matrix3d jointR = parentToJoint.linear().transpose() * parentBnGlobal.linear().transpose() * T;
-
-                int jn_idx = joint->getIndexInSkeleton(0);
-                int jn_dof = joint->getNumDofs();
-                if (jn_dof == 3) {
-                    pos.segment(jn_idx, 3) = BallJoint::convertToPositions(jointR);
-                }
-            }
-        }
     }
 
 #ifdef USE_CERES
@@ -1396,5 +1600,185 @@ void C3D_Reader::initializeSkeletonForIK(const std::vector<Eigen::Vector3d>& fir
 
     // Fit skeleton to first frame markers (naive approach for ForeArm/Spine)
     fitSkeletonToMarker(firstFrameMarkers, params.femurTorsionL, params.femurTorsionR);
+}
+
+// ============================================================================
+// SECTION 12: Fallback Scaling for USE_CERES=OFF
+// ============================================================================
+
+void C3D_Reader::scaleArmsFallback()
+{
+    const auto& allMarkers = mCurrentC3D->getAllMarkers();
+
+    // Lookup C3D index by data_label
+    auto getIdx = [&](const std::string& label) -> int {
+        for (const auto& ref : mFittingConfig.markerMappings) {
+            if (ref.dataLabel == label) return ref.dataIndex;
+        }
+        return -1;
+    };
+
+    // Lookup skeleton marker index by name
+    auto getSkelIdx = [&](const std::string& name) -> int {
+        for (size_t i = 0; i < mMarkerSet.size(); ++i) {
+            if (mMarkerSet[i].name == name) return (int)i;
+        }
+        return -1;
+    };
+
+    struct ArmDef {
+        const char* bone;
+        const char* proxLabel;
+        const char* distLabel;
+        const char* proxSkel;
+        const char* distSkel;
+    };
+
+    std::vector<ArmDef> arms = {
+        {"ArmR",     "R.Shoulder", "R.Elbow", "RSHO_arm",  "RELB_arm"},
+        {"ForeArmR", "R.Elbow",    "R.Wrist", "RELB_farm", "RWRI"},
+        {"ArmL",     "L.Shoulder", "L.Elbow", "LSHO_arm",  "LELB_arm"},
+        {"ForeArmL", "L.Elbow",    "L.Wrist", "LELB_farm", "LWRI"},
+    };
+
+    std::cout << "\n=== Stage 2b Fallback: Marker-distance scaling for arms ===\n" << std::endl;
+
+    for (const auto& arm : arms) {
+        int proxIdx = getIdx(arm.proxLabel);
+        int distIdx = getIdx(arm.distLabel);
+        int proxSkel = getSkelIdx(arm.proxSkel);
+        int distSkel = getSkelIdx(arm.distSkel);
+
+        if (proxIdx < 0 || distIdx < 0 || proxSkel < 0 || distSkel < 0) {
+            LOG_WARN("[Fallback] Missing markers for " << arm.bone
+                     << ": proxIdx=" << proxIdx << " distIdx=" << distIdx
+                     << " proxSkel=" << proxSkel << " distSkel=" << distSkel);
+            continue;
+        }
+
+        double refDist = (mMarkerSet[proxSkel].getGlobalPos() -
+                          mMarkerSet[distSkel].getGlobalPos()).norm();
+        if (refDist < 1e-6) {
+            LOG_WARN("[Fallback] Zero reference distance for " << arm.bone);
+            continue;
+        }
+
+        // Average across all fitting frames
+        double sumScale = 0.0;
+        int validFrames = 0;
+        for (int f = mFitFrameStart; f <= mFitFrameEnd; ++f) {
+            const auto& markers = allMarkers[f];
+            double measDist = (markers[proxIdx] - markers[distIdx]).norm();
+            if (measDist > 1e-6) {
+                sumScale += measDist / refDist;
+                validFrames++;
+            }
+        }
+
+        if (validFrames > 0) {
+            double scale = sumScale / validFrames;
+            auto* bn = mCharacter->getSkeleton()->getBodyNode(arm.bone);
+            if (bn) {
+                int idx = bn->getIndexInSkeleton();
+                std::get<1>(mSkelInfos[idx]).value[3] = scale;
+                LOG_INFO("[Fallback] " << arm.bone << " scale=" << scale);
+            }
+        }
+    }
+}
+
+void C3D_Reader::copyDependentScales()
+{
+    auto copyScale = [&](const char* src, const char* dst) {
+        auto* srcBn = mCharacter->getSkeleton()->getBodyNode(src);
+        auto* dstBn = mCharacter->getSkeleton()->getBodyNode(dst);
+        if (!srcBn || !dstBn) return;
+
+        int srcIdx = srcBn->getIndexInSkeleton();
+        int dstIdx = dstBn->getIndexInSkeleton();
+        auto& srcInfo = std::get<1>(mSkelInfos[srcIdx]);
+        auto& dstInfo = std::get<1>(mSkelInfos[dstIdx]);
+
+        for (int i = 0; i < 4; ++i) {
+            dstInfo.value[i] = srcInfo.value[i];
+        }
+    };
+
+    // Hand = ForeArm
+    copyScale("ForeArmR", "HandR");
+    copyScale("ForeArmL", "HandL");
+
+    // Neck = Head (if Head in target_svd)
+    bool headInSvd = std::find(mFittingConfig.targetSvd.begin(),
+                                mFittingConfig.targetSvd.end(), "Head")
+                     != mFittingConfig.targetSvd.end();
+    if (headInSvd) {
+        copyScale("Head", "Neck");
+        LOG_INFO("[CopyScale] Neck = Head");
+    }
+
+    bool torsoInSvd = std::find(mFittingConfig.targetSvd.begin(),
+                                mFittingConfig.targetSvd.end(), "Torso")
+                     != mFittingConfig.targetSvd.end();
+    if (torsoInSvd) {
+        copyScale("Torso", "Spine");
+        LOG_INFO("[CopyScale] Spine = Torso");
+    }
+
+    LOG_INFO("[CopyScale] HandR = ForeArmR, HandL = ForeArmL");
+}
+
+void C3D_Reader::interpolateDependent()
+{
+    // Interpolate Spine between Pelvis and Torso (insert before Torso)
+    interpolateBoneTransforms("Spine", "Pelvis", "Torso");
+
+    // Interpolate Neck between Torso and Head (insert before Head)
+    interpolateBoneTransforms("Neck", "Torso", "Head");
+}
+
+void C3D_Reader::interpolateBoneTransforms(
+    const std::string& newBone,
+    const std::string& parentBone,
+    const std::string& childBone)
+{
+    const double ratio = mFittingConfig.interpolateRatio;
+    if (!mBoneR_frames.count(parentBone) || !mBoneR_frames.count(childBone)) return;
+
+    const auto& R_parent = mBoneR_frames[parentBone];
+    const auto& R_child = mBoneR_frames[childBone];
+    const auto& t_parent = mBoneT_frames[parentBone];
+    const auto& t_child = mBoneT_frames[childBone];
+
+    int numFrames = std::min(R_parent.size(), R_child.size());
+    std::vector<Eigen::Matrix3d> R_new(numFrames);
+    std::vector<Eigen::Vector3d> t_new(numFrames);
+
+    for (int i = 0; i < numFrames; ++i) {
+        // Translation: linear interpolation
+        t_new[i] = t_parent[i] * (1.0 - ratio) + t_child[i] * ratio;
+
+        // Rotation: slerp
+        Eigen::Quaterniond q_parent(R_parent[i]);
+        Eigen::Quaterniond q_child(R_child[i]);
+        Eigen::Quaterniond q_new = q_parent.slerp(ratio, q_child);
+        R_new[i] = q_new.toRotationMatrix();
+    }
+
+    // Store in maps
+    mBoneR_frames[newBone] = R_new;
+    mBoneT_frames[newBone] = t_new;
+
+    // Insert into mBoneOrder before childBone
+    auto orderIt = std::find(mBoneOrder.begin(), mBoneOrder.end(), childBone);
+    if (orderIt != mBoneOrder.end()) {
+        mBoneOrder.insert(orderIt, newBone);
+    } else {
+        mBoneOrder.push_back(newBone);
+    }
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << ratio;
+    LOG_INFO("[Interpolate] " << newBone << " = lerp(" << parentBone << ", " << childBone << ") ratio=" << oss.str());
 }
 

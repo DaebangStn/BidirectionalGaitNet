@@ -125,7 +125,6 @@ struct SkeletonFittingConfig {
     int maxIterations = 50;
     double convergenceThreshold = 1e-6;
     bool plotConvergence = true;
-    bool upperBody = false;   // Enable upper body scaling (Torso/Spine/Neck/Shoulder only)
 
     // Flat marker mappings: skeleton marker name -> C3D data index/label
     std::vector<MarkerReference> markerMappings;
@@ -136,6 +135,9 @@ struct SkeletonFittingConfig {
     double lambdaRot = 10.0;  // Ceres rotation regularization weight
     // Ceres-based optimizer targets (handles 2+ markers with regularization)
     std::vector<std::string> targetCeres;
+
+    double interpolateRatio = 0.5;  // Interpolation ratio for dependent bones (Spine, Neck)
+    double skelRatioBound = 1.5;    // Max scale ratio constraint: max(s)/min(s) <= skelRatioBound
 
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
@@ -162,6 +164,14 @@ class C3D_Reader
         // buildFramePoseLegacy removed - kept as commented code in .cpp for reference
         Eigen::VectorXd buildFramePose(int fitFrameIdx);
         Eigen::VectorXd buildFramePoseLegacy(std::vector<Eigen::Vector3d>& _pos);
+
+        // Arm rotation from marker heuristics (bending plane normal method)
+        void computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos);
+
+        // Interpolate dependent bone transforms (Spine, Neck)
+        void interpolateDependent();
+        void interpolateBoneTransforms(const std::string& newBone, const std::string& parentBone,
+                                       const std::string& childBone);
         void fitSkeletonToMarker(std::vector<Eigen::Vector3d> init_marker, double torsionL = 0.0, double torsionR = 0.0);
 
         // New multi-frame anisotropic fitting methods
@@ -200,6 +210,8 @@ class C3D_Reader
         // Config loading
         SkeletonFittingConfig loadSkeletonFittingConfig(const std::string& configPath);
         const SkeletonFittingConfig& getFittingConfig() const { return mFittingConfig; }
+        void setFittingConfigPath(const std::string& path) { mFittingConfigPath = path; }
+        const std::string& getFittingConfigPath() const { return mFittingConfigPath; }
 
         // Marker label resolution
         void resolveMarkerReferences(const std::vector<std::string>& c3dLabels);
@@ -225,6 +237,10 @@ class C3D_Reader
             const std::vector<Eigen::Vector3d>& markers,
             const std::vector<Eigen::Vector3d>& refMarkers);
 
+        // Fallback scaling for USE_CERES=OFF
+        void scaleArmsFallback();
+        void copyDependentScales();
+
         RenderCharacter *mCharacter;
 
         std::vector<BoneInfo> mSkelInfos;
@@ -243,6 +259,7 @@ class C3D_Reader
 
         // Skeleton fitting configuration
         SkeletonFittingConfig mFittingConfig;
+        std::string mFittingConfigPath = "data/config/skeleton_fitting.yaml";  // Default path
 
         // Marker label resolver
         MarkerResolver mResolver;
@@ -255,6 +272,11 @@ class C3D_Reader
         // Key: bone name, Value: per-frame transforms for fitted frame range
         std::map<std::string, std::vector<Eigen::Matrix3d>> mBoneR_frames;
         std::map<std::string, std::vector<Eigen::Vector3d>> mBoneT_frames;
+        std::vector<std::string> mBoneOrder;  // Preserves insertion order from targetSvd
+
+        // Arm rotation state for degeneracy handling (straight-arm case)
+        Eigen::Vector3d mPrevArmNormalR = Eigen::Vector3d(0, 0, 1);
+        Eigen::Vector3d mPrevArmNormalL = Eigen::Vector3d(0, 0, 1);
 };
 
 #endif
