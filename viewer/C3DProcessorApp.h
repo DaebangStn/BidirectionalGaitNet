@@ -94,7 +94,8 @@ private:
     double mMouseX, mMouseY;
 
     // Character and rendering
-    std::unique_ptr<RenderCharacter> mMotionCharacter;
+    std::unique_ptr<RenderCharacter> mFreeCharacter;   // Free joints skeleton for bone-by-bone debugging
+    std::unique_ptr<RenderCharacter> mMotionCharacter; // Normal skeleton for motion playback
     ShapeRenderer mShapeRenderer;
     std::string mSkeletonPath;
     std::string mMarkerConfigPath;
@@ -121,7 +122,6 @@ private:
     bool mRenderWorldAxis = false;
     bool mRenderSkeletonAxis = false;
     bool mCameraMoving = false;  // True while camera is being manipulated
-    double mCameraMovingTimer = 0.0;  // Timer for scroll-based axis display
     float mAxisLength = 0.3f;
 
     // Skeleton render mode
@@ -129,6 +129,14 @@ private:
 
     // Rendering panel
     bool mShowRenderingPanel = false;
+
+    // Free character rendering
+    bool mRenderFreeCharacter = true;
+
+    // Motion character rendering
+    bool mRenderMotionCharacter = true;
+    bool mRenderMotionCharMarkers = true;
+    Eigen::Vector3d mMotionCharacterOffset = Eigen::Vector3d(0.8, 0.0, 0.0);
 
     // Per-marker visibility (empty = all visible)
     std::set<int> mHiddenC3DMarkers;
@@ -138,11 +146,17 @@ private:
     char mMarkerSearchFilter[64] = "";
     char mRenderingMarkerFilter[64] = "";
 
-    // Motion pose inspection
-    int mPoseInspectFrame = 0;
-    bool mPoseUseCurrentFrame = true;
-    char mJointFilter[64] = "";
-    int mSelectedJointIdx = -1;
+    // Bone pose inspection
+    char mBonePoseFilter[64] = "";
+    int mBonePoseSelectedIdx = -1;
+
+    // Joint angle inspection
+    char mJointAngleFilter[64] = "";
+    int mJointAngleSelectedIdx = -1;
+
+    // Joint offset inspection
+    char mJointOffsetFilter[64] = "";
+    int mJointOffsetSelectedIdx = -1;
 
     // Playback state
     C3DViewerState mMotionState;
@@ -185,6 +199,7 @@ private:
     void initImGui();
     void initLighting();
     void setCamera();
+    void updateCamera();
     void loadRenderConfig();
 
     // Rendering
@@ -194,6 +209,8 @@ private:
     void drawGround();
     void drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label);
     void drawOriginAxisGizmo();
+    void drawSelectedJointGizmo();
+    void drawSelectedBoneGizmo();
 
     // UI panels
     void drawControlPanel();
@@ -204,7 +221,9 @@ private:
     void drawRenderingPanel();
     void drawMarkerDiffPlot();
     void drawMarkerCorrespondenceTable();
-    void drawMotionPoseSection();
+    void drawBonePoseSection();
+    void drawJointAngleSection();
+    void drawJointOffsetSection();
 
     // Helper for collapsing header
     bool collapsingHeaderWithControls(const std::string& title);

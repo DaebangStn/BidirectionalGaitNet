@@ -129,14 +129,17 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
 
     // Load skeleton and create character
     // SKEL_FREE_JOINTS: All joints are FreeJoint (6 DOF) for debugging bone poses independently
-    mMotionCharacter = std::make_unique<RenderCharacter>(mSkeletonPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
-    if (mMotionCharacter) {
-        mMotionCharacter->loadMarkers(mMarkerConfigPath);
+    mFreeCharacter = std::make_unique<RenderCharacter>(mSkeletonPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
+    mMotionCharacter = std::make_unique<RenderCharacter>(mSkeletonPath, SKEL_COLLIDE_ALL);
+    RenderCharacter* characters[2] = { mFreeCharacter.get(), mMotionCharacter.get() };
+    for (auto character : characters) {
+        if (character) {
+            character->loadMarkers(mMarkerConfigPath);
+        }
     }
 
     // Create C3D Reader
-    mC3DReader = new C3D_Reader(mMarkerConfigPath, mMotionCharacter.get());
-    mC3DReader->setFittingConfigPath(mFittingConfigPath);
+    mC3DReader = new C3D_Reader(mFittingConfigPath, mMarkerConfigPath, mFreeCharacter.get(), mMotionCharacter.get());
 
     // Scan for C3D files and autoload first one
     scanC3DFiles();
@@ -202,14 +205,8 @@ void C3DProcessorApp::startLoop()
         double dt = currentTime - mLastRealTime;
         mLastRealTime = currentTime;
 
-        if (mIsPlaying) {
-            updateViewerTime(dt * mViewerPlaybackSpeed);
-        }
-
-        // Decrement camera moving timer
-        if (mCameraMovingTimer > 0.0) {
-            mCameraMovingTimer -= dt;
-        }
+        if (mIsPlaying) updateViewerTime(dt * mViewerPlaybackSpeed);
+        else updateViewerTime(0.0);
 
         // Start ImGui frame (needed for marker label rendering in drawFrame)
         ImGui_ImplOpenGL3_NewFrame();
@@ -271,6 +268,41 @@ void C3DProcessorApp::initLighting()
     glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
 }
 
+void C3DProcessorApp::updateCamera()
+{
+    // Camera follow character (update mTrans before setCamera applies it)
+    if (mFocus == 1 && mMotion != nullptr && mFreeCharacter) {
+        // Calculate current position based on cycle accumulation
+        double phase = mViewerPhase;
+        Motion* current_motion = mMotion;
+        C3DViewerState& state = mMotionState;
+
+        double frame_float;
+        if (state.navigationMode == C3D_SYNC) {
+            // Use viewer time to compute frame
+            frame_float = (mViewerTime / mViewerCycleDuration) * current_motion->getTotalTimesteps();
+        } else {
+            frame_float = static_cast<double>(state.manualFrameIndex);
+        }
+
+        int current_frame_idx = static_cast<int>(frame_float);
+        int total_frames = current_motion->getTotalTimesteps();
+        current_frame_idx = current_frame_idx % total_frames;
+
+        Eigen::VectorXd raw_motion = current_motion->getRawMotionData();
+        int value_per_frame = current_motion->getValuesPerFrame();
+        Eigen::VectorXd current_frame = raw_motion.segment(current_frame_idx * value_per_frame, value_per_frame);
+
+        // Motion data is already in angle format (positions 3,4,5 are root translation)
+        Eigen::VectorXd current_pos = current_frame;
+
+        // Follow root position with cycle accumulation and display offset
+        mTrans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
+        mTrans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
+        mTrans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
+    }
+}
+
 void C3DProcessorApp::setCamera()
 {
     glMatrixMode(GL_PROJECTION);
@@ -321,6 +353,17 @@ void C3DProcessorApp::loadRenderConfig()
                 mDefaultOpenPanels.insert(panel.as<std::string>());
             }
         }
+
+        if (config["c3d"]) {
+            if (config["c3d"]["motion_char_offset"]) {
+                auto offset = config["c3d"]["motion_char_offset"];
+                if (offset.IsSequence() && offset.size() == 3) {
+                    mMotionCharacterOffset.x() = offset[0].as<double>();
+                    mMotionCharacterOffset.y() = offset[1].as<double>();
+                    mMotionCharacterOffset.z() = offset[2].as<double>();
+                }
+            }
+        }
     } catch (const std::exception& e) {
         LOG_WARN("[C3DProcessor] Could not load render.yaml: " << e.what());
     }
@@ -340,48 +383,14 @@ void C3DProcessorApp::drawFrame()
     initGL();
     initLighting();
 
-    // Camera follow character (update mTrans before setCamera applies it)
-    if (mFocus == 1 && mMotion != nullptr && mMotionCharacter) {
-        // Calculate current position based on cycle accumulation
-        double phase = mViewerPhase;
-        Motion* current_motion = mMotion;
-        C3DViewerState& state = mMotionState;
-
-        double frame_float;
-        if (state.navigationMode == C3D_SYNC) {
-            // Use viewer time to compute frame
-            frame_float = (mViewerTime / mViewerCycleDuration) * current_motion->getTotalTimesteps();
-        } else {
-            frame_float = static_cast<double>(state.manualFrameIndex);
-        }
-
-        int current_frame_idx = static_cast<int>(frame_float);
-        int total_frames = current_motion->getTotalTimesteps();
-        current_frame_idx = current_frame_idx % total_frames;
-
-        Eigen::VectorXd raw_motion = current_motion->getRawMotionData();
-        int value_per_frame = current_motion->getValuesPerFrame();
-        Eigen::VectorXd current_frame = raw_motion.segment(
-            current_frame_idx * value_per_frame, value_per_frame);
-
-        // Motion data is already in angle format (positions 3,4,5 are root translation)
-        Eigen::VectorXd current_pos = current_frame;
-
-        // Follow root position with cycle accumulation and display offset
-        mTrans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
-        mTrans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
-        mTrans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
-    }
-
+    updateCamera();
     setCamera();
     drawGround();
 
     // Draw debug axes
-    if (mRenderWorldAxis) {
-        drawAxis(Eigen::Isometry3d::Identity(), mAxisLength, "World");
-    }
-    if (mRenderSkeletonAxis && mMotionCharacter) {
-        auto skel = mMotionCharacter->getSkeleton();
+    if (mRenderWorldAxis) drawAxis(Eigen::Isometry3d::Identity(), mAxisLength, "World");
+    if (mRenderSkeletonAxis && mFreeCharacter) {
+        auto skel = mFreeCharacter->getSkeleton();
         if (skel && skel->getNumBodyNodes() > 0) {
             drawAxis(skel->getBodyNode(0)->getTransform(), mAxisLength, "Root");
         }
@@ -390,6 +399,8 @@ void C3DProcessorApp::drawFrame()
     drawSkeleton();
     drawMarkers();
     drawOriginAxisGizmo();
+    drawSelectedJointGizmo();
+    drawSelectedBoneGizmo();
 }
 
 void C3DProcessorApp::drawGround()
@@ -448,7 +459,7 @@ void C3DProcessorApp::drawAxis(const Eigen::Isometry3d& transform, float length,
 
 void C3DProcessorApp::drawOriginAxisGizmo()
 {
-    if (!mCameraMoving && mCameraMovingTimer <= 0.0) return;
+    if (!mCameraMoving) return;
 
     // Draw axis at the rotation/zoom center (which is -mTrans in world space)
     Eigen::Vector3d center = -mTrans;
@@ -483,81 +494,274 @@ void C3DProcessorApp::drawOriginAxisGizmo()
     glEnable(GL_LIGHTING);
 }
 
+void C3DProcessorApp::drawSelectedJointGizmo()
+{
+    if (mJointAngleSelectedIdx < 0) return;
+
+    glDisable(GL_LIGHTING);
+
+    // Helper lambda to draw gizmo for one skeleton
+    auto drawJointGizmoForSkeleton = [this](dart::dynamics::SkeletonPtr skel,
+                                             const Eigen::Vector3d& offset,
+                                             float colorTint) {
+        if (!skel || mJointAngleSelectedIdx >= (int)skel->getNumJoints()) return;
+
+        auto* joint = skel->getJoint(mJointAngleSelectedIdx);
+        if (!joint) return;
+
+        auto* childBody = joint->getChildBodyNode();
+        if (!childBody) return;
+
+        // Get joint world transform
+        Eigen::Isometry3d jointWorld;
+        auto* parentBody = childBody->getParentBodyNode();
+        if (parentBody) {
+            jointWorld = parentBody->getTransform() * joint->getTransformFromParentBodyNode();
+        } else {
+            jointWorld = joint->getTransformFromParentBodyNode();
+        }
+
+        // Apply offset
+        jointWorld.translation() += offset;
+
+        Eigen::Vector3d origin = jointWorld.translation();
+        int numDofs = joint->getNumDofs();
+
+        if (numDofs >= 3) {
+            // FreeJoint or BallJoint: draw XYZ axis gizmo
+            float len = 0.1f;
+            Eigen::Matrix3d rot = jointWorld.linear();
+
+            glLineWidth(3.0f);
+
+            // X axis - Red (with tint)
+            Eigen::Vector3d xEnd = origin + rot.col(0) * len;
+            glColor3f(1.0f, colorTint * 0.3f, colorTint * 0.3f);
+            glBegin(GL_LINES);
+            glVertex3d(origin.x(), origin.y(), origin.z());
+            glVertex3d(xEnd.x(), xEnd.y(), xEnd.z());
+            glEnd();
+
+            // Y axis - Green (with tint)
+            Eigen::Vector3d yEnd = origin + rot.col(1) * len;
+            glColor3f(colorTint * 0.3f, 1.0f, colorTint * 0.3f);
+            glBegin(GL_LINES);
+            glVertex3d(origin.x(), origin.y(), origin.z());
+            glVertex3d(yEnd.x(), yEnd.y(), yEnd.z());
+            glEnd();
+
+            // Z axis - Blue (with tint)
+            Eigen::Vector3d zEnd = origin + rot.col(2) * len;
+            glColor3f(colorTint * 0.3f, colorTint * 0.3f, 1.0f);
+            glBegin(GL_LINES);
+            glVertex3d(origin.x(), origin.y(), origin.z());
+            glVertex3d(zEnd.x(), zEnd.y(), zEnd.z());
+            glEnd();
+
+        } else if (numDofs == 1) {
+            // RevoluteJoint: draw rotation axis
+            auto* revoluteJoint = dynamic_cast<dart::dynamics::RevoluteJoint*>(joint);
+            if (revoluteJoint) {
+                Eigen::Vector3d localAxis = revoluteJoint->getAxis();
+                Eigen::Vector3d worldAxis = jointWorld.linear() * localAxis;
+
+                float len = 0.15f;
+                Eigen::Vector3d axisStart = origin - worldAxis * len;
+                Eigen::Vector3d axisEnd = origin + worldAxis * len;
+
+                glLineWidth(4.0f);
+                // Yellow for FreeChar (colorTint=0), Orange for MotionChar (colorTint=1)
+                glColor3f(1.0f, 0.7f - colorTint * 0.3f, colorTint * 0.2f);
+                glBegin(GL_LINES);
+                glVertex3d(axisStart.x(), axisStart.y(), axisStart.z());
+                glVertex3d(axisEnd.x(), axisEnd.y(), axisEnd.z());
+                glEnd();
+            }
+        }
+
+        glLineWidth(1.0f);
+    };
+
+    // Draw for FreeChar
+    if (mFreeCharacter) {
+        drawJointGizmoForSkeleton(mFreeCharacter->getSkeleton(), Eigen::Vector3d::Zero(), 0.0f);
+    }
+
+    // Draw for MotionChar (with offset)
+    if (mMotionCharacter && mRenderMotionCharacter) {
+        drawJointGizmoForSkeleton(mMotionCharacter->getSkeleton(), mMotionCharacterOffset, 1.0f);
+    }
+
+    glEnable(GL_LIGHTING);
+}
+
+void C3DProcessorApp::drawSelectedBoneGizmo()
+{
+    if (mBonePoseSelectedIdx < 0) return;
+
+    glDisable(GL_LIGHTING);
+
+    // Helper lambda to draw gizmo for one skeleton's body node
+    auto drawBoneGizmoForSkeleton = [this](dart::dynamics::SkeletonPtr skel,
+                                            const Eigen::Vector3d& offset,
+                                            float colorTint) {
+        if (!skel || mBonePoseSelectedIdx >= (int)skel->getNumJoints()) return;
+
+        // Get body node from joint (child body of selected joint)
+        auto* joint = skel->getJoint(mBonePoseSelectedIdx);
+        if (!joint) return;
+
+        auto* bodyNode = joint->getChildBodyNode();
+        if (!bodyNode) return;
+
+        // Get body node's world transform
+        Eigen::Isometry3d bodyWorld = bodyNode->getTransform();
+
+        // Apply offset
+        bodyWorld.translation() += offset;
+
+        Eigen::Vector3d origin = bodyWorld.translation();
+        Eigen::Matrix3d rot = bodyWorld.linear();
+
+        // Draw XYZ axis gizmo at body node position
+        float len = 0.12f;
+
+        glLineWidth(3.0f);
+
+        // X axis - Red (with tint)
+        Eigen::Vector3d xEnd = origin + rot.col(0) * len;
+        glColor3f(1.0f, colorTint * 0.3f, colorTint * 0.3f);
+        glBegin(GL_LINES);
+        glVertex3d(origin.x(), origin.y(), origin.z());
+        glVertex3d(xEnd.x(), xEnd.y(), xEnd.z());
+        glEnd();
+
+        // Y axis - Green (with tint)
+        Eigen::Vector3d yEnd = origin + rot.col(1) * len;
+        glColor3f(colorTint * 0.3f, 1.0f, colorTint * 0.3f);
+        glBegin(GL_LINES);
+        glVertex3d(origin.x(), origin.y(), origin.z());
+        glVertex3d(yEnd.x(), yEnd.y(), yEnd.z());
+        glEnd();
+
+        // Z axis - Blue (with tint)
+        Eigen::Vector3d zEnd = origin + rot.col(2) * len;
+        glColor3f(colorTint * 0.3f, colorTint * 0.3f, 1.0f);
+        glBegin(GL_LINES);
+        glVertex3d(origin.x(), origin.y(), origin.z());
+        glVertex3d(zEnd.x(), zEnd.y(), zEnd.z());
+        glEnd();
+
+        glLineWidth(1.0f);
+    };
+
+    // Draw for FreeChar
+    if (mFreeCharacter) {
+        drawBoneGizmoForSkeleton(mFreeCharacter->getSkeleton(), Eigen::Vector3d::Zero(), 0.0f);
+    }
+
+    // Draw for MotionChar (with offset)
+    if (mMotionCharacter && mRenderMotionCharacter) {
+        drawBoneGizmoForSkeleton(mMotionCharacter->getSkeleton(), mMotionCharacterOffset, 1.0f);
+    }
+
+    glEnable(GL_LIGHTING);
+}
+
 void C3DProcessorApp::drawSkeleton()
 {
-    if (!mMotionCharacter || mMotionState.currentPose.size() == 0) return;
-
-    auto skel = mMotionCharacter->getSkeleton();
-    if (!skel) return;
-
-    // Set pose
-    skel->setPositions(mMotionState.currentPose);
-
     glEnable(GL_LIGHTING);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_COLOR_MATERIAL);
-    glColor4f(1.0f, 1.0f, 1.0f, 0.7f);
 
-    for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
-        const BodyNode* bn = skel->getBodyNode(i);
-        if (!bn) continue;
+    // Helper lambda to render a skeleton
+    auto renderSkeleton = [this](dart::dynamics::SkeletonPtr skel, const Eigen::Vector4d& baseColor) {
+        if (!skel) return;
 
-        glPushMatrix();
-        glMultMatrixd(bn->getTransform().data());
-
-        bn->eachShapeNodeWith<VisualAspect>([this](const ShapeNode* sn) {
-            if (!sn) return true;
-            const auto& va = sn->getVisualAspect();
-            if (!va || va->isHidden()) return true;
+        for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
+            const BodyNode* bn = skel->getBodyNode(i);
+            if (!bn) continue;
 
             glPushMatrix();
-            Eigen::Affine3d tmp = sn->getRelativeTransform();
-            glMultMatrixd(tmp.data());
+            glMultMatrixd(bn->getTransform().data());
 
-            const auto* shape = sn->getShape().get();
-            Eigen::Vector4d color(0.6, 0.6, 0.7, 1.0);
+            bn->eachShapeNodeWith<VisualAspect>([this, &baseColor](const ShapeNode* sn) {
+                if (!sn) return true;
+                const auto& va = sn->getVisualAspect();
+                if (!va || va->isHidden()) return true;
 
-            // Render mesh (for Mesh mode)
-            if (mRenderMode == RenderMode::Mesh) {
-                if (shape->is<MeshShape>()) {
-                    const auto* mesh = dynamic_cast<const MeshShape*>(shape);
-                    mShapeRenderer.renderMesh(mesh, false, 0.0, color);
-                }
-            }
+                glPushMatrix();
+                Eigen::Affine3d tmp = sn->getRelativeTransform();
+                glMultMatrixd(tmp.data());
 
-            // Render primitive shapes (for Primitive and Wireframe modes)
-            if (mRenderMode == RenderMode::Primitive || mRenderMode == RenderMode::Wireframe) {
-                // For wireframe mode, render primitives as wireframe
-                if (mRenderMode == RenderMode::Wireframe) {
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                    glLineWidth(2.0f);
-                    glColor4f(0.8f, 0.8f, 0.8f, 1.0f);  // Light gray wireframe
+                const auto* shape = sn->getShape().get();
+
+                // Render mesh (for Mesh mode)
+                if (mRenderMode == RenderMode::Mesh) {
+                    if (shape->is<MeshShape>()) {
+                        const auto* mesh = dynamic_cast<const MeshShape*>(shape);
+                        mShapeRenderer.renderMesh(mesh, false, 0.0, baseColor);
+                    }
                 }
 
-                if (shape->is<BoxShape>()) {
-                    GUI::DrawCube(static_cast<const BoxShape*>(shape)->getSize());
-                } else if (shape->is<CapsuleShape>()) {
-                    auto* cap = static_cast<const CapsuleShape*>(shape);
-                    GUI::DrawCapsule(cap->getRadius(), cap->getHeight());
-                } else if (shape->is<SphereShape>()) {
-                    GUI::DrawSphere(static_cast<const SphereShape*>(shape)->getRadius());
-                } else if (shape->is<CylinderShape>()) {
-                    auto* cyl = static_cast<const CylinderShape*>(shape);
-                    GUI::DrawCylinder(cyl->getRadius(), cyl->getHeight());
+                // Render primitive shapes (for Primitive and Wireframe modes)
+                if (mRenderMode == RenderMode::Primitive || mRenderMode == RenderMode::Wireframe) {
+                    // For wireframe mode, render primitives as wireframe
+                    if (mRenderMode == RenderMode::Wireframe) {
+                        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                        glLineWidth(2.0f);
+                        glColor4f(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
+                    } else {
+                        glColor4f(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
+                    }
+
+                    if (shape->is<BoxShape>()) {
+                        GUI::DrawCube(static_cast<const BoxShape*>(shape)->getSize());
+                    } else if (shape->is<CapsuleShape>()) {
+                        auto* cap = static_cast<const CapsuleShape*>(shape);
+                        GUI::DrawCapsule(cap->getRadius(), cap->getHeight());
+                    } else if (shape->is<SphereShape>()) {
+                        GUI::DrawSphere(static_cast<const SphereShape*>(shape)->getRadius());
+                    } else if (shape->is<CylinderShape>()) {
+                        auto* cyl = static_cast<const CylinderShape*>(shape);
+                        GUI::DrawCylinder(cyl->getRadius(), cyl->getHeight());
+                    }
+
+                    // Restore fill mode and line width after wireframe
+                    if (mRenderMode == RenderMode::Wireframe) {
+                        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                        glLineWidth(1.0f);
+                    }
                 }
 
-                // Restore fill mode and line width after wireframe
-                if (mRenderMode == RenderMode::Wireframe) {
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                    glLineWidth(1.0f);
-                }
-            }
+                glPopMatrix();
+                return true;
+            });
 
             glPopMatrix();
-            return true;
-        });
+        }
+    };
 
-        glPopMatrix();
+    // Render mFreeCharacter (light gray, for bone-by-bone debugging)
+    if (mFreeCharacter && mRenderFreeCharacter && mMotionState.currentPose.size() > 0) {
+        auto skel = mFreeCharacter->getSkeleton();
+        if (skel) {
+            skel->setPositions(mMotionState.currentPose);
+            renderSkeleton(skel, Eigen::Vector4d(0.8, 0.8, 0.8, 0.9));
+        }
+    }
+
+    // Render mMotionCharacter (blue tint, for motion playback)
+    // Pose will be set externally via C3D_Reader in the future
+    if (mMotionCharacter && mRenderMotionCharacter) {
+        auto skel = mMotionCharacter->getSkeleton();
+        if (skel) {
+            // Apply offset transformation
+            glPushMatrix();
+            glTranslated(mMotionCharacterOffset.x(), mMotionCharacterOffset.y(), mMotionCharacterOffset.z());
+            renderSkeleton(skel, Eigen::Vector4d(0.0, 1.0, 0.0, 0.9));
+            glPopMatrix();
+        }
     }
 }
 
@@ -618,11 +822,11 @@ void C3DProcessorApp::drawMarkers()
         }
     }
 
-    // 2. Skeleton markers (expected from skeleton pose) - red
-    if (mRenderExpectedMarkers && mMotionCharacter && mMotionCharacter->hasMarkers()) {
+    // 2. Skeleton markers (expected from skeleton pose) - red (FreeCharacter)
+    if (mRenderExpectedMarkers && mFreeCharacter && mFreeCharacter->hasMarkers()) {
         glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
-        const auto& skelMarkers = mMotionCharacter->getMarkers();
-        auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
+        const auto& skelMarkers = mFreeCharacter->getMarkers();
+        auto expectedMarkers = mFreeCharacter->getExpectedMarkerPositions();
         for (size_t i = 0; i < expectedMarkers.size(); ++i) {
             // Skip hidden markers
             if (mHiddenSkelMarkers.find(static_cast<int>(i)) != mHiddenSkelMarkers.end())
@@ -635,9 +839,27 @@ void C3DProcessorApp::drawMarkers()
         }
     }
 
+    // 2b. Skeleton markers for MotionCharacter - orange (with offset)
+    if (mRenderMotionCharMarkers && mMotionCharacter && mMotionCharacter->hasMarkers()) {
+        glColor4f(1.0f, 0.5f, 0.0f, 1.0f);  // Orange
+        const auto& skelMarkers = mMotionCharacter->getMarkers();
+        auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
+        for (size_t i = 0; i < expectedMarkers.size(); ++i) {
+            // Skip hidden markers
+            if (mHiddenSkelMarkers.find(static_cast<int>(i)) != mHiddenSkelMarkers.end())
+                continue;
+            const auto& marker = expectedMarkers[i];
+            if (!marker.array().isFinite().all()) continue;
+            Eigen::Vector3d offsetMarker = marker + mMotionCharacterOffset;
+            GUI::DrawSphere(offsetMarker, 0.0125);
+            std::string name = (i < skelMarkers.size()) ? skelMarkers[i].name : "";
+            renderLabel(offsetMarker, static_cast<int>(i), name, 5.0f);
+        }
+    }
+
     // 3. Joint positions (parent joint of each body node) - purple
-    if (mRenderJointPositions && mMotionCharacter) {
-        auto skel = mMotionCharacter->getSkeleton();
+    if (mRenderJointPositions && mFreeCharacter) {
+        auto skel = mFreeCharacter->getSkeleton();
         if (skel) {
             glColor4f(0.6f, 0.2f, 0.8f, 1.0f);
             for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
@@ -768,7 +990,7 @@ void C3DProcessorApp::drawPlaybackSection()
         // Frame navigation
         if (mMotion) {
             int maxFrame = std::max(0, mMotion->getNumFrames() - 1);
-            int currentFrame = mMotionState.lastFrameIdx;
+            int currentFrame = mMotionState.navigationMode == C3D_MANUAL_FRAME ? mMotionState.manualFrameIndex : mMotionState.lastFrameIdx;
 
             ImGui::SetNextItemWidth(150);
             if (ImGui::SliderInt("Frame", &currentFrame, 0, maxFrame)) {
@@ -805,15 +1027,15 @@ void C3DProcessorApp::drawMarkerFittingSection()
         }
         ImGui::SameLine();
         if (ImGui::Button("Reset Skeleton")) {
-            if (mMotionCharacter) mMotionCharacter->resetSkeletonToDefault();
+            if (mFreeCharacter) mFreeCharacter->resetSkeletonToDefault();
         }
     }
 }
 
 void C3DProcessorApp::drawVisualizationPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 400, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(mWidth - 500, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("Visualization")) {
         ImGui::End();
@@ -850,7 +1072,11 @@ void C3DProcessorApp::drawVisualizationPanel()
 
     drawMarkerCorrespondenceTable();
 
-    drawMotionPoseSection();
+    drawBonePoseSection();
+
+    drawJointAngleSection();
+
+    drawJointOffsetSection();
 
     ImGui::End();
 }
@@ -875,6 +1101,54 @@ void C3DProcessorApp::drawRenderingPanel()
     ImGui::SameLine();
     if (ImGui::RadioButton("Wire", &mode, 2)) mRenderMode = RenderMode::Wireframe;
     ImGui::Separator();
+
+    // Free Character section
+    if (ImGui::CollapsingHeader("Free Character", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Draw Free Character", &mRenderFreeCharacter);
+    }
+
+    // Motion Character section
+    if (ImGui::CollapsingHeader("Motion Character", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Draw Motion Character", &mRenderMotionCharacter);
+        ImGui::Checkbox("Draw Skeleton Markers", &mRenderMotionCharMarkers);
+
+        ImGui::Text("Offset from Free Character:");
+        float offset[3] = {
+            static_cast<float>(mMotionCharacterOffset.x()),
+            static_cast<float>(mMotionCharacterOffset.y()),
+            static_cast<float>(mMotionCharacterOffset.z())
+        };
+
+        ImGui::PushItemWidth(100);
+        if (ImGui::InputFloat("X##MotionOffset", &offset[0], 0.1f, 0.5f, "%.3f")) {
+            mMotionCharacterOffset.x() = offset[0];
+        }
+        ImGui::SameLine();
+        if (ImGui::InputFloat("Y##MotionOffset", &offset[1], 0.1f, 0.5f, "%.3f")) {
+            mMotionCharacterOffset.y() = offset[1];
+        }
+        ImGui::SameLine();
+        if (ImGui::InputFloat("Z##MotionOffset", &offset[2], 0.1f, 0.5f, "%.3f")) {
+            mMotionCharacterOffset.z() = offset[2];
+        }
+        ImGui::PopItemWidth();
+
+        if (ImGui::Button("Reset##MotionOffset")) {
+            mMotionCharacterOffset.setZero();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("X##MotionOffsetX")) {
+            mMotionCharacterOffset.x() = 0.8;
+            mMotionCharacterOffset.y() = 0.0;
+            mMotionCharacterOffset.z() = 0.0;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Z##MotionOffsetZ")) {
+            mMotionCharacterOffset.x() = 0.0;
+            mMotionCharacterOffset.y() = 0.0;
+            mMotionCharacterOffset.z() = 0.5;
+        }
+    }
 
     // Marker Visibility section
     if (ImGui::CollapsingHeader("Marker Visibility", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -909,8 +1183,8 @@ void C3DProcessorApp::drawRenderingPanel()
                 for (size_t i = 0; i < c3dMotion->getLabels().size(); ++i)
                     mHiddenC3DMarkers.insert(static_cast<int>(i));
             }
-            if (mMotionCharacter && mMotionCharacter->hasMarkers()) {
-                for (size_t i = 0; i < mMotionCharacter->getMarkers().size(); ++i)
+            if (mFreeCharacter && mFreeCharacter->hasMarkers()) {
+                for (size_t i = 0; i < mFreeCharacter->getMarkers().size(); ++i)
                     mHiddenSkelMarkers.insert(static_cast<int>(i));
             }
         }
@@ -925,8 +1199,8 @@ void C3DProcessorApp::drawRenderingPanel()
             C3D* c3dMotion = static_cast<C3D*>(mMotion);
             c3dLabels = c3dMotion->getLabels();
         }
-        if (mMotionCharacter && mMotionCharacter->hasMarkers()) {
-            const auto& markers = mMotionCharacter->getMarkers();
+        if (mFreeCharacter && mFreeCharacter->hasMarkers()) {
+            const auto& markers = mFreeCharacter->getMarkers();
             for (const auto& m : markers)
                 skelLabels.push_back(m.name);
         }
@@ -1004,14 +1278,14 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
 {
     if (!collapsingHeaderWithControls("Marker Correspondence")) return;
 
-    if (!mMotion || mMotion->getSourceType() != "c3d" || !mMotionCharacter || !mC3DReader) {
+    if (!mMotion || mMotion->getSourceType() != "c3d" || !mFreeCharacter || !mC3DReader) {
         ImGui::Text("Load a C3D file to see correspondence");
         return;
     }
 
     C3D* c3dMotion = static_cast<C3D*>(mMotion);
     const auto& dataLabels = c3dMotion->getLabels();
-    const auto& skelMarkers = mMotionCharacter->getMarkers();
+    const auto& skelMarkers = mFreeCharacter->getMarkers();
 
     const auto& config = mC3DReader->getFittingConfig();
     const auto& mappings = config.markerMappings;
@@ -1024,7 +1298,7 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
     // Search filter
     ImGui::InputText("Filter", mMarkerSearchFilter, sizeof(mMarkerSearchFilter));
 
-    auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
+    auto expectedMarkers = mFreeCharacter->getExpectedMarkerPositions();
     Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
 
     if (ImGui::BeginTable("MarkerTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 300))) {
@@ -1126,61 +1400,35 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
     }
 }
 
-void C3DProcessorApp::drawMotionPoseSection()
+void C3DProcessorApp::drawBonePoseSection()
 {
-    if (!collapsingHeaderWithControls("Motion Pose")) return;
-    if (!mMotion || !mMotionCharacter) {
-        ImGui::Text("No motion loaded");
+    if (!collapsingHeaderWithControls("Bone Pose")) return;
+
+    // Get both skeletons
+    dart::dynamics::SkeletonPtr freeSkel = mFreeCharacter ? mFreeCharacter->getSkeleton() : nullptr;
+    dart::dynamics::SkeletonPtr motionSkel = mMotionCharacter ? mMotionCharacter->getSkeleton() : nullptr;
+
+    if (!freeSkel && !motionSkel) {
+        ImGui::Text("No skeleton available");
         return;
     }
 
-    auto skel = mMotionCharacter->getSkeleton();
-    if (!skel) return;
+    dart::dynamics::SkeletonPtr refSkel = freeSkel ? freeSkel : motionSkel;
 
-    int maxFrame = std::max(0, mMotion->getNumFrames() - 1);
-
-    // Frame controls: slider | input | checkbox
-    int displayFrame = mPoseUseCurrentFrame ? mMotionState.lastFrameIdx : mPoseInspectFrame;
-
-    if (mPoseUseCurrentFrame) {
-        // Show current frame (read-only)
-        ImGui::BeginDisabled();
-        ImGui::PushItemWidth(150);
-        ImGui::SliderInt("##FrameSlider", &displayFrame, 0, maxFrame);
-        ImGui::PopItemWidth();
-        ImGui::SameLine();
-        ImGui::PushItemWidth(60);
-        ImGui::InputInt("##FrameInput", &displayFrame, 0, 0);
-        ImGui::PopItemWidth();
-        ImGui::EndDisabled();
-    } else {
-        // Editable frame selection
-        ImGui::PushItemWidth(150);
-        ImGui::SliderInt("##FrameSlider", &mPoseInspectFrame, 0, maxFrame);
-        ImGui::PopItemWidth();
-        ImGui::SameLine();
-        ImGui::PushItemWidth(60);
-        ImGui::InputInt("##FrameInput", &mPoseInspectFrame, 0, 0);
-        ImGui::PopItemWidth();
-        mPoseInspectFrame = std::clamp(mPoseInspectFrame, 0, maxFrame);
-        displayFrame = mPoseInspectFrame;
-    }
+    // Filter input with deselect button
+    ImGui::InputText("Filter##BonePose", mBonePoseFilter, sizeof(mBonePoseFilter));
     ImGui::SameLine();
-    ImGui::Checkbox("Current", &mPoseUseCurrentFrame);
-
-    // Get pose for display frame
-    Eigen::VectorXd pose = mMotion->getPose(displayFrame);
-
-    // Filter input
-    ImGui::InputText("Filter##Joint", mJointFilter, sizeof(mJointFilter));
+    if (ImGui::Button("Deselect##BonePose")) {
+        mBonePoseSelectedIdx = -1;
+    }
 
     // Build filtered joint list
     std::vector<std::pair<int, std::string>> filteredJoints;
-    std::string filterStr(mJointFilter);
+    std::string filterStr(mBonePoseFilter);
     std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
 
-    for (size_t i = 0; i < skel->getNumJoints(); ++i) {
-        auto* joint = skel->getJoint(i);
+    for (size_t i = 0; i < refSkel->getNumJoints(); ++i) {
+        auto* joint = refSkel->getJoint(i);
         std::string name = joint->getName();
         std::string nameLower = name;
         std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
@@ -1191,54 +1439,398 @@ void C3DProcessorApp::drawMotionPoseSection()
     }
 
     // Joint listbox
-    if (ImGui::BeginListBox("##JointList", ImVec2(-1, 150))) {
+    if (ImGui::BeginListBox("##BonePoseList", ImVec2(-1, 100))) {
         for (const auto& [idx, name] : filteredJoints) {
-            bool isSelected = (mSelectedJointIdx == idx);
+            bool isSelected = (mBonePoseSelectedIdx == idx);
             if (ImGui::Selectable(name.c_str(), isSelected)) {
-                mSelectedJointIdx = idx;
+                mBonePoseSelectedIdx = idx;
             }
         }
         ImGui::EndListBox();
     }
 
-    // Display selected joint info
-    if (mSelectedJointIdx >= 0 && mSelectedJointIdx < (int)skel->getNumJoints()) {
-        auto* joint = skel->getJoint(mSelectedJointIdx);
-        int dofIdx = joint->getIndexInSkeleton(0);
-        int numDofs = joint->getNumDofs();
+    // Display selected bone pose for both characters (like Joint Offset section)
+    if (mBonePoseSelectedIdx >= 0 && mBonePoseSelectedIdx < (int)refSkel->getNumJoints()) {
+        auto* freeJoint = freeSkel ? freeSkel->getJoint(mBonePoseSelectedIdx) : nullptr;
+        auto* motionJoint = motionSkel ? motionSkel->getJoint(mBonePoseSelectedIdx) : nullptr;
+
+        auto* refJoint = freeJoint ? freeJoint : motionJoint;
 
         ImGui::Separator();
-        ImGui::Text("Joint: %s", joint->getName().c_str());
-        ImGui::Text("Type: %s (%d DOF)", joint->getType().c_str(), numDofs);
+        ImGui::Text("Bone: %s", refJoint->getName().c_str());
 
-        // Helper lambda to display rotation matrix
-        auto displayRotationMatrix = [](const Eigen::Vector3d& axisAngle) {
+        // Get poses from both skeletons
+        Eigen::VectorXd freePose = freeSkel ? freeSkel->getPositions() : Eigen::VectorXd();
+        Eigen::VectorXd motionPose = motionSkel ? motionSkel->getPositions() : Eigen::VectorXd();
+
+        // Helper lambda to compute rotation matrix from axis-angle
+        auto toRotationMatrix = [](const Eigen::Vector3d& axisAngle) -> Eigen::Matrix3d {
             double angle = axisAngle.norm();
-            Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
-            if (angle > 1e-10) {
-                Eigen::Vector3d axis = axisAngle.normalized();
-                R = Eigen::AngleAxisd(angle, axis).toRotationMatrix();
-            }
-            ImGui::Text("Rotation Matrix:");
-            ImGui::Text("  [%7.4f %7.4f %7.4f]", R(0,0), R(0,1), R(0,2));
-            ImGui::Text("  [%7.4f %7.4f %7.4f]", R(1,0), R(1,1), R(1,2));
-            ImGui::Text("  [%7.4f %7.4f %7.4f]", R(2,0), R(2,1), R(2,2));
+            if (angle < 1e-10) return Eigen::Matrix3d::Identity();
+            return Eigen::AngleAxisd(angle, axisAngle.normalized()).toRotationMatrix();
         };
 
-        if (numDofs >= 6) {
-            // FreeJoint: first 3 = rotation (angle-axis), next 3 = translation
-            Eigen::Vector3d rot = pose.segment<3>(dofIdx);
-            Eigen::Vector3d trans = pose.segment<3>(dofIdx + 3);
-            ImGui::Text("Translation: %.3f  %.3f  %.3f", trans.x(), trans.y(), trans.z());
-            displayRotationMatrix(rot);
-        } else if (numDofs == 3) {
-            // BallJoint: 3 rotation DOFs
-            Eigen::Vector3d rot = pose.segment<3>(dofIdx);
-            displayRotationMatrix(rot);
-        } else if (numDofs == 1) {
-            // RevoluteJoint: 1 rotation DOF
-            double angle = pose(dofIdx);
-            ImGui::Text("Angle: %.3f rad (%.1f deg)", angle, angle * 180.0 / M_PI);
+        // Colors
+        ImVec4 defaultColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        ImVec4 redColor(1.0f, 0.3f, 0.3f, 1.0f);
+
+        auto valuesDiffer = [](double a, double b) -> bool {
+            return std::abs(a - b) >= 0.0005;
+        };
+
+        // Legend
+        ImGui::Text("Values: Free /");
+        ImGui::SameLine();
+        ImGui::TextColored(redColor, "Motion");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(red = different)");
+
+        // Get transforms - FreeChar always has 6 DOF per joint
+        Eigen::Vector3d freeTrans = Eigen::Vector3d::Zero();
+        Eigen::Matrix3d freeR = Eigen::Matrix3d::Identity();
+        if (freeJoint && freePose.size() > 0) {
+            int dofIdx = freeJoint->getIndexInSkeleton(0);
+            freeTrans = freePose.segment<3>(dofIdx + 3);
+            Eigen::Vector3d freeRot = freePose.segment<3>(dofIdx);
+            freeR = toRotationMatrix(freeRot);
+        }
+
+        Eigen::Vector3d motionTrans = Eigen::Vector3d::Zero();
+        Eigen::Matrix3d motionR = Eigen::Matrix3d::Identity();
+        if (motionJoint && motionPose.size() > 0) {
+            int dofIdx = motionJoint->getIndexInSkeleton(0);
+            int numDofs = motionJoint->getNumDofs();
+            if (numDofs >= 6) {
+                motionTrans = motionPose.segment<3>(dofIdx + 3);
+                Eigen::Vector3d motionRot = motionPose.segment<3>(dofIdx);
+                motionR = toRotationMatrix(motionRot);
+            } else if (numDofs == 3) {
+                Eigen::Vector3d motionRot = motionPose.segment<3>(dofIdx);
+                motionR = toRotationMatrix(motionRot);
+            } else if (numDofs == 1) {
+                // For revolute joint, get rotation from body node transform
+                auto* bn = motionJoint->getChildBodyNode();
+                if (bn) {
+                    motionR = bn->getTransform().linear();
+                    motionTrans = bn->getTransform().translation();
+                }
+            }
+        }
+
+        // Display translation
+        ImGui::Text("Translation:");
+        bool xDiff = valuesDiffer(freeTrans.x(), motionTrans.x());
+        bool yDiff = valuesDiffer(freeTrans.y(), motionTrans.y());
+        bool zDiff = valuesDiffer(freeTrans.z(), motionTrans.z());
+
+        ImGui::Text("  X: %.3f /", freeTrans.x());
+        ImGui::SameLine();
+        ImGui::TextColored(xDiff ? redColor : defaultColor, "%.3f", motionTrans.x());
+
+        ImGui::Text("  Y: %.3f /", freeTrans.y());
+        ImGui::SameLine();
+        ImGui::TextColored(yDiff ? redColor : defaultColor, "%.3f", motionTrans.y());
+
+        ImGui::Text("  Z: %.3f /", freeTrans.z());
+        ImGui::SameLine();
+        ImGui::TextColored(zDiff ? redColor : defaultColor, "%.3f", motionTrans.z());
+
+        // Display rotation matrix
+        ImGui::Text("Rotation:");
+        for (int row = 0; row < 3; ++row) {
+            bool rowDiff = valuesDiffer(freeR(row,0), motionR(row,0)) ||
+                           valuesDiffer(freeR(row,1), motionR(row,1)) ||
+                           valuesDiffer(freeR(row,2), motionR(row,2));
+
+            ImGui::Text("  [%6.3f %6.3f %6.3f] /", freeR(row,0), freeR(row,1), freeR(row,2));
+            ImGui::SameLine();
+            ImGui::TextColored(rowDiff ? redColor : defaultColor, "[%6.3f %6.3f %6.3f]",
+                motionR(row,0), motionR(row,1), motionR(row,2));
+        }
+    }
+}
+
+void C3DProcessorApp::drawJointAngleSection()
+{
+    if (!collapsingHeaderWithControls("Joint Angle")) return;
+
+    // Get both skeletons
+    dart::dynamics::SkeletonPtr freeSkel = mFreeCharacter ? mFreeCharacter->getSkeleton() : nullptr;
+    dart::dynamics::SkeletonPtr motionSkel = mMotionCharacter ? mMotionCharacter->getSkeleton() : nullptr;
+
+    if (!freeSkel && !motionSkel) {
+        ImGui::Text("No skeleton available");
+        return;
+    }
+
+    dart::dynamics::SkeletonPtr refSkel = freeSkel ? freeSkel : motionSkel;
+
+    // Filter input with deselect button
+    ImGui::InputText("Filter##JointAngle", mJointAngleFilter, sizeof(mJointAngleFilter));
+    ImGui::SameLine();
+    if (ImGui::Button("Deselect##JointAngle")) {
+        mJointAngleSelectedIdx = -1;
+    }
+    std::string filterStr(mJointAngleFilter);
+    std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
+
+    // Build filtered joint list
+    std::vector<std::pair<int, std::string>> filteredJoints;
+    for (size_t i = 0; i < refSkel->getNumJoints(); ++i) {
+        auto* joint = refSkel->getJoint(i);
+        std::string name = joint->getName();
+        std::string nameLower = name;
+        std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+
+        if (filterStr.empty() || nameLower.find(filterStr) != std::string::npos) {
+            filteredJoints.push_back({static_cast<int>(i), name});
+        }
+    }
+
+    // Single joint listbox
+    if (ImGui::BeginListBox("##JointAngleList", ImVec2(-1, 100))) {
+        for (const auto& [idx, name] : filteredJoints) {
+            bool isSelected = (mJointAngleSelectedIdx == idx);
+            if (ImGui::Selectable(name.c_str(), isSelected)) {
+                mJointAngleSelectedIdx = idx;
+            }
+        }
+        ImGui::EndListBox();
+    }
+
+    // Display joint angle for both characters
+    if (mJointAngleSelectedIdx >= 0 && mJointAngleSelectedIdx < (int)refSkel->getNumJoints()) {
+        ImGui::Separator();
+        ImGui::Text("Joint: %s", refSkel->getJoint(mJointAngleSelectedIdx)->getName().c_str());
+
+        // Helper lambda to display joint angle for one skeleton
+        auto displayJointAngle = [](dart::dynamics::SkeletonPtr skel, int jointIdx, const char* label, ImVec4 color) {
+            if (!skel || jointIdx < 0 || jointIdx >= (int)skel->getNumJoints()) {
+                ImGui::TextColored(color, "=== %s === (N/A)", label);
+                return;
+            }
+
+            auto* joint = skel->getJoint(jointIdx);
+            int dofIdx = joint->getIndexInSkeleton(0);
+            int numDofs = joint->getNumDofs();
+            Eigen::VectorXd pose = skel->getPositions();
+
+            ImGui::TextColored(color, "=== %s ===", label);
+            ImGui::Text("Type: %s (%d DOF)", joint->getType().c_str(), numDofs);
+
+            if (numDofs >= 6) {
+                // FreeJoint
+                Eigen::Vector3d trans = pose.segment<3>(dofIdx + 3);
+                Eigen::Vector3d rot = pose.segment<3>(dofIdx);
+                double angle = rot.norm();
+                Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
+                if (angle > 1e-10) {
+                    R = Eigen::AngleAxisd(angle, rot.normalized()).toRotationMatrix();
+                }
+
+                ImGui::Text("Translation: %.3f %.3f %.3f", trans.x(), trans.y(), trans.z());
+                ImGui::Text("Rotation:");
+                for (int row = 0; row < 3; ++row) {
+                    ImGui::Text("  [%6.3f %6.3f %6.3f]", R(row,0), R(row,1), R(row,2));
+                }
+
+            } else if (numDofs == 3) {
+                // BallJoint
+                Eigen::Vector3d rot = pose.segment<3>(dofIdx);
+                double angle = rot.norm();
+                Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
+                if (angle > 1e-10) {
+                    R = Eigen::AngleAxisd(angle, rot.normalized()).toRotationMatrix();
+                }
+
+                ImGui::Text("Rotation:");
+                for (int row = 0; row < 3; ++row) {
+                    ImGui::Text("  [%6.3f %6.3f %6.3f]", R(row,0), R(row,1), R(row,2));
+                }
+
+            } else if (numDofs == 1) {
+                // RevoluteJoint
+                double angleVal = pose(dofIdx);
+                ImGui::Text("Angle: %.3f rad (%.1f deg)", angleVal, angleVal * 180.0 / M_PI);
+            }
+        };
+
+        // FreeChar section
+        displayJointAngle(freeSkel, mJointAngleSelectedIdx, "FreeChar", ImVec4(0.8f, 0.8f, 0.8f, 1.0f));
+
+        ImGui::Separator();
+
+        // MotionChar section
+        displayJointAngle(motionSkel, mJointAngleSelectedIdx, "MotionChar", ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+    }
+}
+
+void C3DProcessorApp::drawJointOffsetSection()
+{
+    if (!collapsingHeaderWithControls("Joint Offset")) return;
+
+    // Get both skeletons
+    dart::dynamics::SkeletonPtr freeSkel = mFreeCharacter ? mFreeCharacter->getSkeleton() : nullptr;
+    dart::dynamics::SkeletonPtr motionSkel = mMotionCharacter ? mMotionCharacter->getSkeleton() : nullptr;
+
+    if (!freeSkel && !motionSkel) {
+        ImGui::Text("No skeleton available");
+        return;
+    }
+
+    // Use freeSkel as reference for joint list (both should have same structure)
+    dart::dynamics::SkeletonPtr refSkel = freeSkel ? freeSkel : motionSkel;
+
+    // Filter input with deselect button
+    ImGui::InputText("Filter##JointOffset", mJointOffsetFilter, sizeof(mJointOffsetFilter));
+    ImGui::SameLine();
+    if (ImGui::Button("Deselect##JointOffset")) {
+        mJointOffsetSelectedIdx = -1;
+    }
+
+    // Build filtered joint list
+    std::vector<std::pair<int, std::string>> filteredJoints;
+    std::string filterStr(mJointOffsetFilter);
+    std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
+
+    for (size_t i = 0; i < refSkel->getNumJoints(); ++i) {
+        auto* joint = refSkel->getJoint(i);
+        std::string name = joint->getName();
+        std::string nameLower = name;
+        std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+
+        if (filterStr.empty() || nameLower.find(filterStr) != std::string::npos) {
+            filteredJoints.push_back({static_cast<int>(i), name});
+        }
+    }
+
+    // Joint listbox
+    if (ImGui::BeginListBox("##JointOffsetList", ImVec2(-1, 120))) {
+        for (const auto& [idx, name] : filteredJoints) {
+            bool isSelected = (mJointOffsetSelectedIdx == idx);
+            if (ImGui::Selectable(name.c_str(), isSelected)) {
+                mJointOffsetSelectedIdx = idx;
+            }
+        }
+        ImGui::EndListBox();
+    }
+
+    // Display selected joint offset info - comparing both characters
+    if (mJointOffsetSelectedIdx >= 0 && mJointOffsetSelectedIdx < (int)refSkel->getNumJoints()) {
+        // Get joints from both skeletons
+        auto* freeJoint = freeSkel ? freeSkel->getJoint(mJointOffsetSelectedIdx) : nullptr;
+        auto* motionJoint = motionSkel ? motionSkel->getJoint(mJointOffsetSelectedIdx) : nullptr;
+
+        auto* refJoint = freeJoint ? freeJoint : motionJoint;
+        auto* parentBody = refJoint->getParentBodyNode();
+        auto* childBody = refJoint->getChildBodyNode();
+
+        ImGui::Separator();
+        ImGui::Text("Joint: %s", refJoint->getName().c_str());
+        ImGui::Text("Type: %s", refJoint->getType().c_str());
+
+        // Legend
+        ImGui::Text("Values: Free /");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Motion");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(red = different)");
+
+        // Colors
+        ImVec4 redColor(1.0f, 0.3f, 0.3f, 1.0f);
+        ImVec4 defaultColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+
+        // Helper to check if values differ at 3 decimal precision
+        auto valuesDiffer = [](double a, double b) -> bool {
+            return std::abs(a - b) >= 0.0005;  // 3 decimal precision threshold
+        };
+
+        // Helper to display comparison values
+        auto displayTranslationCompare = [&](const char* label,
+                                              const Eigen::Vector3d& freeTrans,
+                                              const Eigen::Vector3d& motionTrans,
+                                              bool hasFree, bool hasMotion) {
+            ImGui::Text("%s", label);
+            if (hasFree && hasMotion) {
+                bool xDiff = valuesDiffer(freeTrans.x(), motionTrans.x());
+                bool yDiff = valuesDiffer(freeTrans.y(), motionTrans.y());
+                bool zDiff = valuesDiffer(freeTrans.z(), motionTrans.z());
+
+                ImGui::Text("  X: %.3f /", freeTrans.x());
+                ImGui::SameLine();
+                ImGui::TextColored(xDiff ? redColor : defaultColor, "%.3f", motionTrans.x());
+
+                ImGui::Text("  Y: %.3f /", freeTrans.y());
+                ImGui::SameLine();
+                ImGui::TextColored(yDiff ? redColor : defaultColor, "%.3f", motionTrans.y());
+
+                ImGui::Text("  Z: %.3f /", freeTrans.z());
+                ImGui::SameLine();
+                ImGui::TextColored(zDiff ? redColor : defaultColor, "%.3f", motionTrans.z());
+            } else if (hasFree) {
+                ImGui::Text("  X: %.3f  Y: %.3f  Z: %.3f", freeTrans.x(), freeTrans.y(), freeTrans.z());
+            } else if (hasMotion) {
+                ImGui::TextColored(redColor, "  X: %.3f  Y: %.3f  Z: %.3f", motionTrans.x(), motionTrans.y(), motionTrans.z());
+            }
+        };
+
+        auto displayRotationCompare = [&](const char* label,
+                                           const Eigen::Matrix3d& freeRot,
+                                           const Eigen::Matrix3d& motionRot,
+                                           bool hasFree, bool hasMotion) {
+            ImGui::Text("%s", label);
+            for (int row = 0; row < 3; ++row) {
+                if (hasFree && hasMotion) {
+                    // Check if any value in this row differs
+                    bool rowDiff = valuesDiffer(freeRot(row,0), motionRot(row,0)) ||
+                                   valuesDiffer(freeRot(row,1), motionRot(row,1)) ||
+                                   valuesDiffer(freeRot(row,2), motionRot(row,2));
+
+                    ImGui::Text("  [%6.3f %6.3f %6.3f] /", freeRot(row,0), freeRot(row,1), freeRot(row,2));
+                    ImGui::SameLine();
+                    ImGui::TextColored(rowDiff ? redColor : defaultColor, "[%6.3f %6.3f %6.3f]", motionRot(row,0), motionRot(row,1), motionRot(row,2));
+                } else if (hasFree) {
+                    ImGui::Text("  [%6.3f %6.3f %6.3f]", freeRot(row,0), freeRot(row,1), freeRot(row,2));
+                } else if (hasMotion) {
+                    ImGui::TextColored(redColor, "  [%6.3f %6.3f %6.3f]", motionRot(row,0), motionRot(row,1), motionRot(row,2));
+                }
+            }
+        };
+
+        // Parent body info
+        ImGui::Separator();
+        if (parentBody) {
+            ImGui::Text("Parent Body: %s", parentBody->getName().c_str());
+
+            Eigen::Isometry3d freeT = freeJoint ? freeJoint->getTransformFromParentBodyNode() : Eigen::Isometry3d::Identity();
+            Eigen::Isometry3d motionT = motionJoint ? motionJoint->getTransformFromParentBodyNode() : Eigen::Isometry3d::Identity();
+
+            displayTranslationCompare("Offset from Parent (translation):",
+                freeT.translation(), motionT.translation(),
+                freeJoint != nullptr, motionJoint != nullptr);
+
+            displayRotationCompare("Offset from Parent (rotation):",
+                freeT.linear(), motionT.linear(),
+                freeJoint != nullptr, motionJoint != nullptr);
+        } else {
+            ImGui::Text("Parent Body: (World/Root)");
+        }
+
+        // Child body info
+        ImGui::Separator();
+        if (childBody) {
+            ImGui::Text("Child Body: %s", childBody->getName().c_str());
+
+            Eigen::Isometry3d freeT = freeJoint ? freeJoint->getTransformFromChildBodyNode() : Eigen::Isometry3d::Identity();
+            Eigen::Isometry3d motionT = motionJoint ? motionJoint->getTransformFromChildBodyNode() : Eigen::Isometry3d::Identity();
+
+            displayTranslationCompare("Offset to Child (translation):",
+                freeT.translation(), motionT.translation(),
+                freeJoint != nullptr, motionJoint != nullptr);
+
+            displayRotationCompare("Offset to Child (rotation):",
+                freeT.linear(), motionT.linear(),
+                freeJoint != nullptr, motionJoint != nullptr);
         }
     }
 }
@@ -1300,6 +1892,7 @@ void C3DProcessorApp::loadC3DFile(const std::string& path)
 
     // Load C3D
     C3DConversionParams params;
+    params.doCalibration = true;
     mMotion = mC3DReader->loadC3D(path, params);
 
     if (mMotion) {
@@ -1421,8 +2014,8 @@ void C3DProcessorApp::evaluateMarkerPlayback(const MarkerPlaybackContext& contex
     }
 
     // Update skeleton pose from C3D
-    if (mMotionCharacter && mMotion) {
-        auto skel = mMotionCharacter->getSkeleton();
+    if (mFreeCharacter && mMotion) {
+        auto skel = mFreeCharacter->getSkeleton();
         if (skel && mMotion->getValuesPerFrame() == skel->getNumDofs()) {
             int frame = markerState.lastFrameIdx;
             Eigen::VectorXd pose = mMotion->getPose(frame);
@@ -1430,6 +2023,20 @@ void C3DProcessorApp::evaluateMarkerPlayback(const MarkerPlaybackContext& contex
                 // Apply display offset
                 pose.segment<3>(3) += markerState.displayOffset + markerState.cycleAccumulation;
                 mMotionState.currentPose = pose;
+            }
+        }
+    }
+
+    // Update motion character pose from converted poses
+    if (mMotionCharacter && mC3DReader) {
+        const auto& motionResult = mC3DReader->getMotionConversionResult();
+        if (motionResult.valid && markerState.lastFrameIdx < (int)motionResult.motionPoses.size()) {
+            auto skel = mMotionCharacter->getSkeleton();
+            Eigen::VectorXd pose = motionResult.motionPoses[markerState.lastFrameIdx];
+            if (pose.size() == skel->getNumDofs()) {
+                // Apply display offset
+                pose.segment<3>(3) += markerState.displayOffset + markerState.cycleAccumulation;
+                skel->setPositions(pose);
             }
         }
     }
@@ -1474,14 +2081,14 @@ void C3DProcessorApp::updateViewerTime(double dt)
 
 void C3DProcessorApp::computeViewerMetric()
 {
-    if (!mMotion || mMotion->getSourceType() != "c3d" || !mMotionCharacter || !mC3DReader) return;
+    if (!mMotion || mMotion->getSourceType() != "c3d" || !mFreeCharacter || !mC3DReader) return;
 
-    const auto& skelMarkers = mMotionCharacter->getMarkers();
+    const auto& skelMarkers = mFreeCharacter->getMarkers();
     const auto& config = mC3DReader->getFittingConfig();
     const auto& mappings = config.markerMappings;
     if (mappings.empty()) return;
 
-    auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
+    auto expectedMarkers = mFreeCharacter->getExpectedMarkerPositions();
     Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
 
     double totalError = 0.0;
@@ -1718,11 +2325,14 @@ void C3DProcessorApp::reset()
     mTrackball = dart::gui::Trackball();
 
     // Reset skeleton to zero pose
-    if (mMotionCharacter) {
-        mMotionCharacter->resetSkeletonToDefault();
-        auto skel = mMotionCharacter->getSkeleton();
-        if (skel) {
-            skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+    RenderCharacter* characters[2] = { mFreeCharacter.get(), mMotionCharacter.get() };
+    for (auto character : characters) {
+        if (character) {
+            character->resetSkeletonToDefault();
+            auto skel = character->getSkeleton();
+            if (skel) {
+                skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+            }
         }
     }
 }

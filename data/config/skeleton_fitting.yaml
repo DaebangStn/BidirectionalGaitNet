@@ -93,3 +93,28 @@ skeleton_fitting:
       - ForeArmR
       - ArmL
       - ForeArmL
+
+    # Revolute axis selection mode for motion skeleton conversion
+    # Modes: PCA (always use PCA), FIX (always use XML axis), BLEND (blend based on threshold)
+    revolute_axis_mode: XML
+    revolute_axis_threshold_low: 5.0    # degrees - below this, use XML axis
+    revolute_axis_threshold_high: 10.0   # degrees - above this, use PCA axis (between = blend)
+
+    # Motion skeleton conversion targets (joint names = body node names)
+    # Joints listed here will have offset estimation and pose projection applied
+    target_motion_joint:
+      - Pelvis
+      - FemurR
+      - TibiaR
+      - TalusR
+      - FemurL
+      - TibiaL
+      - TalusL
+      - Spine
+      - Torso
+      - Neck
+      - Head
+      - ArmR
+      - ForeArmR
+      - ArmL
+      - ForeArmL

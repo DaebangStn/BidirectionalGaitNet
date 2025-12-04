@@ -75,7 +75,9 @@
       "streambuf": "cpp",
       "thread": "cpp",
       "charconv": "cpp",
-      "future": "cpp"
+      "future": "cpp",
+      "*.inc": "cpp",
+      "any": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",

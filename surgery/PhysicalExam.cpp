@@ -3776,14 +3776,11 @@ void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
         setPoseSupineKneeFlexed(mPresetKneeAngle);
     }
     // Camera preset loading (hardcoded presets)
-    else if (key == GLFW_KEY_8) {
-        loadCameraPreset(0);  // Front view (initial)
-    }
     else if (key == GLFW_KEY_9) {
-        loadCameraPreset(1);  // Side view (right)
+        selectCameraPresetInteractive();
     }
     else if (key == GLFW_KEY_0) {
-        loadCameraPreset(2);  // Top view
+        loadCameraPreset(0);  // Top view
     }
     else if (key == GLFW_KEY_G) {
         mShowSurgeryPanel = !mShowSurgeryPanel;  // Toggle surgery panel
@@ -4460,7 +4457,7 @@ void PhysicalExam::saveCameraPreset(int index) {
 }
 
 void PhysicalExam::loadCameraPreset(int index) {
-    if (index < 0 || index >= 3) {
+    if (index < 0 || index >= 10) {
         LOG_ERROR("Invalid camera preset index: " << index);
         return;
     }
@@ -4490,12 +4487,13 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
     "PRESET|Front Thigh view|0,0.431401,1.2942|0,1,0|-0.0612152,-0.655993,-0.0328963|1|0.81416,0.580639,0.0,0.0",
     // "PRESET|Back Thigh view|0,0.256203,0.768607|0,1,0|0.123724,-1.05037,-0.222596|1|0.0,0.0,0.593647,-0.803454",
     "PRESET|Foot side view|0,0.564545,1.69364|0,1,0|-0.382306,-0.960299,-0.632363|1|0.767598,0.0,0.630236,0.11053",
+    "PRESET|Surgery overview|0,0.813471,2.44041|0,1,0|-0.289215,-0.570655,-0.280608|1|0.81416,0.580639,0,0"
 };
 
 void PhysicalExam::initializeCameraPresets() {
     const int numPresets = sizeof(CAMERA_PRESET_DEFINITIONS) / sizeof(CAMERA_PRESET_DEFINITIONS[0]);
     
-    for (int i = 0; i < std::min(numPresets, 3); ++i) {
+    for (int i = 0; i < numPresets; ++i) {
         std::string line = CAMERA_PRESET_DEFINITIONS[i];
         
         // Parse the preset line
@@ -4554,6 +4552,42 @@ void PhysicalExam::initializeCameraPresets() {
                 LOG_INFO("Camera preset " << (i + 1) << " parsed: " << tokens[1]);
             }
         }
+    }
+}
+
+void PhysicalExam::selectCameraPresetInteractive() {
+    // Collect available preset indices
+    std::vector<int> availableIndices;
+    for (int i = 0; i < 10; ++i) {
+        if (mCameraPresets[i].isSet) {
+            availableIndices.push_back(i);
+        }
+    }
+
+    if (availableIndices.empty()) {
+        std::cout << "No camera presets available." << std::endl;
+        return;
+    }
+
+    // Display available presets
+    std::cout << "\n=== Available Camera Presets ===" << std::endl;
+    for (int idx : availableIndices) {
+        std::cout << "  [" << idx << "] " << mCameraPresets[idx].description << std::endl;
+    }
+    std::cout << "================================" << std::endl;
+    std::cout << "Enter preset number: ";
+    std::cout.flush();
+
+    // Read user input
+    int selection = -1;
+    std::cin >> selection;
+
+    // Validate and load
+    if (selection >= 0 && selection < 10 && mCameraPresets[selection].isSet) {
+        loadCameraPreset(selection);
+        std::cout << "Loaded preset: " << mCameraPresets[selection].description << std::endl;
+    } else {
+        std::cout << "Invalid selection: " << selection << std::endl;
     }
 }
 

@@ -139,6 +139,15 @@ struct SkeletonFittingConfig {
     double interpolateRatio = 0.5;  // Interpolation ratio for dependent bones (Spine, Neck)
     double skelRatioBound = 1.5;    // Max scale ratio constraint: max(s)/min(s) <= skelRatioBound
 
+    // Motion skeleton conversion targets (joint names)
+    std::vector<std::string> targetMotionJoint;
+
+    // Revolute axis selection mode: PCA, FIX (XML), BLEND
+    enum class RevoluteAxisMode { PCA, FIX, BLEND };
+    RevoluteAxisMode revoluteAxisMode = RevoluteAxisMode::BLEND;
+    double revoluteAxisThresholdLow = 10.0;   // degrees
+    double revoluteAxisThresholdHigh = 10.1;  // degrees
+
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
         for (const auto& ref : markerMappings) {
@@ -149,12 +158,40 @@ struct SkeletonFittingConfig {
         return -1;
     }
 
+    // Helper: check if joint is in motion conversion target list (empty = all joints)
+    bool isMotionJointTarget(const std::string& jointName) const {
+        if (targetMotionJoint.empty()) return true;  // Empty = process all
+        return std::find(targetMotionJoint.begin(), targetMotionJoint.end(), jointName)
+               != targetMotionJoint.end();
+    }
+
+};
+
+// Result of joint offset estimation for motion skeleton conversion
+struct JointOffsetResult {
+    Eigen::Isometry3d parentOffset;  // Parent body → joint pivot transform
+    Eigen::Isometry3d childOffset;   // Joint pivot → child body transform
+    Eigen::Vector3d revoluteAxis;    // For RevoluteJoint: estimated rotation axis
+    bool valid = false;
+
+    JointOffsetResult() {
+        parentOffset.setIdentity();
+        childOffset.setIdentity();
+        revoluteAxis = Eigen::Vector3d::UnitX();
+    }
+};
+
+// Result of converting free-joint poses to motion skeleton poses
+struct MotionConversionResult {
+    std::map<std::string, JointOffsetResult> jointOffsets;  // Per-joint fixed offsets
+    std::vector<Eigen::VectorXd> motionPoses;               // Per-frame poses for motion skeleton
+    bool valid = false;
 };
 
 class C3D_Reader
 {
     public:
-        C3D_Reader(std::string marker_path, RenderCharacter *character);
+        C3D_Reader(std::string fitting_config_path, std::string marker_path, RenderCharacter *free_character, RenderCharacter *motion_character);
         ~C3D_Reader();
 
         int getFrameRate() { return mFrameRate; }
@@ -210,7 +247,6 @@ class C3D_Reader
         // Config loading
         SkeletonFittingConfig loadSkeletonFittingConfig(const std::string& configPath);
         const SkeletonFittingConfig& getFittingConfig() const { return mFittingConfig; }
-        void setFittingConfigPath(const std::string& path) { mFittingConfigPath = path; }
         const std::string& getFittingConfigPath() const { return mFittingConfigPath; }
 
         // Marker label resolution
@@ -219,6 +255,10 @@ class C3D_Reader
         // Accessors for fitted frame range
         int getFitFrameStart() const { return mFitFrameStart; }
         int getFitFrameEnd() const { return mFitFrameEnd; }
+
+        // Motion skeleton conversion (free-joint poses → constrained joint angles)
+        const MotionConversionResult& getMotionConversionResult() const { return mMotionResult; }
+        MotionConversionResult convertToMotionSkeleton();
 
     private:
         // Helper methods for loadC3D refactoring
@@ -241,7 +281,7 @@ class C3D_Reader
         void scaleArmsFallback();
         void copyDependentScales();
 
-        RenderCharacter *mCharacter;
+        RenderCharacter *mFreeCharacter;
 
         std::vector<BoneInfo> mSkelInfos;
 
@@ -277,6 +317,26 @@ class C3D_Reader
         // Arm rotation state for degeneracy handling (straight-arm case)
         Eigen::Vector3d mPrevArmNormalR = Eigen::Vector3d(0, 0, 1);
         Eigen::Vector3d mPrevArmNormalL = Eigen::Vector3d(0, 0, 1);
+
+        // Cached elbow angles from cross product (for motion skeleton conversion)
+        // Key: "ForeArmR" or "ForeArmL", Value: per-frame angles in [0, π]
+        std::map<std::string, std::vector<double>> mElbowAngle_frames;
+
+        // Motion skeleton conversion
+        RenderCharacter* mMotionCharacter = nullptr;
+        MotionConversionResult mMotionResult;
+
+        // Helper functions for motion conversion
+        std::map<std::string, std::vector<Eigen::Isometry3d>> computeRelativeTransforms();
+        JointOffsetResult estimateJointOffsets(const std::string& jointName,
+            const std::vector<Eigen::Isometry3d>& relativeTransforms);
+        Eigen::Vector3d selectRevoluteAxis(const Eigen::Vector3d& xmlAxis,
+            const std::vector<Eigen::Matrix3d>& rotations);
+        Eigen::VectorXd buildMotionFramePose(int frameIdx,
+            const std::map<std::string, JointOffsetResult>& offsets,
+            const std::map<std::string, std::vector<Eigen::Isometry3d>>& relTransforms);
+        void applyJointOffsetsToSkeleton(dart::dynamics::SkeletonPtr skel,
+            const std::map<std::string, JointOffsetResult>& offsets);
 };
 
 #endif

@@ -191,6 +191,8 @@ public:
     void printCameraInfo();
     void saveCameraPreset(int index);
     void loadCameraPreset(int index);
+
+    void selectCameraPresetInteractive();  // Interactive preset selection via stdin
     void initializeCameraPresets();
 
 private:
@@ -229,9 +231,9 @@ private:
         Eigen::Vector3d trans;
         double zoom;
         Eigen::Quaterniond quat;
-        bool isSet;
+        bool isSet = false;  // Default to unset
     };
-    CameraPreset mCameraPresets[3];
+    CameraPreset mCameraPresets[10];
     int mCurrentCameraPreset;  // Track which preset is currently active
 
     // Force state
