@@ -997,6 +997,12 @@ void C3DProcessorApp::drawPlaybackSection()
                 mMotionState.navigationMode = C3D_MANUAL_FRAME;
                 mMotionState.manualFrameIndex = currentFrame;
             }
+            if (mMotionState.navigationMode == C3D_MANUAL_FRAME) {
+                ImGui::SameLine();
+                if (ImGui::Button("+")) mMotionState.manualFrameIndex++;
+                ImGui::SameLine();
+                if (ImGui::Button("-")) mMotionState.manualFrameIndex--;
+            }
 
             // Navigation mode toggle
             bool syncMode = (mMotionState.navigationMode == C3D_SYNC);
@@ -1028,6 +1034,23 @@ void C3DProcessorApp::drawMarkerFittingSection()
         ImGui::SameLine();
         if (ImGui::Button("Reset Skeleton")) {
             if (mFreeCharacter) mFreeCharacter->resetSkeletonToDefault();
+        }
+
+        // IK Refinement buttons
+        if (ImGui::Button("Refine Arm IK")) {
+            if (mC3DReader) {
+                mC3DReader->loadSkeletonFittingConfig();
+                mC3DReader->refineArmIK();
+                LOG_INFO("[C3DProcessor] Arm IK refinement completed");
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Refine Leg IK")) {
+            if (mC3DReader) {
+                mC3DReader->loadSkeletonFittingConfig();
+                mC3DReader->refineLegIK();
+                LOG_INFO("[C3DProcessor] Leg IK refinement completed");
+            }
         }
     }
 }
@@ -1943,12 +1966,17 @@ C3DProcessorApp::MarkerPlaybackContext C3DProcessorApp::computeMarkerPlayback()
     context.state = &mMotionState;
     context.phase = mViewerPhase;
 
-    if (!mRenderC3DMarkers || !mMotion || mMotion->getSourceType() != "c3d")
+    if (!mMotion || mMotion->getSourceType() != "c3d") {
+        LOG_WARN("[C3DProcessor] No motion or motion is not a C3D file, skipping marker playback");
         return context;
+    }
 
     C3D* c3dMotion = static_cast<C3D*>(mMotion);
     if (c3dMotion->getNumFrames() == 0)
+    {
+        LOG_WARN("[C3DProcessor] No frames in motion, skipping marker playback");
         return context;
+    }
 
     context.markers = c3dMotion;
     context.totalFrames = c3dMotion->getNumFrames();
@@ -2280,6 +2308,18 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                 break;
             case GLFW_KEY_V:
                 hideVirtualMarkers();
+                break;
+            case GLFW_KEY_M:
+                // Toggle all marker rendering
+                {
+                    bool anyVisible = mRenderC3DMarkers || mRenderExpectedMarkers ||
+                                      mRenderJointPositions || mRenderMotionCharMarkers;
+                    bool newState = !anyVisible;
+                    mRenderC3DMarkers = newState;
+                    mRenderExpectedMarkers = newState;
+                    mRenderJointPositions = newState;
+                    mRenderMotionCharMarkers = newState;
+                }
                 break;
             case GLFW_KEY_ESCAPE:
                 glfwSetWindowShouldClose(mWindow, GLFW_TRUE);

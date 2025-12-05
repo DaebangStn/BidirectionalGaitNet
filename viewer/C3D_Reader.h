@@ -148,6 +148,25 @@ struct SkeletonFittingConfig {
     double revoluteAxisThresholdLow = 10.0;   // degrees
     double revoluteAxisThresholdHigh = 10.1;  // degrees
 
+    // Inverse Kinematics refinement parameters (DLS + Line Search)
+    struct IKParams {
+        int maxIterations = 15;
+        double tolerance = 1e-4;
+        double lambda = 0.01;          // DLS damping factor
+        double alphaInit = 1.0;        // Initial line search step
+        double beta = 0.5;             // Line search backtrack factor
+        int maxLineSearch = 8;
+
+        // Arm IK step limits (radians)
+        double armMaxTwist = 0.15;
+        double armMaxElbow = 0.2;
+
+        // Leg IK step limits (radians)
+        double legMaxHip = 0.15;
+        double legMaxKnee = 0.2;
+    };
+    IKParams ik;
+
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
         for (const auto& ref : markerMappings) {
@@ -245,7 +264,7 @@ class C3D_Reader
         std::vector<Eigen::VectorXd> mConvertedPos;
 
         // Config loading
-        SkeletonFittingConfig loadSkeletonFittingConfig(const std::string& configPath);
+        void loadSkeletonFittingConfig();
         const SkeletonFittingConfig& getFittingConfig() const { return mFittingConfig; }
         const std::string& getFittingConfigPath() const { return mFittingConfigPath; }
 
@@ -259,6 +278,10 @@ class C3D_Reader
         // Motion skeleton conversion (free-joint poses → constrained joint angles)
         const MotionConversionResult& getMotionConversionResult() const { return mMotionResult; }
         MotionConversionResult convertToMotionSkeleton();
+
+        // IK postprocessing methods (can be called independently via UI)
+        void refineArmIK();   // Step 6: Adjust arm twist + elbow to match wrist markers
+        void refineLegIK();   // Step 7: Adjust femur + tibia to match talus position
 
     private:
         // Helper methods for loadC3D refactoring
@@ -325,6 +348,7 @@ class C3D_Reader
         // Motion skeleton conversion
         RenderCharacter* mMotionCharacter = nullptr;
         MotionConversionResult mMotionResult;
+        std::vector<Eigen::VectorXd> mFreePoses;  // Free skeleton poses from buildFramePose
 
         // Helper functions for motion conversion
         std::map<std::string, std::vector<Eigen::Isometry3d>> computeRelativeTransforms();

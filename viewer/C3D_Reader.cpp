@@ -179,8 +179,12 @@ void C3D_Reader::resolveMarkerReferences(const std::vector<std::string>& c3dLabe
 }
 
 // Load skeleton fitting config from YAML
-SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& configPath) {
-    SkeletonFittingConfig config;
+void C3D_Reader::loadSkeletonFittingConfig() {
+    // Reset to defaults before loading
+    mFittingConfig = SkeletonFittingConfig();
+
+    // Resolve URI scheme if present
+    std::string configPath = PMuscle::URIResolver::getInstance().resolve(mFittingConfigPath);
 
     try {
         YAML::Node yaml = YAML::LoadFile(configPath);
@@ -188,62 +192,79 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
 
         if (!sf) {
             LOG_ERROR("[C3D_Reader] No skeleton_fitting section in config file");
-            return config;
+            return;
         }
 
         if (sf["frame_range"]) {
-            config.frameStart = sf["frame_range"]["start"].as<int>(0);
-            config.frameEnd = sf["frame_range"]["end"].as<int>(0);
+            mFittingConfig.frameStart = sf["frame_range"]["start"].as<int>(0);
+            mFittingConfig.frameEnd = sf["frame_range"]["end"].as<int>(0);
         }
 
         if (sf["optimization"]) {
-            config.maxIterations = sf["optimization"]["max_iterations"].as<int>(50);
-            config.convergenceThreshold = sf["optimization"]["convergence_threshold"].as<double>(1e-6);
-            config.plotConvergence = sf["optimization"]["plot_convergence"].as<bool>(true);
+            mFittingConfig.maxIterations = sf["optimization"]["max_iterations"].as<int>(50);
+            mFittingConfig.convergenceThreshold = sf["optimization"]["convergence_threshold"].as<double>(1e-6);
+            mFittingConfig.plotConvergence = sf["optimization"]["plot_convergence"].as<bool>(true);
             // SVD-based optimizer targets (3+ markers)
             if (sf["optimization"]["target_svd"]) {
                 for (const auto& t : sf["optimization"]["target_svd"]) {
-                    config.targetSvd.push_back(t.as<std::string>());
+                    mFittingConfig.targetSvd.push_back(t.as<std::string>());
                 }
             }
 
-            config.lambdaRot = sf["optimization"]["lambda_rot"].as<double>(10.0);
-            config.interpolateRatio = sf["optimization"]["interpolate_ratio"].as<double>(0.5);
-            config.skelRatioBound = sf["optimization"]["skel_ratio_bound"].as<double>(1.5);
+            mFittingConfig.lambdaRot = sf["optimization"]["lambda_rot"].as<double>(10.0);
+            mFittingConfig.interpolateRatio = sf["optimization"]["interpolate_ratio"].as<double>(0.5);
+            mFittingConfig.skelRatioBound = sf["optimization"]["skel_ratio_bound"].as<double>(1.5);
 
             // Ceres-based optimizer targets (2+ markers with regularization)
             if (sf["optimization"]["target_ceres"]) {
                 for (const auto& t : sf["optimization"]["target_ceres"]) {
-                    config.targetCeres.push_back(t.as<std::string>());
+                    mFittingConfig.targetCeres.push_back(t.as<std::string>());
                 }
             }
 
             // Motion skeleton conversion targets (joint names)
             if (sf["optimization"]["target_motion_joint"]) {
                 for (const auto& joint : sf["optimization"]["target_motion_joint"]) {
-                    config.targetMotionJoint.push_back(joint.as<std::string>());
+                    mFittingConfig.targetMotionJoint.push_back(joint.as<std::string>());
                 }
-                LOG_INFO("[Config] target_motion_joint: " << config.targetMotionJoint.size() << " joints");
+                LOG_INFO("[Config] target_motion_joint: " << mFittingConfig.targetMotionJoint.size() << " joints");
             }
 
             // Revolute axis selection mode and thresholds
             if (sf["optimization"]["revolute_axis_mode"]) {
                 std::string modeStr = sf["optimization"]["revolute_axis_mode"].as<std::string>();
                 if (modeStr == "PCA") {
-                    config.revoluteAxisMode = SkeletonFittingConfig::RevoluteAxisMode::PCA;
+                    mFittingConfig.revoluteAxisMode = SkeletonFittingConfig::RevoluteAxisMode::PCA;
                 } else if (modeStr == "FIX") {
-                    config.revoluteAxisMode = SkeletonFittingConfig::RevoluteAxisMode::FIX;
+                    mFittingConfig.revoluteAxisMode = SkeletonFittingConfig::RevoluteAxisMode::FIX;
                 } else {
-                    config.revoluteAxisMode = SkeletonFittingConfig::RevoluteAxisMode::BLEND;
+                    mFittingConfig.revoluteAxisMode = SkeletonFittingConfig::RevoluteAxisMode::BLEND;
                 }
                 LOG_INFO("[Config] revolute_axis_mode: " << modeStr);
             }
             if (sf["optimization"]["revolute_axis_threshold_low"]) {
-                config.revoluteAxisThresholdLow = sf["optimization"]["revolute_axis_threshold_low"].as<double>();
+                mFittingConfig.revoluteAxisThresholdLow = sf["optimization"]["revolute_axis_threshold_low"].as<double>();
             }
             if (sf["optimization"]["revolute_axis_threshold_high"]) {
-                config.revoluteAxisThresholdHigh = sf["optimization"]["revolute_axis_threshold_high"].as<double>();
+                mFittingConfig.revoluteAxisThresholdHigh = sf["optimization"]["revolute_axis_threshold_high"].as<double>();
             }
+        }
+
+        // Inverse Kinematics refinement parameters
+        if (sf["inverse_kinematics"]) {
+            auto ik = sf["inverse_kinematics"];
+            mFittingConfig.ik.maxIterations = ik["max_iterations"].as<int>(15);
+            mFittingConfig.ik.tolerance = ik["tolerance"].as<double>(1e-4);
+            mFittingConfig.ik.lambda = ik["lambda"].as<double>(0.01);
+            mFittingConfig.ik.alphaInit = ik["alpha_init"].as<double>(1.0);
+            mFittingConfig.ik.beta = ik["beta"].as<double>(0.5);
+            mFittingConfig.ik.maxLineSearch = ik["max_line_search"].as<int>(8);
+            mFittingConfig.ik.armMaxTwist = ik["arm_max_twist"].as<double>(0.15);
+            mFittingConfig.ik.armMaxElbow = ik["arm_max_elbow"].as<double>(0.2);
+            mFittingConfig.ik.legMaxHip = ik["leg_max_hip"].as<double>(0.15);
+            mFittingConfig.ik.legMaxKnee = ik["leg_max_knee"].as<double>(0.2);
+            LOG_INFO("[Config] IK params loaded: maxIter=" << mFittingConfig.ik.maxIterations
+                     << ", lambda=" << mFittingConfig.ik.lambda << ", beta=" << mFittingConfig.ik.beta);
         }
 
         // New format: marker_mappings (flat list)
@@ -253,10 +274,10 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
                     std::string name = m["name"].as<std::string>("");
                     if (m["data_idx"]) {
                         int idx = m["data_idx"].as<int>();
-                        config.markerMappings.push_back(MarkerReference::fromNameAndIndex(name, idx));
+                        mFittingConfig.markerMappings.push_back(MarkerReference::fromNameAndIndex(name, idx));
                     } else if (m["data_label"]) {
                         std::string label = m["data_label"].as<std::string>();
-                        config.markerMappings.push_back(MarkerReference::fromNameAndLabel(name, label));
+                        mFittingConfig.markerMappings.push_back(MarkerReference::fromNameAndLabel(name, label));
                     } else {
                         LOG_WARN("[C3D_Reader] marker_mappings entry missing data_idx or data_label for: " << name);
                     }
@@ -265,22 +286,20 @@ SkeletonFittingConfig C3D_Reader::loadSkeletonFittingConfig(const std::string& c
         }
 
         LOG_INFO("[C3D_Reader] Loaded skeleton fitting config:");
-        LOG_INFO("  - frameRange: " << config.frameStart << " to " << config.frameEnd);
-        LOG_INFO("  - maxIterations: " << config.maxIterations);
-        LOG_INFO("  - convergenceThreshold: " << config.convergenceThreshold);
-        LOG_INFO("  - plotConvergence: " << (config.plotConvergence ? "true" : "false"));
-        LOG_INFO("  - markerMappings: " << config.markerMappings.size() << " markers");
-        LOG_INFO("  - targetSvd: " << config.targetSvd.size() << " bones");
-        LOG_INFO("  - lambdaRot: " << config.lambdaRot);
-        LOG_INFO("  - interpolateRatio: " << config.interpolateRatio);
-        LOG_INFO("  - skelRatioBound: " << config.skelRatioBound);
-        LOG_INFO("  - targetCeres: " << config.targetCeres.size() << " bones");
+        LOG_INFO("  - frameRange: " << mFittingConfig.frameStart << " to " << mFittingConfig.frameEnd);
+        LOG_INFO("  - maxIterations: " << mFittingConfig.maxIterations);
+        LOG_INFO("  - convergenceThreshold: " << mFittingConfig.convergenceThreshold);
+        LOG_INFO("  - plotConvergence: " << (mFittingConfig.plotConvergence ? "true" : "false"));
+        LOG_INFO("  - markerMappings: " << mFittingConfig.markerMappings.size() << " markers");
+        LOG_INFO("  - targetSvd: " << mFittingConfig.targetSvd.size() << " bones");
+        LOG_INFO("  - lambdaRot: " << mFittingConfig.lambdaRot);
+        LOG_INFO("  - interpolateRatio: " << mFittingConfig.interpolateRatio);
+        LOG_INFO("  - skelRatioBound: " << mFittingConfig.skelRatioBound);
+        LOG_INFO("  - targetCeres: " << mFittingConfig.targetCeres.size() << " bones");
 
     } catch (const std::exception& e) {
         LOG_ERROR("[C3D_Reader] Failed to load config from " << configPath << ": " << e.what());
     }
-
-    return config;
 }
 
 // ============================================================================
@@ -292,9 +311,7 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
     LOG_VERBOSE("[C3D_Reader] loadC3D started for: " << path);
 
     // ========== 0. Load skeleton fitting config ==========
-    // Resolve URI scheme if present
-    std::string resolvedConfigPath = PMuscle::URIResolver::getInstance().resolve(mFittingConfigPath);
-    mFittingConfig = loadSkeletonFittingConfig(resolvedConfigPath);
+    loadSkeletonFittingConfig();
 
     // ========== 1. Load C3D file ==========
     // C3D::load() parses the file and stores markers directly in c3dData->mMarkers
@@ -343,13 +360,13 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
     }
 
     // ========== 4. Convert to skeleton poses (IK) ==========
-    std::vector<Eigen::VectorXd> motion;
     int numFitFrames = mFitFrameEnd - mFitFrameStart + 1;
-    motion.reserve(numFitFrames);
+    mFreePoses.clear();
+    mFreePoses.reserve(numFitFrames);
 
     for (int i = 0; i < numFitFrames; ++i) {
         Eigen::VectorXd pose = buildFramePose(i);
-        motion.push_back(pose);
+        mFreePoses.push_back(pose);
     }
 
     // ========== 5. Convert to motion skeleton (if available) ==========
@@ -357,8 +374,11 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
         mMotionResult = convertToMotionSkeleton();
     }
 
+    refineArmIK();
+    refineLegIK();
+
     // ========== 6. Finalize ==========
-    c3dData->setSkeletonPoses(motion);
+    c3dData->setSkeletonPoses(mFreePoses);
     c3dData->setSourceFile(path);
     mCurrentC3D = nullptr;  // Clear after processing
 
@@ -1083,12 +1103,6 @@ void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
 
         // Check valid markers
         if (sho_idx < 0 || elb_arm_idx < 0 || elb_farm_idx < 0 || wri_idx < 0) {
-            if (fitFrameIdx == 0) {
-                std::cerr << "[ArmDebug] " << (isRight ? "R" : "L")
-                          << " SKIPPED: invalid marker idx (sho=" << sho_idx
-                          << " elb_arm=" << elb_arm_idx << " elb_farm=" << elb_farm_idx
-                          << " wri=" << wri_idx << ")" << std::endl;
-            }
             continue;
         }
         if (sho_idx >= (int)markers.size() || elb_arm_idx >= (int)markers.size() ||
@@ -1234,20 +1248,6 @@ void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
             // Compute resulting joint transform
             Eigen::Matrix3d R_joint = R_p2j.transpose() * R_upper_world.transpose() * R_lower_world * R_c2j;
             Eigen::AngleAxisd aa_joint(R_joint);
-
-            std::cerr << "[ArmDebug] " << (isRight ? "R" : "L")
-                      << " u_local=[" << u_local.transpose() << "]"
-                      << " n_local=[" << n_local_upper.transpose() << "]"
-                      << std::endl;
-            std::cerr << "[ArmDebug] " << (isRight ? "R" : "L")
-                      << " dot(R*u_local, u_world)=" << u_reconstructed.dot(u)
-                      << " dot(R*l_local, l_world)=" << l_reconstructed.dot(l)
-                      << std::endl;
-            std::cerr << "[ArmDebug] " << (isRight ? "R" : "L")
-                      << " R_joint axis=[" << aa_joint.axis().transpose() << "]"
-                      << " angle=" << aa_joint.angle() * 180.0/M_PI << "°"
-                      << " θ_cross=" << elbowAngle * 180.0/M_PI << "°"
-                      << std::endl;
         }
 
         // 5. Apply to FreeJoint positions
@@ -1269,15 +1269,6 @@ void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
                 pos.segment(upperBn->getParentJoint()->getIndexInSkeleton(0), jointPos.size()) = jointPos;
                 skel->setPositions(pos);
             }
-
-            // DEBUG: After pose applied, check body axis alignment
-            if (fitFrameIdx == 0) {
-                Eigen::Matrix3d actualR = upperBn->getTransform().linear();
-                Eigen::Vector3d actualMarkerDir = actualR * u_local;
-                std::cerr << "[ArmDebug] " << (isRight ? "R" : "L")
-                          << " upperArm: dot(R*u_local, u_world)=" << actualMarkerDir.dot(u)
-                          << std::endl;
-            }
         }
 
         // Forearm: average translation from elbow and wrist markers
@@ -1295,15 +1286,6 @@ void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
             if (jointPos.size() > 0) {
                 pos.segment(lowerBn->getParentJoint()->getIndexInSkeleton(0), jointPos.size()) = jointPos;
                 skel->setPositions(pos);
-            }
-
-            // DEBUG: After pose applied, check body axis alignment
-            if (fitFrameIdx == 0) {
-                Eigen::Matrix3d actualR = lowerBn->getTransform().linear();
-                Eigen::Vector3d actualMarkerDir = actualR * l_local;
-                std::cerr << "[ArmDebug] " << (isRight ? "R" : "L")
-                          << " foreArm: dot(R*l_local, l_world)=" << actualMarkerDir.dot(l)
-                          << std::endl;
             }
         }
 
@@ -2247,8 +2229,6 @@ void C3D_Reader::applyJointOffsetsToSkeleton(
 
         // Apply child offset (transform from joint to child body)
         joint->setTransformFromChildBodyNode(offset.childOffset);
-
-        LOG_INFO("[ApplyOffset] " << jointName << ": applied offsets");
     }
 }
 
@@ -2363,10 +2343,9 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
         Eigen::VectorXd b_vec(3 * numFrames);
 
         for (int t = 0; t < numFrames; ++t) {
-            // Apply poses to both skeletons
+            // Apply poses to both skeletons (use cached free poses)
             skel->setPositions(result.motionPoses[t]);
-            Eigen::VectorXd freePose = buildFramePose(t);
-            freeSkel->setPositions(freePose);
+            freeSkel->setPositions(mFreePoses[t]);
 
             // Get child body node world position (origin of TibiaL/R body node)
             Eigen::Vector3d childBnPosMotion = childBn->getWorldTransform().translation();
@@ -2401,6 +2380,10 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
         }
     }
 
+    // Step 6 & 7: IK refinement (called separately via UI or automatically)
+    // refineArmIK();  // Disabled by default - can be called via button
+    // refineLegIK();  // Disabled by default - can be called via button
+
     applyJointOffsetsToSkeleton(skel, result.jointOffsets);
 
     result.valid = true;
@@ -2408,5 +2391,391 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
              << " joints, " << result.motionPoses.size() << " frames");
 
     return result;
+}
+
+// ============================================================================
+// Step 6: Arm IK refinement - adjust arm twist + elbow angle to match hand position
+// Matches HandR/HandL body node position from free skeleton (no C3D dependency)
+// Uses DLS + Line Search for robust convergence
+// Can be called independently via UI button
+// ============================================================================
+void C3D_Reader::refineArmIK()
+{
+    if (!mMotionCharacter || !mFreeCharacter) {
+        LOG_WARN("[ArmIK] No motion or free character available");
+        return;
+    }
+
+    if (!mMotionResult.valid || mMotionResult.motionPoses.empty()) {
+        LOG_WARN("[ArmIK] No valid motion poses available");
+        return;
+    }
+
+    LOG_INFO("[ArmIK] Refining arm poses with DLS + Line Search (matching hand position)...");
+    LOG_INFO("[ArmIK] Params: maxIter=" << mFittingConfig.ik.maxIterations << ", lambda=" << mFittingConfig.ik.lambda
+             << ", beta=" << mFittingConfig.ik.beta << ", armMaxTwist=" << mFittingConfig.ik.armMaxTwist);
+
+    auto skel = mMotionCharacter->getSkeleton();
+    auto freeSkel = mFreeCharacter->getSkeleton();
+    int numFrames = mMotionResult.motionPoses.size();
+
+    // Arm chains: {arm joint, forearm joint, hand body node}
+    std::vector<std::tuple<std::string, std::string, std::string>> armConfigs = {
+        {"ArmR", "ForeArmR", "HandR"},
+        {"ArmL", "ForeArmL", "HandL"}
+    };
+
+    for (const auto& [armJointName, foreArmJointName, handName] : armConfigs) {
+        // Get joints and body nodes
+        auto* armJoint = skel->getJoint(armJointName);
+        auto* foreArmJoint = skel->getJoint(foreArmJointName);
+        auto* handBn = skel->getBodyNode(handName);
+        auto* freeHandBn = freeSkel->getBodyNode(handName);
+
+        if (!armJoint || !foreArmJoint || !handBn || !freeHandBn) continue;
+        if (armJoint->getType() != "BallJoint" || foreArmJoint->getType() != "RevoluteJoint") continue;
+
+        auto* armBn = armJoint->getChildBodyNode();
+        auto* foreArmBn = foreArmJoint->getChildBodyNode();
+        auto* torsoBn = armJoint->getParentBodyNode();
+        if (!armBn || !foreArmBn || !torsoBn) continue;
+
+        int armJointIdx = armJoint->getIndexInSkeleton(0);
+        int foreArmJointIdx = foreArmJoint->getIndexInSkeleton(0);
+
+        // Get elbow revolute axis from offset result (defined in arm body frame)
+        Eigen::Vector3d elbowAxisLocal = Eigen::Vector3d::UnitX();
+        auto offIt = mMotionResult.jointOffsets.find(foreArmJointName);
+        if (offIt != mMotionResult.jointOffsets.end()) {
+            elbowAxisLocal = offIt->second.revoluteAxis;
+        }
+
+        double totalRmsBefore = 0.0, totalRmsAfter = 0.0;
+
+        for (int t = 0; t < numFrames; ++t) {
+            // Set both skeleton poses (use cached free poses)
+            skel->setPositions(mMotionResult.motionPoses[t]);
+            freeSkel->setPositions(mFreePoses[t]);
+
+            // Target: hand position from free skeleton
+            Eigen::Vector3d p_target = freeHandBn->getWorldTransform().translation();
+
+            // Store initial pose for this frame
+            Eigen::VectorXd initialPose = mMotionResult.motionPoses[t];
+            Eigen::Vector3d initialError = p_target - handBn->getWorldTransform().translation();
+            double initialNorm = initialError.norm();
+            totalRmsBefore += initialError.squaredNorm();
+
+            double currentNorm = initialNorm;
+
+            for (int iter = 0; iter < mFittingConfig.ik.maxIterations; ++iter) {
+                if (currentNorm < mFittingConfig.ik.tolerance) break;
+
+                // Get current positions
+                Eigen::Isometry3d T_torso = torsoBn->getWorldTransform();
+                Eigen::Vector3d p_shoulder = T_torso * armJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Isometry3d T_arm = armBn->getWorldTransform();
+                Eigen::Vector3d p_elbow = T_arm * foreArmJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Vector3d p_hand = handBn->getWorldTransform().translation();
+
+                Eigen::Vector3d error = p_target - p_hand;
+
+                // Compute arm direction (twist axis) - in world frame
+                Eigen::Vector3d u = (p_elbow - p_shoulder);
+                double armLen = u.norm();
+                if (armLen < 1e-6) break;  // Degenerate arm
+                u /= armLen;
+
+                // Transform elbow axis to world frame (from arm body frame)
+                Eigen::Vector3d elbowAxisWorld = T_arm.linear() * elbowAxisLocal;
+
+                // Compute Jacobian (3x2)
+                // Col 0: twist around arm direction (shoulder→elbow)
+                // Col 1: elbow flexion around elbow axis
+                Eigen::Matrix<double, 3, 2> J;
+                J.col(0) = u.cross(p_hand - p_shoulder);
+                J.col(1) = elbowAxisWorld.cross(p_hand - p_elbow);
+
+                // DLS solve: dq = J^T (J J^T + λ²I)^{-1} e
+                Eigen::Matrix3d JJt = J * J.transpose();
+                JJt(0, 0) += mFittingConfig.ik.lambda * mFittingConfig.ik.lambda;
+                JJt(1, 1) += mFittingConfig.ik.lambda * mFittingConfig.ik.lambda;
+                JJt(2, 2) += mFittingConfig.ik.lambda * mFittingConfig.ik.lambda;
+                Eigen::Vector3d y = JJt.ldlt().solve(error);
+                Eigen::Vector2d dq = J.transpose() * y;
+
+                // Step clamping
+                if (std::abs(dq(0)) > mFittingConfig.ik.armMaxTwist) {
+                    dq(0) = (dq(0) > 0 ? 1.0 : -1.0) * mFittingConfig.ik.armMaxTwist;
+                }
+                if (std::abs(dq(1)) > mFittingConfig.ik.armMaxElbow) {
+                    dq(1) = (dq(1) > 0 ? 1.0 : -1.0) * mFittingConfig.ik.armMaxElbow;
+                }
+
+                // Store current pose before line search
+                Eigen::VectorXd currentPose = mMotionResult.motionPoses[t];
+
+                // Backtracking line search
+                double alpha = mFittingConfig.ik.alphaInit;
+                bool accepted = false;
+
+                for (int ls = 0; ls < mFittingConfig.ik.maxLineSearch; ++ls) {
+                    // Apply trial update
+                    Eigen::Vector2d dq_trial = alpha * dq;
+
+                    // Apply twist to arm BallJoint
+                    // Twist axis u is in world frame → transform to parent (torso) frame
+                    Eigen::Matrix3d R_arm_current = dart::dynamics::BallJoint::convertToRotation(
+                        currentPose.segment<3>(armJointIdx));
+                    Eigen::Matrix3d R_parent = T_torso.linear();
+                    Eigen::Vector3d u_local = R_parent.transpose() * u;
+
+                    Eigen::Matrix3d R_twist = Eigen::Matrix3d::Identity();
+                    if (std::abs(dq_trial(0)) > 1e-8) {
+                        R_twist = Eigen::AngleAxisd(dq_trial(0), u_local).toRotationMatrix();
+                    }
+                    Eigen::Matrix3d R_arm_new = R_twist * R_arm_current;
+
+                    mMotionResult.motionPoses[t].segment<3>(armJointIdx) =
+                        dart::dynamics::BallJoint::convertToPositions(R_arm_new);
+
+                    // Apply elbow angle delta
+                    mMotionResult.motionPoses[t](foreArmJointIdx) = currentPose(foreArmJointIdx) + dq_trial(1);
+
+                    // Evaluate trial
+                    skel->setPositions(mMotionResult.motionPoses[t]);
+                    Eigen::Vector3d trialError = p_target - handBn->getWorldTransform().translation();
+                    double trialNorm = trialError.norm();
+
+                    if (trialNorm < currentNorm) {
+                        // Accept step
+                        currentNorm = trialNorm;
+                        accepted = true;
+                        break;
+                    }
+
+                    // Reject: restore and reduce step
+                    mMotionResult.motionPoses[t] = currentPose;
+                    alpha *= mFittingConfig.ik.beta;
+                }
+
+                if (!accepted) {
+                    // No improvement found, restore and stop
+                    mMotionResult.motionPoses[t] = currentPose;
+                    skel->setPositions(mMotionResult.motionPoses[t]);
+                    break;
+                }
+            }
+
+            // Guarantee: never worse than initial
+            Eigen::Vector3d finalError = p_target - handBn->getWorldTransform().translation();
+            double finalNorm = finalError.norm();
+            if (finalNorm > initialNorm) {
+                // Should not happen with line search, but safety fallback
+                mMotionResult.motionPoses[t] = initialPose;
+                skel->setPositions(mMotionResult.motionPoses[t]);
+                totalRmsAfter += initialError.squaredNorm();
+            } else {
+                totalRmsAfter += finalError.squaredNorm();
+            }
+        }
+
+        double rmsBefore = std::sqrt(totalRmsBefore / numFrames);
+        double rmsAfter = std::sqrt(totalRmsAfter / numFrames);
+        LOG_INFO("[ArmIK] " << armJointName << ": RMS " << std::fixed << std::setprecision(4)
+                 << rmsBefore << " -> " << rmsAfter << " (target: " << handName << ")");
+    }
+}
+
+// ============================================================================
+// Step 7: Leg IK refinement - adjust femur + tibia to match talus position
+// Can be called independently via UI button
+// ============================================================================
+void C3D_Reader::refineLegIK()
+{
+    if (!mMotionCharacter || !mFreeCharacter) {
+        LOG_WARN("[LegIK] No motion or free character available");
+        return;
+    }
+
+    if (!mMotionResult.valid || mMotionResult.motionPoses.empty()) {
+        LOG_WARN("[LegIK] No valid motion poses available");
+        return;
+    }
+
+    LOG_INFO("[LegIK] Refining leg poses with DLS + Line Search...");
+    LOG_INFO("[LegIK] Params: maxIter=" << mFittingConfig.ik.maxIterations << ", lambda=" << mFittingConfig.ik.lambda
+             << ", beta=" << mFittingConfig.ik.beta << ", legMaxHip=" << mFittingConfig.ik.legMaxHip);
+
+    auto skel = mMotionCharacter->getSkeleton();
+    auto freeSkel = mFreeCharacter->getSkeleton();
+    int numFrames = mMotionResult.motionPoses.size();
+
+    // Leg chains: {femur joint, tibia joint, talus body node}
+    std::vector<std::tuple<std::string, std::string, std::string>> legConfigs = {
+        {"FemurR", "TibiaR", "TalusR"},
+        {"FemurL", "TibiaL", "TalusL"}
+    };
+
+    for (const auto& [femurJointName, tibiaJointName, talusName] : legConfigs) {
+        // Get joints and body nodes
+        auto* femurJoint = skel->getJoint(femurJointName);
+        auto* tibiaJoint = skel->getJoint(tibiaJointName);
+        auto* talusBn = skel->getBodyNode(talusName);
+        auto* freeTalusBn = freeSkel->getBodyNode(talusName);
+
+        if (!femurJoint || !tibiaJoint || !talusBn || !freeTalusBn) continue;
+        if (femurJoint->getType() != "BallJoint" || tibiaJoint->getType() != "RevoluteJoint") continue;
+
+        auto* femurBn = femurJoint->getChildBodyNode();
+        auto* tibiaBn = tibiaJoint->getChildBodyNode();
+        auto* pelvisBn = femurJoint->getParentBodyNode();
+        if (!femurBn || !tibiaBn || !pelvisBn) continue;
+
+        int femurJointIdx = femurJoint->getIndexInSkeleton(0);
+        int tibiaJointIdx = tibiaJoint->getIndexInSkeleton(0);
+
+        // Get knee revolute axis from offset result (defined in joint parent frame = femur body)
+        Eigen::Vector3d kneeAxisLocal = Eigen::Vector3d::UnitX();
+        auto offIt = mMotionResult.jointOffsets.find(tibiaJointName);
+        if (offIt != mMotionResult.jointOffsets.end()) {
+            kneeAxisLocal = offIt->second.revoluteAxis;
+        }
+
+        double totalRmsBefore = 0.0, totalRmsAfter = 0.0;
+
+        for (int t = 0; t < numFrames; ++t) {
+            // Set both skeleton poses (use cached free poses)
+            skel->setPositions(mMotionResult.motionPoses[t]);
+            freeSkel->setPositions(mFreePoses[t]);
+
+            // Target: talus position from free skeleton
+            Eigen::Vector3d p_target = freeTalusBn->getWorldTransform().translation();
+
+            // Store initial pose for this frame
+            Eigen::VectorXd initialPose = mMotionResult.motionPoses[t];
+            Eigen::Vector3d initialError = p_target - talusBn->getWorldTransform().translation();
+            double initialNorm = initialError.norm();
+            totalRmsBefore += initialError.squaredNorm();
+
+            double currentNorm = initialNorm;
+
+            for (int iter = 0; iter < mFittingConfig.ik.maxIterations; ++iter) {
+                if (currentNorm < mFittingConfig.ik.tolerance) break;
+
+                // Get current positions
+                Eigen::Isometry3d T_pelvis = pelvisBn->getWorldTransform();
+                Eigen::Vector3d p_hip = T_pelvis * femurJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Isometry3d T_femur = femurBn->getWorldTransform();
+                Eigen::Vector3d p_knee = T_femur * tibiaJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Vector3d p_talus = talusBn->getWorldTransform().translation();
+
+                Eigen::Vector3d error = p_target - p_talus;
+
+                // Compute Jacobian (3x4)
+                Eigen::Matrix<double, 3, 4> J;
+
+                // Femur BallJoint: 3 rotation axes (X, Y, Z in parent frame transformed to world)
+                Eigen::Matrix3d R_pelvis = T_pelvis.linear();
+                Eigen::Vector3d r_hip_talus = p_talus - p_hip;
+                for (int axis = 0; axis < 3; ++axis) {
+                    Eigen::Vector3d axisWorld = R_pelvis.col(axis);
+                    J.col(axis) = axisWorld.cross(r_hip_talus);
+                }
+
+                // Tibia RevoluteJoint: knee axis in world frame
+                // Use femur body world transform (joint parent) to transform local axis to world
+                Eigen::Vector3d kneeAxisWorld = T_femur.linear() * kneeAxisLocal;
+                J.col(3) = kneeAxisWorld.cross(p_talus - p_knee);
+
+                // DLS solve: dq = J^T (J J^T + λ²I)^{-1} e
+                Eigen::Matrix3d JJt = J * J.transpose();
+                JJt(0, 0) += mFittingConfig.ik.lambda * mFittingConfig.ik.lambda;
+                JJt(1, 1) += mFittingConfig.ik.lambda * mFittingConfig.ik.lambda;
+                JJt(2, 2) += mFittingConfig.ik.lambda * mFittingConfig.ik.lambda;
+                Eigen::Vector3d y = JJt.ldlt().solve(error);
+                Eigen::Vector4d dq = J.transpose() * y;
+
+                // Step clamping
+                double hipNorm = dq.head<3>().norm();
+                if (hipNorm > mFittingConfig.ik.legMaxHip) {
+                    dq.head<3>() *= mFittingConfig.ik.legMaxHip / hipNorm;
+                }
+                if (std::abs(dq(3)) > mFittingConfig.ik.legMaxKnee) {
+                    dq(3) = (dq(3) > 0 ? 1.0 : -1.0) * mFittingConfig.ik.legMaxKnee;
+                }
+
+                // Store current pose before line search
+                Eigen::VectorXd currentPose = mMotionResult.motionPoses[t];
+
+                // Backtracking line search
+                double alpha = mFittingConfig.ik.alphaInit;
+                bool accepted = false;
+
+                for (int ls = 0; ls < mFittingConfig.ik.maxLineSearch; ++ls) {
+                    // Apply trial update
+                    Eigen::Vector4d dq_trial = alpha * dq;
+
+                    // Apply femur rotation delta (PRE-multiply for parent frame rotation)
+                    Eigen::Matrix3d R_femur_current = dart::dynamics::BallJoint::convertToRotation(
+                        currentPose.segment<3>(femurJointIdx));
+
+                    Eigen::Vector3d omega = dq_trial.head<3>();
+                    double angle = omega.norm();
+                    Eigen::Matrix3d R_delta = Eigen::Matrix3d::Identity();
+                    if (angle > 1e-8) {
+                        R_delta = Eigen::AngleAxisd(angle, omega / angle).toRotationMatrix();
+                    }
+                    Eigen::Matrix3d R_femur_new = R_delta * R_femur_current;
+
+                    mMotionResult.motionPoses[t].segment<3>(femurJointIdx) =
+                        dart::dynamics::BallJoint::convertToPositions(R_femur_new);
+
+                    // Apply tibia angle delta
+                    mMotionResult.motionPoses[t](tibiaJointIdx) = currentPose(tibiaJointIdx) + dq_trial(3);
+
+                    // Evaluate trial
+                    skel->setPositions(mMotionResult.motionPoses[t]);
+                    Eigen::Vector3d trialError = p_target - talusBn->getWorldTransform().translation();
+                    double trialNorm = trialError.norm();
+
+                    if (trialNorm < currentNorm) {
+                        // Accept step
+                        currentNorm = trialNorm;
+                        accepted = true;
+                        break;
+                    }
+
+                    // Reject: restore and reduce step
+                    mMotionResult.motionPoses[t] = currentPose;
+                    alpha *= mFittingConfig.ik.beta;
+                }
+
+                if (!accepted) {
+                    // No improvement found, restore and stop
+                    mMotionResult.motionPoses[t] = currentPose;
+                    skel->setPositions(mMotionResult.motionPoses[t]);
+                    break;
+                }
+            }
+
+            // Guarantee: never worse than initial
+            Eigen::Vector3d finalError = p_target - talusBn->getWorldTransform().translation();
+            double finalNorm = finalError.norm();
+            if (finalNorm > initialNorm) {
+                // Should not happen with line search, but safety fallback
+                mMotionResult.motionPoses[t] = initialPose;
+                skel->setPositions(mMotionResult.motionPoses[t]);
+                totalRmsAfter += initialError.squaredNorm();
+            } else {
+                totalRmsAfter += finalError.squaredNorm();
+            }
+        }
+
+        double rmsBefore = std::sqrt(totalRmsBefore / numFrames);
+        double rmsAfter = std::sqrt(totalRmsAfter / numFrames);
+        LOG_INFO("[LegIK] " << femurJointName << ": RMS " << std::fixed << std::setprecision(4)
+                 << rmsBefore << " -> " << rmsAfter << " (target: " << talusName << ")");
+    }
 }
 
