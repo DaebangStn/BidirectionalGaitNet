@@ -58,7 +58,7 @@ struct MuscleTuple
 class Character
 {
 public:
-    Character(std::string path, bool collide_all = false);
+    Character(std::string path, int skelFlags = SKEL_DEFAULT);
     ~Character();
 
     dart::dynamics::SkeletonPtr getSkeleton() { return mSkeleton; }

@@ -11,21 +11,40 @@
 
 namespace PMuscle {
 
+// Static data root path - computed once at startup
+static std::string computeDataRoot() {
+    // Get the data root path from compile-time define or fallback
+    #ifdef DATA_ROOT_PATH
+        return DATA_ROOT_PATH;
+    #else
+        // Fallback: try to find data directory relative to executable or current directory
+        std::filesystem::path cwd = std::filesystem::current_path();
+        std::filesystem::path dataPath = cwd / "data";
+        if (std::filesystem::exists(dataPath)) {
+            return dataPath.string();
+        }
+        // Last resort: return current directory
+        return cwd.string();
+    #endif
+}
+
+// Global constant - initialized before main() runs, fully thread-safe
+static const std::string g_dataRoot = computeDataRoot();
+
+URIResolver::URIResolver() : mDataRoot(g_dataRoot) {
+    // mDataRoot is a copy of the global constant, fully initialized before any threads start
+    mSchemeRoots["data"] = mDataRoot;
+    LOG_VERBOSE("[URIResolver] Initialized with data root: " << mDataRoot);
+}
+
 URIResolver& URIResolver::getInstance() {
     static URIResolver instance;
     return instance;
 }
 
 void URIResolver::initialize() {
-    // Eager initialization - must be called from main thread before parallel access
-    // No synchronization needed since this is called once before any parallel operations
-    if (mSchemeRoots.empty()) {
-        // Register default @data/ scheme
-        std::string dataRoot = getDataRootPath();
-        registerScheme("data", dataRoot);
-
-        LOG_VERBOSE("[URIResolver] Initialized with data root: " << dataRoot);
-    }
+    // No-op: initialization now happens in constructor
+    // Kept for backward compatibility with existing code that calls initialize()
 }
 
 std::string URIResolver::resolve(const std::string& uri) const {
@@ -33,27 +52,21 @@ std::string URIResolver::resolve(const std::string& uri) const {
         // Special case: check for */filename pattern and resolve to data/filename
         if (!uri.empty() && uri[0] == '*' && uri.length() > 1 && uri[1] == '/') {
             std::string filename = uri.substr(2); // Remove */
-            auto it = mSchemeRoots.find("data");
-            if (it != mSchemeRoots.end()) {
-                std::filesystem::path fullPath = std::filesystem::path(it->second) / filename;
-                return fullPath.string();
-            }
+            std::filesystem::path fullPath = std::filesystem::path(mDataRoot) / filename;
+            return fullPath.string();
         }
-        
+
         // Backwards compatibility: check for ../data/ pattern and resolve to data/
         if (uri.find("../data/") == 0) {
             std::string filename = uri.substr(8); // Remove "../data/"
-            auto it = mSchemeRoots.find("data");
-            if (it != mSchemeRoots.end()) {
-                std::filesystem::path fullPath = std::filesystem::path(it->second) / filename;
-                LOG_VERBOSE("URIResolver: Backwards compatibility - resolving " << uri << " to " << fullPath.string());
-                return fullPath.string();
-            }
+            std::filesystem::path fullPath = std::filesystem::path(mDataRoot) / filename;
+            LOG_VERBOSE("URIResolver: Backwards compatibility - resolving " << uri << " to " << fullPath.string());
+            return fullPath.string();
         }
-        
+
         return uri; // Not a URI, return as-is
     }
-    
+
     std::string scheme, relativePath;
 
     // Handle @scheme:path or @scheme/path formats
@@ -91,13 +104,13 @@ std::string URIResolver::resolve(const std::string& uri) const {
         relativePath = uri.substr(colonPos + 1);
     }
 
-    auto it = mSchemeRoots.find(scheme);
-    if (it == mSchemeRoots.end()) {
+    // Only "data" scheme is supported, use mDataRoot directly
+    if (scheme != "data") {
         std::printf("Warning: Unknown URI scheme: %s\n", scheme.c_str());
         return uri;
     }
 
-    std::filesystem::path fullPath = std::filesystem::path(it->second) / relativePath;
+    std::filesystem::path fullPath = std::filesystem::path(mDataRoot) / relativePath;
     return fullPath.string();
 }
 

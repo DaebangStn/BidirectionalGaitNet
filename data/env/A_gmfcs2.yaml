@@ -1,9 +1,10 @@
- args:
+# args:
 
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@data/skeleton/base.xml"
+    file: "@data/skeleton/gmfcs2.yaml"
+    # file: "@data/skeleton/base_v2.xml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
@@ -12,11 +13,11 @@ environment:
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    file: "@data/motion/walk.h5"
+    file: "@data/motion/walk_50dof.h5"
 
   # Muscle System
   muscle:
-    file: "@data/muscle/distribute_lower_only.xml"
+    file: "@data/muscle/test_exported.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
@@ -33,7 +34,7 @@ environment:
   action:
     scale: 0.04
     time_warping: 0.001  # -1 means disabled
-    gait_phase_mode: "phase"  # "contact" or "phase"
+    gait_phase_mode: "contact"  # "contact" or "phase"
     contact_debounce_alpha: 0.4
     step_min_ratio: 0.1
 
@@ -79,6 +80,12 @@ environment:
       termination: false
       use_max: false
       max_weight: 0.1
+
+  # Discriminator for energy-efficient muscle activation (ADD-style)
+  discriminator:
+    enabled: false  # Set to true to enable discriminator
+    normalize: false  # Optional: normalize disc_obs before forward pass
+    reward_scale: 1.0  # Scale factor for discriminator reward
 
   # Parameterization for training
   parameters:

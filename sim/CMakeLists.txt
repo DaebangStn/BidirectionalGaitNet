@@ -6,7 +6,7 @@ find_package(ezc3d CONFIG REQUIRED)
 
 file(GLOB srcs "*.h" "*.cpp")
 
-add_library(sim ${srcs})
+add_library(sim SHARED ${srcs})
 target_include_directories(sim PUBLIC
         ${CMAKE_SOURCE_DIR}/viewer
 )

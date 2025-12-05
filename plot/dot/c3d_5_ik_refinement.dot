@@ -1,0 +1,160 @@
+// IK Refinement Pipeline (Stage 5 Detail)
+// Arm IK and Leg IK postprocessing with DLS + Line Search
+digraph c3d_ik_refinement {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=0.55;
+    fontname="Helvetica";
+    newrank=true;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Helvetica",
+        fontsize=10,
+        margin="0.15,0.10"
+    ];
+
+    edge [
+        color="gray30",
+        penwidth=1.2,
+        arrowsize=0.7,
+        fontname="Helvetica",
+        fontsize=8
+    ];
+
+    // === INPUT ===
+    subgraph cluster_input {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Input</font>>;
+
+        motion_poses [label="mMotionResult.motionPoses\n(initial motion poses)", fillcolor="#E3F2FD"];
+        free_poses [label="mFreePoses\n(free skeleton target)", fillcolor="#E3F2FD"];
+        ik_config [label="mFittingConfig.ik\n(IK parameters)", fillcolor="#FFF8E1"];
+    }
+
+    // === ARM IK (STEP 6) ===
+    subgraph cluster_arm_ik {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 6: Arm IK Refinement</font>>;
+
+        arm_target [label="Target: HandR/L\nfrom freeSkel", shape=ellipse, fillcolor="white"];
+        arm_dof [label="DOF: arm twist (1)\n+ elbow angle (1)", shape=ellipse, fillcolor="white"];
+        arm_jacobian [label="Jacobian 3x2\nJ = [J_twist, J_elbow]", fillcolor="#BBDEFB"];
+        arm_dls [label="DLS Solve\ndq = J^T(JJ^T+lambda^2 I)^-1 e", fillcolor="#BBDEFB"];
+        arm_linesearch [label="Line Search\nalpha *= beta", fillcolor="#BBDEFB"];
+        arm_apply [label="Apply:\nArmR/L (BallJoint)\nForeArmR/L (Revolute)"];
+
+        arm_target -> arm_jacobian [penwidth=1.5, color=black];
+        arm_dof -> arm_jacobian [penwidth=1.5, color=black];
+        arm_jacobian -> arm_dls [penwidth=1.5, color=black];
+        arm_dls -> arm_linesearch [penwidth=1.5, color=black];
+        arm_linesearch -> arm_apply [penwidth=1.5, color=black];
+    }
+
+    // === LEG IK (STEP 7) ===
+    subgraph cluster_leg_ik {
+        style=filled;
+        fillcolor="#FFF3E0";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 7: Leg IK Refinement</font>>;
+
+        leg_target [label="Target: TalusR/L\nfrom freeSkel", shape=ellipse, fillcolor="white"];
+        leg_dof [label="DOF: hip (3)\n+ knee (1)", shape=ellipse, fillcolor="white"];
+        leg_jacobian [label="Jacobian 3x4\nJ = [J_hip(3x3), J_knee(3x1)]", fillcolor="#FFE0B2"];
+        leg_dls [label="DLS Solve\ndq = J^T(JJ^T+lambda^2 I)^-1 e", fillcolor="#FFE0B2"];
+        leg_linesearch [label="Line Search\nalpha *= beta", fillcolor="#FFE0B2"];
+        leg_apply [label="Apply:\nFemurR/L (BallJoint)\nTibiaR/L (Revolute)"];
+
+        leg_target -> leg_jacobian [penwidth=1.5, color=black];
+        leg_dof -> leg_jacobian [penwidth=1.5, color=black];
+        leg_jacobian -> leg_dls [penwidth=1.5, color=black];
+        leg_dls -> leg_linesearch [penwidth=1.5, color=black];
+        leg_linesearch -> leg_apply [penwidth=1.5, color=black];
+    }
+
+    // === OUTPUT ===
+    subgraph cluster_output {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Output</font>>;
+
+        refined_poses [label="mMotionResult.motionPoses\n(refined)", fillcolor="#C8E6C9"];
+    }
+
+    // === MAIN FLOW ===
+    motion_poses -> arm_target [penwidth=2.5, color=black];
+    free_poses -> arm_target [penwidth=1.5, color=gray50, style=dashed, label="target"];
+    ik_config -> arm_dls [penwidth=1.0, color=gray50, style=dashed];
+    ik_config -> leg_dls [penwidth=1.0, color=gray50, style=dashed];
+
+    arm_apply -> leg_target [penwidth=2.5, color=black];
+    free_poses -> leg_target [penwidth=1.5, color=gray50, style=dashed, label="target"];
+
+    leg_apply -> refined_poses [penwidth=2.5, color=black];
+
+    // === DLS ALGORITHM DETAIL ===
+    subgraph cluster_dls_algo {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.3;
+        label=<<font point-size="7" color="gray50">DLS + Line Search Algorithm</font>>;
+
+        dls1 [label="1. Error e = p_target - p_current", fontsize=8, fillcolor="white"];
+        dls2 [label="2. Jacobian J = d(p)/d(q)\nnumerical or analytic", fontsize=8, fillcolor="white"];
+        dls3 [label="3. DLS: dq = J^T(JJ^T + lambda^2 I)^-1 e\n(regularized pseudo-inverse)", fontsize=8, fillcolor="white"];
+        dls4 [label="4. Clamp: |dq_i| <= max_step\n(prevent large jumps)", fontsize=8, fillcolor="white"];
+        dls5 [label="5. Line Search: q += alpha * dq\nreduce alpha if ||e_new|| > ||e||", fontsize=8, fillcolor="white"];
+
+        dls1 -> dls2 [penwidth=0.8, color=gray60];
+        dls2 -> dls3 [penwidth=0.8, color=gray60];
+        dls3 -> dls4 [penwidth=0.8, color=gray60];
+        dls4 -> dls5 [penwidth=0.8, color=gray60];
+    }
+
+    // === ARM JACOBIAN DETAIL ===
+    subgraph cluster_arm_jac {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.3;
+        label=<<font point-size="7" color="gray50">Arm Jacobian (3x2)</font>>;
+
+        aj1 [label="J[:,0] = u x (p_hand - p_shoulder)\narm twist around u", fontsize=8, fillcolor="white"];
+        aj2 [label="J[:,1] = axis x (p_hand - p_elbow)\nelbow rotation", fontsize=8, fillcolor="white"];
+
+        aj1 -> aj2 [style=invis];
+    }
+
+    // === LEG JACOBIAN DETAIL ===
+    subgraph cluster_leg_jac {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.3;
+        label=<<font point-size="7" color="gray50">Leg Jacobian (3x4)</font>>;
+
+        lj1 [label="J[:,0:3] = [e_x, e_y, e_z] x (p_talus - p_hip)\nhip BallJoint (3 axes)", fontsize=8, fillcolor="white"];
+        lj2 [label="J[:,3] = axis x (p_talus - p_knee)\nknee Revolute", fontsize=8, fillcolor="white"];
+
+        lj1 -> lj2 [style=invis];
+    }
+
+    // Rank alignment
+    {rank=same; motion_poses; free_poses; ik_config;}
+    {rank=same; arm_jacobian; leg_jacobian;}
+    {rank=same; dls1; aj1; lj1;}
+}

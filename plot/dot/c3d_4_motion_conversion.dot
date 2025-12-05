@@ -1,0 +1,171 @@
+// convertToMotionSkeleton Pipeline (Stage 4 Detail)
+// Free-joint poses to constrained motion skeleton conversion
+digraph c3d_motion_conversion {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=0.55;
+    fontname="Helvetica";
+    newrank=true;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Helvetica",
+        fontsize=10,
+        margin="0.15,0.10"
+    ];
+
+    edge [
+        color="gray30",
+        penwidth=1.2,
+        arrowsize=0.7,
+        fontname="Helvetica",
+        fontsize=8
+    ];
+
+    // === INPUT ===
+    subgraph cluster_input {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Input</font>>;
+
+        free_poses [label="mFreePoses\n(free skeleton)", fillcolor="#E3F2FD"];
+        bone_r [label="mBoneR_frames\n{bone -> R[t]}", fillcolor="#E3F2FD"];
+        bone_t [label="mBoneT_frames\n{bone -> t[t]}", fillcolor="#E3F2FD"];
+        motion_skel [label="mMotionCharacter\n(constrained skeleton)", fillcolor="#FFF8E1"];
+    }
+
+    // === STEP 1: RELATIVE TRANSFORMS ===
+    subgraph cluster_step1 {
+        style=filled;
+        fillcolor="#E8F5E9";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 1: Relative Transforms</font>>;
+
+        compute_rel [label="computeRelativeTransforms", fillcolor="#C8E6C9"];
+        rel_output [label="relTransforms\n{bone -> T_rel[t]}", shape=ellipse, fillcolor="white"];
+
+        compute_rel -> rel_output [penwidth=1.5, color=black];
+    }
+
+    // === STEP 2: JOINT OFFSETS ===
+    subgraph cluster_step2 {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 2: Joint Offset Estimation</font>>;
+
+        estimate_offsets [label="estimateJointOffsets\n(least-squares)", fillcolor="#BBDEFB"];
+        select_axis [label="selectRevoluteAxis\n(PCA / XML / Blend)"];
+        offset_result [label="JointOffsetResult\nparentOffset, childOffset\nrevoluteAxis", shape=ellipse, fillcolor="white"];
+
+        estimate_offsets -> select_axis [penwidth=1.5, color=black];
+        select_axis -> offset_result [penwidth=1.5, color=black];
+    }
+
+    // === STEP 3: APPLY OFFSETS ===
+    subgraph cluster_step3 {
+        style=filled;
+        fillcolor="#F3E5F5";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 3: Apply to Skeleton</font>>;
+
+        apply_offsets [label="applyJointOffsets\nToSkeleton", fillcolor="#E1BEE7"];
+    }
+
+    // === STEP 4: BUILD POSES ===
+    subgraph cluster_step4 {
+        style=filled;
+        fillcolor="#FFF3E0";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 4: Per-Frame Poses</font>>;
+
+        build_motion [label="buildMotionFramePose\n(per frame)", fillcolor="#FFE0B2"];
+    }
+
+    // === STEP 5: KNEE REFINEMENT ===
+    subgraph cluster_step5 {
+        style=filled;
+        fillcolor="#FFEBEE";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 5: Knee Joint Refinement</font>>;
+
+        knee_refine [label="Knee Refinement\n(TibiaL, TibiaR)", fillcolor="#FFCDD2"];
+        knee_ls [label="Least-squares\nposition matching"];
+
+        knee_refine -> knee_ls [penwidth=1.2, color=black];
+    }
+
+    // === OUTPUT ===
+    subgraph cluster_output {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Output</font>>;
+
+        motion_result [label="MotionConversionResult\n.jointOffsets\n.motionPoses", fillcolor="#C8E6C9"];
+    }
+
+    // === MAIN FLOW ===
+    bone_r -> compute_rel [penwidth=2.5, color=black];
+    bone_t -> compute_rel [penwidth=2.5, color=black];
+    motion_skel -> estimate_offsets [penwidth=1.5, color=gray50];
+
+    rel_output -> estimate_offsets [penwidth=2.5, color=black];
+    offset_result -> apply_offsets [penwidth=2.5, color=black];
+    apply_offsets -> build_motion [penwidth=2.5, color=black];
+    rel_output -> build_motion [penwidth=1.5, color=gray50, style=dashed];
+    offset_result -> build_motion [penwidth=1.5, color=gray50, style=dashed];
+
+    build_motion -> knee_refine [penwidth=2.5, color=black];
+    free_poses -> knee_ls [penwidth=1.5, color=gray50, style=dashed, label="target"];
+    knee_ls -> motion_result [penwidth=2.5, color=black];
+
+    // === estimateJointOffsets DETAIL ===
+    subgraph cluster_offset_algo {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.3;
+        label=<<font point-size="7" color="gray50">estimateJointOffsets</font>>;
+
+        ejo1 [label="1. Extract R[t] from\nrelative transforms", fontsize=8, fillcolor="white"];
+        ejo2 [label="2. Rotation offset:\nR_mean = average(R[t])", fontsize=8, fillcolor="white"];
+        ejo3 [label="3. Translation offset:\nleast-squares fit", fontsize=8, fillcolor="white"];
+
+        ejo1 -> ejo2 [penwidth=0.8, color=gray60];
+        ejo2 -> ejo3 [penwidth=0.8, color=gray60];
+    }
+
+    // === buildMotionFramePose DETAIL ===
+    subgraph cluster_build_algo {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.3;
+        label=<<font point-size="7" color="gray50">buildMotionFramePose</font>>;
+
+        bmf1 [label="BallJoint:\nR_joint = offset^-1 * R_rel[t]", fontsize=8, fillcolor="white"];
+        bmf2 [label="RevoluteJoint:\naxis projection", fontsize=8, fillcolor="white"];
+        bmf3 [label="Root (Pelvis):\n6-DOF from global T", fontsize=8, fillcolor="white"];
+
+        bmf1 -> bmf2 [penwidth=0.8, color=gray60];
+        bmf2 -> bmf3 [penwidth=0.8, color=gray60];
+    }
+
+    // Rank alignment
+    {rank=same; free_poses; bone_r; bone_t; motion_skel;}
+    {rank=same; estimate_offsets; select_axis;}
+    {rank=same; ejo1; bmf1;}
+}

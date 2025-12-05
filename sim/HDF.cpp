@@ -13,7 +13,7 @@ HDF::HDF(const std::string& filepath)
     : mFilename(filepath)
     , mFrameTime(1.0 / 60.0)
     , mNumFrames(0)
-    , mDofPerFrame(56)  // HDF format: 56 values per frame (angle format, no conversion needed)
+    , mDofPerFrame(0)  // Will be detected from file
 {
     loadFromFile(filepath);
 }
@@ -49,13 +49,7 @@ void HDF::loadFromFile(const std::string& filepath)
         }
 
         mNumFrames = static_cast<int>(dims_motions[0]);
-        int values_per_frame = static_cast<int>(dims_motions[1]);
-
-        if (values_per_frame != mDofPerFrame) {
-            LOG_WARN("[HDF] Warning: Expected " << mDofPerFrame << " DOF per frame, got "
-                      << values_per_frame);
-            mDofPerFrame = values_per_frame;
-        }
+        mDofPerFrame = static_cast<int>(dims_motions[1]);
 
         // Allocate and read motions data
         mMotionData.resize(mNumFrames, mDofPerFrame);

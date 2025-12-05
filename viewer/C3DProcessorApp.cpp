@@ -919,6 +919,11 @@ void C3DProcessorApp::drawControlPanel()
     // Marker Fitting Section
     drawMarkerFittingSection();
 
+    ImGui::Separator();
+
+    // Skeleton Export Section
+    drawSkeletonExportSection();
+
     ImGui::End();
 }
 
@@ -1050,6 +1055,32 @@ void C3DProcessorApp::drawMarkerFittingSection()
                 mC3DReader->loadSkeletonFittingConfig();
                 mC3DReader->refineLegIK();
                 LOG_INFO("[C3DProcessor] Leg IK refinement completed");
+            }
+        }
+
+        if (ImGui::Button("Clear Motion & Zero Pose")) {
+            clearMotionAndZeroPose();
+        }
+    }
+}
+
+void C3DProcessorApp::drawSkeletonExportSection()
+{
+    if (collapsingHeaderWithControls("Skeleton Export")) {
+        // Export path display
+        ImGui::Text("Export to: data/skeleton/");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(150);
+        ImGui::InputText("##exportname", mExportSkeletonName, sizeof(mExportSkeletonName));
+        ImGui::SameLine();
+        ImGui::Text(".yaml");
+
+        // Export button
+        if (ImGui::Button("Export Calibrated Skeleton")) {
+            if (mMotionCharacter) {
+                std::string outputPath = std::string("data/skeleton/") + mExportSkeletonName + ".yaml";
+                mMotionCharacter->exportSkeletonYAML(outputPath);
+                LOG_INFO("[C3DProcessor] Exported calibrated skeleton to: " + outputPath);
             }
         }
     }
@@ -1966,10 +1997,7 @@ C3DProcessorApp::MarkerPlaybackContext C3DProcessorApp::computeMarkerPlayback()
     context.state = &mMotionState;
     context.phase = mViewerPhase;
 
-    if (!mMotion || mMotion->getSourceType() != "c3d") {
-        LOG_WARN("[C3DProcessor] No motion or motion is not a C3D file, skipping marker playback");
-        return context;
-    }
+    if (!mMotion || mMotion->getSourceType() != "c3d") return context;
 
     C3D* c3dMotion = static_cast<C3D*>(mMotion);
     if (c3dMotion->getNumFrames() == 0)
@@ -2313,11 +2341,10 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                 // Toggle all marker rendering
                 {
                     bool anyVisible = mRenderC3DMarkers || mRenderExpectedMarkers ||
-                                      mRenderJointPositions || mRenderMotionCharMarkers;
+                                      mRenderMotionCharMarkers;
                     bool newState = !anyVisible;
                     mRenderC3DMarkers = newState;
                     mRenderExpectedMarkers = newState;
-                    mRenderJointPositions = newState;
                     mRenderMotionCharMarkers = newState;
                 }
                 break;
@@ -2395,4 +2422,41 @@ void C3DProcessorApp::hideVirtualMarkers()
     }
 
     LOG_INFO("[C3DProcessor] Hidden " << hiddenCount << " virtual markers (V_*)");
+}
+
+void C3DProcessorApp::clearMotionAndZeroPose()
+{
+    // Clear current motion
+    if (mMotion) {
+        delete mMotion;
+        mMotion = nullptr;
+    }
+    mSelectedMotion = -1;
+    mMotionPath.clear();
+
+    // Reset motion state
+    mMotionState.currentPose.setZero();
+    mMotionState.currentMarkers.clear();
+    mMotionState.lastFrameIdx = 0;
+    mMotionState.cycleAccumulation.setZero();
+    mMotionState.displayOffset.setZero();
+    mMotionState.manualFrameIndex = 0;
+
+    // Zero pose both skeletons
+    RenderCharacter* characters[2] = { mFreeCharacter.get(), mMotionCharacter.get() };
+    for (auto character : characters) {
+        if (character) {
+            auto skel = character->getSkeleton();
+            if (skel) {
+                skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+            }
+        }
+    }
+
+    // Reset viewer time
+    mViewerTime = 0.0;
+    mViewerPhase = 0.0;
+    mIsPlaying = false;
+
+    LOG_INFO("[C3DProcessor] Cleared motion and set zero pose");
 }

@@ -119,7 +119,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     {
         std::string skeletonPath = Trim(std::string(skeletonElem->GetText()));
         std::string resolvedSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skeletonPath);
-        addCharacter(resolvedSkeletonPath, false);
+        mCharacter = new Character(resolvedSkeletonPath, SKEL_DEFAULT);
 
         std::string _actTypeString;
         if (skeletonElem->Attribute("actuator") != NULL) _actTypeString = Trim(skeletonElem->Attribute("actuator"));
@@ -170,7 +170,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mNumActuatorAction = mCharacter->getMuscles().size();
     }
     // Ground Loading (hardcoded)
-    addObject(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"));
+    mGround = BuildFromFile(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"), SKEL_DEFAULT);
 
     // Controller Setting (hardcoded)
     mIsResidual = true;
@@ -235,9 +235,8 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     mWorld->setGravity(Eigen::Vector3d(0, -9.8, 0.0));
     // Add Character
     mWorld->addSkeleton(mCharacter->getSkeleton());
-    // Add Objects
-    for (auto o : mObjects)
-        mWorld->addSkeleton(o);
+    // Add Ground
+    mWorld->addSkeleton(mGround);
 
     // Motion Loading (BVH or NPZ)
     // World Setting 후에 함. 왜냐하면 Height Calibration 을 위해서는 충돌 감지를 필요로 하기 때문.
@@ -527,6 +526,9 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
 void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 {
     YAML::Node config = YAML::Load(yaml_content);
+    if (!config["environment"]) {
+        throw std::runtime_error("Missing 'environment' key in YAML config");
+    }
     YAML::Node env = config["environment"];
 
     // Local variable to track gait phase mode during parsing
@@ -541,8 +543,10 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         auto skel = env["skeleton"];
         std::string skelPath = skel["file"].as<std::string>();
         std::string resolved = PMuscle::URIResolver::getInstance().resolve(skelPath);
-        bool selfCollide = skel["self_collide"].as<bool>(false);  // NEW: default to false
-        addCharacter(resolved, selfCollide);
+        bool selfCollide = skel["self_collide"].as<bool>(false);
+        int skelFlags = SKEL_DEFAULT;
+        if (selfCollide) skelFlags |= SKEL_COLLIDE_ALL;
+        mCharacter = new Character(resolved, skelFlags);
 
         std::string actType = skel["actuator"].as<std::string>();
         mCharacter->setActuatorType(getActuatorType(actType));
@@ -615,7 +619,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     }
 
     // === Ground === (hardcoded)
-    addObject(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"));
+    mGround = BuildFromFile(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"), SKEL_DEFAULT);
 
     // === Motion === (hardcoded)
     // Height calibration is always applied in strict mode (no config needed)
@@ -664,8 +668,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
     mWorld->setGravity(Eigen::Vector3d(0, -9.8, 0.0));
     mWorld->addSkeleton(mCharacter->getSkeleton());
-    for (auto o : mObjects)
-        mWorld->addSkeleton(o);
+    mWorld->addSkeleton(mGround);
 
     // === Motion Loading ===
     if (env["motion"]) {
@@ -1067,17 +1070,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, mode, mControlHz, mSimulationHz);
     mGaitPhase->setContactDebounceAlpha(contactDebounceAlpha);
     mGaitPhase->setStepMinRatio(stepMinRatio);
-}
-
-void Environment::addCharacter(std::string path, bool collide_all)
-{
-    mCharacter = new Character(path, collide_all);
-    // std::cout << "Skeleton Added " << mCharacter->getSkeleton()->getName() << " Degree Of Freedom : " << mCharacter->getSkeleton()->getNumDofs() << std::endl;
-}
-
-void Environment::addObject(std::string path)
-{
-    mObjects.push_back(BuildFromFile(path, SKEL_DEFAULT));
 }
 
 void Environment::setAction(Eigen::VectorXd _action)

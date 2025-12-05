@@ -26,7 +26,7 @@ environment:
 
   # Simulation Timing
   simulation:
-    sim_hz: 300
+    sim_hz: 180
     control_hz: 30
 
   # Action and Control

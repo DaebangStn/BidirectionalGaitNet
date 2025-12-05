@@ -1,0 +1,114 @@
+digraph SoftsuitPaper {
+    // ---------------------------------------------------------
+    // 1. Global Graph Settings
+    // ---------------------------------------------------------
+    rankdir=LR;                 // Left to Right layout
+    splines=spline;             // Use smooth curves (cleaner for papers)
+    nodesep=0.6;                // Horizontal spacing
+    ranksep=1.0;                // Vertical spacing
+    bgcolor="transparent";      // Transparent background
+    fontname="Helvetica";
+
+    // Watermark / Label Settings
+    label="DRAFT";              // The text to display
+    labelloc="b";               // Position at the bottom
+    labeljust="c";              // Center alignment
+    fontsize=80;                // Large font size
+    fontcolor="#FF0000";        // Red color
+
+    // ---------------------------------------------------------
+    // 2. Node Styles (Publication Quality)
+    // ---------------------------------------------------------
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",      // Clean white background
+        color="#333333",        // Dark grey borders (softer than pure black)
+        penwidth=1.5,           // Slightly thicker border
+        fontname="Helvetica-Bold",
+        fontsize=12,
+        margin="0.2,0.1"
+    ];
+
+    // ---------------------------------------------------------
+    // 3. Edge Styles
+    // ---------------------------------------------------------
+    edge [
+        fontname="Helvetica",
+        fontsize=10,
+        color="#333333",
+        penwidth=1.2,
+        arrowsize=0.8
+    ];
+
+    // ---------------------------------------------------------
+    // 4. Node Definitions
+    // ---------------------------------------------------------
+    
+    // Using HTML-like labels for better formatting
+    IMU [label="IMU Sensor"];
+    
+    LCU [label="Loadcell"];
+
+    SBC [
+        label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
+            <TR><TD><B>SBC</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9" COLOR="#555555">(TensorRT)</FONT></TD></TR>
+            </TABLE>
+        >
+    ];
+
+    Torque [label="Torque\nCompute"]; // Multi-line label
+    Motor  [label="Motor"];
+
+    // ---------------------------------------------------------
+    // 5. Layout Alignment (Grouping)
+    // ---------------------------------------------------------
+    
+    // Align Sensors vertically at the start
+    { rank=same; IMU; LCU; }
+
+    // ---------------------------------------------------------
+    // 6. Connections (Main Signal Flow)
+    // ---------------------------------------------------------
+    
+    // IMU -> SBC
+    IMU:e -> SBC:w [
+        label="Orientation\nAng. Vel / Acc", 
+        labeldistance=2.5,
+        lp="100,100" // Hint for label position if needed
+    ];
+
+    // Loadcell -> SBC
+    LCU:e -> SBC:w [
+        label="Tension / Force"
+    ];
+
+    // SBC -> Torque
+    SBC -> Torque [
+        label="Assist\nCommand",
+        penwidth=2.0 // Highlight main control path
+    ];
+
+    // Torque -> Motor
+    Torque -> Motor [
+        label="Target\nTorque",
+        penwidth=2.0
+    ];
+
+    // ---------------------------------------------------------
+    // 7. Feedback Loop (Physical Interaction)
+    // ---------------------------------------------------------
+    
+    // Direct feedback curve using ports (South to South)
+    // 'constraint=false' prevents this edge from messing up the LR layout
+    Motor:s -> LCU:s [
+        label="Measured Interaction",
+        style="dashed",
+        color="#E05759", // A professional muted red/orange for feedback
+        fontcolor="#E05759",
+        constraint=false,
+        dir=forward
+    ];
+}

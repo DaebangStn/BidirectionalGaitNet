@@ -158,6 +158,9 @@ private:
     char mJointOffsetFilter[64] = "";
     int mJointOffsetSelectedIdx = -1;
 
+    // Skeleton export
+    char mExportSkeletonName[128] = "calibrated_skeleton";
+
     // Playback state
     C3DViewerState mMotionState;
     Eigen::Vector3d mC3DCOM;
@@ -217,6 +220,7 @@ private:
     void drawMotionListSection();
     void drawPlaybackSection();
     void drawMarkerFittingSection();
+    void drawSkeletonExportSection();
     void drawVisualizationPanel();
     void drawRenderingPanel();
     void drawMarkerDiffPlot();
@@ -254,6 +258,7 @@ private:
     void alignCameraToPlane(int plane);
     void reset();
     void hideVirtualMarkers();
+    void clearMotionAndZeroPose();
 };
 
 #endif // C3D_PROCESSOR_APP_H

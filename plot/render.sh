@@ -32,6 +32,7 @@ FORCE=false
 CLEAN=false
 DRY_RUN=false
 VERBOSE=false
+REMOVE_ORPHANS=false
 JOBS="${RENDER_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 # Statistics
@@ -53,6 +54,7 @@ Render DOT files to PNG with incremental caching and parallel execution.
 Options:
   -f, --force       Force rebuild all files (ignore cache)
   -c, --clean       Delete cache directory and exit
+  -r, --remove      Remove orphan PNG files (no corresponding DOT file)
   -j, --jobs N      Set parallel job count (default: $JOBS)
   -n, --dry-run     Show what would be rendered without doing it
   -v, --verbose     Show detailed timing per file
@@ -78,6 +80,10 @@ parse_args() {
                 ;;
             -c|--clean)
                 CLEAN=true
+                shift
+                ;;
+            -r|--remove)
+                REMOVE_ORPHANS=true
                 shift
                 ;;
             -j|--jobs)
@@ -145,6 +151,28 @@ clean_cache() {
     fi
 }
 
+# Check for orphan PNG files (no corresponding DOT file)
+# Returns array of orphan files via global ORPHAN_FILES
+check_orphan_files() {
+    ORPHAN_FILES=()
+
+    if [[ ! -d "$DIAGRAM_DIR" ]]; then
+        return
+    fi
+
+    while IFS= read -r -d '' pngfile; do
+        local filename
+        filename=$(basename "$pngfile")
+        # Extract base name: remove .png suffix
+        local base="${filename%.png}"
+        local dotfile="$DOT_DIR/${base}.dot"
+
+        if [[ ! -f "$dotfile" ]]; then
+            ORPHAN_FILES+=("$pngfile")
+        fi
+    done < <(find "$DIAGRAM_DIR" -maxdepth 1 -name "*.png" -print0 2>/dev/null | sort -z)
+}
+
 # Get cached hash for a file (empty string if not found)
 get_cached_hash() {
     local filename="$1"
@@ -185,7 +213,7 @@ should_render() {
     local filename
     filename=$(basename "$dotfile")
     local base="${filename%.dot}"
-    local output="$DIAGRAM_DIR/${base}_clean.png"
+    local output="$DIAGRAM_DIR/${base}.png"
 
     # Force mode: always render
     if [[ "$FORCE" == true ]]; then
@@ -219,7 +247,7 @@ render_single() {
     local filename
     filename=$(basename "$dotfile")
     local base="${filename%.dot}"
-    local output="$DIAGRAM_DIR/${base}_clean.png"
+    local output="$DIAGRAM_DIR/${base}.png"
     local start_time
     start_time=$(date +%s.%N)
 
@@ -270,6 +298,27 @@ main() {
     # Setup
     mkdir -p "$DIAGRAM_DIR"
     init_cache
+
+    # Check for orphan files (always log, remove only with -r and not dry-run)
+    check_orphan_files
+    if [[ ${#ORPHAN_FILES[@]} -gt 0 ]]; then
+        echo "Orphan PNG files (no corresponding DOT file):"
+        for orphan in "${ORPHAN_FILES[@]}"; do
+            local filename
+            filename=$(basename "$orphan")
+            if [[ "$REMOVE_ORPHANS" == true ]]; then
+                if [[ "$DRY_RUN" == true ]]; then
+                    echo "  ✗ $filename (would remove)"
+                else
+                    rm -f "$orphan"
+                    echo "  ✗ $filename (removed)"
+                fi
+            else
+                echo "  ⚠ $filename (use -r to remove)"
+            fi
+        done
+        echo ""
+    fi
 
     # Discover DOT files
     local -a dotfiles=()

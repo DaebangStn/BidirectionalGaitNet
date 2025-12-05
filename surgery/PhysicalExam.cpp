@@ -75,7 +75,6 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mShowPostureDebug(false)        // Posture control debug off by default
     , mShowExamTable(false)            // Show examination table by default
     , mShowAnchorPoints(true)         // Anchor point visualization off by default
-    , mDrawOBJ(true)                  // Draw mesh shapes by default
     , mApplyPostureControl(true)
     , mGraphData(nullptr)
     , mEnableInterpolation(false)
@@ -90,6 +89,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mLoadScriptPath("")            // Will be constructed from buffer
     , mShowScriptPreview(false)     // Script preview hidden by default
     , mUseMuscle(true)              // Default to true for backward compatibility
+    , mRenderMode(RenderMode::Primitive)  // Default render mode
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
@@ -428,7 +428,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     LOG_INFO("Loading skeleton: " << resolved_skel);
 
     // Create character
-    mCharacter = new Character(resolved_skel);
+    mCharacter = new Character(resolved_skel, true);
 
     // Load muscles if path is provided and mUseMuscle is true
     if (!muscle_path.empty() && mUseMuscle) {
@@ -3198,30 +3198,43 @@ void PhysicalExam::drawShape(const dart::dynamics::Shape* shape, const Eigen::Ve
     glEnable(GL_DEPTH_TEST);
     glColor4d(color[0], color[1], color[2], color[3]);
 
-    if (!mDrawOBJ) {
-        // Draw primitive shapes (simple geometric forms)
-        if (shape->is<dart::dynamics::SphereShape>()) {
-            const auto* sphere = dynamic_cast<const dart::dynamics::SphereShape*>(shape);
-            GUI::DrawSphere(sphere->getRadius());
+    // Render mesh (for Mesh mode)
+    if (mRenderMode == RenderMode::Mesh) {
+        if (shape->is<dart::dynamics::MeshShape>()) {
+            const auto* mesh = dynamic_cast<const dart::dynamics::MeshShape*>(shape);
+            mShapeRenderer.renderMesh(mesh, false, 0.0, color);
         }
-        else if (shape->is<dart::dynamics::BoxShape>()) {
+    }
+
+    // Render primitive shapes (for Primitive and Wireframe modes)
+    if (mRenderMode == RenderMode::Primitive || mRenderMode == RenderMode::Wireframe) {
+        // For wireframe mode, render primitives as wireframe
+        if (mRenderMode == RenderMode::Wireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(2.0f);
+            glColor4d(color[0], color[1], color[2], color[3]);
+        } else {
+            glColor4d(color[0], color[1], color[2], color[3]);
+        }
+
+        if (shape->is<dart::dynamics::BoxShape>()) {
             const auto* box = dynamic_cast<const dart::dynamics::BoxShape*>(shape);
             GUI::DrawCube(box->getSize());
-        }
-        else if (shape->is<dart::dynamics::CapsuleShape>()) {
+        } else if (shape->is<dart::dynamics::CapsuleShape>()) {
             const auto* capsule = dynamic_cast<const dart::dynamics::CapsuleShape*>(shape);
             GUI::DrawCapsule(capsule->getRadius(), capsule->getHeight());
-        }
-        else if (shape->is<dart::dynamics::CylinderShape>()) {
+        } else if (shape->is<dart::dynamics::SphereShape>()) {
+            const auto* sphere = dynamic_cast<const dart::dynamics::SphereShape*>(shape);
+            GUI::DrawSphere(sphere->getRadius());
+        } else if (shape->is<dart::dynamics::CylinderShape>()) {
             const auto* cylinder = dynamic_cast<const dart::dynamics::CylinderShape*>(shape);
             GUI::DrawCylinder(cylinder->getRadius(), cylinder->getHeight());
         }
-    }
-    else {
-        // Draw mesh shapes (OBJ models)
-        if (shape->is<dart::dynamics::MeshShape>()) {
-            const auto& mesh = dynamic_cast<const dart::dynamics::MeshShape*>(shape);
-            mShapeRenderer.renderMesh(mesh, false, 0.0, color);
+
+        // Restore fill mode and line width after wireframe
+        if (mRenderMode == RenderMode::Wireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            glLineWidth(1.0f);
         }
     }
 }
@@ -3760,8 +3773,17 @@ void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
         reset();
     }
     else if (key == GLFW_KEY_O) {
-        mDrawOBJ = !mDrawOBJ;  // Toggle mesh vs primitive shape rendering
-        LOG_INFO("Rendering mode: " << (mDrawOBJ ? "Mesh (OBJ)" : "Primitive shapes"));
+        // Cycle through render modes: Primitive -> Mesh -> Wireframe -> Primitive
+        if (mRenderMode == RenderMode::Primitive) {
+            mRenderMode = RenderMode::Mesh;
+            LOG_INFO("Rendering mode: Mesh");
+        } else if (mRenderMode == RenderMode::Mesh) {
+            mRenderMode = RenderMode::Wireframe;
+            LOG_INFO("Rendering mode: Wireframe");
+        } else {
+            mRenderMode = RenderMode::Primitive;
+            LOG_INFO("Rendering mode: Primitive");
+        }
     }
     else if (key == GLFW_KEY_1) {
         setPoseStanding();
@@ -4955,6 +4977,16 @@ void PhysicalExam::drawRecordingSection() {
 
 void PhysicalExam::drawRenderOptionsSection() {
     if (ImGui::CollapsingHeader("Render", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Render Mode section
+        ImGui::Text("Render Mode (O):");
+        int mode = static_cast<int>(mRenderMode);
+        if (ImGui::RadioButton("Primitive", &mode, 0)) mRenderMode = RenderMode::Primitive;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Mesh", &mode, 1)) mRenderMode = RenderMode::Mesh;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Wire", &mode, 2)) mRenderMode = RenderMode::Wireframe;
+        ImGui::Separator();
+
         ImGui::Checkbox("Show Exam Table", &mShowExamTable);
         ImGui::Checkbox("Show Joint Forces", &mShowJointPassiveForces);
         if (mShowJointPassiveForces) {

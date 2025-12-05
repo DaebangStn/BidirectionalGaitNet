@@ -117,8 +117,6 @@ public:
     void initialize_xml(std::string xml_content);  // Backward compatibility: XML content
 
     // Simulation environment configuration
-    void addCharacter(std::string path, bool collide_all = false);
-    void addObject(std::string path = nullptr);
 
     Character *getCharacter() { return mCharacter; }
     Motion *getMotion() { return mMotion; }
@@ -466,7 +464,7 @@ private:
 
     dart::simulation::WorldPtr mWorld;
     Character *mCharacter;
-    std::vector<dart::dynamics::SkeletonPtr> mObjects;
+    dart::dynamics::SkeletonPtr mGround;
     Motion *mMotion;
     std::unique_ptr<NoiseInjector> mNoiseInjector;
 

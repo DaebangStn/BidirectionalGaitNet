@@ -13,3 +13,14 @@ target_include_directories(extract_cycle PRIVATE
     ${HDF5_INCLUDE_DIRS}
     ${CURSES_INCLUDE_DIR}
 )
+
+# HDF DOF Remapper - Convert 56-DOF to 50-DOF motion files
+add_executable(hdf_dof_remapper hdf_dof_remapper.cpp)
+
+target_link_libraries(hdf_dof_remapper
+    ${HDF5_CXX_LIBRARIES}
+)
+
+target_include_directories(hdf_dof_remapper PRIVATE
+    ${HDF5_INCLUDE_DIRS}
+)

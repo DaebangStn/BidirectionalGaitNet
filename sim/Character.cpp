@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
+#include <mutex>
 #include <yaml-cpp/yaml.h>
 
 namespace {
@@ -41,20 +42,15 @@ static std::map<std::string, int> skeletonAxis = {
     {"HandL", 0},
 };
 
-static std::unordered_map<std::string, ActuatorType> ActuatorTypeMap = {
-    {"torque", tor},
-    {"pd", pd},
-    {"muscle", mus},
-    {"mass", mass},
-    {"mass_lower", mass_lower}
-};
-
-ActuatorType getActuatorType(std::string type) { 
-    auto it = ActuatorTypeMap.find(type);
-    if (it == ActuatorTypeMap.end()) {
-        throw std::runtime_error("Invalid actuator type: " + type);
-    }
-    return it->second;
+// Thread-safe ActuatorType lookup using simple switch statement
+// Avoids static map initialization order issues in multi-threaded environments
+ActuatorType getActuatorType(std::string type) {
+    if (type == "torque") return tor;
+    if (type == "pd") return pd;
+    if (type == "muscle") return mus;
+    if (type == "mass") return mass;
+    if (type == "mass_lower") return mass_lower;
+    throw std::runtime_error("Invalid actuator type: " + type);
 }
 
 static std::tuple<Eigen::Vector3d, double, double> UnfoldModifyInfo(const ModifyInfo &info)
@@ -310,7 +306,7 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
     rtgBody->setInertia(inertia);
 }
 
-Character::Character(std::string path, bool collide_all)
+Character::Character(std::string path, int skelFlags)
 {
     mActuatorType = tor;
 
@@ -323,13 +319,11 @@ Character::Character(std::string path, bool collide_all)
     // Always resolve paths through UriResolver for backwards compatibility
     std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
 
-    int flags = SKEL_DEFAULT;
-    if (collide_all) flags |= SKEL_COLLIDE_ALL;
-    mSkeleton = BuildFromFile(resolvedPath, flags);
+    mSkeleton = BuildFromFile(resolvedPath, skelFlags);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
 
     // Configure self-collision if enabled
-    if (collide_all) {
+    if (skelFlags & SKEL_COLLIDE_ALL) {
         LOG_VERBOSE("[Character] Enabling self-collision check");
         mSkeleton->enableSelfCollisionCheck();  // Enable self-collision check
         mSkeleton->setAdjacentBodyCheck(false);  // Disable adjacent body filtering for true self-collision

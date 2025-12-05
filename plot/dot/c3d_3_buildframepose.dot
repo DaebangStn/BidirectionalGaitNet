@@ -1,0 +1,144 @@
+// buildFramePose Pipeline (Stage 3 Detail)
+// Per-frame skeleton pose construction from fitted transforms
+digraph c3d_buildframepose {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=0.6;
+    fontname="Helvetica";
+    newrank=true;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Helvetica",
+        fontsize=10,
+        margin="0.15,0.10"
+    ];
+
+    edge [
+        color="gray30",
+        penwidth=1.2,
+        arrowsize=0.7,
+        fontname="Helvetica",
+        fontsize=8
+    ];
+
+    // === INPUT ===
+    subgraph cluster_input {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Input (per frame t)</font>>;
+
+        bone_r [label="mBoneR_frames[bone][t]\n(world rotation)", fillcolor="#E3F2FD"];
+        bone_t [label="mBoneT_frames[bone][t]\n(world position)", fillcolor="#E3F2FD"];
+        bone_order [label="mBoneOrder\n(config sequence)", fillcolor="#FFF8E1"];
+        c3d_markers [label="C3D Markers[t]\n(arm markers)", fillcolor="#E3F2FD"];
+    }
+
+    // === STEP 1: INITIALIZE ===
+    subgraph cluster_init {
+        style=filled;
+        fillcolor="#E8F5E9";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 1: Initialize</font>>;
+
+        zero_pose [label="pos.setZero()\nT-pose reference"];
+    }
+
+    // === STEP 2: ITERATE BONES ===
+    subgraph cluster_bones {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 2: For each bone in mBoneOrder</font>>;
+
+        get_bn [label="getBodyNode(bone)"];
+        build_global [label="bodynodeGlobalT\n= {R[t], t[t]}"];
+        compute_joint [label="computeJointPositions\n(bn, globalT)", fillcolor="#BBDEFB"];
+        set_segment [label="pos.segment(jn_idx)\n= jointPos"];
+
+        get_bn -> build_global [penwidth=1.5, color=black];
+        build_global -> compute_joint [penwidth=1.5, color=black];
+        compute_joint -> set_segment [penwidth=1.5, color=black];
+    }
+
+    // === STEP 3: ARM HEURISTICS ===
+    subgraph cluster_arm {
+        style=filled;
+        fillcolor="#FFF3E0";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Step 3: Arm Rotation Heuristics</font>>;
+
+        arm_rot [label="computeArmRotations\n(fitFrameIdx, pos)", fillcolor="#FFE0B2"];
+    }
+
+    // === OUTPUT ===
+    subgraph cluster_output {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Output</font>>;
+
+        free_pose [label="Eigen::VectorXd pos\n(free skeleton pose)", fillcolor="#C8E6C9"];
+    }
+
+    // === MAIN FLOW ===
+    bone_order -> zero_pose [penwidth=2.5, color=black];
+    zero_pose -> get_bn [penwidth=2.5, color=black];
+
+    bone_r -> build_global [penwidth=1.5, color=gray50];
+    bone_t -> build_global [penwidth=1.5, color=gray50];
+
+    set_segment -> arm_rot [penwidth=2.5, color=black, label="loop done"];
+    c3d_markers -> arm_rot [penwidth=1.5, color=gray50];
+    arm_rot -> free_pose [penwidth=2.5, color=black];
+
+    // === computeJointPositions DETAIL ===
+    subgraph cluster_joint_algo {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.3;
+        label=<<font point-size="7" color="gray50">computeJointPositions</font>>;
+
+        cjp1 [label="1. Get parent world T\n(or identity for root)", fontsize=8, fillcolor="white"];
+        cjp2 [label="2. jointT = parentT^-1\n* bodynodeT * childToJoint", fontsize=8, fillcolor="white"];
+        cjp3 [label="3. FreeJoint::\nconvertToPositions(jointT)", fontsize=8, fillcolor="white"];
+
+        cjp1 -> cjp2 [penwidth=0.8, color=gray60];
+        cjp2 -> cjp3 [penwidth=0.8, color=gray60];
+    }
+
+    // === computeArmRotations DETAIL ===
+    subgraph cluster_arm_algo {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.3;
+        label=<<font point-size="7" color="gray50">computeArmRotations</font>>;
+
+        arm1 [label="1. Get S, E, W markers\n(shoulder, elbow, wrist)", fontsize=8, fillcolor="white"];
+        arm2 [label="2. u = (E-S).normalized\nl = (W-E).normalized", fontsize=8, fillcolor="white"];
+        arm3 [label="3. n = cross(u, l)\n(bending plane normal)", fontsize=8, fillcolor="white"];
+        arm4 [label="4. R = alignY(u) * alignZ(n)\nBallJoint pose", fontsize=8, fillcolor="white"];
+        arm5 [label="5. Cache elbow angle\nfor ForeArm revolute", fontsize=8, fillcolor="white"];
+
+        arm1 -> arm2 [penwidth=0.8, color=gray60];
+        arm2 -> arm3 [penwidth=0.8, color=gray60];
+        arm3 -> arm4 [penwidth=0.8, color=gray60];
+        arm4 -> arm5 [penwidth=0.8, color=gray60];
+    }
+
+    // Rank alignment
+    {rank=same; bone_r; bone_t; bone_order; c3d_markers;}
+    {rank=same; cjp1; arm1;}
+}

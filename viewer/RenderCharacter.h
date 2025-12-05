@@ -59,11 +59,37 @@ public:
     // Reset skeleton to default bone scales and zero pose
     void resetSkeletonToDefault();
 
+    // Skeleton metadata accessors (for export)
+    const std::map<std::string, std::string>& getContactFlags() const { return mContactFlags; }
+    const std::map<std::string, std::string>& getObjFileLabels() const { return mObjFileLabels; }
+    const std::map<std::string, std::vector<std::string>>& getBVHMap() const { return mBVHMap; }
+    const std::vector<dart::dynamics::BodyNode*>& getEndEffectors() const { return mEndEffectors; }
+    const Eigen::VectorXd& getKpVector() const { return mKp; }
+    const Eigen::VectorXd& getKvVector() const { return mKv; }
+    const std::string& getSkeletonPath() const { return mSkeletonPath; }
+
+    // Skeleton export (bakes calibrated geometry)
+    void exportSkeletonYAML(const std::string& path) const;
+
 private:
+    // Skeleton metadata parsing
+    void parseSkeletonMetadata(const std::string& path);
+    void parseSkeletonMetadataFromXML(const std::string& path);
+    void parseSkeletonMetadataFromYAML(const std::string& path);
     SkeletonPtr mSkeleton;
     SkeletonPtr mRefSkeleton;  // Reference skeleton for bone scaling
     std::vector<RenderMarker> mMarkers;
     std::vector<BoneInfo> mSkelInfos;  // Cached bone scale info
+
+    // Skeleton metadata (parsed from XML/YAML)
+    std::string mSkeletonPath;
+    int mSkelFlags;  // Skeleton loading flags (SKEL_FREE_JOINTS, etc.)
+    std::map<std::string, std::string> mContactFlags;      // body_name → "On"/"Off"
+    std::map<std::string, std::string> mObjFileLabels;     // body_name → "mesh.obj"
+    std::map<std::string, std::vector<std::string>> mBVHMap;  // joint_name → [bvh_channels]
+    std::vector<dart::dynamics::BodyNode*> mEndEffectors;
+    Eigen::VectorXd mKp;  // Joint Kp gains
+    Eigen::VectorXd mKv;  // Joint Kv gains
 };
 
 #endif

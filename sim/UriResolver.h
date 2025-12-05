@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <mutex>
+#include <atomic>
 
 namespace PMuscle {
 
@@ -32,8 +34,11 @@ public:
     // Register a new scheme with its root path
     void registerScheme(const std::string& scheme, const std::string& rootPath);
 
+    // Get the data root path directly (thread-safe)
+    std::string getDataRoot() const { return mDataRoot; }
+
 private:
-    URIResolver() = default;
+    URIResolver();  // Constructor initializes default schemes
     ~URIResolver() = default;
     URIResolver(const URIResolver&) = delete;
     URIResolver& operator=(const URIResolver&) = delete;
@@ -51,8 +56,13 @@ private:
     std::string getTempDir() const;
     std::string generateTempFilePath(const std::string& host, const std::string& remotePath) const;
 
+    // Thread-safe storage: set once during construction, read-only after
+    std::string mDataRoot;  // Immutable after construction
+
+    // Deprecated: kept for backward compatibility but not used
     std::unordered_map<std::string, std::string> mSchemeRoots;
     mutable std::unordered_map<std::string, FTPCredentials> mFTPCredentialsCache;
+    mutable std::mutex mFTPCacheMutex;
 };
 
 } // namespace PMuscle

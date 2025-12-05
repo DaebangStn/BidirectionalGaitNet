@@ -1,2 +1,3 @@
 diagram/
 .rendercache/
+./**/*.png

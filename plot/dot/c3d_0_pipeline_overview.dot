@@ -1,0 +1,141 @@
+// C3D_Reader::loadC3D Pipeline Overview
+// Abstract high-level flow of marker-to-skeleton conversion
+digraph c3d_pipeline_overview {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.6;
+    ranksep=0.7;
+    fontname="Helvetica";
+    newrank=true;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Helvetica",
+        fontsize=11,
+        margin="0.20,0.12"
+    ];
+
+    edge [
+        color="gray30",
+        penwidth=1.2,
+        arrowsize=0.8,
+        fontname="Helvetica",
+        fontsize=9
+    ];
+
+    // === INPUT ===
+    subgraph cluster_input {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Input</font>>;
+
+        c3d_file [label="C3D File", fillcolor="#E3F2FD"];
+        yaml_config [label="YAML Config", fillcolor="#E3F2FD"];
+        skeleton_xml [label="Skeleton XML", fillcolor="#E3F2FD"];
+        marker_xml [label="Marker XML", fillcolor="#E3F2FD"];
+    }
+
+    // === STAGE 0: LOAD CONFIG ===
+    stage0 [label="Stage 0\nLoad Config", fillcolor="#FFF8E1", shape=box];
+
+    // === STAGE 1: PARSE C3D ===
+    subgraph cluster_stage1 {
+        style=filled;
+        fillcolor="#E8F5E9";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Stage 1: Parse</font>>;
+
+        parse_c3d [label="parseC3DFile"];
+        resolve_markers [label="resolveMarkerReferences"];
+        correct_backward [label="detectAndCorrect\nBackwardWalking"];
+    }
+
+    // === STAGE 2: CALIBRATION ===
+    subgraph cluster_stage2 {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Stage 2: Calibration</font>>;
+
+        calibrate [label="calibrateSkeleton", fillcolor="#BBDEFB"];
+    }
+
+    // === STAGE 3: BUILD POSES ===
+    subgraph cluster_stage3 {
+        style=filled;
+        fillcolor="#F3E5F5";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Stage 3: Build Poses</font>>;
+
+        build_poses [label="buildFramePose\n(per frame)", fillcolor="#E1BEE7"];
+    }
+
+    // === STAGE 4: MOTION CONVERSION ===
+    subgraph cluster_stage4 {
+        style=filled;
+        fillcolor="#FFF3E0";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Stage 4: Motion Skeleton</font>>;
+
+        motion_convert [label="convertToMotion\nSkeleton", fillcolor="#FFE0B2"];
+    }
+
+    // === STAGE 5: IK REFINEMENT ===
+    subgraph cluster_stage5 {
+        style=filled;
+        fillcolor="#FFEBEE";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Stage 5: IK Refinement</font>>;
+
+        arm_ik [label="refineArmIK"];
+        leg_ik [label="refineLegIK"];
+    }
+
+    // === OUTPUT ===
+    subgraph cluster_output {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="9">Output</font>>;
+
+        free_poses [label="mFreePoses\n(Free Skeleton)", fillcolor="#C8E6C9"];
+        motion_poses [label="mMotionResult\n(Motion Skeleton)", fillcolor="#C8E6C9"];
+    }
+
+    // === MAIN FLOW (thick black) ===
+    c3d_file -> parse_c3d [penwidth=2.5, color=black];
+    yaml_config -> stage0 [penwidth=1.5, color=gray50];
+    skeleton_xml -> stage0 [penwidth=1.0, color=gray50, style=dashed];
+    marker_xml -> stage0 [penwidth=1.0, color=gray50, style=dashed];
+
+    stage0 -> parse_c3d [penwidth=2.5, color=black];
+    parse_c3d -> resolve_markers [penwidth=2.5, color=black];
+    resolve_markers -> correct_backward [penwidth=2.5, color=black];
+    correct_backward -> calibrate [penwidth=2.5, color=black];
+    calibrate -> build_poses [penwidth=2.5, color=black];
+    build_poses -> motion_convert [penwidth=2.5, color=black];
+    motion_convert -> arm_ik [penwidth=2.5, color=black];
+    arm_ik -> leg_ik [penwidth=2.5, color=black];
+    leg_ik -> free_poses [penwidth=2.5, color=black];
+    leg_ik -> motion_poses [penwidth=2.5, color=black];
+
+    // Data storage flow (dashed)
+    build_poses -> free_poses [penwidth=1.5, color="#4CAF50", style=dashed, label="store"];
+    motion_convert -> motion_poses [penwidth=1.5, color="#FF9800", style=dashed, label="store"];
+
+    // === RANK ALIGNMENT ===
+    {rank=same; c3d_file; yaml_config; skeleton_xml; marker_xml;}
+    {rank=same; arm_ik; leg_ik;}
+    {rank=same; free_poses; motion_poses;}
+}
