@@ -68,6 +68,9 @@ public:
     const Eigen::VectorXd& getKvVector() const { return mKv; }
     const std::string& getSkeletonPath() const { return mSkeletonPath; }
 
+    // Reference skeleton (original, unmodified by calibration)
+    SkeletonPtr getRefSkeleton() const { return mRefSkeleton; }
+
     // Skeleton export (bakes calibrated geometry)
     void exportSkeletonYAML(const std::string& path) const;
 

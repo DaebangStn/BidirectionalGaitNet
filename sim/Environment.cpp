@@ -1054,6 +1054,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mDiscConfig.enabled = disc["enabled"].as<bool>(false);
         mDiscConfig.normalize = disc["normalize"].as<bool>(false);
         mDiscConfig.reward_scale = disc["reward_scale"].as<double>(1.0);
+        mDiscConfig.multiplicative = disc["multiplicative"].as<bool>(false);
 
         if (mDiscConfig.enabled && mUseMuscle) {
             // Create C++ DiscriminatorNN (libtorch) for thread-safe inference
@@ -1061,7 +1062,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             int num_muscles = mCharacter->getNumMuscles();
             mDiscriminatorNN = make_discriminator_nn(num_muscles, true);
             mRandomDiscObs = Eigen::VectorXf::Zero(num_muscles);
-            LOG_INFO("[Environment] Created DiscriminatorNN with " << num_muscles << " muscles");
         }
     }
 
@@ -1301,11 +1301,11 @@ double Environment::calcReward()
 
             double r_torque = exp(-mRewardConfig.metabolic_weight * mCharacter->getTorqueEnergy());
             if (mRewardConfig.flags & REWARD_METABOLIC) r_energy *= r_torque;
-            else r_energy += mRewardConfig.metabolic_scale * r_torque;
+            else r_energy +=  r_torque;
             mInfoMap.insert(std::make_pair("r_torque", r_torque));
         }
 
-        if (mRewardConfig.flags & REWARD_METABOLIC) multiplicative_part *= r_energy;
+        if ((mRewardConfig.flags & REWARD_METABOLIC) && mRewardConfig.metabolic_scale > 0.001) multiplicative_part *= r_energy;
         else additive_part += mRewardConfig.metabolic_scale * r_energy;
         mInfoMap.insert(std::make_pair("r_energy", r_energy));
 
@@ -1323,6 +1323,21 @@ double Environment::calcReward()
             double r_knee_pain_max = getKneePainMaxReward();
             multiplicative_part *= r_knee_pain_max;
             mInfoMap.insert(std::make_pair("r_knee_pain_max", r_knee_pain_max));
+        }
+
+        // Apply discriminator reward (ADD-style, multiplicative or additive based on config)
+        // Uses accumulated reward across all substeps, averaged
+        if (mDiscConfig.enabled && mDiscriminatorNN)
+        {
+            double r_disc = mDiscRewardAccum / static_cast<double>(mNumSubSteps);
+            if (mDiscConfig.multiplicative) {
+                // Multiplicative: no scaling, direct multiplication with main reward
+                multiplicative_part *= r_disc;
+            } else {
+                // Additive: apply reward_scale
+                additive_part += mDiscConfig.reward_scale * r_disc;
+            }
+            mInfoMap.insert(std::make_pair("r_disc", r_disc));
         }
 
         r = multiplicative_part + additive_part;
@@ -1594,12 +1609,21 @@ void Environment::calcActivation()
         mTupleFilled = true;
     }
 
+    // Accumulate mean activation every substep (always, for tensorboard logging)
+    mMeanActivation += activations.cwiseAbs().mean();
+
     // Sample disc_obs (muscle activations) per control step, same as muscle tuples
     if (mDiscConfig.enabled) {
+        // Sample disc_obs randomly (like muscle tuples)
         if (thread_safe_uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mDiscObsFilled) {
-            mRandomDiscObs = activations;  // Current muscle activations
-            mMeanActivation = activations.cwiseAbs().mean();  // For tensorboard logging
+            mRandomDiscObs = activations;
             mDiscObsFilled = true;
+        }
+
+        // Accumulate discriminator reward on current activations (every substep)
+        // reward_scale applied later only for additive mode
+        if (mDiscriminatorNN) {
+            mDiscRewardAccum += mDiscriminatorNN->compute_reward(activations);
         }
     }
 }
@@ -1651,6 +1675,14 @@ void Environment::preStep()
 {
     // Clear PD-level step completion flag at the beginning of each PD step
     mGaitPhase->clearStepComplete();
+
+    // Reset mean activation accumulator (always, for tensorboard logging)
+    mMeanActivation = 0.0;
+
+    // Reset discriminator accumulators
+    if (mDiscConfig.enabled) {
+        mDiscRewardAccum = 0.0;
+    }
 }
 
 void Environment::step()
@@ -1667,10 +1699,9 @@ void Environment::postStep()
     mKneeLoadingMaxCycle = std::max(mKneeLoadingMaxCycle, mCharacter->getKneeLoadingMax());
     mReward = calcReward();
 
-    // Add mean_activation to info map for tensorboard logging (discriminator training)
-    if (mDiscConfig.enabled) {
-        mInfoMap["mean_activation"] = mMeanActivation;
-    }
+    // Add mean_activation to info map for tensorboard logging (always enabled)
+    // Average over all substeps
+    mInfoMap["mean_activation"] = mMeanActivation / static_cast<double>(mNumSubSteps);
 
     // Reset disc_obs filled flag for next control step
     mDiscObsFilled = false;

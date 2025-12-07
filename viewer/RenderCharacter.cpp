@@ -454,6 +454,19 @@ void RenderCharacter::resetSkeletonToDefault()
         std::get<1>(info) = ModifyInfo();
     }
     applySkeletonBodyNode(mSkelInfos, mSkeleton);
+
+    // Restore joint transforms from reference skeleton
+    if (mSkeleton && mRefSkeleton) {
+        for (size_t i = 0; i < mSkeleton->getNumJoints(); ++i) {
+            auto* joint = mSkeleton->getJoint(i);
+            auto* refJoint = mRefSkeleton->getJoint(i);
+            if (joint && refJoint) {
+                joint->setTransformFromParentBodyNode(refJoint->getTransformFromParentBodyNode());
+                joint->setTransformFromChildBodyNode(refJoint->getTransformFromChildBodyNode());
+            }
+        }
+    }
+
     // Set skeleton to zero pose
     if (mSkeleton) {
         mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));

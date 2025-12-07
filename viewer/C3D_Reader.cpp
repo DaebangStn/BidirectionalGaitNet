@@ -2134,6 +2134,24 @@ Eigen::VectorXd C3D_Reader::buildMotionFramePose(
 
         if (joint->getType() == "FreeJoint") {
             if (numDofs == 6) {
+                // For root FreeJoint (Pelvis): relT contains world position
+                // The pose should be relative to skeleton's default offset, not use calibration offsets
+                // Use the REFERENCE skeleton's original joint transforms (unmodified by calibration)
+                if (boneName == "Pelvis") {
+                    auto refSkel = mMotionCharacter->getRefSkeleton();
+                    if (refSkel) {
+                        auto* refJoint = refSkel->getJoint(joint->getName());
+                        if (refJoint) {
+                            // Get skeleton's original joint transforms (from XML, before calibration)
+                            Eigen::Isometry3d skelParentT = refJoint->getTransformFromParentBodyNode();
+                            Eigen::Isometry3d skelChildT = refJoint->getTransformFromChildBodyNode();
+
+                            // T_pose = skelParentT^-1 * globalT * skelChildT
+                            // This makes pose relative to skeleton's default position
+                            T_obs = skelParentT.inverse() * relT * skelChildT;
+                        }
+                    }
+                }
                 pose.segment<6>(jn_idx) = dart::dynamics::FreeJoint::convertToPositions(T_obs);
             }
         } else if (joint->getType() == "BallJoint") {
@@ -2224,6 +2242,13 @@ void C3D_Reader::applyJointOffsetsToSkeleton(
         auto* joint = skel->getJoint(jointName);
         if (!joint) continue;
 
+        // Skip root FreeJoint (Pelvis) - offset is handled in pose computation via buildMotionFramePose
+        // Modifying root joint offset causes incorrect world position when pose is reset
+        if (jointName == "Pelvis") {
+            LOG_INFO("[JointOffset] Skipping root joint 'Pelvis' - offset handled in pose computation");
+            continue;
+        }
+
         // Apply parent offset (transform from parent body to joint)
         joint->setTransformFromParentBodyNode(offset.parentOffset);
 
@@ -2256,6 +2281,12 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
 
     // Step 2: Estimate joint offsets for each target_motion_joint
     for (const auto& boneName : mFittingConfig.targetMotionJoint) {
+        // Skip root joint (Pelvis) - it's a FreeJoint, offset should be applied via pose translation, not joint transform
+        if (boneName == "Pelvis") {
+            LOG_INFO("[MotionConvert] Skipping Pelvis - root FreeJoint offset handled via pose, not joint transform");
+            continue;
+        }
+
         // Check if bone is in mBoneOrder (was fitted)
         if (std::find(mBoneOrder.begin(), mBoneOrder.end(), boneName) == mBoneOrder.end()) {
             LOG_WARN("[MotionConvert] target_motion_joint '" << boneName << "' not found in mBoneOrder, skipping");

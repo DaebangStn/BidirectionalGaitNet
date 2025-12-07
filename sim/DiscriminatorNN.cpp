@@ -64,7 +64,7 @@ float DiscriminatorNNImpl::forward_no_grad(const Eigen::VectorXf& activations) {
     return logit.item<float>();
 }
 
-float DiscriminatorNNImpl::compute_reward(const Eigen::VectorXf& activations, float scale) {
+float DiscriminatorNNImpl::compute_reward(const Eigen::VectorXf& activations) {
     // For ADD-style energy efficiency:
     // - Input: current muscle activations
     // - Demo: zero activations (ideal minimal energy)
@@ -82,10 +82,11 @@ float DiscriminatorNNImpl::compute_reward(const Eigen::VectorXf& activations, fl
     // Compute probability using sigmoid
     float prob = 1.0f / (1.0f + std::exp(-logit));
 
-    // ADD reward formula: disc_r = -log(max(1 - prob, 0.0001)) * scale
+    // ADD reward formula: disc_r = -log(max(1 - prob, 0.0001))
     // When prob → 1 (agent looks like demo/efficient) → high reward
     // When prob → 0 (agent looks fake/inefficient) → low reward
-    float disc_r = -std::log(std::max(1.0f - prob, 0.0001f)) * scale;
+    // Note: reward_scale is applied in Environment.cpp (additive mode only)
+    float disc_r = -std::log(std::max(1.0f - prob, 0.0001f));
 
     return disc_r;
 }

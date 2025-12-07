@@ -1379,6 +1379,12 @@ void GLFWApp::drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &colo
 {
     if (!bn) return;
 
+    // Set wireframe mode if enabled
+    if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Wireframe) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glLineWidth(2.0f);
+    }
+
     glPushMatrix();
     glMultMatrixd(bn->getTransform().data());
 
@@ -1400,6 +1406,11 @@ void GLFWApp::drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &colo
         return true;
     });
     glPopMatrix();
+
+    // Restore solid mode
+    if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Wireframe) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
 }
 
 void GLFWApp::drawKinematicsControlPanel()
@@ -3628,6 +3639,15 @@ void GLFWApp::drawSimControlPanel()
         ImGui::Checkbox("Draw EOE", &mDrawFlags.eoe);
         ImGui::Checkbox("Draw Collision", &mDrawFlags.collision);
 
+        // Skeleton Render Mode
+        const char* renderModes[] = {"Solid", "Wireframe", "Mesh"};
+        int currentMode = static_cast<int>(mDrawFlags.skeletonRenderMode);
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::Combo("Render Mode", &currentMode, renderModes, IM_ARRAYSIZE(renderModes)))
+        {
+            mDrawFlags.skeletonRenderMode = static_cast<SkeletonRenderMode>(currentMode);
+        }
+
         ImGui::Separator();
         // Muscle Filtering and Selection
         ImGui::Indent();
@@ -4946,7 +4966,9 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             else reset();
             break;
         case GLFW_KEY_O:
-            mDrawFlags.obj = !mDrawFlags.obj;
+            // Cycle through render modes: Solid -> Wireframe -> Mesh -> Solid
+            mDrawFlags.skeletonRenderMode = static_cast<SkeletonRenderMode>(
+                (static_cast<int>(mDrawFlags.skeletonRenderMode) + 1) % 3);
             break;
         case GLFW_KEY_SPACE:
             mRolloutStatus.pause = !mRolloutStatus.pause;
@@ -5072,7 +5094,11 @@ void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
     glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_DEPTH_TEST);
     glColor4d(color[0], color[1], color[2], color[3]);
-    if (!mDrawFlags.obj)
+
+    // Determine whether to use mesh or primitive rendering
+    // Mesh mode uses obj meshes, Solid/Wireframe use primitives
+    bool useMesh = (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Mesh);
+    if (!useMesh)
     {
 
         // glColor4dv(color.data());

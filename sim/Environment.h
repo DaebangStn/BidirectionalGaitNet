@@ -103,6 +103,7 @@ struct DiscriminatorConfig
     bool enabled = false;           // Whether discriminator is enabled
     bool normalize = false;         // Whether to normalize disc_obs (optional)
     double reward_scale = 1.0;      // Scale factor for discriminator reward
+    bool multiplicative = false;    // If true, multiplies with main reward; if false, additive
 };
 
 class DLL_PUBLIC Environment
@@ -497,6 +498,7 @@ private:
     Eigen::VectorXf mRandomDiscObs;     // Sampled disc_obs per control step (like muscle tuples)
     bool mDiscObsFilled = false;        // Whether disc_obs has been sampled this step
     double mMeanActivation = 0.0;       // Mean activation for tensorboard logging
+    double mDiscRewardAccum = 0.0;      // Accumulated discriminator reward across substeps
 
     // Reward Type (Deep Mimic or GaitNet)
     RewardType mRewardType;

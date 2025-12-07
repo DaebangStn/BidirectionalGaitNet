@@ -39,6 +39,13 @@ enum MuscleRenderingType
     weakness
 };
 
+enum class SkeletonRenderMode
+{
+    Solid = 0,
+    Wireframe,
+    Mesh
+};
+
 struct RolloutStatus
 {
     std::string name, settingPath, fileContents, storeKey;
@@ -125,6 +132,7 @@ struct DrawFlags
     bool noiseArrows = true;
     bool fgnSkeleton = false;
     bool obj = true;
+    SkeletonRenderMode skeletonRenderMode = SkeletonRenderMode::Solid;
 };
 
 /**
@@ -261,7 +269,6 @@ private:
     int mCurrentCameraPreset;
 
     // Variable
-    bool mRenderMode;
     double mWidth, mHeight;
     bool mRotate, mTranslate, mZooming, mMouseDown;
 

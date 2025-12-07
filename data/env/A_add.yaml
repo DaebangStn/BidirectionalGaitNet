@@ -45,7 +45,7 @@ environment:
     metabolic:
       type: "A"  # A, A2, MA, MA2
       weight: 0.02
-      scale: 1.0
+      scale: 0.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
         coeff: 0.1
@@ -82,10 +82,10 @@ environment:
 
   # Discriminator for energy-efficient muscle activation (ADD-style)
   discriminator:
-    enabled: false  # Set to true to enable discriminator
+    enabled: true  # Set to true to enable discriminator
     normalize: false  # Optional: normalize disc_obs before forward pass
     reward_scale: 1.0  # Scale factor for discriminator reward
-    multiplicative: false  # if true, multiplies with main reward term; if false, additive
+    multiplicative: false
 
   # Parameterization for training
   parameters:

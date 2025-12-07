@@ -135,8 +135,12 @@ class DiscriminatorLearner:
         indices = torch.randint(0, valid_size, (num_samples,), device=self.device)
         return self.replay_buffer[indices]
 
-    def _compute_gradient_penalty(self, real_samples: torch.Tensor, fake_samples: torch.Tensor) -> torch.Tensor:
-        """Compute gradient penalty for discriminator training."""
+    def _compute_gradient_penalty(self, real_samples: torch.Tensor, fake_samples: torch.Tensor):
+        """Compute gradient penalty for discriminator training.
+
+        Returns:
+            Tuple of (gradient_penalty, grad_norm_mean, grad_norm_std)
+        """
         batch_size = real_samples.shape[0]
 
         # Random interpolation
@@ -156,9 +160,17 @@ class DiscriminatorLearner:
             retain_graph=True,
         )[0]
 
+        # Per-sample gradient norms
+        grad_norms = gradients.norm(2, dim=1)
+
         # Gradient penalty: (||grad|| - 1)^2
-        gradient_penalty = (gradients.norm(2, dim=1) - 1).pow(2).mean()
-        return gradient_penalty
+        gradient_penalty = (grad_norms - 1).pow(2).mean()
+
+        # Stats for logging (detached)
+        grad_norm_mean = grad_norms.mean().item()
+        grad_norm_std = grad_norms.std().item()
+
+        return gradient_penalty, grad_norm_mean, grad_norm_std
 
     def learn(self, disc_obs: np.ndarray) -> Dict:
         """
@@ -197,7 +209,10 @@ class DiscriminatorLearner:
         loss_avg = 0.0
         loss_pos_avg = 0.0
         loss_neg_avg = 0.0
-        loss_gp_avg = 0.0
+        loss_gp_raw_avg = 0.0      # Raw GP term (before scaling)
+        loss_gp_scaled_avg = 0.0   # Scaled GP contribution (grad_penalty * gp)
+        grad_norm_mean_avg = 0.0   # Averaged over all batches/epochs
+        grad_norm_std_avg = 0.0    # Averaged over all batches/epochs
         accuracy_avg = 0.0
 
         indices = np.arange(num_samples)
@@ -208,7 +223,10 @@ class DiscriminatorLearner:
             epoch_loss = 0.0
             epoch_loss_pos = 0.0
             epoch_loss_neg = 0.0
-            epoch_loss_gp = 0.0
+            epoch_loss_gp_raw = 0.0
+            epoch_loss_gp_scaled = 0.0
+            epoch_grad_norm_mean = 0.0
+            epoch_grad_norm_std = 0.0
             epoch_accuracy = 0.0
 
             for batch_idx in range(num_batches):
@@ -253,10 +271,15 @@ class DiscriminatorLearner:
 
                 # Gradient penalty
                 if self.grad_penalty > 0:
-                    gp = self._compute_gradient_penalty(pos_samples, neg_samples[:pos_samples.shape[0]])
-                    disc_loss = disc_loss + self.grad_penalty * gp
+                    gp_raw, gp_grad_norm_mean, gp_grad_norm_std = self._compute_gradient_penalty(
+                        pos_samples, neg_samples[:pos_samples.shape[0]])
+                    gp_scaled = self.grad_penalty * gp_raw
+                    disc_loss = disc_loss + gp_scaled
                 else:
-                    gp = torch.tensor(0.0)
+                    gp_raw = 0.0
+                    gp_scaled = 0.0
+                    gp_grad_norm_mean = 0.0
+                    gp_grad_norm_std = 0.0
 
                 # Logit regularization
                 if self.logit_reg > 0:
@@ -274,38 +297,86 @@ class DiscriminatorLearner:
                     neg_correct = (torch.sigmoid(neg_logits) < 0.5).float().mean()
                     accuracy = (pos_correct + neg_correct) / 2
 
-                # Accumulate stats
+                # Accumulate stats (use .item() for tensors to detach from graph)
                 epoch_loss += disc_loss.item()
                 epoch_loss_pos += loss_pos.item()
                 epoch_loss_neg += loss_neg.item()
-                epoch_loss_gp += gp.item() if isinstance(gp, torch.Tensor) else gp
+                epoch_loss_gp_raw += gp_raw.item() if isinstance(gp_raw, torch.Tensor) else gp_raw
+                epoch_loss_gp_scaled += gp_scaled.item() if isinstance(gp_scaled, torch.Tensor) else gp_scaled
+                epoch_grad_norm_mean += gp_grad_norm_mean  # Already a float from _compute_gradient_penalty
+                epoch_grad_norm_std += gp_grad_norm_std    # Already a float from _compute_gradient_penalty
                 epoch_accuracy += accuracy.item()
 
             # Average over batches
             loss_avg += epoch_loss / num_batches
             loss_pos_avg += epoch_loss_pos / num_batches
             loss_neg_avg += epoch_loss_neg / num_batches
-            loss_gp_avg += epoch_loss_gp / num_batches
+            loss_gp_raw_avg += epoch_loss_gp_raw / num_batches
+            loss_gp_scaled_avg += epoch_loss_gp_scaled / num_batches
+            grad_norm_mean_avg += epoch_grad_norm_mean / num_batches
+            grad_norm_std_avg += epoch_grad_norm_std / num_batches
             accuracy_avg += epoch_accuracy / num_batches
 
         # Average over epochs
         loss_avg /= self.num_epochs
         loss_pos_avg /= self.num_epochs
         loss_neg_avg /= self.num_epochs
-        loss_gp_avg /= self.num_epochs
+        loss_gp_raw_avg /= self.num_epochs
+        loss_gp_scaled_avg /= self.num_epochs
+        grad_norm_mean_avg /= self.num_epochs
+        grad_norm_std_avg /= self.num_epochs
         accuracy_avg /= self.num_epochs
 
         learning_time = (time.perf_counter() - learning_start) * 1000
         total_time = (time.perf_counter() - start_time) * 1000
+
+        # ===== DIAGNOSTIC METRICS (computed on final batch outputs) =====
+        eps = 1e-6
+
+        with torch.no_grad():
+            # D_fake distribution (sigmoid of neg_logits)
+            D_fake = torch.sigmoid(neg_logits).squeeze()
+            D_fake_mean = D_fake.mean().item()
+            D_fake_std = D_fake.std().item() if D_fake.numel() > 1 else 0.0
+            D_fake_p10 = torch.quantile(D_fake, 0.1).item() if D_fake.numel() > 1 else D_fake_mean
+            D_fake_p90 = torch.quantile(D_fake, 0.9).item() if D_fake.numel() > 1 else D_fake_mean
+
+            # D_pos distribution
+            D_pos = torch.sigmoid(pos_logits).squeeze()
+
+            # Logit margin: logit(D_pos) - logit(D_neg)
+            def safe_logit(x):
+                return torch.log(x + eps) - torch.log(1 - x + eps)
+            logit_margin = (safe_logit(D_pos) - safe_logit(D_fake)).mean().item()
+
+            # r_disc reward distribution
+            r_disc = -torch.log(1 - D_fake + eps)
+            r_disc_mean = r_disc.mean().item()
+            r_disc_std = r_disc.std().item() if r_disc.numel() > 1 else 0.0
+            r_disc_p10 = torch.quantile(r_disc, 0.1).item() if r_disc.numel() > 1 else r_disc_mean
+            r_disc_p90 = torch.quantile(r_disc, 0.9).item() if r_disc.numel() > 1 else r_disc_mean
 
         return {
             'num_samples': num_samples,
             'loss_disc': loss_avg,
             'loss_pos': loss_pos_avg,
             'loss_neg': loss_neg_avg,
-            'loss_gp': loss_gp_avg,
+            'loss_gp_raw': loss_gp_raw_avg,       # Raw GP term (before scaling)
+            'loss_gp_scaled': loss_gp_scaled_avg, # Scaled GP (grad_penalty * gp)
             'accuracy': accuracy_avg,
             'replay_buffer_size': min(self.replay_idx, self.buffer_size),
+            # Diagnostic metrics
+            'D_fake_mean': D_fake_mean,
+            'D_fake_std': D_fake_std,
+            'D_fake_p10': D_fake_p10,
+            'D_fake_p90': D_fake_p90,
+            'logit_margin': logit_margin,
+            'r_disc_mean': r_disc_mean,
+            'r_disc_std': r_disc_std,
+            'r_disc_p10': r_disc_p10,
+            'r_disc_p90': r_disc_p90,
+            'grad_norm_mean': grad_norm_mean_avg,  # Averaged over all batches/epochs
+            'grad_norm_std': grad_norm_std_avg,    # Averaged over all batches/epochs
             'time': {
                 'converting_time_ms': converting_time,
                 'learning_time_ms': learning_time,

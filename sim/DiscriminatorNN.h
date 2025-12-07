@@ -42,13 +42,12 @@ public:
     /**
      * Compute discriminator reward from activations.
      * Uses ADD style: diff = 0 - activations = -activations
-     * Reward: disc_r = -log(max(1 - sigmoid(logit), 0.0001)) * scale
+     * Reward: disc_r = -log(max(1 - sigmoid(logit), 0.0001))
      *
      * @param activations Muscle activations as Eigen vector
-     * @param scale Scaling factor for reward
      * @return Discriminator reward (positive when activations look "efficient")
      */
-    float compute_reward(const Eigen::VectorXf& activations, float scale);
+    float compute_reward(const Eigen::VectorXf& activations);
 
     /**
      * Load weights from Python state_dict.

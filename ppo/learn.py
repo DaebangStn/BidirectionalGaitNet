@@ -28,13 +28,13 @@ import ppo.torch_config
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import tyro
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from ppo.muscle_learner import MuscleLearner
 from ppo.discriminator import DiscriminatorLearner
+from ppo.utils import parse_args_with_presets
 
 
 @dataclass
@@ -47,9 +47,9 @@ class Args:
     """save checkpoint every K iterations"""
 
     # Algorithm specific arguments
-    env_file: str = "data/env/A2.yaml"
+    env_file: str = "data/env/A.yaml"
     """path to environment configuration file"""
-    total_timesteps: int = 150_000_000
+    total_timesteps: int = 100_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the initial learning rate of the optimizer"""
@@ -57,7 +57,7 @@ class Args:
     """the final learning rate after annealing"""
     num_envs: int = 32
     """the number of parallel game environments"""
-    num_steps: int = 4
+    num_steps: int = 128
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -65,7 +65,7 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.99
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 4
+    num_minibatches: int = 16
     """the number of mini-batches"""
     update_epochs: int = 4
     """the K epochs to update the policy"""
@@ -97,8 +97,8 @@ class Args:
     """discriminator network learning rate"""
     disc_num_epochs: int = 3
     """discriminator training epochs per update"""
-    disc_batch_size: int = 256
-    """discriminator minibatch size"""
+    disc_batch_size: int = 0
+    """discriminator minibatch size (0 = use muscle_batch_size)"""
     disc_buffer_size: int = 100000
     """discriminator replay buffer size"""
     disc_grad_penalty: float = 10.0
@@ -130,6 +130,44 @@ class Args:
     """if True, save full training state (optimizer, iteration) for resume"""
     resume_from: Optional[str] = None
     """path to checkpoint directory to resume training from"""
+
+    # --- Preset classmethods matching shell scripts ---
+
+    @classmethod
+    def gait(cls) -> "Args":
+        """Preset matching scripts/train/gait.sh (CPU cluster, 128 cores)."""
+        return cls(
+            num_envs=128,
+            num_steps=128,
+            muscle_batch_size=512,
+            num_minibatches=16,
+        )
+
+    @classmethod
+    def a6000(cls) -> "Args":
+        """Preset matching scripts/train/a6000.sh (GPU node, 96 cores)."""
+        return cls(
+            num_envs=96,
+            num_steps=128,
+            muscle_batch_size=512,
+            num_minibatches=16,
+        )
+
+    @classmethod
+    def debug(cls) -> "Args":
+        return cls(
+            num_envs=4,
+            num_steps=32,
+            muscle_batch_size=128,
+            num_minibatches=4,
+        )
+
+
+# Dynamically build preset map from classmethods (None = default constructor)
+PRESET_FNS = {None: Args}
+for name, method in vars(Args).items():
+    if isinstance(method, classmethod):
+        PRESET_FNS[name] = getattr(Args, name)
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -255,7 +293,7 @@ class Agent(nn.Module):
 
 
 if __name__ == "__main__":
-    args = tyro.cli(Args)
+    args = parse_args_with_presets(Args, PRESET_FNS)
 
     # Override args from YAML config if 'args' section exists
     with open(args.env_file, 'r') as f:
@@ -270,6 +308,8 @@ if __name__ == "__main__":
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
+    if args.disc_batch_size == 0:
+        args.disc_batch_size = args.muscle_batch_size
 
     # Hyperparameter validation
     if args.minibatch_size < 16:
@@ -684,6 +724,21 @@ if __name__ == "__main__":
                 writer.add_scalar("disc/accuracy", disc_loss['accuracy'], global_step)
                 writer.add_scalar("disc/replay_buffer_size", disc_loss['replay_buffer_size'], global_step)
                 writer.add_scalar("perf/disc_time_ms", disc_learn_time, global_step)
+                # Diagnostic metrics: D_fake distribution
+                writer.add_scalar("disc/D_fake_mean", disc_loss['D_fake_mean'], global_step)
+                writer.add_scalar("disc/D_fake_std", disc_loss['D_fake_std'], global_step)
+                writer.add_scalar("disc/D_fake_p10", disc_loss['D_fake_p10'], global_step)
+                writer.add_scalar("disc/D_fake_p90", disc_loss['D_fake_p90'], global_step)
+                # Logit margin
+                writer.add_scalar("disc/logit_margin", disc_loss['logit_margin'], global_step)
+                # r_disc reward distribution
+                writer.add_scalar("info/r_disc_mean", disc_loss['r_disc_mean'], global_step)
+                writer.add_scalar("info/r_disc_std", disc_loss['r_disc_std'], global_step)
+                writer.add_scalar("info/r_disc_p10", disc_loss['r_disc_p10'], global_step)
+                writer.add_scalar("info/r_disc_p90", disc_loss['r_disc_p90'], global_step)
+                # GP gradient norm stats
+                writer.add_scalar("disc/grad_norm_mean", disc_loss['grad_norm_mean'], global_step)
+                writer.add_scalar("disc/grad_norm_std", disc_loss['grad_norm_std'], global_step)
 
             # Logging
             y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
