@@ -4,10 +4,10 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 cd "$PROJECT_ROOT"
 
-exec python -c '
+python -c '
 from python.scripts import physical_exam
 physical_exam()
-' "$@"
+' "$@" &

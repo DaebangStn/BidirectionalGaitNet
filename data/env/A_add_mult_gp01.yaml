@@ -1,3 +1,6 @@
+args:
+  disc_grad_penalty: 0.1
+
 environment:
   # Skeleton and Character
   skeleton:
@@ -24,7 +27,7 @@ environment:
 
   # Simulation Timing
   simulation:
-    sim_hz: 60
+    sim_hz: 180
     control_hz: 30
 
   # Action and Control
@@ -33,15 +36,20 @@ environment:
     time_warping: 0.001  # -1 means disabled
     gait_phase_mode: "contact"  # "contact" or "phase"
     contact_debounce_alpha: 0.4
+    step_min_ratio: 0.1
+
   # Reward System
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
+    clip:
+      step: 50
+      value: 0.1
 
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2
       weight: 0.02
-      scale: 1.0
+      scale: 0.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
         coeff: 0.1
@@ -75,6 +83,13 @@ environment:
       termination: false
       use_max: false
       max_weight: 0.1
+
+  # Discriminator for energy-efficient muscle activation (ADD-style)
+  discriminator:
+    enabled: true  # Set to true to enable discriminator
+    normalize: false  # Optional: normalize disc_obs before forward pass
+    reward_scale: 1.0  # Scale factor for discriminator reward
+    multiplicative: true
 
   # Parameterization for training
   parameters:

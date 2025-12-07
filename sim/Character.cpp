@@ -728,17 +728,22 @@ void Character::step()
             int lowerBodyDof = 18;  // First 18 DOFs after root are lower body
             int upperBodyStart = rootDof + lowerBodyDof;
 
-            Eigen::VectorXd upperBodyTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
+            // Cache upper body dimension on first call
+            if (mUpperBodyDim == 0) {
+                mUpperBodyDim = mSkeleton->getNumDofs() - upperBodyStart;
+            }
+
+            mUpperBodyTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
             // Zero out root and lower body DOFs, keep upper body
-            upperBodyTorque.head(upperBodyStart).setZero();
-            upperBodyTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart) =
+            mUpperBodyTorque.head(upperBodyStart).setZero();
+            mUpperBodyTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart) =
                 mTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart);
 
             // Apply upper body PD torque
-            mSkeleton->setForces(mSkeleton->getForces() + upperBodyTorque);
+            mSkeleton->setForces(mSkeleton->getForces() + mUpperBodyTorque);
 
-            mTorqueStepEnergy = upperBodyTorque.cwiseAbs().sum();
+            mTorqueStepEnergy = mUpperBodyTorque.cwiseAbs().sum();
             mTorqueEnergyAccum += mTorqueStepEnergy;
         }
         break;

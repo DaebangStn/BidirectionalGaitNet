@@ -21,17 +21,17 @@ class DiscriminatorNN(nn.Module):
     ADD-style discriminator network.
 
     Architecture: input_dim -> 256 -> 256 -> 1 (logit)
-    Input: Normalized difference (demo - agent) = (-activations) for energy efficiency.
+    Input: Normalized difference (demo - agent) = (-disc_obs) for energy efficiency.
     Output: Logit (high = looks like demo/efficient, low = looks fake/inefficient).
     """
 
-    def __init__(self, num_muscles: int):
+    def __init__(self, disc_obs_dim: int):
         super().__init__()
-        self.num_muscles = num_muscles
+        self.disc_obs_dim = disc_obs_dim
 
         # Network architecture: 3-layer MLP matching C++ implementation
         self.fc = nn.Sequential(
-            nn.Linear(num_muscles, 256),
+            nn.Linear(disc_obs_dim, 256),
             nn.LeakyReLU(0.2),
             nn.Linear(256, 256),
             nn.LeakyReLU(0.2),
@@ -39,7 +39,7 @@ class DiscriminatorNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass: activations -> logit."""
+        """Forward pass: disc_obs -> logit."""
         return self.fc(x)
 
 
@@ -47,13 +47,13 @@ class DiscriminatorLearner:
     """
     ADD-style discriminator trainer.
 
-    Trains discriminator to distinguish demo (zero activations) from agent (current activations).
-    For ADD style, the input to discriminator is the difference (demo - agent) = -activations.
+    Trains discriminator to distinguish demo (zero disc_obs) from agent (current disc_obs).
+    For ADD style, the input to discriminator is the difference (demo - agent) = -disc_obs.
     """
 
     def __init__(
         self,
-        num_muscles: int,
+        disc_obs_dim: int,
         learning_rate: float = 1e-4,
         num_epochs: int = 3,
         batch_size: int = 256,
@@ -66,7 +66,7 @@ class DiscriminatorLearner:
         Initialize discriminator learner.
 
         Args:
-            num_muscles: Number of muscles (input dimension)
+            disc_obs_dim: Discriminator observation dimension (e.g., num_muscles + upper_body_dim)
             learning_rate: Adam optimizer learning rate
             num_epochs: Training epochs per update
             batch_size: Minibatch size for training
@@ -76,7 +76,7 @@ class DiscriminatorLearner:
             weight_decay: Weight decay coefficient
         """
         self.device = torch.device("cuda")
-        self.num_muscles = num_muscles
+        self.disc_obs_dim = disc_obs_dim
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.buffer_size = buffer_size
@@ -85,7 +85,7 @@ class DiscriminatorLearner:
         self.weight_decay = weight_decay
 
         # Create discriminator model
-        self.model = DiscriminatorNN(num_muscles).to(self.device)
+        self.model = DiscriminatorNN(disc_obs_dim).to(self.device)
 
         # Adam optimizer with weight decay
         self.optimizer = optim.Adam(
@@ -107,7 +107,7 @@ class DiscriminatorLearner:
         if self.replay_buffer is None:
             # Initialize buffer
             self.replay_buffer = torch.zeros(
-                (self.buffer_size, self.num_muscles),
+                (self.buffer_size, self.disc_obs_dim),
                 device=self.device
             )
 
@@ -250,7 +250,7 @@ class DiscriminatorLearner:
                     neg_samples = torch.cat([neg_samples, -replay_samples], dim=0)
                     pos_samples = torch.cat([
                         pos_samples,
-                        torch.zeros(batch_size // 2, self.num_muscles, device=self.device)
+                        torch.zeros(batch_size // 2, self.disc_obs_dim, device=self.device)
                     ], dim=0)
 
                 # Forward pass

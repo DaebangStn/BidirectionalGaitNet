@@ -329,6 +329,7 @@ private:
     bool mShowJointPassiveForces;   // Toggle for joint passive force arrows
     float mJointForceScale;          // Scale factor for joint force arrow visualization
     bool mShowJointForceLabels;      // Toggle for joint passive force text labels
+    int mTopPassiveForcesCount;      // Number of top passive forces to display in UI
     bool mShowPostureDebug;          // Toggle for posture control debug output
     bool mShowExamTable;             // Toggle for examination table visibility
     bool mShowAnchorPoints;          // Toggle for anchor point visualization

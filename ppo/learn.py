@@ -398,13 +398,13 @@ if __name__ == "__main__":
     disc_learner = None
     use_discriminator = envs.use_discriminator()
     if use_discriminator:
-        num_muscles = envs.getNumMuscles()
+        disc_obs_dim = envs.getDiscObsDim()
         disc_reward_scale = envs.getDiscRewardScale()
 
-        print(f"Discriminator enabled: {num_muscles} muscles, reward_scale={disc_reward_scale}")
+        print(f"Discriminator enabled: disc_obs_dim={disc_obs_dim}, reward_scale={disc_reward_scale}")
 
         disc_learner = DiscriminatorLearner(
-            num_muscles=num_muscles,
+            disc_obs_dim=disc_obs_dim,
             learning_rate=args.disc_lr,
             num_epochs=args.disc_num_epochs,
             batch_size=args.disc_batch_size,
@@ -489,6 +489,10 @@ if __name__ == "__main__":
         if not use_tqdm and iteration % args.log_interval == 0:
             elapsed = time.time() - start_time
             sps = int(global_step / elapsed) if elapsed > 0 else 0
+            # Format elapsed time
+            elapsed_hours = int(elapsed // 3600)
+            elapsed_minutes = int((elapsed % 3600) // 60)
+            elapsed_str = f"{elapsed_hours}h {elapsed_minutes}m"
             # Calculate ETA
             remaining_iterations = args.num_iterations - iteration
             if sps > 0:
@@ -499,7 +503,7 @@ if __name__ == "__main__":
                 eta_str = f"{eta_hours}h {eta_minutes}m"
             else:
                 eta_str = "N/A"
-            print(f"[Iteration {iteration}/{args.num_iterations}] Steps: {global_step}, SPS: {sps}, Elapsed: {elapsed:.1f}s, ETA: {eta_str}")
+            print(f"[Iteration {iteration}/{args.num_iterations}] Steps: {global_step}, SPS: {sps}, Elapsed: {elapsed_str}, ETA: {eta_str}")
 
         # Annealing the rate if instructed to do so
         if args.anneal_lr:
@@ -720,7 +724,8 @@ if __name__ == "__main__":
                 writer.add_scalar("disc/loss", disc_loss['loss_disc'], global_step)
                 writer.add_scalar("disc/loss_pos", disc_loss['loss_pos'], global_step)
                 writer.add_scalar("disc/loss_neg", disc_loss['loss_neg'], global_step)
-                writer.add_scalar("disc/loss_gp", disc_loss['loss_gp'], global_step)
+                writer.add_scalar("disc/loss_gp_raw", disc_loss['loss_gp_raw'], global_step)
+                writer.add_scalar("disc/loss_gp_scaled", disc_loss['loss_gp_scaled'], global_step)
                 writer.add_scalar("disc/accuracy", disc_loss['accuracy'], global_step)
                 writer.add_scalar("disc/replay_buffer_size", disc_loss['replay_buffer_size'], global_step)
                 writer.add_scalar("perf/disc_time_ms", disc_learn_time, global_step)

@@ -5,4 +5,4 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 # Call the viewer binary directly using current shell environment
-exec build/release/viewer/viewer "$@"
+exec build/release/viewer/viewer "$@" &

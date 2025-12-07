@@ -80,6 +80,8 @@ public:
 
     void setTorque(Eigen::VectorXd _torque) { mTorque = _torque; }
     Eigen::VectorXd getTorque() { return mTorque; }
+    Eigen::VectorXd getUpperBodyTorque() const { return mUpperBodyTorque; }
+    int getUpperBodyDim() const { return mUpperBodyDim; }
     void setZeroForces();
     void setActivations(Eigen::VectorXd _activation);
     Eigen::VectorXd getActivations() { return mActivations; }
@@ -213,6 +215,8 @@ private:
 
     ActuatorType mActuatorType;
     Eigen::VectorXd mTorque;
+    Eigen::VectorXd mUpperBodyTorque;  // Upper body PD torque (for mass_lower mode)
+    int mUpperBodyDim = 0;             // Cached upper body DOF dimension
     Eigen::VectorXd mPDTarget;
 
     // Muscle

@@ -41,7 +41,10 @@ environment:
   # Reward System
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
-
+    clip:
+      step: 50
+      value: 0.2
+      
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2

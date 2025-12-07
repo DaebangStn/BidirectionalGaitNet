@@ -1,10 +1,10 @@
-# args:
+args:
+  disc_grad_penalty: 30.0
 
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@data/skeleton/gmfcs2.yaml"
-    # file: "@data/skeleton/base_v2.xml"
+    file: "@data/skeleton/base.xml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
@@ -13,11 +13,11 @@ environment:
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    file: "@data/motion/walk_50dof.h5"
+    file: "@data/motion/walk.h5"
 
   # Muscle System
   muscle:
-    file: "@data/muscle/test_exported.yaml"
+    file: "@data/muscle/distribute_lower_only.xml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
@@ -43,13 +43,13 @@ environment:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
     clip:
       step: 50
-      value: 0.2
+      value: 0.1
 
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2
       weight: 0.02
-      scale: 1.0
+      scale: 0.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
         coeff: 0.1
@@ -86,9 +86,10 @@ environment:
 
   # Discriminator for energy-efficient muscle activation (ADD-style)
   discriminator:
-    enabled: false  # Set to true to enable discriminator
+    enabled: true  # Set to true to enable discriminator
     normalize: false  # Optional: normalize disc_obs before forward pass
     reward_scale: 1.0  # Scale factor for discriminator reward
+    multiplicative: true
 
   # Parameterization for training
   parameters:

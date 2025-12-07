@@ -104,6 +104,7 @@ struct DiscriminatorConfig
     bool normalize = false;         // Whether to normalize disc_obs (optional)
     double reward_scale = 1.0;      // Scale factor for discriminator reward
     bool multiplicative = false;    // If true, multiplies with main reward; if false, additive
+    bool upper_body = false;        // If true, include upper body torques in disc_obs
 };
 
 class DLL_PUBLIC Environment
@@ -252,6 +253,30 @@ public:
      * @return Muscle activations as VectorXf (num_muscles dimensions)
      */
     Eigen::VectorXf getRandomDiscObs() const { return mRandomDiscObs; }
+
+    /**
+     * Get discriminator observation dimension.
+     * Dimension depends on config: num_muscles + (upper_body ? upper_body_dim : 0)
+     *
+     * @return Dimension of disc_obs vector
+     */
+    int getDiscObsDim() const;
+
+    /**
+     * Get current discriminator observation (disc_obs).
+     * Composition depends on config:
+     * - Base: muscle activations
+     * - upper_body=true: [activations, upperBodyTorque]
+     *
+     * @return disc_obs as VectorXf
+     */
+    Eigen::VectorXf getDiscObs() const;
+
+    /**
+     * Get upper body DOF dimension (cached).
+     * @return Number of upper body DOFs
+     */
+    int getUpperBodyDim() const { return mUpperBodyDim; }
 
     /**
      * Get mean activation for tensorboard logging.
@@ -499,6 +524,7 @@ private:
     bool mDiscObsFilled = false;        // Whether disc_obs has been sampled this step
     double mMeanActivation = 0.0;       // Mean activation for tensorboard logging
     double mDiscRewardAccum = 0.0;      // Accumulated discriminator reward across substeps
+    int mUpperBodyDim = 0;              // Cached upper body DOF dimension for disc_obs
 
     // Reward Type (Deep Mimic or GaitNet)
     RewardType mRewardType;

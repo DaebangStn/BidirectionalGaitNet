@@ -2,8 +2,6 @@ build/
 *.so
 *.a
 
-legacy_data/
-
 nn/
 python/CMakeFiles/
 __pycache__
@@ -13,7 +11,6 @@ python/ray_results
 python/vae_result
 
 frames/
-output.mp4
 
 # CLion related
 .idea/
@@ -29,10 +26,6 @@ ray_results/
 prev_ray_results/
 
 # C++ and Python packages
-pkgsrc/
-pkgenv/
-pyenv/
-vae_result_no_kld_pre_decoder/
 rollout/*
 
 # SLURM output
@@ -41,24 +34,10 @@ slurm-*.out
 # Error Log 
 error_log.txt
 
-# Folder
-gvae/
-with_kld_and_sqrt/
-full/
-pvae_training*
-double_kl_loss/
-pvae_again/
-
-python/gvae_training*
-python/gvae_prior_training*
-python/Result
-
 tmp/
 *temp/
-distillation*
-experiment*
-gaitnet/
-error_*
+distillation/
+experiments/
 
 screenshots
 Clustering/
@@ -68,12 +47,8 @@ uniform
 
 python/fgn_network/*
 
-data/c3d/*
-
 previous_rollout/*
 
-
-*.c3d
 
 imgui.ini
 .venv
@@ -84,11 +59,9 @@ imgui.ini
 augment/
 augment_test/
 
-secret.yaml
 results/
 sampled/
 uv.lock
-data/motion/c3d/
 render.yaml
 runs/
 benchmark_results/

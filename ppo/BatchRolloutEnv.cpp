@@ -87,7 +87,7 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
 
     // Initialize discriminator observation buffers if discriminator enabled
     if (envs_[0]->getUseDiscriminator()) {
-        num_muscles_ = envs_[0]->getCharacter()->getNumMuscles();
+        num_muscles_ = envs_[0]->getDiscObsDim();
         disc_obs_buffers_.resize(num_envs_);
     } else {
         num_muscles_ = 0;
@@ -404,6 +404,11 @@ float BatchRolloutEnv::getDiscRewardScale() const {
     return static_cast<float>(envs_[0]->getDiscConfig().reward_scale);
 }
 
+int BatchRolloutEnv::getDiscObsDim() const {
+    if (envs_.empty()) return 0;
+    return envs_[0]->getDiscObsDim();
+}
+
 // ===== PYBIND11 MODULE =====
 
 PYBIND11_MODULE(batchrolloutenv, m) {
@@ -507,5 +512,7 @@ PYBIND11_MODULE(batchrolloutenv, m) {
         .def("use_discriminator", &BatchRolloutEnv::use_discriminator,
              "Check if discriminator is enabled for this environment")
         .def("getDiscRewardScale", &BatchRolloutEnv::getDiscRewardScale,
-             "Get discriminator reward scale factor");
+             "Get discriminator reward scale factor")
+        .def("getDiscObsDim", &BatchRolloutEnv::getDiscObsDim,
+             "Get discriminator observation dimension");
 }

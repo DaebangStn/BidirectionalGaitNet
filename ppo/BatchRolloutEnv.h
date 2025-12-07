@@ -131,6 +131,7 @@ public:
     // Discriminator query methods
     bool use_discriminator() const;
     float getDiscRewardScale() const;
+    int getDiscObsDim() const;
 
 private:
     // Environment instances

@@ -8,8 +8,8 @@ static void xavier_init_disc(torch::nn::Linear& layer) {
     torch::nn::init::zeros_(layer->bias);
 }
 
-DiscriminatorNNImpl::DiscriminatorNNImpl(int num_muscles, bool force_cpu)
-    : num_muscles_(num_muscles),
+DiscriminatorNNImpl::DiscriminatorNNImpl(int disc_obs_dim, bool force_cpu)
+    : disc_obs_dim_(disc_obs_dim),
       device_(torch::kCPU) {
 
     // Network architecture: 3-layer MLP (256 -> 256 -> 1)
@@ -17,7 +17,7 @@ DiscriminatorNNImpl::DiscriminatorNNImpl(int num_muscles, bool force_cpu)
     const int num_h2 = 256;
 
     // Define layers
-    fc1 = register_module("fc1", torch::nn::Linear(num_muscles, num_h1));
+    fc1 = register_module("fc1", torch::nn::Linear(disc_obs_dim, num_h1));
     fc2 = register_module("fc2", torch::nn::Linear(num_h1, num_h2));
     fc_out = register_module("fc_out", torch::nn::Linear(num_h2, 1));
 

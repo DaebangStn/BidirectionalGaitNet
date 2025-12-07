@@ -1055,13 +1055,21 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mDiscConfig.normalize = disc["normalize"].as<bool>(false);
         mDiscConfig.reward_scale = disc["reward_scale"].as<double>(1.0);
         mDiscConfig.multiplicative = disc["multiplicative"].as<bool>(false);
+        mDiscConfig.upper_body = disc["upper_body"].as<bool>(false);
 
         if (mDiscConfig.enabled && mUseMuscle) {
+            // Cache upper body dimension if needed
+            if (mDiscConfig.upper_body) {
+                int rootDof = mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
+                int lowerBodyDof = 18;  // First 18 DOFs after root are lower body
+                mUpperBodyDim = mCharacter->getSkeleton()->getNumDofs() - rootDof - lowerBodyDof;
+            }
+
             // Create C++ DiscriminatorNN (libtorch) for thread-safe inference
             // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
-            int num_muscles = mCharacter->getNumMuscles();
-            mDiscriminatorNN = make_discriminator_nn(num_muscles, true);
-            mRandomDiscObs = Eigen::VectorXf::Zero(num_muscles);
+            int disc_dim = getDiscObsDim();
+            mDiscriminatorNN = make_discriminator_nn(disc_dim, true);
+            mRandomDiscObs = Eigen::VectorXf::Zero(disc_dim);
         }
     }
 
@@ -1538,6 +1546,33 @@ Eigen::VectorXd Environment::getState()
     return mState;
 }
 
+int Environment::getDiscObsDim() const
+{
+    int dim = mCharacter->getNumMuscles();
+    if (mDiscConfig.upper_body) {
+        dim += mUpperBodyDim;
+    }
+    return dim;
+}
+
+Eigen::VectorXf Environment::getDiscObs() const
+{
+    Eigen::VectorXf disc_obs(getDiscObsDim());
+    Eigen::VectorXf activations = mCharacter->getActivations().cast<float>();
+
+    if (mDiscConfig.upper_body) {
+        // Concatenate: [activations, upperBodyTorque]
+        Eigen::VectorXf upperTorque = mCharacter->getUpperBodyTorque()
+            .tail(mUpperBodyDim).cast<float>();
+        disc_obs.head(activations.size()) = activations;
+        disc_obs.tail(mUpperBodyDim) = upperTorque;
+    } else {
+        disc_obs = activations;
+    }
+
+    return disc_obs;
+}
+
 void Environment::calcActivation()
 {
     MuscleTuple mt = mCharacter->getMuscleTuple(isMirror());
@@ -1612,20 +1647,8 @@ void Environment::calcActivation()
     // Accumulate mean activation every substep (always, for tensorboard logging)
     mMeanActivation += activations.cwiseAbs().mean();
 
-    // Sample disc_obs (muscle activations) per control step, same as muscle tuples
-    if (mDiscConfig.enabled) {
-        // Sample disc_obs randomly (like muscle tuples)
-        if (thread_safe_uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mDiscObsFilled) {
-            mRandomDiscObs = activations;
-            mDiscObsFilled = true;
-        }
-
-        // Accumulate discriminator reward on current activations (every substep)
-        // reward_scale applied later only for additive mode
-        if (mDiscriminatorNN) {
-            mDiscRewardAccum += mDiscriminatorNN->compute_reward(activations);
-        }
-    }
+    // Note: Discriminator reward computation moved to postMuscleStep()
+    // where full disc_obs (including upper body torque) is available
 }
 
 void Environment::postMuscleStep()
@@ -1657,6 +1680,23 @@ void Environment::postMuscleStep()
 
     if (currentGlobalCount > currentLocalCount) mGaitPhase->setLocalTime(mGlobalTime);
     else if (currentGlobalCount < currentLocalCount) mGaitPhase->setLocalTime(currentLocalCount * ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
+
+    // Discriminator processing after character step (when upperBodyTorque is computed)
+    if (mDiscConfig.enabled) {
+        // Get full disc_obs (activations + optional upper body torque)
+        Eigen::VectorXf disc_obs = getDiscObs();
+
+        // Accumulate discriminator reward every substep
+        if (mDiscriminatorNN) {
+            mDiscRewardAccum += mDiscriminatorNN->compute_reward(disc_obs);
+        }
+
+        // Sample disc_obs once per control step (for training data)
+        if (thread_safe_uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mDiscObsFilled) {
+            mRandomDiscObs = disc_obs;
+            mDiscObsFilled = true;
+        }
+    }
 }
 
 void Environment::muscleStep()

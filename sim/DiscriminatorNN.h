@@ -5,10 +5,10 @@
 #include <memory>
 
 /**
- * C++ implementation of ADD-style Discriminator for energy-efficient muscle activation.
+ * C++ implementation of ADD-style Discriminator for energy-efficient control.
  *
- * Learns to distinguish "necessary" vs "excessive" muscle activations.
- * Input: muscle activations (normalized difference from zero)
+ * Learns to distinguish "necessary" vs "excessive" disc_obs (e.g., muscle activations + upper body torques).
+ * Input: disc_obs (normalized difference from zero)
  * Output: single logit (high = looks like zero/efficient)
  *
  * Reward formula: disc_r = -log(max(1 - sigmoid(logit), 0.0001)) * scale
@@ -19,10 +19,10 @@ public:
     /**
      * Construct DiscriminatorNN with specified architecture.
      *
-     * @param num_muscles Number of muscles (input dimension)
+     * @param disc_obs_dim Discriminator observation dimension (e.g., num_muscles + upper_body_dim)
      * @param force_cpu If true, force CPU execution even if CUDA is available
      */
-    DiscriminatorNNImpl(int num_muscles, bool force_cpu = true);
+    DiscriminatorNNImpl(int disc_obs_dim, bool force_cpu = true);
 
     /**
      * Forward pass: activations -> logit.
@@ -77,16 +77,16 @@ public:
     bool usesNormalizer() const { return use_normalizer_; }
 
     /**
-     * Get number of muscles (input dimension).
+     * Get discriminator observation dimension.
      */
-    int getNumMuscles() const { return num_muscles_; }
+    int getDiscObsDim() const { return disc_obs_dim_; }
 
 private:
     // Network architecture: 3-layer MLP (256 -> 256 -> 1)
     torch::nn::Linear fc1{nullptr}, fc2{nullptr}, fc_out{nullptr};
 
     // Network configuration
-    int num_muscles_;
+    int disc_obs_dim_;
 
     // Device management
     torch::Device device_;
@@ -103,9 +103,9 @@ using DiscriminatorNN = std::shared_ptr<DiscriminatorNNImpl>;
 /**
  * Factory function to create DiscriminatorNN instance.
  *
- * @param num_muscles Number of muscles (input dimension)
+ * @param disc_obs_dim Discriminator observation dimension
  * @param force_cpu If true, force CPU execution (recommended for multi-process)
  */
-inline DiscriminatorNN make_discriminator_nn(int num_muscles, bool force_cpu = true) {
-    return std::make_shared<DiscriminatorNNImpl>(num_muscles, force_cpu);
+inline DiscriminatorNN make_discriminator_nn(int disc_obs_dim, bool force_cpu = true) {
+    return std::make_shared<DiscriminatorNNImpl>(disc_obs_dim, force_cpu);
 }

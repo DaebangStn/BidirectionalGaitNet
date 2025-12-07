@@ -72,6 +72,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mShowJointPassiveForces(true)   // Show joint passive forces by default
     , mJointForceScale(0.01f)          // Default scale for force arrows
     , mShowJointForceLabels(false)     // Labels off by default
+    , mTopPassiveForcesCount(3)       // Show top 3 passive forces by default
     , mShowPostureDebug(false)        // Posture control debug off by default
     , mShowExamTable(false)            // Show examination table by default
     , mShowAnchorPoints(true)         // Anchor point visualization off by default
@@ -5515,9 +5516,14 @@ void PhysicalExam::drawCurrentStateSection() {
 
                 ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "  Total Passive: %.2f N", total_passive);
 
-                // Show top 3 muscles with highest passive force
-                ImGui::Text("  Top 3 Passive Forces:");
-                for (int i = 0; i < std::min(3, (int)muscle_forces.size()); i++) {
+                // Configurable top N passive forces
+                ImGui::SetNextItemWidth(30);
+                ImGui::InputInt("## of Top Passive Forces", &mTopPassiveForcesCount, 0, 0, ImGuiInputTextFlags_CharsDecimal);
+                if (mTopPassiveForcesCount < 1) mTopPassiveForcesCount = 1;
+                if (mTopPassiveForcesCount > (int)muscle_forces.size()) mTopPassiveForcesCount = (int)muscle_forces.size();
+                ImGui::SameLine();
+                ImGui::Text("  Top %d Passive Forces:", mTopPassiveForcesCount);
+                for (int i = 0; i < std::min(mTopPassiveForcesCount, (int)muscle_forces.size()); i++) {
                     ImGui::Text("    %d. %s: %.2f N", i+1,
                                muscle_forces[i].second.c_str(),
                                muscle_forces[i].first);
