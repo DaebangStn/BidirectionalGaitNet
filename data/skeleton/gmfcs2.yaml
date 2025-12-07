@@ -1,6 +1,6 @@
 metadata:
   generator: "C3DProcessorApp"
-  timestamp: "2025-12-06 22:57:26"
+  timestamp: "2025-12-07 16:52:18"
   version: v1
   skeleton_from: "@data/skeleton/base_v2.xml"
 
@@ -10,11 +10,11 @@ skeleton:
     - {name: Pelvis, parent: None, ee: false, 
        body: {type: Box, mass: 3.31, size: [ 0.1850,  0.1407,  0.0883], contact: false, obj: "Pelvis.obj",
        R: [[ 1.0000,  0.0000,  0.0000], [ 0.0000,  1.0000,  0.0000], [ 0.0000,  0.0000,  1.0000]],
-       t: [-0.5193,  0.6081, -0.3390]}, 
+       t: [ 0.0000,  0.9809, -0.0116]}, 
 
        joint: {type: Free, bvh: Character1_Hips,
        R: [[ 1.0000,  0.0000,  0.0000], [ 0.0000,  1.0000,  0.0000], [ 0.0000,  0.0000,  1.0000]],
-       t: [ 0.1268,  0.4427, -0.4521]}}
+       t: [ 0.0000,  0.9809, -0.0116]}}
 
     - {name: FemurR, parent: Pelvis, ee: false, 
        body: {type: Box, mass: 3.42, size: [ 0.1212,  0.2570,  0.1051], contact: false, obj: "R_Femur.obj",

@@ -17,6 +17,7 @@ struct ShapeRenderer {
     std::unordered_map<const Muscle*, std::pair<uint32_t, uint32_t>> muscleVboIbo;
 
     void renderMuscle(const Muscle* muscle, double thickness = -1.0);
+    void renderMuscleLine(const Muscle* muscle, float lineWidth = 2.0f);
     void invalidateMuscleCache(const Muscle* muscle);
     void clearCache();  // Clear all cached VBOs/IBOs (call before skeleton reset)
 

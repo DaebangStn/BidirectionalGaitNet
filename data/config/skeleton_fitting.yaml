@@ -71,7 +71,7 @@ skeleton_fitting:
   optimization:
     max_iterations: 100
     convergence_threshold: 1.0e-6
-    plot_convergence: true
+    plot_convergence: false
     lambda_rot: 10.0           # Rotation regularization weight for Ceres optimizer
     interpolate_ratio: 0.5
 

@@ -89,7 +89,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mLoadScriptPath("")            // Will be constructed from buffer
     , mShowScriptPreview(false)     // Script preview hidden by default
     , mUseMuscle(true)              // Default to true for backward compatibility
-    , mRenderMode(RenderMode::Primitive)  // Default render mode
+    , mRenderMode(RenderMode::Wireframe)  // Default render mode
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
@@ -428,7 +428,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     LOG_INFO("Loading skeleton: " << resolved_skel);
 
     // Create character
-    mCharacter = new Character(resolved_skel, true);
+    mCharacter = new Character(resolved_skel, SKEL_COLLIDE_ALL);
 
     // Load muscles if path is provided and mUseMuscle is true
     if (!muscle_path.empty() && mUseMuscle) {
@@ -937,7 +937,7 @@ void PhysicalExam::setCamera() {
 
 void PhysicalExam::render() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glClearColor(0.9f, 0.9f, 0.9f, 1.0f);  // Light background
+    glClearColor(0.95f, 0.95f, 0.95f, 1.0f);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -3193,134 +3193,126 @@ void PhysicalExam::drawSingleBodyNode(const dart::dynamics::BodyNode* bn, const 
 
 void PhysicalExam::drawShape(const dart::dynamics::Shape* shape, const Eigen::Vector4d& color) {
     if (!shape) return;
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glEnable(GL_COLOR_MATERIAL);
-    glEnable(GL_DEPTH_TEST);
-    glColor4d(color[0], color[1], color[2], color[3]);
 
-    // Render mesh (for Mesh mode)
-    if (mRenderMode == RenderMode::Mesh) {
-        if (shape->is<dart::dynamics::MeshShape>()) {
-            const auto* mesh = dynamic_cast<const dart::dynamics::MeshShape*>(shape);
+    glEnable(GL_DEPTH_TEST);
+
+    // Set wireframe mode once at the start
+    const bool isWireframe = (mRenderMode == RenderMode::Wireframe);
+    if (isWireframe) {
+        glDisable(GL_LIGHTING);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glLineWidth(3.0f);
+        glColor4d(0.0, 0.5, 0.5, 1.0);  // White wireframe
+    } else {
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+        glColor4d(color[0], color[1], color[2], color[3]);
+    }
+
+    // Render based on shape type and render mode
+    if (shape->is<dart::dynamics::MeshShape>()) {
+        // Mesh shapes: render only in Mesh mode
+        if (mRenderMode == RenderMode::Mesh) {
+            const auto* mesh = static_cast<const dart::dynamics::MeshShape*>(shape);
             mShapeRenderer.renderMesh(mesh, false, 0.0, color);
+        }
+    } else if (mRenderMode == RenderMode::Primitive || isWireframe) {
+        // Primitive shapes: render in Primitive or Wireframe mode
+        if (shape->is<dart::dynamics::BoxShape>()) {
+            const auto* box = static_cast<const dart::dynamics::BoxShape*>(shape);
+            GUI::DrawCube(box->getSize());
+        } else if (shape->is<dart::dynamics::CapsuleShape>()) {
+            const auto* capsule = static_cast<const dart::dynamics::CapsuleShape*>(shape);
+            GUI::DrawCapsule(capsule->getRadius(), capsule->getHeight());
+        } else if (shape->is<dart::dynamics::SphereShape>()) {
+            const auto* sphere = static_cast<const dart::dynamics::SphereShape*>(shape);
+            GUI::DrawSphere(sphere->getRadius());
+        } else if (shape->is<dart::dynamics::CylinderShape>()) {
+            const auto* cylinder = static_cast<const dart::dynamics::CylinderShape*>(shape);
+            GUI::DrawCylinder(cylinder->getRadius(), cylinder->getHeight());
         }
     }
 
-    // Render primitive shapes (for Primitive and Wireframe modes)
-    if (mRenderMode == RenderMode::Primitive || mRenderMode == RenderMode::Wireframe) {
-        // For wireframe mode, render primitives as wireframe
-        if (mRenderMode == RenderMode::Wireframe) {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            glLineWidth(2.0f);
-            glColor4d(color[0], color[1], color[2], color[3]);
-        } else {
-            glColor4d(color[0], color[1], color[2], color[3]);
-        }
-
-        if (shape->is<dart::dynamics::BoxShape>()) {
-            const auto* box = dynamic_cast<const dart::dynamics::BoxShape*>(shape);
-            GUI::DrawCube(box->getSize());
-        } else if (shape->is<dart::dynamics::CapsuleShape>()) {
-            const auto* capsule = dynamic_cast<const dart::dynamics::CapsuleShape*>(shape);
-            GUI::DrawCapsule(capsule->getRadius(), capsule->getHeight());
-        } else if (shape->is<dart::dynamics::SphereShape>()) {
-            const auto* sphere = dynamic_cast<const dart::dynamics::SphereShape*>(shape);
-            GUI::DrawSphere(sphere->getRadius());
-        } else if (shape->is<dart::dynamics::CylinderShape>()) {
-            const auto* cylinder = dynamic_cast<const dart::dynamics::CylinderShape*>(shape);
-            GUI::DrawCylinder(cylinder->getRadius(), cylinder->getHeight());
-        }
-
-        // Restore fill mode and line width after wireframe
-        if (mRenderMode == RenderMode::Wireframe) {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            glLineWidth(1.0f);
-        }
+    // Restore GL state
+    if (isWireframe) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glLineWidth(1.0f);
+        glEnable(GL_LIGHTING);
     }
 }
 
 void PhysicalExam::drawMuscles() {
     if (!mCharacter) return;
-    if (!mUseMuscle) return;  // Guard: no muscles loaded
+    if (!mUseMuscle) return;
 
-    glEnable(GL_LIGHTING);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glEnable(GL_COLOR_MATERIAL);
     glEnable(GL_DEPTH_TEST);
-
-    // Defensive: Ensure GL_COLOR_ARRAY is disabled before muscle rendering
-    // (prevents state leakage from skeleton mesh rendering with vertex colors)
     glDisableClientState(GL_COLOR_ARRAY);
 
-    auto muscles = mCharacter->getMuscles();
+    auto& muscles = mCharacter->getMuscles();
 
-    for (int i = 0; i < muscles.size(); i++) {
-        auto muscle = muscles[i];
+    if (mShowAnchorPoints) {
+        // Anchor points mode: disable lighting once for all muscles
+        glDisable(GL_LIGHTING);
+        glLineWidth(1.5f);
 
-        // Skip if muscle is not selected (using same order as environment)
-        if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
+        for (size_t i = 0; i < muscles.size(); i++) {
+            if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
-        // Passive force visualization (blue gradient)
-        double f_p = muscle->Getf_p();
-        // Normalize by user-adjustable normalizer value
-        double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
-        glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
+            auto& muscle = muscles[i];
+            auto& anchors = muscle->GetAnchors();
 
-        if (mShowAnchorPoints) {
-            // Render anchor points as dots with connection lines and muscle path
-            glDisable(GL_LIGHTING);
+            // Passive force color for muscle path
+            double f_p = muscle->Getf_p();
+            double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
 
-            auto anchors = muscle->GetAnchors();
-
-            // First, draw muscle path as thin black line (behind everything)
-            glLineWidth(1.5f);
-            glColor4f(0.0f, 0.0f, 0.0f, 0.8f);  // Thin semi-transparent black line
+            // Draw muscle path with passive force color
+            glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
             glBegin(GL_LINE_STRIP);
-            for (auto anchor : anchors) {
-                Eigen::Vector3d anchorPos = anchor->GetPoint();
-                glVertex3f(anchorPos[0], anchorPos[1], anchorPos[2]);
+            for (auto& anchor : anchors) {
+                Eigen::Vector3d pos = anchor->GetPoint();
+                glVertex3f(pos[0], pos[1], pos[2]);
             }
             glEnd();
 
-            // Now draw anchor-to-bodynode connections and anchor points on top
-            for (auto anchor : anchors) {
+            // Draw anchor-to-bodynode connections and anchor points
+            for (auto& anchor : anchors) {
                 Eigen::Vector3d anchorPos = anchor->GetPoint();
 
-                // Draw lines from anchor to each bodynode it's attached to
+                // Lines to bodynodes
                 if (!anchor->bodynodes.empty()) {
-                    glLineWidth(1.5f);
-                    glColor4f(0.0f, 0.8f, 0.0f, 0.6f);  // Semi-transparent green for lines
+                    glColor4f(0.0f, 0.8f, 0.0f, 0.6f);
                     glBegin(GL_LINES);
-
-                    for (auto bodynode : anchor->bodynodes) {
-                        // Get bodynode center position (world transform origin)
-                        Eigen::Vector3d bodynodePos = bodynode->getWorldTransform().translation();
-
-                        // Draw line from anchor to bodynode center
+                    for (auto& bodynode : anchor->bodynodes) {
+                        Eigen::Vector3d bnPos = bodynode->getWorldTransform().translation();
                         glVertex3f(anchorPos[0], anchorPos[1], anchorPos[2]);
-                        glVertex3f(bodynodePos[0], bodynodePos[1], bodynodePos[2]);
+                        glVertex3f(bnPos[0], bnPos[1], bnPos[2]);
                     }
-
                     glEnd();
                 }
 
-                // Draw anchor point sphere
-                glColor4f(0.0f, 1.0f, 0.0f, 1.0f);  // Bright green color
+                // Anchor point sphere
+                glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
                 glPushMatrix();
                 glTranslatef(anchorPos[0], anchorPos[1], anchorPos[2]);
-                glutSolidSphere(0.004, 12, 12);  // Small sphere for anchor point
+                glutSolidSphere(0.004, 12, 12);
                 glPopMatrix();
             }
+        }
 
-            glLineWidth(1.0f);  // Reset line width
-            glEnable(GL_LIGHTING);
-        } else {
-            // Render muscle as line (default behavior)
-            mShapeRenderer.renderMuscle(muscle, -1.0);
+        glLineWidth(1.0f);
+        glEnable(GL_LIGHTING);
+    } else {
+        // Default muscle rendering
+        for (size_t i = 0; i < muscles.size(); i++) {
+            if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
+
+            auto& muscle = muscles[i];
+            double f_p = muscle->Getf_p();
+            double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
+            glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
+            mShapeRenderer.renderMuscleLine(muscle, 2.0f);
         }
     }
-
-    glEnable(GL_LIGHTING);
 }
 
 void PhysicalExam::drawForceArrow() {

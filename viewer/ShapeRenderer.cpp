@@ -153,6 +153,22 @@ void ShapeRenderer::renderMuscle(const Muscle *muscle, double thickness)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
+void ShapeRenderer::renderMuscleLine(const Muscle* muscle, float lineWidth) {
+    if (!muscle) return;
+
+    auto& anchors = muscle->GetAnchors();
+    if (anchors.empty()) return;
+
+    glLineWidth(lineWidth);
+    glBegin(GL_LINE_STRIP);
+    for (auto& anchor : anchors) {
+        Eigen::Vector3d pos = anchor->GetPoint();
+        glVertex3f(pos[0], pos[1], pos[2]);
+    }
+    glEnd();
+    glLineWidth(1.0f);
+}
+
 void ShapeRenderer::invalidateMuscleCache(const Muscle* muscle) {
     auto it = muscleVboIbo.find(muscle);
     if (it != muscleVboIbo.end()) {

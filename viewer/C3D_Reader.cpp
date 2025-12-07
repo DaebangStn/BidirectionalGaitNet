@@ -175,7 +175,7 @@ void C3D_Reader::resolveMarkerReferences(const std::vector<std::string>& c3dLabe
         }
     }
 
-    LOG_INFO("[C3D_Reader] Marker reference resolution complete");
+    LOG_VERBOSE("[C3D_Reader] Marker reference resolution complete");
 }
 
 // Load skeleton fitting config from YAML
@@ -227,7 +227,7 @@ void C3D_Reader::loadSkeletonFittingConfig() {
                 for (const auto& joint : sf["optimization"]["target_motion_joint"]) {
                     mFittingConfig.targetMotionJoint.push_back(joint.as<std::string>());
                 }
-                LOG_INFO("[Config] target_motion_joint: " << mFittingConfig.targetMotionJoint.size() << " joints");
+                LOG_VERBOSE("[Config] target_motion_joint: " << mFittingConfig.targetMotionJoint.size() << " joints");
             }
 
             // Revolute axis selection mode and thresholds
@@ -240,7 +240,7 @@ void C3D_Reader::loadSkeletonFittingConfig() {
                 } else {
                     mFittingConfig.revoluteAxisMode = SkeletonFittingConfig::RevoluteAxisMode::BLEND;
                 }
-                LOG_INFO("[Config] revolute_axis_mode: " << modeStr);
+                LOG_VERBOSE("[Config] revolute_axis_mode: " << modeStr);
             }
             if (sf["optimization"]["revolute_axis_threshold_low"]) {
                 mFittingConfig.revoluteAxisThresholdLow = sf["optimization"]["revolute_axis_threshold_low"].as<double>();
@@ -263,7 +263,7 @@ void C3D_Reader::loadSkeletonFittingConfig() {
             mFittingConfig.ik.armMaxElbow = ik["arm_max_elbow"].as<double>(0.2);
             mFittingConfig.ik.legMaxHip = ik["leg_max_hip"].as<double>(0.15);
             mFittingConfig.ik.legMaxKnee = ik["leg_max_knee"].as<double>(0.2);
-            LOG_INFO("[Config] IK params loaded: maxIter=" << mFittingConfig.ik.maxIterations
+            LOG_VERBOSE("[Config] IK params loaded: maxIter=" << mFittingConfig.ik.maxIterations
                      << ", lambda=" << mFittingConfig.ik.lambda << ", beta=" << mFittingConfig.ik.beta);
         }
 
@@ -285,17 +285,17 @@ void C3D_Reader::loadSkeletonFittingConfig() {
             }
         }
 
-        LOG_INFO("[C3D_Reader] Loaded skeleton fitting config:");
-        LOG_INFO("  - frameRange: " << mFittingConfig.frameStart << " to " << mFittingConfig.frameEnd);
-        LOG_INFO("  - maxIterations: " << mFittingConfig.maxIterations);
-        LOG_INFO("  - convergenceThreshold: " << mFittingConfig.convergenceThreshold);
-        LOG_INFO("  - plotConvergence: " << (mFittingConfig.plotConvergence ? "true" : "false"));
-        LOG_INFO("  - markerMappings: " << mFittingConfig.markerMappings.size() << " markers");
-        LOG_INFO("  - targetSvd: " << mFittingConfig.targetSvd.size() << " bones");
-        LOG_INFO("  - lambdaRot: " << mFittingConfig.lambdaRot);
-        LOG_INFO("  - interpolateRatio: " << mFittingConfig.interpolateRatio);
-        LOG_INFO("  - skelRatioBound: " << mFittingConfig.skelRatioBound);
-        LOG_INFO("  - targetCeres: " << mFittingConfig.targetCeres.size() << " bones");
+        LOG_VERBOSE("[C3D_Reader] Loaded skeleton fitting config:");
+        LOG_VERBOSE("  - frameRange: " << mFittingConfig.frameStart << " to " << mFittingConfig.frameEnd);
+        LOG_VERBOSE("  - maxIterations: " << mFittingConfig.maxIterations);
+        LOG_VERBOSE("  - convergenceThreshold: " << mFittingConfig.convergenceThreshold);
+        LOG_VERBOSE("  - plotConvergence: " << (mFittingConfig.plotConvergence ? "true" : "false"));
+        LOG_VERBOSE("  - markerMappings: " << mFittingConfig.markerMappings.size() << " markers");
+        LOG_VERBOSE("  - targetSvd: " << mFittingConfig.targetSvd.size() << " bones");
+        LOG_VERBOSE("  - lambdaRot: " << mFittingConfig.lambdaRot);
+        LOG_VERBOSE("  - interpolateRatio: " << mFittingConfig.interpolateRatio);
+        LOG_VERBOSE("  - skelRatioBound: " << mFittingConfig.skelRatioBound);
+        LOG_VERBOSE("  - targetCeres: " << mFittingConfig.targetCeres.size() << " bones");
 
     } catch (const std::exception& e) {
         LOG_ERROR("[C3D_Reader] Failed to load config from " << configPath << ": " << e.what());
@@ -430,7 +430,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     if (mFreeCharacter) mFreeCharacter->applySkeletonBodyNode(mSkelInfos, mFreeCharacter->getSkeleton());
     if (mMotionCharacter) mMotionCharacter->applySkeletonBodyNode(mSkelInfos, mMotionCharacter->getSkeleton());
 
-    LOG_INFO("[C3D_Reader] Starting multi-stage skeleton fitting...");
+    LOG_VERBOSE("[C3D_Reader] Starting multi-stage skeleton fitting...");
 
     // Clear previous fitting results
     mBoneR_frames.clear();
@@ -508,7 +508,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     if (mMotionCharacter) mMotionCharacter->applySkeletonBodyNode(mSkelInfos, mMotionCharacter->getSkeleton());
 
     // Print summary
-    LOG_INFO("[C3D_Reader] Multi-stage skeleton fitting complete. Final scales:");
+    LOG_VERBOSE("[C3D_Reader] Multi-stage skeleton fitting complete. Final scales:");
     // Combine SVD and Ceres targets for summary
     std::vector<std::string> allTargets;
     allTargets.insert(allTargets.end(), mFittingConfig.targetSvd.begin(), mFittingConfig.targetSvd.end());
@@ -518,7 +518,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         if (bn) {
             int idx = bn->getIndexInSkeleton();
             auto& modInfo = std::get<1>(mSkelInfos[idx]);
-            LOG_INFO("  " << boneName << ": [" << modInfo.value[0] << ", "
+            LOG_VERBOSE("  " << boneName << ": [" << modInfo.value[0] << ", "
                      << modInfo.value[1] << ", " << modInfo.value[2] << "]");
         }
     }
@@ -658,7 +658,7 @@ void C3D_Reader::calibrateBone(
         mBoneR_frames[boneName] = result.R_frames;
         mBoneT_frames[boneName] = result.t_frames;
 
-        LOG_INFO("[Fitting] " << boneName << " scale: ["
+        LOG_VERBOSE("[Fitting] " << boneName << " scale: ["
                  << result.scale.transpose() << "] RMS=" << result.finalRMS * 1000.0 << "mm"
                  << " (" << result.iterations << " iters, " << K << " frames)");
     }
@@ -1830,7 +1830,7 @@ void C3D_Reader::scaleArmsFallback()
             if (bn) {
                 int idx = bn->getIndexInSkeleton();
                 std::get<1>(mSkelInfos[idx]).value[3] = scale;
-                LOG_INFO("[Fallback] " << arm.bone << " scale=" << scale);
+                LOG_VERBOSE("[Fallback] " << arm.bone << " scale=" << scale);
             }
         }
 
@@ -1873,27 +1873,27 @@ void C3D_Reader::copyDependentScales()
     };
     if (isBoneOptimized("Head")) {
         copyScale("Head", "Neck");
-        LOG_INFO("[CopyScale] Neck = Head");
+        LOG_VERBOSE("[CopyScale] Neck = Head");
     }
 
     if (isBoneOptimized("Torso")) {
         copyScale("Torso", "Spine");
-        LOG_INFO("[CopyScale] Spine = Torso");
+        LOG_VERBOSE("[CopyScale] Spine = Torso");
     }
 
     if (isBoneOptimized("TalusR")) {
         copyScale("TalusR", "FootPinkyR");
         copyScale("TalusR", "FootThumbR");
-        LOG_INFO("[CopyScale] Spine = FootPinkyR, FootThumbR");
+        LOG_VERBOSE("[CopyScale] Spine = FootPinkyR, FootThumbR");
     }
     
     if (isBoneOptimized("TalusL")) {
         copyScale("TalusL", "FootPinkyL");
         copyScale("TalusL", "FootThumbL");
-        LOG_INFO("[CopyScale] Spine = FootPinkyL, FootThumbL");
+        LOG_VERBOSE("[CopyScale] Spine = FootPinkyL, FootThumbL");
     }
 
-    LOG_INFO("[CopyScale] HandR = ForeArmR, HandL = ForeArmL");
+    LOG_VERBOSE("[CopyScale] HandR = ForeArmR, HandL = ForeArmL");
 }
 
 void C3D_Reader::interpolateDependent()
@@ -1947,7 +1947,7 @@ void C3D_Reader::interpolateBoneTransforms(
 
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2) << ratio;
-    LOG_INFO("[Interpolate] " << newBone << " = lerp(" << parentBone << ", " << childBone << ") ratio=" << oss.str());
+    LOG_VERBOSE("[Interpolate] " << newBone << " = lerp(" << parentBone << ", " << childBone << ") ratio=" << oss.str());
 }
 
 // ============================================================================
@@ -2008,7 +2008,7 @@ std::map<std::string, std::vector<Eigen::Isometry3d>> C3D_Reader::computeRelativ
         relTransforms[boneName] = relT;
     }
 
-    LOG_INFO("[MotionConvert] Computed relative transforms for " << relTransforms.size() << " bones, " << numFrames << " frames");
+    LOG_VERBOSE("[MotionConvert] Computed relative transforms for " << relTransforms.size() << " bones, " << numFrames << " frames");
     return relTransforms;
 }
 
@@ -2050,7 +2050,7 @@ JointOffsetResult C3D_Reader::estimateJointOffsets(
     double rms = std::sqrt(residual.squaredNorm() / numFrames);
 
     result.valid = true;
-    LOG_INFO("[JointOffset] " << jointName << ": parentOff=(" << x.head<3>().transpose()
+    LOG_VERBOSE("[JointOffset] " << jointName << ": parentOff=(" << x.head<3>().transpose()
              << "), childOff=(" << x.tail<3>().transpose() << "), RMS=" << std::fixed << std::setprecision(4) << rms);
 
     return result;
@@ -2075,7 +2075,7 @@ Eigen::Vector3d C3D_Reader::selectRevoluteAxis(
         return Eigen::Vector3d::UnitX();
     }
 
-    LOG_INFO("[RevoluteAxis] Using XML axis: (" << xmlAxis.transpose() << ")");
+    LOG_VERBOSE("[RevoluteAxis] Using XML axis: (" << xmlAxis.transpose() << ")");
     return xmlAxis.normalized();
 }
 
@@ -2245,7 +2245,7 @@ void C3D_Reader::applyJointOffsetsToSkeleton(
         // Skip root FreeJoint (Pelvis) - offset is handled in pose computation via buildMotionFramePose
         // Modifying root joint offset causes incorrect world position when pose is reset
         if (jointName == "Pelvis") {
-            LOG_INFO("[JointOffset] Skipping root joint 'Pelvis' - offset handled in pose computation");
+            LOG_VERBOSE("[JointOffset] Skipping root joint 'Pelvis' - offset handled in pose computation");
             continue;
         }
 
@@ -2271,7 +2271,7 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
         return result;
     }
 
-    LOG_INFO("[MotionConvert] Starting conversion to motion skeleton...");
+    LOG_VERBOSE("[MotionConvert] Starting conversion to motion skeleton...");
 
     // Step 1: Compute relative transforms
     auto relTransforms = computeRelativeTransforms();
@@ -2283,7 +2283,7 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
     for (const auto& boneName : mFittingConfig.targetMotionJoint) {
         // Skip root joint (Pelvis) - it's a FreeJoint, offset should be applied via pose translation, not joint transform
         if (boneName == "Pelvis") {
-            LOG_INFO("[MotionConvert] Skipping Pelvis - root FreeJoint offset handled via pose, not joint transform");
+            LOG_VERBOSE("[MotionConvert] Skipping Pelvis - root FreeJoint offset handled via pose, not joint transform");
             continue;
         }
 
@@ -2403,7 +2403,7 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
         auto parentIt = result.jointOffsets.find(parentJointName);
         if (parentIt != result.jointOffsets.end()) {
             parentIt->second.childOffset.translation() -= delta;
-            LOG_INFO("[KneeRefine] " << jointName << " -> adjust " << parentJointName
+            LOG_VERBOSE("[KneeRefine] " << jointName << " -> adjust " << parentJointName
                      << ".childOffset: Δt=(" << delta.transpose()
                      << "), RMS: " << std::fixed << std::setprecision(4) << rmsBefore << " -> " << rmsAfter);
         } else {
@@ -2418,7 +2418,7 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
     applyJointOffsetsToSkeleton(skel, result.jointOffsets);
 
     result.valid = true;
-    LOG_INFO("[MotionConvert] Conversion complete: " << result.jointOffsets.size()
+    LOG_VERBOSE("[MotionConvert] Conversion complete: " << result.jointOffsets.size()
              << " joints, " << result.motionPoses.size() << " frames");
 
     return result;
@@ -2442,8 +2442,8 @@ void C3D_Reader::refineArmIK()
         return;
     }
 
-    LOG_INFO("[ArmIK] Refining arm poses with DLS + Line Search (matching hand position)...");
-    LOG_INFO("[ArmIK] Params: maxIter=" << mFittingConfig.ik.maxIterations << ", lambda=" << mFittingConfig.ik.lambda
+    LOG_VERBOSE("[ArmIK] Refining arm poses with DLS + Line Search (matching hand position)...");
+    LOG_VERBOSE("[ArmIK] Params: maxIter=" << mFittingConfig.ik.maxIterations << ", lambda=" << mFittingConfig.ik.lambda
              << ", beta=" << mFittingConfig.ik.beta << ", armMaxTwist=" << mFittingConfig.ik.armMaxTwist);
 
     auto skel = mMotionCharacter->getSkeleton();
@@ -2613,7 +2613,7 @@ void C3D_Reader::refineArmIK()
 
         double rmsBefore = std::sqrt(totalRmsBefore / numFrames);
         double rmsAfter = std::sqrt(totalRmsAfter / numFrames);
-        LOG_INFO("[ArmIK] " << armJointName << ": RMS " << std::fixed << std::setprecision(4)
+        LOG_VERBOSE("[ArmIK] " << armJointName << ": RMS " << std::fixed << std::setprecision(4)
                  << rmsBefore << " -> " << rmsAfter << " (target: " << handName << ")");
     }
 }
@@ -2634,8 +2634,8 @@ void C3D_Reader::refineLegIK()
         return;
     }
 
-    LOG_INFO("[LegIK] Refining leg poses with DLS + Line Search...");
-    LOG_INFO("[LegIK] Params: maxIter=" << mFittingConfig.ik.maxIterations << ", lambda=" << mFittingConfig.ik.lambda
+    LOG_VERBOSE("[LegIK] Refining leg poses with DLS + Line Search...");
+    LOG_VERBOSE("[LegIK] Params: maxIter=" << mFittingConfig.ik.maxIterations << ", lambda=" << mFittingConfig.ik.lambda
              << ", beta=" << mFittingConfig.ik.beta << ", legMaxHip=" << mFittingConfig.ik.legMaxHip);
 
     auto skel = mMotionCharacter->getSkeleton();
@@ -2805,7 +2805,7 @@ void C3D_Reader::refineLegIK()
 
         double rmsBefore = std::sqrt(totalRmsBefore / numFrames);
         double rmsAfter = std::sqrt(totalRmsAfter / numFrames);
-        LOG_INFO("[LegIK] " << femurJointName << ": RMS " << std::fixed << std::setprecision(4)
+        LOG_VERBOSE("[LegIK] " << femurJointName << ": RMS " << std::fixed << std::setprecision(4)
                  << rmsBefore << " -> " << rmsAfter << " (target: " << talusName << ")");
     }
 }

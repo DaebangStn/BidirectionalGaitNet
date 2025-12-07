@@ -234,7 +234,7 @@ void C3DProcessorApp::startLoop()
 
 void C3DProcessorApp::initGL()
 {
-    glClearColor(0.15f, 0.15f, 0.18f, 1.0f);
+    glClearColor(0.15f, 0.15f, 0.15f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
@@ -670,52 +670,6 @@ void C3DProcessorApp::drawSelectedBoneGizmo()
 
 void C3DProcessorApp::drawSkeleton()
 {
-    // Debug: Print root positions and actual body transforms (once per second)
-    static double lastDebugTime = 0.0;
-    double currentTime = glfwGetTime();
-    if (currentTime - lastDebugTime > 1.0) {
-        lastDebugTime = currentTime;
-
-        auto printJointInfo = [](dart::dynamics::SkeletonPtr skel, const char* name) {
-            if (!skel) return;
-            auto* joint = skel->getJoint(0);  // Root joint
-            if (!joint) return;
-            auto parentT = joint->getTransformFromParentBodyNode();
-            auto childT = joint->getTransformFromChildBodyNode();
-            LOG_INFO("[Debug] " << name << " root joint '" << joint->getName() << "'"
-                     << " parentT trans: [" << parentT.translation().x() << ", " << parentT.translation().y() << ", " << parentT.translation().z() << "]"
-                     << " childT trans: [" << childT.translation().x() << ", " << childT.translation().y() << ", " << childT.translation().z() << "]");
-        };
-
-        if (mFreeCharacter && mFreeCharacter->getSkeleton()) {
-            auto freeSkel = mFreeCharacter->getSkeleton();
-            Eigen::VectorXd freePos = freeSkel->getPositions();
-            auto* pelvis = freeSkel->getBodyNode("Pelvis");
-            Eigen::Vector3d pelvisWorldPos = Eigen::Vector3d::Zero();
-            if (pelvis) pelvisWorldPos = pelvis->getTransform().translation();
-            LOG_INFO("[Debug] FreeChar DOFs: " << freeSkel->getNumDofs()
-                     << ", currentPose.size: " << mMotionState.currentPose.size()
-                     << ", root trans: [" << (freePos.size() >= 6 ? freePos[3] : 0)
-                     << ", " << (freePos.size() >= 6 ? freePos[4] : 0)
-                     << ", " << (freePos.size() >= 6 ? freePos[5] : 0) << "]"
-                     << ", Pelvis WORLD pos: [" << pelvisWorldPos.x() << ", " << pelvisWorldPos.y() << ", " << pelvisWorldPos.z() << "]");
-            printJointInfo(freeSkel, "FreeChar");
-        }
-        if (mMotionCharacter && mMotionCharacter->getSkeleton()) {
-            auto motionSkel = mMotionCharacter->getSkeleton();
-            Eigen::VectorXd motionPos = motionSkel->getPositions();
-            auto* pelvis = motionSkel->getBodyNode("Pelvis");
-            Eigen::Vector3d pelvisWorldPos = Eigen::Vector3d::Zero();
-            if (pelvis) pelvisWorldPos = pelvis->getTransform().translation();
-            LOG_INFO("[Debug] MotionChar DOFs: " << motionSkel->getNumDofs()
-                     << ", root trans: [" << (motionPos.size() >= 6 ? motionPos[3] : 0)
-                     << ", " << (motionPos.size() >= 6 ? motionPos[4] : 0)
-                     << ", " << (motionPos.size() >= 6 ? motionPos[5] : 0) << "]"
-                     << ", Pelvis WORLD pos: [" << pelvisWorldPos.x() << ", " << pelvisWorldPos.y() << ", " << pelvisWorldPos.z() << "]");
-            printJointInfo(motionSkel, "MotionChar");
-        }
-    }
-
     glEnable(GL_LIGHTING);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_COLOR_MATERIAL);
