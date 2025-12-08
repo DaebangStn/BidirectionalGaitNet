@@ -1,0 +1,36 @@
+#pragma once
+
+#include "rm/handle.hpp"
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace rm {
+
+// Abstract backend interface
+// Implementations provide access to resources from different sources (local, FTP, etc.)
+class Backend {
+public:
+    virtual ~Backend() = default;
+
+    // Human-readable name for logging/debugging
+    virtual std::string name() const = 0;
+
+    // Whether results from this backend should be cached by ResourceManager
+    // Returns true for remote backends (FTP), false for local filesystem
+    virtual bool cached() const = 0;
+
+    // Check if a resource exists at the given path
+    // Path is relative to the backend's root
+    virtual bool exists(const std::string& path) = 0;
+
+    // Fetch a resource, returning a handle to its data
+    // Throws RMError on failure
+    virtual ResourceHandle fetch(const std::string& path) = 0;
+
+    // List resources matching a pattern (glob-style)
+    // Returns relative paths within the backend
+    virtual std::vector<std::string> list(const std::string& pattern) = 0;
+};
+
+} // namespace rm

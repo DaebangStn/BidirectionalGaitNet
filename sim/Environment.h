@@ -105,6 +105,7 @@ struct DiscriminatorConfig
     double reward_scale = 1.0;      // Scale factor for discriminator reward
     bool multiplicative = false;    // If true, multiplies with main reward; if false, additive
     bool upper_body = false;        // If true, include upper body torques in disc_obs
+    double upper_body_scale = 1.0;  // Scale factor for upper body torques in disc_obs
 };
 
 class DLL_PUBLIC Environment

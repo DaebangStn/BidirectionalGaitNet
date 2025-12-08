@@ -89,7 +89,10 @@ environment:
     normalize: false  # Optional: normalize disc_obs before forward pass
     reward_scale: 1.0  # Scale factor for discriminator reward
     multiplicative: false
-    upper_body: true
+    upper_body: 
+      enabled: true
+      scale: 0.1
+
 
   # Parameterization for training
   parameters:

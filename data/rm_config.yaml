@@ -1,0 +1,36 @@
+# Resource Manager Configuration
+# Prefix-based routing with named backends
+
+cache_dir: ../.tmp/rm_cache
+
+# Named backend definitions
+backends:
+  # Local project data
+  project_data:
+    type: local
+    root: /home/geon/BidirectionalGaitNet/data
+
+  # Patient data - local storage
+  pid_local:
+    type: local
+    root: /mnt/blue8T/CP/RM
+
+  # Patient data - FTP fallback
+  pid_ftp:
+    type: ftp
+    host: gait
+    ip: 192.168.x.x        # TODO: fill in actual IP
+    username: user         # TODO: fill in actual username
+    password: pass         # TODO: fill in actual password
+    port: 21
+    root: /
+
+# Prefix routing rules
+routes:
+  # @data/path -> project data only
+  "@data":
+    backends: [project_data]
+
+  # @pid:ID/path -> local first, then FTP fallback
+  "@pid":
+    backends: [pid_local, pid_ftp]

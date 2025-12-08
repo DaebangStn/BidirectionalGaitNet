@@ -88,6 +88,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold -Wl,-O
 # Optional Ceres-based bone optimization (for 2-marker bones)
 option(USE_CERES "Enable Ceres-based bone optimization" OFF)
 
+add_subdirectory( rm )
 add_subdirectory( sim )
 add_subdirectory( rollouts )
 add_subdirectory( python )

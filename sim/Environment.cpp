@@ -1055,7 +1055,19 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mDiscConfig.normalize = disc["normalize"].as<bool>(false);
         mDiscConfig.reward_scale = disc["reward_scale"].as<double>(1.0);
         mDiscConfig.multiplicative = disc["multiplicative"].as<bool>(false);
-        mDiscConfig.upper_body = disc["upper_body"].as<bool>(false);
+
+        // Parse upper_body config (supports both bool and nested map)
+        if (disc["upper_body"]) {
+            auto ub = disc["upper_body"];
+            if (ub.IsMap()) {
+                // Nested config: upper_body: { enabled: true, scale: 0.01 }
+                mDiscConfig.upper_body = ub["enabled"].as<bool>(false);
+                mDiscConfig.upper_body_scale = ub["scale"].as<double>(1.0);
+            } else {
+                // Simple bool: upper_body: true
+                mDiscConfig.upper_body = ub.as<bool>(false);
+            }
+        }
 
         if (mDiscConfig.enabled && mUseMuscle) {
             // Cache upper body dimension if needed
@@ -1561,9 +1573,11 @@ Eigen::VectorXf Environment::getDiscObs() const
     Eigen::VectorXf activations = mCharacter->getActivations().cast<float>();
 
     if (mDiscConfig.upper_body) {
-        // Concatenate: [activations, upperBodyTorque]
+        // Concatenate: [activations, scaled_upperBodyTorque]
         Eigen::VectorXf upperTorque = mCharacter->getUpperBodyTorque()
             .tail(mUpperBodyDim).cast<float>();
+        // Apply scale to upper body torques (they can be much larger than activations)
+        upperTorque *= static_cast<float>(mDiscConfig.upper_body_scale);
         disc_obs.head(activations.size()) = activations;
         disc_obs.tail(mUpperBodyDim) = upperTorque;
     } else {

@@ -49,7 +49,7 @@ class Args:
     # Algorithm specific arguments
     env_file: str = "data/env/A.yaml"
     """path to environment configuration file"""
-    total_timesteps: int = 100_000_000
+    total_timesteps: int = 200_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the initial learning rate of the optimizer"""
@@ -468,8 +468,8 @@ if __name__ == "__main__":
 
     # Always create fresh run_name (new TensorBoard directory)
     env_name = Path(args.env_file).stem
-    timestamp = time.strftime("%y%m%d_%H%M%S")
-    run_name = f"{env_name}/{timestamp}"
+    start_localtime = time.localtime()
+    run_name = f"{env_name}/{time.strftime('%y%m%d_%H%M%S', start_localtime)}"
 
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
@@ -693,9 +693,8 @@ if __name__ == "__main__":
             should_save_checkpoint = iteration % args.checkpoint_interval == 0
 
         if should_save_checkpoint:
-            ckpt_timestamp = time.strftime("%m%d_%H%M%S")
             run_title = run_name.split('/')[0]
-            checkpoint_name = f"{run_title}-{iteration:05d}-{ckpt_timestamp}"
+            checkpoint_name = f"{run_title}-{iteration:05d}-{time.strftime('%m%d_%H%M%S', start_localtime)}"
             checkpoint_path = f"runs/{run_name}/{checkpoint_name}"
             save_checkpoint(
                 checkpoint_path, agent, muscle_learner, args.env_file,
