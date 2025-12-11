@@ -4381,7 +4381,7 @@ void GLFWApp::drawSimFrame()
         drawPhase(mViewerPhase, mViewerPhase);
         if (mDrawFlags.character)
         {
-            drawSkeleton(mRenderEnv->getCharacter()->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 1.0));
+            drawSkeleton(mRenderEnv->getCharacter()->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 0.5));
             if (!mRenderConditions) drawShadow();
             if (mMuscleSelectionStates.size() > 0) drawMuscles(mMuscleRenderType);
         }

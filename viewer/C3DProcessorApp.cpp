@@ -921,6 +921,11 @@ void C3DProcessorApp::drawControlPanel()
 
     ImGui::Separator();
 
+    // Skeleton Scale Section
+    drawSkeletonScaleSection();
+
+    ImGui::Separator();
+
     // Skeleton Export Section
     drawSkeletonExportSection();
 
@@ -1060,6 +1065,184 @@ void C3DProcessorApp::drawMarkerFittingSection()
 
         if (ImGui::Button("Clear Motion & Zero Pose")) {
             clearMotionAndZeroPose();
+        }
+    }
+}
+
+void C3DProcessorApp::drawSkeletonScaleSection()
+{
+    if (collapsingHeaderWithControls("Skeleton Scale")) {
+        // Use mFreeCharacter as the primary source for scale info
+        RenderCharacter* character = mFreeCharacter.get();
+        if (!character) {
+            character = mMotionCharacter.get();
+        }
+
+        if (!character) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No character loaded");
+            return;
+        }
+
+        auto skel = character->getSkeleton();
+        auto& skelInfos = character->getSkelInfos();
+
+        if (!skel || skelInfos.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No skeleton info available");
+            return;
+        }
+
+        bool anyChanged = false;
+
+        // Build map of bone name -> index for quick lookup
+        std::map<std::string, int> boneNameToIdx;
+        for (size_t i = 0; i < skelInfos.size(); ++i) {
+            boneNameToIdx[std::get<0>(skelInfos[i])] = static_cast<int>(i);
+        }
+
+        // Define paired bones (Right, Left)
+        std::vector<std::pair<std::string, std::string>> pairedBones = {
+            {"FemurR", "FemurL"},
+            {"TibiaR", "TibiaL"},
+            {"TalusR", "TalusL"},
+            {"FootR", "FootL"},
+            {"ArmR", "ArmL"},
+            {"ForeArmR", "ForeArmL"},
+            {"HandR", "HandL"},
+        };
+
+        // Track processed bones to avoid duplicates
+        std::set<std::string> processedBones;
+
+        // Helper lambda to check if values differ by 1.5x ratio
+        auto isDifferent = [](double a, double b) -> bool {
+            if (a == 0 && b == 0) return false;
+            if (a == 0 || b == 0) return true;
+            double ratio = a / b;
+            return ratio > 1.5 || ratio < (1.0 / 1.5);
+        };
+
+        // Helper to get highlight color
+        auto getHighlightColor = [&isDifferent](double valR, double valL) -> ImVec4 {
+            if (isDifferent(valR, valL)) {
+                return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Red highlight
+            }
+            return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);  // Normal white
+        };
+
+        // Draw paired bones side-by-side
+        for (const auto& [rightName, leftName] : pairedBones) {
+            auto itR = boneNameToIdx.find(rightName);
+            auto itL = boneNameToIdx.find(leftName);
+            if (itR == boneNameToIdx.end() || itL == boneNameToIdx.end()) continue;
+
+            int idxR = itR->second;
+            int idxL = itL->second;
+            auto& modInfoR = std::get<1>(skelInfos[idxR]);
+            auto& modInfoL = std::get<1>(skelInfos[idxL]);
+
+            processedBones.insert(rightName);
+            processedBones.insert(leftName);
+
+            // Extract base name (remove R/L suffix)
+            std::string baseName = rightName.substr(0, rightName.length() - 1);
+
+            ImGui::PushID(baseName.c_str());
+            if (ImGui::TreeNode((baseName + " (R/L)").c_str())) {
+                // Table header
+                ImGui::Text("%-12s %10s %10s", "Parameter", "Right", "Left");
+                ImGui::Separator();
+
+                const char* paramNames[] = {"Scale X", "Scale Y", "Scale Z", "Uniform", "Torsion"};
+                float minVals[] = {0.5f, 0.5f, 0.5f, 0.5f, -45.0f};
+                float maxVals[] = {2.0f, 2.0f, 2.0f, 2.0f, 45.0f};
+
+                for (int p = 0; p < 5; ++p) {
+                    float valR = static_cast<float>(modInfoR.value[p]);
+                    float valL = static_cast<float>(modInfoL.value[p]);
+
+                    ImVec4 color = getHighlightColor(modInfoR.value[p], modInfoL.value[p]);
+                    bool highlighted = isDifferent(modInfoR.value[p], modInfoL.value[p]);
+
+                    ImGui::PushID(p);
+
+                    // Parameter name with highlight
+                    if (highlighted) {
+                        ImGui::TextColored(color, "%-12s", paramNames[p]);
+                    } else {
+                        ImGui::Text("%-12s", paramNames[p]);
+                    }
+
+                    // Right value drag
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80);
+                    if (highlighted) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
+                    if (ImGui::DragFloat("##R", &valR, 0.01f, minVals[p], maxVals[p], "%.3f")) {
+                        modInfoR.value[p] = valR;
+                        anyChanged = true;
+                    }
+                    if (highlighted) ImGui::PopStyleColor();
+
+                    // Left value drag
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80);
+                    if (highlighted) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
+                    if (ImGui::DragFloat("##L", &valL, 0.01f, minVals[p], maxVals[p], "%.3f")) {
+                        modInfoL.value[p] = valL;
+                        anyChanged = true;
+                    }
+                    if (highlighted) ImGui::PopStyleColor();
+
+                    ImGui::PopID();
+                }
+
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+
+        // Draw unpaired bones (center bones like Pelvis, Spine, etc.)
+        if (ImGui::TreeNode("Center Bones")) {
+            for (size_t i = 0; i < skelInfos.size(); ++i) {
+                auto& [boneName, modInfo] = skelInfos[i];
+                if (processedBones.count(boneName) > 0) continue;
+
+                auto* bn = skel->getBodyNode(boneName);
+                if (!bn) continue;
+
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::TreeNode(boneName.c_str())) {
+                    ImGui::Text("[%.3f, %.3f, %.3f, %.3f, %.3f]",
+                        modInfo.value[0], modInfo.value[1], modInfo.value[2],
+                        modInfo.value[3], modInfo.value[4]);
+
+                    const char* paramNames[] = {"Scale X", "Scale Y", "Scale Z", "Uniform", "Torsion"};
+                    float minVals[] = {0.5f, 0.5f, 0.5f, 0.5f, -45.0f};
+                    float maxVals[] = {2.0f, 2.0f, 2.0f, 2.0f, 45.0f};
+
+                    for (int p = 0; p < 5; ++p) {
+                        float val = static_cast<float>(modInfo.value[p]);
+                        ImGui::SetNextItemWidth(120);
+                        if (ImGui::DragFloat(paramNames[p], &val, 0.01f, minVals[p], maxVals[p], "%.3f")) {
+                            modInfo.value[p] = val;
+                            anyChanged = true;
+                        }
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
+
+        // Apply all bone scales when any changed
+        if (anyChanged) {
+            character->applySkeletonBodyNode(skelInfos, skel);
+            // Also apply to the other character if both exist
+            if (mFreeCharacter && mMotionCharacter && character == mFreeCharacter.get()) {
+                mMotionCharacter->applySkeletonBodyNode(skelInfos, mMotionCharacter->getSkeleton());
+            } else if (mFreeCharacter && mMotionCharacter && character == mMotionCharacter.get()) {
+                mFreeCharacter->applySkeletonBodyNode(skelInfos, mFreeCharacter->getSkeleton());
+            }
         }
     }
 }

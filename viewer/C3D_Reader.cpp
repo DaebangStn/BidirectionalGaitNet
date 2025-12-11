@@ -253,6 +253,7 @@ void C3D_Reader::loadSkeletonFittingConfig() {
         // Inverse Kinematics refinement parameters
         if (sf["inverse_kinematics"]) {
             auto ik = sf["inverse_kinematics"];
+            mFittingConfig.ik.enabled = ik["enabled"].as<bool>(true);
             mFittingConfig.ik.maxIterations = ik["max_iterations"].as<int>(15);
             mFittingConfig.ik.tolerance = ik["tolerance"].as<double>(1e-4);
             mFittingConfig.ik.lambda = ik["lambda"].as<double>(0.01);
@@ -263,8 +264,34 @@ void C3D_Reader::loadSkeletonFittingConfig() {
             mFittingConfig.ik.armMaxElbow = ik["arm_max_elbow"].as<double>(0.2);
             mFittingConfig.ik.legMaxHip = ik["leg_max_hip"].as<double>(0.15);
             mFittingConfig.ik.legMaxKnee = ik["leg_max_knee"].as<double>(0.2);
-            LOG_VERBOSE("[Config] IK params loaded: maxIter=" << mFittingConfig.ik.maxIterations
+            LOG_VERBOSE("[Config] IK params loaded: enabled=" << mFittingConfig.ik.enabled
+                     << ", maxIter=" << mFittingConfig.ik.maxIterations
                      << ", lambda=" << mFittingConfig.ik.lambda << ", beta=" << mFittingConfig.ik.beta);
+        }
+
+        // Symmetry enforcement parameters
+        if (sf["symmetry"]) {
+            auto sym = sf["symmetry"];
+            mFittingConfig.symmetry.enabled = sym["enabled"].as<bool>(true);
+            mFittingConfig.symmetry.threshold = sym["threshold"].as<double>(1.5);
+            mFittingConfig.symmetry.torsionThreshold = sym["torsion_threshold"].as<double>(0.15);
+
+            // Common axis settings
+            mFittingConfig.symmetry.applyX = sym["x"].as<bool>(true);
+            mFittingConfig.symmetry.applyY = sym["y"].as<bool>(true);
+            mFittingConfig.symmetry.applyZ = sym["z"].as<bool>(true);
+            mFittingConfig.symmetry.applyUniform = sym["uniform"].as<bool>(true);
+            mFittingConfig.symmetry.applyTorsion = sym["torsion"].as<bool>(true);
+
+            // Bone list
+            if (sym["bones"]) {
+                for (const auto& b : sym["bones"]) {
+                    mFittingConfig.symmetry.bones.push_back(b.as<std::string>());
+                }
+            }
+            LOG_VERBOSE("[Config] Symmetry params loaded: enabled=" << mFittingConfig.symmetry.enabled
+                     << ", threshold=" << mFittingConfig.symmetry.threshold
+                     << ", bones=" << mFittingConfig.symmetry.bones.size());
         }
 
         // New format: marker_mappings (flat list)
@@ -358,6 +385,9 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
     if (params.doCalibration) {
         calibrateSkeleton(params);
     }
+
+    // Symmetry enforcement (balance R/L bone scales)
+    enforceSymmetry();
 
     // ========== 4. Convert to skeleton poses (IK) ==========
     int numFitFrames = mFitFrameEnd - mFitFrameStart + 1;
@@ -508,7 +538,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     if (mMotionCharacter) mMotionCharacter->applySkeletonBodyNode(mSkelInfos, mMotionCharacter->getSkeleton());
 
     // Print summary
-    LOG_VERBOSE("[C3D_Reader] Multi-stage skeleton fitting complete. Final scales:");
+    LOG_INFO("[C3D_Reader] Multi-stage skeleton fitting complete. Final scales:");
     // Combine SVD and Ceres targets for summary
     std::vector<std::string> allTargets;
     allTargets.insert(allTargets.end(), mFittingConfig.targetSvd.begin(), mFittingConfig.targetSvd.end());
@@ -518,7 +548,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         if (bn) {
             int idx = bn->getIndexInSkeleton();
             auto& modInfo = std::get<1>(mSkelInfos[idx]);
-            LOG_VERBOSE("  " << boneName << ": [" << modInfo.value[0] << ", "
+            LOG_INFO("  " << boneName << ": [" << modInfo.value[0] << ", "
                      << modInfo.value[1] << ", " << modInfo.value[2] << "]");
         }
     }
@@ -1830,7 +1860,7 @@ void C3D_Reader::scaleArmsFallback()
             if (bn) {
                 int idx = bn->getIndexInSkeleton();
                 std::get<1>(mSkelInfos[idx]).value[3] = scale;
-                LOG_VERBOSE("[Fallback] " << arm.bone << " scale=" << scale);
+                LOG_INFO("[Fallback] " << arm.bone << " scale=" << scale);
             }
         }
 
@@ -2808,5 +2838,103 @@ void C3D_Reader::refineLegIK()
         LOG_VERBOSE("[LegIK] " << femurJointName << ": RMS " << std::fixed << std::setprecision(4)
                  << rmsBefore << " -> " << rmsAfter << " (target: " << talusName << ")");
     }
+}
+
+// ============================================================================
+// SECTION: Symmetry Enforcement
+//   - enforceSymmetry: Balance R/L bone scales based on threshold
+// ============================================================================
+
+void C3D_Reader::enforceSymmetry() {
+    if (!mFittingConfig.symmetry.enabled) {
+        LOG_VERBOSE("[Symmetry] Disabled, skipping");
+        return;
+    }
+
+    if (!mFreeCharacter) {
+        LOG_WARN("[Symmetry] No free character available");
+        return;
+    }
+
+    auto skel = mFreeCharacter->getSkeleton();
+    const auto& sym = mFittingConfig.symmetry;
+    double thresh = sym.threshold;
+
+    LOG_INFO("[Symmetry] Enforcing symmetry with threshold=" << thresh
+             << ", torsionThreshold=" << sym.torsionThreshold);
+
+    for (const auto& baseName : sym.bones) {
+        std::string nameR = baseName + "R";
+        std::string nameL = baseName + "L";
+
+        auto* bnR = skel->getBodyNode(nameR);
+        auto* bnL = skel->getBodyNode(nameL);
+        if (!bnR || !bnL) {
+            LOG_VERBOSE("[Symmetry] Skipping " << baseName << ": missing R/L body nodes");
+            continue;
+        }
+
+        int idxR = bnR->getIndexInSkeleton();
+        int idxL = bnL->getIndexInSkeleton();
+        auto& modR = std::get<1>(mSkelInfos[idxR]);
+        auto& modL = std::get<1>(mSkelInfos[idxL]);
+
+        // Apply to each configured axis (0=x, 1=y, 2=z, 3=uniform, 4=torsion)
+        bool axes[5] = {sym.applyX, sym.applyY, sym.applyZ, sym.applyUniform, sym.applyTorsion};
+        const char* axisNames[5] = {"x", "y", "z", "uniform", "torsion"};
+
+        for (int i = 0; i < 5; ++i) {
+            if (!axes[i]) continue;
+
+            double valR = modR.value[i];
+            double valL = modL.value[i];
+
+            // For torsion (i=4), use arithmetic mean (angles can be negative)
+            if (i == 4) {
+                double diff = std::abs(valR - valL);
+                double maxDiff = sym.torsionThreshold;
+                if (diff > maxDiff) {
+                    double mean = (valR + valL) / 2.0;
+                    double halfMax = maxDiff / 2.0;
+                    modR.value[i] = mean + (valR > valL ? halfMax : -halfMax);
+                    modL.value[i] = mean + (valL > valR ? halfMax : -halfMax);
+                    LOG_INFO("[Symmetry] " << baseName << " torsion: "
+                             << valR << "/" << valL << " -> "
+                             << modR.value[i] << "/" << modL.value[i]);
+                }
+                continue;
+            }
+
+            // For scales (i=0-3), use geometric mean (must be positive)
+            if (valR <= 0 || valL <= 0) continue;
+
+            double ratio = std::max(valR, valL) / std::min(valR, valL);
+            if (ratio <= thresh) continue;
+
+            // Geometric mean balancing: preserve gm, clamp ratio to threshold
+            double gm = std::sqrt(valR * valL);
+            double sqrtThresh = std::sqrt(thresh);
+
+            if (valR > valL) {
+                modR.value[i] = gm * sqrtThresh;
+                modL.value[i] = gm / sqrtThresh;
+            } else {
+                modL.value[i] = gm * sqrtThresh;
+                modR.value[i] = gm / sqrtThresh;
+            }
+
+            LOG_INFO("[Symmetry] " << baseName << " " << axisNames[i]
+                     << ": " << valR << "/" << valL << " -> "
+                     << modR.value[i] << "/" << modL.value[i]
+                     << " (ratio " << ratio << " -> " << thresh << ")");
+        }
+    }
+
+    // Apply updated scales only to motion character (not free character)
+    if (mMotionCharacter) {
+        mMotionCharacter->applySkeletonBodyNode(mSkelInfos, mMotionCharacter->getSkeleton());
+    }
+
+    LOG_INFO("[Symmetry] Enforcement complete");
 }
 

@@ -220,6 +220,7 @@ private:
     void drawMotionListSection();
     void drawPlaybackSection();
     void drawMarkerFittingSection();
+    void drawSkeletonScaleSection();
     void drawSkeletonExportSection();
     void drawVisualizationPanel();
     void drawRenderingPanel();

@@ -150,6 +150,7 @@ struct SkeletonFittingConfig {
 
     // Inverse Kinematics refinement parameters (DLS + Line Search)
     struct IKParams {
+        bool enabled = true;           // Enable/disable IK refinement
         int maxIterations = 15;
         double tolerance = 1e-4;
         double lambda = 0.01;          // DLS damping factor
@@ -166,6 +167,24 @@ struct SkeletonFittingConfig {
         double legMaxKnee = 0.2;
     };
     IKParams ik;
+
+    // Symmetry enforcement configuration
+    struct SymmetryConfig {
+        bool enabled = true;
+        double threshold = 1.5;           // ratio threshold for scales
+        double torsionThreshold = 0.15;   // max angle diff in radians (~8.6°)
+
+        // Common settings for all bones
+        bool applyX = true;
+        bool applyY = true;
+        bool applyZ = true;
+        bool applyUniform = true;
+        bool applyTorsion = true;
+
+        // List of bone base names (e.g., "Femur" -> FemurR/FemurL)
+        std::vector<std::string> bones;
+    };
+    SymmetryConfig symmetry;
 
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
@@ -280,8 +299,9 @@ class C3D_Reader
         MotionConversionResult convertToMotionSkeleton();
 
         // IK postprocessing methods (can be called independently via UI)
-        void refineArmIK();   // Step 6: Adjust arm twist + elbow to match wrist markers
-        void refineLegIK();   // Step 7: Adjust femur + tibia to match talus position
+        void refineArmIK();      // Step 6: Adjust arm twist + elbow to match wrist markers
+        void refineLegIK();      // Step 7: Adjust femur + tibia to match talus position
+        void enforceSymmetry();  // Step 8: Balance R/L bone scales based on threshold
 
     private:
         // Helper methods for loadC3D refactoring

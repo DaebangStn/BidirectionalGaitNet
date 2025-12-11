@@ -121,6 +121,7 @@ skeleton_fitting:
 
   # Inverse Kinematics refinement parameters (DLS + Line Search)
   inverse_kinematics:
+    enabled: true               # Enable/disable IK refinement
     max_iterations: 5          # Maximum IK iterations per frame
     tolerance: 5.0e-3           # Convergence tolerance (meters)
     lambda: 0.05                # DLS damping factor (Levenberg-Marquardt)
@@ -135,3 +136,26 @@ skeleton_fitting:
     # Leg IK step limits (radians)
     leg_max_hip: 0.05           # Max hip rotation step per iteration
     leg_max_knee: 0.05           # Max knee angle step per iteration
+
+  # Symmetry enforcement (balance R/L bone scales)
+  symmetry:
+    enabled: true
+    threshold: 1.2              # Ratio threshold for scale correction (1.5 = 50% diff)
+    torsion_threshold: 0.15     # Max angle diff in radians (~8.6°)
+
+    # Common axis settings for all bones
+    x: true
+    y: false
+    z: true
+    uniform: false
+    torsion: false
+
+    # List of bone base names (e.g., "Femur" -> applies to FemurR/FemurL)
+    bones:
+      - Femur
+      - Tibia
+      - Talus
+      # - Foot
+      # - Arm
+      # - ForeArm
+      # - Hand
