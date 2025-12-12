@@ -38,3 +38,17 @@ target_link_libraries(c3d_merge
 target_include_directories(c3d_merge PRIVATE
     ${CMAKE_SOURCE_DIR}/rm/include
 )
+
+# C3D Inspect Tool - Inspect C3D file metadata (frames, labels)
+add_executable(c3d_inspect c3d_inspect.cpp)
+
+target_link_libraries(c3d_inspect
+    rm
+    ezc3d
+    ${CURSES_LIBRARY}
+)
+
+target_include_directories(c3d_inspect PRIVATE
+    ${CMAKE_SOURCE_DIR}/rm/include
+    ${CURSES_INCLUDE_DIR}
+)
