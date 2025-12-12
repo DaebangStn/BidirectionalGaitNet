@@ -49,7 +49,7 @@ for pid_dir in "$RM_DIR"/*/; do
     fi
 
     # Destination c3d directory
-    c3d_dir="$pid_dir/c3d"
+    c3d_dir="$pid_dir/gait"
 
     # Copy sessions
     echo "  [COPY] $pid ($name) - $session_count sessions"

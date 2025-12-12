@@ -112,6 +112,7 @@ target_link_libraries(c3d_processor
     dart-gui
     ezc3d
     Boost::program_options
+    rm
 )
 
 # Conditionally link Ceres and add compile definition

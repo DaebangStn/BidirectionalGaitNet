@@ -12,6 +12,7 @@ set(RM_SOURCES
     src/manager.cpp
     src/backends/local.cpp
     src/backends/ftp.cpp
+    src/backends/pid.cpp
 )
 
 set(RM_HEADERS
@@ -23,6 +24,7 @@ set(RM_HEADERS
     include/rm/manager.hpp
     include/rm/backends/local.hpp
     include/rm/backends/ftp.hpp
+    include/rm/backends/pid.hpp
 )
 
 # Create library

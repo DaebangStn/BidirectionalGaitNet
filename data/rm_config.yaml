@@ -10,9 +10,9 @@ backends:
     type: local
     root: /home/geon/BidirectionalGaitNet/data
 
-  # Patient data - local storage
+  # Patient data - local storage with gait path transformation
   pid_local:
-    type: local
+    type: pid
     root: /mnt/blue8T/CP/RM
 
   # Patient data - FTP fallback

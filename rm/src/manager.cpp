@@ -2,6 +2,7 @@
 #include "rm/error.hpp"
 #include "rm/backends/local.hpp"
 #include "rm/backends/ftp.hpp"
+#include "rm/backends/pid.hpp"
 #include <yaml-cpp/yaml.h>
 #include <unordered_set>
 #include <fstream>
@@ -67,6 +68,20 @@ void ResourceManager::load_config(const std::string& config_path) {
                 try {
                     named_backends_[name] = std::make_unique<LocalBackend>(root_path);
                     std::cout << "[rm] Backend '" << name << "': local " << root_path << std::endl;
+                } catch (const RMError& e) {
+                    std::cerr << "[rm] Warning: Failed to add backend '" << name << "': " << e.what() << std::endl;
+                }
+
+            } else if (type == "pid") {
+                std::string root = backend_config["root"].as<std::string>();
+                std::filesystem::path root_path(root);
+                if (root_path.is_relative()) {
+                    root_path = config_dir_ / root_path;
+                }
+
+                try {
+                    named_backends_[name] = std::make_unique<PidBackend>(root_path);
+                    std::cout << "[rm] Backend '" << name << "': pid " << root_path << std::endl;
                 } catch (const RMError& e) {
                     std::cerr << "[rm] Warning: Failed to add backend '" << name << "': " << e.what() << std::endl;
                 }

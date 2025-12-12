@@ -9,6 +9,7 @@
 #include "C3D.h"
 #include "Motion.h"
 #include "CBufferData.h"
+#include "rm/rm.hpp"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -106,10 +107,30 @@ private:
     Motion* mMotion;  // C3D motion only
     std::string mMotionPath;
 
+    // Motion source tracking
+    enum class MotionSource { None, FileList, PID };
+    MotionSource mMotionSource = MotionSource::None;
+
     // Motion file list (C3D files only)
     std::vector<std::string> mMotionList;
     int mSelectedMotion = -1;
     std::string mDirectorySearchPath;
+
+    // Resource Manager for PID-based access
+    std::unique_ptr<rm::ResourceManager> mResourceManager;
+
+    // PID browser state
+    std::vector<std::string> mPIDList;          // List of available PIDs
+    std::vector<std::string> mPIDNames;         // Patient names (parallel to mPIDList)
+    std::vector<std::string> mPIDGMFCS;         // GMFCS levels (parallel to mPIDList)
+    int mSelectedPID = -1;                       // Selected PID index
+    char mPIDFilter[64] = "";                    // Filter text for PIDs
+    bool mPreOp = true;                          // true=pre, false=post
+
+    // PID C3D files
+    std::vector<std::string> mPIDC3DFiles;      // C3D filenames for selected PID
+    int mSelectedPIDC3D = -1;                    // Selected C3D index
+    char mPIDC3DFilter[64] = "";                 // Filter text for C3D files
 
     // Marker rendering flags
     bool mRenderC3DMarkers;
@@ -229,6 +250,16 @@ private:
     void drawBonePoseSection();
     void drawJointAngleSection();
     void drawJointOffsetSection();
+    void drawClinicalDataSection();
+
+    // PID scanner methods
+    void scanPIDList();
+    void scanPIDC3DFiles();
+    void loadPIDC3DFile(const std::string& filename);
+
+    // Motion source helper
+    std::string getCurrentMotionPath() const;
+    void reloadCurrentMotion(bool withCalibration);
 
     // Helper for collapsing header
     bool collapsingHeaderWithControls(const std::string& title);

@@ -16,7 +16,7 @@ if [ -d "$PATIENT_DIR" ]; then
     echo "  [EXISTS] $PATIENT_DIR"
 else
     # Create directory structure
-    mkdir -p "$PATIENT_DIR/c3d"
+    mkdir -p "$PATIENT_DIR/gait"
     mkdir -p "$PATIENT_DIR/anatomy/skeleton"
     mkdir -p "$PATIENT_DIR/anatomy/muscle"
     mkdir -p "$PATIENT_DIR/ckpt"

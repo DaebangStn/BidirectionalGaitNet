@@ -149,6 +149,16 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
         LOG_INFO("[C3DProcessor] Autoloaded first C3D file: " << mMotionList[0]);
     }
 
+    // Initialize Resource Manager for PID-based access
+    try {
+        mResourceManager = std::make_unique<rm::ResourceManager>("data/rm_config.yaml");
+        scanPIDList();
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[C3DProcessor] Resource manager init failed: " << e.what());
+    } catch (const std::exception& e) {
+        LOG_WARN("[C3DProcessor] Resource manager init failed: " << e.what());
+    }
+
     mLastRealTime = glfwGetTime();
 
     // Reset to initial state
@@ -248,6 +258,23 @@ void C3DProcessorApp::initImGui()
     ImPlot::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // Load font with Korean glyph support
+    ImFontConfig fontConfig;
+    fontConfig.MergeMode = false;
+
+    // Try to load Noto Sans CJK for Korean support
+    const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+    if (std::filesystem::exists(fontPath)) {
+        // Load with full Korean range
+        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
+            io.Fonts->GetGlyphRangesKorean());
+        LOG_INFO("[C3DProcessor] Loaded Korean font: " << fontPath);
+    } else {
+        // Fallback to default font
+        io.Fonts->AddFontDefault();
+        LOG_WARN("[C3DProcessor] Korean font not found, using default");
+    }
 
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
@@ -911,6 +938,11 @@ void C3DProcessorApp::drawControlPanel()
 
     ImGui::Separator();
 
+    // Clinical Data (PID) Section
+    drawClinicalDataSection();
+
+    ImGui::Separator();
+
     // Playback Section
     drawPlaybackSection();
 
@@ -948,10 +980,11 @@ void C3DProcessorApp::drawMotionListSection()
                 fs::path p(mMotionList[i]);
                 std::string filename = p.filename().string();
 
-                bool isSelected = (i == mSelectedMotion);
+                bool isSelected = (i == mSelectedMotion && mMotionSource == MotionSource::FileList);
                 if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                    if (i != mSelectedMotion) {
+                    if (i != mSelectedMotion || mMotionSource != MotionSource::FileList) {
                         mSelectedMotion = i;
+                        mMotionSource = MotionSource::FileList;
                         loadC3DFile(mMotionList[i]);
                     }
                 }
@@ -2495,12 +2528,8 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                 alignCameraToPlane(3);  // ZX plane
                 break;
             case GLFW_KEY_C:
-                if (mC3DReader && mMotion && mSelectedMotion >= 0) {
-                    C3DConversionParams params;
-                    params.doCalibration = true;
-                    mMotion = mC3DReader->loadC3D(mMotionList[mSelectedMotion], params);
-                    LOG_INFO("[C3DProcessor] Reloaded with calibration");
-                }
+                // Reload current motion with calibration
+                reloadCurrentMotion(true);
                 break;
             case GLFW_KEY_F:
                 // Toggle camera follow
@@ -2649,4 +2678,280 @@ void C3DProcessorApp::clearMotionAndZeroPose()
     mIsPlaying = false;
 
     LOG_INFO("[C3DProcessor] Cleared motion and set zero pose");
+}
+
+// =============================================================================
+// Clinical Data (PID) Section
+// =============================================================================
+
+void C3DProcessorApp::drawClinicalDataSection()
+{
+    if (!mResourceManager) return;
+
+    if (collapsingHeaderWithControls("Clinical Data (PID)")) {
+        // PID Filter and Refresh
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::InputText("##PIDFilter", mPIDFilter, sizeof(mPIDFilter))) {
+            // Filter applied on display
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh##PID")) {
+            scanPIDList();
+        }
+        ImGui::SameLine();
+        ImGui::Text("%zu PIDs", mPIDList.size());
+
+        // PID List
+        if (ImGui::BeginListBox("##PIDList", ImVec2(-1, 150))) {
+            for (int i = 0; i < static_cast<int>(mPIDList.size()); ++i) {
+                const auto& pid = mPIDList[i];
+                const std::string& name = (i < static_cast<int>(mPIDNames.size())) ? mPIDNames[i] : "";
+                const std::string& gmfcs = (i < static_cast<int>(mPIDGMFCS.size())) ? mPIDGMFCS[i] : "";
+
+                // Build display string: "12345678 (홍길동, II)" or "12345678 (홍길동)" or just "12345678"
+                std::string displayStr;
+                if (name.empty() && gmfcs.empty()) {
+                    displayStr = pid;
+                } else if (name.empty()) {
+                    displayStr = pid + " (" + gmfcs + ")";
+                } else if (gmfcs.empty()) {
+                    displayStr = pid + " (" + name + ")";
+                } else {
+                    displayStr = pid + " (" + name + ", " + gmfcs + ")";
+                }
+
+                // Apply filter (search in PID, name, and GMFCS)
+                if (mPIDFilter[0] != '\0' &&
+                    pid.find(mPIDFilter) == std::string::npos &&
+                    name.find(mPIDFilter) == std::string::npos &&
+                    gmfcs.find(mPIDFilter) == std::string::npos) {
+                    continue;
+                }
+
+                bool isSelected = (i == mSelectedPID);
+                if (ImGui::Selectable(displayStr.c_str(), isSelected)) {
+                    if (i != mSelectedPID) {
+                        mSelectedPID = i;
+                        scanPIDC3DFiles();
+                    }
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        // Pre/Post radio buttons
+        if (ImGui::RadioButton("Pre-op", mPreOp)) {
+            if (!mPreOp) {
+                mPreOp = true;
+                if (mSelectedPID >= 0) scanPIDC3DFiles();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Post-op", !mPreOp)) {
+            if (mPreOp) {
+                mPreOp = false;
+                if (mSelectedPID >= 0) scanPIDC3DFiles();
+            }
+        }
+
+        // C3D Files section (only if PID selected)
+        if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
+            ImGui::Separator();
+            ImGui::Text("C3D Files: (%zu files)", mPIDC3DFiles.size());
+
+            // C3D Filter
+            ImGui::SetNextItemWidth(150);
+            ImGui::InputText("##PIDC3DFilter", mPIDC3DFilter, sizeof(mPIDC3DFilter));
+
+            // C3D List
+            if (ImGui::BeginListBox("##PIDC3DList", ImVec2(-1, 150))) {
+                for (int i = 0; i < static_cast<int>(mPIDC3DFiles.size()); ++i) {
+                    const auto& filename = mPIDC3DFiles[i];
+
+                    // Apply filter
+                    if (mPIDC3DFilter[0] != '\0' && filename.find(mPIDC3DFilter) == std::string::npos) {
+                        continue;
+                    }
+
+                    bool isSelected = (i == mSelectedPIDC3D && mMotionSource == MotionSource::PID);
+                    if (ImGui::Selectable(filename.c_str(), isSelected)) {
+                        if (i != mSelectedPIDC3D || mMotionSource != MotionSource::PID) {
+                            mSelectedPIDC3D = i;
+                            mMotionSource = MotionSource::PID;
+                            loadPIDC3DFile(filename);
+                        }
+                    }
+                }
+                ImGui::EndListBox();
+            }
+        }
+    }
+}
+
+void C3DProcessorApp::scanPIDList()
+{
+    mPIDList.clear();
+    mPIDNames.clear();
+    mPIDGMFCS.clear();
+    mSelectedPID = -1;
+    mPIDC3DFiles.clear();
+    mSelectedPIDC3D = -1;
+
+    if (!mResourceManager) return;
+
+    try {
+        // List all PIDs (directories under @pid:)
+        auto entries = mResourceManager->list("@pid:");
+        for (const auto& entry : entries) {
+            // Entry is the PID (directory name)
+            mPIDList.push_back(entry);
+        }
+        std::sort(mPIDList.begin(), mPIDList.end());
+
+        // Fetch patient names and GMFCS levels for each PID
+        mPIDNames.resize(mPIDList.size());
+        mPIDGMFCS.resize(mPIDList.size());
+        for (size_t i = 0; i < mPIDList.size(); ++i) {
+            try {
+                std::string nameUri = "@pid:" + mPIDList[i] + "/name";
+                auto handle = mResourceManager->fetch(nameUri);
+                mPIDNames[i] = handle.as_string();
+            } catch (const rm::RMError&) {
+                mPIDNames[i] = "";  // No name available
+            }
+            try {
+                std::string gmfcsUri = "@pid:" + mPIDList[i] + "/gmfcs";
+                auto handle = mResourceManager->fetch(gmfcsUri);
+                mPIDGMFCS[i] = handle.as_string();
+            } catch (const rm::RMError&) {
+                mPIDGMFCS[i] = "";  // No GMFCS available
+            }
+        }
+
+        LOG_INFO("[C3DProcessor] Found " << mPIDList.size() << " PIDs");
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[C3DProcessor] Failed to list PIDs: " << e.what());
+    }
+}
+
+void C3DProcessorApp::scanPIDC3DFiles()
+{
+    mPIDC3DFiles.clear();
+    mSelectedPIDC3D = -1;
+
+    if (!mResourceManager || mSelectedPID < 0 || mSelectedPID >= static_cast<int>(mPIDList.size())) {
+        return;
+    }
+
+    const std::string& pid = mPIDList[mSelectedPID];
+    std::string prePost = mPreOp ? "pre" : "post";
+    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+
+    try {
+        auto files = mResourceManager->list(pattern);
+        for (const auto& file : files) {
+            // Filter for .c3d files only
+            std::string lower = file;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".c3d") {
+                mPIDC3DFiles.push_back(file);
+            }
+        }
+        std::sort(mPIDC3DFiles.begin(), mPIDC3DFiles.end());
+        LOG_INFO("[C3DProcessor] Found " << mPIDC3DFiles.size() << " C3D files for PID " << pid << " (" << prePost << ")");
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[C3DProcessor] Failed to list C3D files: " << e.what());
+    }
+}
+
+void C3DProcessorApp::loadPIDC3DFile(const std::string& filename)
+{
+    if (!mResourceManager || mSelectedPID < 0) return;
+
+    const std::string& pid = mPIDList[mSelectedPID];
+    std::string prePost = mPreOp ? "pre" : "post";
+    std::string uri = "@pid:" + pid + "/gait/" + prePost + "/" + filename;
+
+    try {
+        auto handle = mResourceManager->fetch(uri);
+        std::filesystem::path localPath = handle.local_path();
+
+        // Use existing loadC3DFile with the local path
+        loadC3DFile(localPath.string());
+
+        LOG_INFO("[C3DProcessor] Loaded PID C3D: " << uri);
+    } catch (const rm::RMError& e) {
+        LOG_ERROR("[C3DProcessor] Failed to fetch C3D: " << e.what());
+    }
+}
+
+std::string C3DProcessorApp::getCurrentMotionPath() const
+{
+    switch (mMotionSource) {
+        case MotionSource::FileList:
+            if (mSelectedMotion >= 0 && mSelectedMotion < static_cast<int>(mMotionList.size())) {
+                return mMotionList[mSelectedMotion];
+            }
+            break;
+        case MotionSource::PID:
+            // For PID source, return the stored mMotionPath (set by loadC3DFile)
+            return mMotionPath;
+        case MotionSource::None:
+        default:
+            break;
+    }
+    return "";
+}
+
+void C3DProcessorApp::reloadCurrentMotion(bool withCalibration)
+{
+    if (!mC3DReader || mMotionSource == MotionSource::None) {
+        LOG_WARN("[C3DProcessor] No motion to reload");
+        return;
+    }
+
+    std::string path = getCurrentMotionPath();
+    if (path.empty()) {
+        LOG_WARN("[C3DProcessor] Cannot determine current motion path");
+        return;
+    }
+
+    // Unload previous motion
+    if (mMotion) {
+        delete mMotion;
+        mMotion = nullptr;
+    }
+
+    // Clear state
+    mMotionState = C3DViewerState();
+    mGraphData->clear_all();
+
+    // Reload with calibration option
+    C3DConversionParams params;
+    params.doCalibration = withCalibration;
+    mMotion = mC3DReader->loadC3D(path, params);
+
+    if (mMotion) {
+        mMotionPath = path;
+        mMotionState.maxFrameIndex = std::max(0, mMotion->getNumFrames() - 1);
+
+        // Compute cycle distance
+        C3D* c3dMotion = static_cast<C3D*>(mMotion);
+        mMotionState.cycleDistance = computeMarkerCycleDistance(c3dMotion);
+
+        // Height calibration
+        if (c3dMotion->getNumFrames() > 0) {
+            auto markers = c3dMotion->getMarkers(0);
+            double heightOffset = computeMarkerHeightCalibration(markers);
+            mMotionState.displayOffset = Eigen::Vector3d(0, heightOffset, 0);
+        }
+
+        // Initialize viewer time
+        mViewerTime = 0.0;
+        mViewerPhase = 0.0;
+
+        LOG_INFO("[C3DProcessor] Reloaded: " << path << " (calibration=" << withCalibration << ")");
+    } else {
+        LOG_ERROR("[C3DProcessor] Failed to reload: " << path);
+    }
 }
