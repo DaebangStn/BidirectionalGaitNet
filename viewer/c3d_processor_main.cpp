@@ -12,7 +12,7 @@ int main(int argc, char** argv)
         ("help,h", "Show this help message")
         ("skeleton,s", po::value<std::string>()->default_value("@data/skeleton/base_v2.xml"),
             "Skeleton XML path (supports @data/ URI scheme)")
-        ("marker,m", po::value<std::string>()->default_value("@data/marker/default.xml"),
+        ("marker,m", po::value<std::string>()->default_value("@data/marker/static.xml"),
             "Marker configuration XML/YAML path (supports @data/ URI scheme)")
         ("config,c", po::value<std::string>()->default_value("@data/config/skeleton_fitting.yaml"),
             "Skeleton fitting config YAML path (supports @data/ URI scheme)");
@@ -26,7 +26,7 @@ int main(int argc, char** argv)
             std::cout << desc << std::endl;
             std::cout << "\nUsage examples:\n"
                       << "  c3d_processor                    # Uses default skeleton, marker, and fitting config\n"
-                      << "  c3d_processor -m data/marker/default.yaml\n"
+                      << "  c3d_processor -m data/marker/static.xml\n"
                       << "  c3d_processor -c @data/config/skeleton_fitting.yaml\n"
                       << "  c3d_processor -s @data/skeleton/base_v2.xml\n"
                       << "\nControls:\n"

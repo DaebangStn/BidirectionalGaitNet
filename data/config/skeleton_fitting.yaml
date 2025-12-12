@@ -76,14 +76,17 @@ skeleton_fitting:
     interpolate_ratio: 0.5
 
     # SVD-based optimizer targets (requires 3+ markers)
+    # Plain string = scale: true (default), object format for scale: false
     target_svd:
       - Pelvis
       - FemurR
       - TibiaR
-      - TalusR
+      - name: TalusR
+        scale: false
       - FemurL
       - TibiaL
-      - TalusL
+      - name: TalusL
+        scale: false
       - Torso
       - Head
 
@@ -159,3 +162,10 @@ skeleton_fitting:
       # - Arm
       # - ForeArm
       # - Hand
+
+  # Plantar correction during foot lock phases
+  plantar_correction:
+    enabled: true
+    velocity_threshold: 0.002  # m/frame threshold for lock detection (5mm)
+    min_lock_frames: 15         # minimum consecutive frames to count as lock phase
+    blend_frames: 6            # frames for smooth transition at phase boundaries

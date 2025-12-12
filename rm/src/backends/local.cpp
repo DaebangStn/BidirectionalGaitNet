@@ -36,6 +36,15 @@ bool LocalBackend::exists(const std::string& path) {
     return std::filesystem::exists(full_path) && std::filesystem::is_regular_file(full_path);
 }
 
+bool LocalBackend::existsDir(const std::string& path) {
+    auto full_path = resolve(path);
+    return std::filesystem::exists(full_path) && std::filesystem::is_directory(full_path);
+}
+
+std::filesystem::path LocalBackend::resolvePath(const std::string& path) {
+    return resolve(path);
+}
+
 ResourceHandle LocalBackend::fetch(const std::string& path) {
     auto full_path = resolve(path);
 

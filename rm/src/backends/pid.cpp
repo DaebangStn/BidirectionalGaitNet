@@ -187,6 +187,15 @@ bool PidBackend::exists(const std::string& path) {
     return std::filesystem::exists(full_path) && std::filesystem::is_regular_file(full_path);
 }
 
+bool PidBackend::existsDir(const std::string& path) {
+    auto full_path = resolve(path);
+    return std::filesystem::exists(full_path) && std::filesystem::is_directory(full_path);
+}
+
+std::filesystem::path PidBackend::resolvePath(const std::string& path) {
+    return resolve(path);
+}
+
 ResourceHandle PidBackend::fetch(const std::string& path) {
     // Check if this is a metadata field request
     auto metadata_request = parse_metadata_field(path);

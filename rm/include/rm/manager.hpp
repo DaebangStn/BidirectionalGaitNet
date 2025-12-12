@@ -78,6 +78,10 @@ public:
     // Returns empty path if resource not found
     std::filesystem::path resolve(const std::string& uri_str);
 
+    // Resolve URI to directory path (for export destinations)
+    // Returns empty path if directory not found
+    std::filesystem::path resolveDir(const std::string& uri_str);
+
     // Get backend names for a URI (based on prefix routing)
     std::vector<std::string> resolve_backend_names(const std::string& uri_str);
 

@@ -1,0 +1,227 @@
+// Dynamic Optimization Pipeline
+// Two-stage approach: Static calibration -> Dynamic tracking with personalized markers
+digraph dynamic_optimization {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=0.6;
+    fontname="Helvetica";
+    newrank=true;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Helvetica",
+        fontsize=10,
+        margin="0.15,0.10"
+    ];
+
+    edge [
+        color="gray30",
+        penwidth=1.2,
+        arrowsize=0.7,
+        fontname="Helvetica",
+        fontsize=8
+    ];
+
+    // === TITLE ===
+    labelloc="t";
+    label=<<font point-size="12"><b>Dynamic Optimization Pipeline (Full Motion)</b></font>>;
+
+    // === INPUT ===
+    subgraph cluster_input {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Input</font>>;
+
+        c3d_dynamic [label="Dynamic C3D File\n(walk01-Dynamic.c3d)\n[K frames]", fillcolor="#E3F2FD"];
+        pers_markers [label="Personalized Markers\n(from static calibration)\nstatic_calibrated_marker.xml", fillcolor="#C8E6C9"];
+        skel_xml [label="Skeleton XML\n(base_v2.xml)", fillcolor="#FFF8E1"];
+        config_yaml [label="skeleton_fitting.yaml", fillcolor="#FFF8E1"];
+    }
+
+    // === PRE-REQUISITE: STATIC CALIBRATION ===
+    subgraph cluster_static_prereq {
+        style=filled;
+        fillcolor="#E8F5E9";
+        color="#4CAF50";
+        penwidth=1.5;
+        label=<<font point-size="8" color="#2E7D32">Pre-requisite: Static Calibration (once per patient)</font>>;
+
+        static_c3d [label="Static C3D\n(with medial markers)", fillcolor="#A5D6A7"];
+        static_calib [label="calibrateStatic()\n(see calibration_2_static.dot)", fillcolor="#81C784"];
+        static_output [label="Personalized Offsets\n{THI, Shank, Heel, Toe}", shape=ellipse, fillcolor="white"];
+
+        static_c3d -> static_calib [penwidth=2.0, color="#4CAF50"];
+        static_calib -> static_output [penwidth=2.0, color="#4CAF50"];
+    }
+
+    // === CHARACTERS (BOTH) ===
+    subgraph cluster_characters {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Both Character Skeletons</font>>;
+
+        free_char [label="mFreeCharacter\n(free joints)\n126 DOFs\nbone-by-bone fitting", fillcolor="#BBDEFB"];
+        motion_char [label="mMotionCharacter\n(articulated)\n50 DOFs\narticulated IK", fillcolor="#90CAF9"];
+    }
+
+    // === STAGE A: BONE FITTING (mFreeCharacter) ===
+    subgraph cluster_stage_a {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage A: Bone Fitting (mFreeCharacter)</font>>;
+
+        harrington [label="Harrington Hip\nJoint Centers\n[K frames]", fillcolor="#BBDEFB"];
+        svd_multi [label="SVD Multi-Frame\nBone Fitting\n(Pelvis, Femur, Tibia,\nTalus, Torso, Head)", fillcolor="#BBDEFB"];
+        ceres_arm [label="Ceres Arm Fitting\n(Arm, ForeArm)", fillcolor="#BBDEFB"];
+        symmetry [label="Symmetry\nEnforcement", fillcolor="#90CAF9"];
+
+        bone_R [label="mBoneR_frames\n{bone -> R[t]}", shape=ellipse, fillcolor="white"];
+        bone_t [label="mBoneT_frames\n{bone -> t[t]}", shape=ellipse, fillcolor="white"];
+        bone_S [label="mSkelInfos\n(anisotropic scales)", shape=ellipse, fillcolor="white"];
+
+        harrington -> svd_multi [penwidth=2.0, color=black];
+        svd_multi -> symmetry [penwidth=2.0, color=black];
+        ceres_arm -> symmetry [penwidth=2.0, color=black];
+        symmetry -> bone_R [penwidth=1.5, color="#2196F3", style=dashed];
+        symmetry -> bone_t [penwidth=1.5, color="#2196F3", style=dashed];
+        symmetry -> bone_S [penwidth=1.5, color="#2196F3", style=dashed];
+    }
+
+    // === STAGE B: FREE POSE BUILDING ===
+    subgraph cluster_stage_b {
+        style=filled;
+        fillcolor="#FFF3E0";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage B: Free Pose Building</font>>;
+
+        build_free [label="buildFramePose()\nfrom R[t], t[t], S", fillcolor="#FFE0B2"];
+        free_poses [label="Free Poses\n[K frames]\nmFreePoses", shape=ellipse, fillcolor="white"];
+
+        build_free -> free_poses [penwidth=2.0, color=black];
+    }
+
+    // === STAGE C: MOTION CONVERSION (mMotionCharacter) ===
+    subgraph cluster_stage_c {
+        style=filled;
+        fillcolor="#F3E5F5";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage C: Motion Conversion (mMotionCharacter)</font>>;
+
+        joint_offset [label="estimateJointOffsets()\nleast-squares fitting\nmFreeChar vs mMotionChar", fillcolor="#E1BEE7"];
+        project [label="projectPoseToMotion()\narticulated IK", fillcolor="#CE93D8"];
+        motion_poses [label="Motion Poses\n[K frames]\nmMotionPoses", shape=ellipse, fillcolor="white"];
+
+        joint_offset -> project [penwidth=2.0, color=black];
+        project -> motion_poses [penwidth=2.0, color=black];
+    }
+
+    // === STAGE D: IK REFINEMENT (OPTIONAL) ===
+    subgraph cluster_stage_d {
+        style=filled;
+        fillcolor="#FCE4EC";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage D: IK Refinement (Optional)</font>>;
+
+        arm_ik [label="refineArmIK()\nDLS + Line Search\nmarker-driven", fillcolor="#F8BBD9"];
+        leg_ik [label="refineLegIK()\nDLS + Line Search\nmarker-driven", fillcolor="#F8BBD9"];
+    }
+
+    // === OUTPUT ===
+    subgraph cluster_output {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Output: DynamicCalibrationResult</font>>;
+
+        result [label="DynamicCalibrationResult", fillcolor="#C8E6C9"];
+        out_scales [label="boneScales\n{bone -> (Sx, Sy, Sz)}", fillcolor="#A5D6A7"];
+        out_free [label="freePoses\n[K frames]", fillcolor="#A5D6A7"];
+        out_motion [label="motionPoses\n[K frames]", fillcolor="#A5D6A7"];
+        out_offsets [label="motionResult\n(joint offsets)", fillcolor="#A5D6A7"];
+
+        result -> out_scales [penwidth=1.0, color=gray50, style=dashed];
+        result -> out_free [penwidth=1.0, color=gray50, style=dashed];
+        result -> out_motion [penwidth=1.0, color=gray50, style=dashed];
+        result -> out_offsets [penwidth=1.0, color=gray50, style=dashed];
+    }
+
+    // === MAIN FLOW ===
+    // Static calibration feeds personalized markers
+    static_output -> pers_markers [penwidth=2.5, color="#4CAF50", label="patient-specific"];
+
+    // Input to processing
+    c3d_dynamic -> harrington [penwidth=2.5, color=black];
+    pers_markers -> svd_multi [penwidth=2.0, color="#4CAF50", label="personalized\noffsets"];
+    skel_xml -> free_char [penwidth=1.5, color=gray50];
+    skel_xml -> motion_char [penwidth=1.5, color=gray50];
+    config_yaml -> svd_multi [penwidth=1.0, color=gray50, style=dashed];
+
+    // Character usage
+    free_char -> svd_multi [penwidth=2.0, color="#2196F3"];
+    free_char -> ceres_arm [penwidth=2.0, color="#2196F3"];
+    free_char -> build_free [penwidth=2.0, color="#2196F3"];
+
+    bone_R -> build_free [penwidth=2.0, color=black];
+    bone_t -> build_free [penwidth=2.0, color=black];
+    bone_S -> build_free [penwidth=2.0, color=black];
+
+    free_poses -> joint_offset [penwidth=2.5, color=black];
+    motion_char -> joint_offset [penwidth=2.0, color="#9C27B0"];
+    motion_char -> project [penwidth=2.0, color="#9C27B0"];
+
+    // IK refinement (optional)
+    motion_poses -> arm_ik [penwidth=1.5, color=gray50, style=dashed];
+    motion_poses -> leg_ik [penwidth=1.5, color=gray50, style=dashed];
+
+    // To output
+    bone_S -> out_scales [penwidth=1.5, color="#2196F3", style=dashed];
+    free_poses -> out_free [penwidth=1.5, color="#FF9800", style=dashed];
+    motion_poses -> out_motion [penwidth=1.5, color="#9C27B0", style=dashed];
+    joint_offset -> out_offsets [penwidth=1.5, color="#9C27B0", style=dashed];
+
+    // === KEY DIFFERENCE BOX ===
+    subgraph cluster_key {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="#1976D2";
+        penwidth=1.0;
+        label=<<font point-size="8" color="#1565C0">Key Improvement over Previous</font>>;
+
+        key_diff [label="Uses personalized marker offsets\nfrom static calibration instead of\npopulation-average offsets.\n\nBetter soft-tissue marker tracking\nfor THI, Shank, Heel, Toe.",
+                 shape=note, fillcolor="#BBDEFB", fontsize=9];
+    }
+
+    // === DATA FLOW LEGEND ===
+    subgraph cluster_legend {
+        style=filled;
+        fillcolor="#FAFAFA";
+        color="gray80";
+        penwidth=0.5;
+        label=<<font point-size="7" color="gray50">Color Legend</font>>;
+
+        leg_free [label="mFreeCharacter flow", fillcolor="#BBDEFB", fontsize=8];
+        leg_motion [label="mMotionCharacter flow", fillcolor="#E1BEE7", fontsize=8];
+        leg_pers [label="Personalized data", fillcolor="#C8E6C9", fontsize=8];
+    }
+
+    // Rank alignment
+    {rank=same; c3d_dynamic; pers_markers; skel_xml; config_yaml;}
+    {rank=same; static_c3d; static_calib;}
+    {rank=same; free_char; motion_char;}
+    {rank=same; bone_R; bone_t; bone_S;}
+    {rank=same; out_scales; out_free; out_motion; out_offsets;}
+}

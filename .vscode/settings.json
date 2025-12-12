@@ -77,7 +77,8 @@
       "charconv": "cpp",
       "future": "cpp",
       "*.inc": "cpp",
-      "any": "cpp"
+      "any": "cpp",
+      "variant": "cpp"
     },
     "C_Cpp.intelliSenseEngine": "Disabled",
     "C_Cpp.autocomplete": "Disabled",

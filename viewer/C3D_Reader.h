@@ -118,6 +118,12 @@ private:
     std::unordered_map<std::string, MarkerInfo> mNameToInfo;
 };
 
+// SVD optimization target with per-bone settings
+struct SvdTarget {
+    std::string name;
+    bool optimizeScale = true;  // false = only fit R,t, keep scale at 1.0
+};
+
 // Skeleton fitting configuration (loaded from YAML)
 struct SkeletonFittingConfig {
     int frameStart = 0;
@@ -130,7 +136,7 @@ struct SkeletonFittingConfig {
     std::vector<MarkerReference> markerMappings;
 
     // SVD-based optimizer targets (requires 3+ markers)
-    std::vector<std::string> targetSvd;
+    std::vector<SvdTarget> targetSvd;
 
     double lambdaRot = 10.0;  // Ceres rotation regularization weight
     // Ceres-based optimizer targets (handles 2+ markers with regularization)
@@ -186,6 +192,15 @@ struct SkeletonFittingConfig {
     };
     SymmetryConfig symmetry;
 
+    // Plantar correction configuration (for refineTalus)
+    struct PlantarCorrectionConfig {
+        bool enabled = true;
+        double velocityThreshold = 0.005;  // m/frame (5mm)
+        int minLockFrames = 5;
+        int blendFrames = 3;               // frames for smooth transition at boundaries
+    };
+    PlantarCorrectionConfig plantarCorrection;
+
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
         for (const auto& ref : markerMappings) {
@@ -226,6 +241,34 @@ struct MotionConversionResult {
     bool valid = false;
 };
 
+// Foot lock phase for plantar correction (stance phase detection)
+struct FootLockPhase {
+    int startFrame;
+    int endFrame;
+    bool isLeft;  // true = left foot, false = right foot
+};
+
+// Result of static calibration (mFreeCharacter only, single frame)
+// Outputs: bone scales + personalized marker offsets
+struct StaticCalibrationResult {
+    std::map<std::string, Eigen::Vector3d> boneScales;           // Bone name -> (sx, sy, sz) scale
+    std::map<std::string, Eigen::Vector3d> personalizedOffsets;  // Marker name -> personalized offset
+    std::map<std::string, double> talusHeightOffsets;            // Talus bone name -> shared y0 height offset
+    bool success = false;
+    std::string errorMessage;
+};
+
+// Result of dynamic calibration (both mFreeCharacter and mMotionCharacter)
+// Outputs: bone scales + free poses + motion poses + joint offsets
+struct DynamicCalibrationResult {
+    std::map<std::string, Eigen::Vector3d> boneScales;      // Bone name -> (sx, sy, sz) scale
+    std::vector<Eigen::VectorXd> freePoses;                 // Free skeleton poses (from mFreeCharacter)
+    std::vector<Eigen::VectorXd> motionPoses;               // Articulated poses (from mMotionCharacter)
+    MotionConversionResult motionResult;                    // Joint offsets etc.
+    bool success = false;
+    std::string errorMessage;
+};
+
 class C3D_Reader
 {
     public:
@@ -236,6 +279,7 @@ class C3D_Reader
 
 
         C3D* loadC3D(const std::string& path, const C3DConversionParams& params);
+        C3D* loadC3DMarkersOnly(const std::string& path);  // Load markers only, no calibration/IK
         // buildFramePoseLegacy removed - kept as commented code in .cpp for reference
         Eigen::VectorXd buildFramePose(int fitFrameIdx);
         Eigen::VectorXd buildFramePoseLegacy(std::vector<Eigen::Vector3d>& _pos);
@@ -263,15 +307,18 @@ class C3D_Reader
         // Stage 2: Fit bones - extracts S (scale) and stores R, t (global transforms)
         void calibrateBone(const std::string& boneName,
                           const std::vector<const MarkerReference*>& markers,
-                          const std::vector<std::vector<Eigen::Vector3d>>& allMarkers);
+                          const std::vector<std::vector<Eigen::Vector3d>>& allMarkers,
+                          bool optimizeScale = true);
 
         // Core algorithm (SVD-based): uses MarkerReference for both offset and data index
         // Internally handles world-to-local transformation and returns GLOBAL transforms
         // Requires 3+ markers per bone
+        // optimizeScale: if false, only fit R,t (pose), keep scale at 1.0
         BoneFitResult optimizeBoneScale(
             BodyNode* bn,                                    // BodyNode for coordinate transforms
             const std::vector<const MarkerReference*>& markers,  // Markers with offset and dataIndex
-            const std::vector<std::vector<Eigen::Vector3d>>& globalP);  // Measured markers [K frames][N markers] in WORLD coords
+            const std::vector<std::vector<Eigen::Vector3d>>& globalP,  // Measured markers [K frames][N markers] in WORLD coords
+            bool optimizeScale = true);
 
         // Note: Ceres-based optimizer (optimizeBoneScaleCeres) is in CeresOptimizer.h/cpp
         // and is only available when USE_CERES is defined
@@ -301,7 +348,39 @@ class C3D_Reader
         // IK postprocessing methods (can be called independently via UI)
         void refineArmIK();      // Step 6: Adjust arm twist + elbow to match wrist markers
         void refineLegIK();      // Step 7: Adjust femur + tibia to match talus position
-        void enforceSymmetry();  // Step 8: Balance R/L bone scales based on threshold
+        void refineTalus();      // Step 8: Correct talus orientation during foot lock phases
+        void enforceSymmetry();  // Step 9: Balance R/L bone scales based on threshold
+
+        // ====== Static Calibration API ======
+        // Uses mFreeCharacter ONLY - bone-by-bone SVD fitting, single frame
+        // Outputs: bone scales + personalized marker offsets (THI, Shank, Heel, Toe)
+        StaticCalibrationResult calibrateStatic(C3D* c3dData, const std::string& staticConfigPath);
+
+        // Talus alternating optimization with shared body-frame height offset
+        // Returns shared y0 height offset for heel/toe markers
+        double calibrateTalusWithSharedHeight(
+            const std::string& boneName,
+            const std::vector<const MarkerReference*>& markers,
+            const std::vector<Eigen::Vector3d>& frameMarkers);
+
+        // Back-project marker position to bone-local offset (for THI, Shank)
+        Eigen::Vector3d personalizeMarkerOffset(
+            const std::string& markerName,
+            const std::string& boneName,
+            const Eigen::Vector3d& worldPos);
+
+        // Export personalized markers and body scales to given directory
+        void exportPersonalizedCalibration(
+            const StaticCalibrationResult& result,
+            const std::string& outputDir);
+
+        // Dynamic calibration: multi-frame bone fitting + pose building
+        // Input: C3D* with markers already loaded (from loadC3DMarkersOnly)
+        // Uses both mFreeCharacter and mMotionCharacter
+        DynamicCalibrationResult calibrateDynamic(C3D* c3dData);
+
+        // Check if C3D has medial markers (for static calibration)
+        static bool hasMedialMarkers(const std::vector<std::string>& labels);
 
     private:
         // Helper methods for loadC3D refactoring

@@ -998,3 +998,87 @@ void RenderCharacter::exportSkeletonYAML(const std::string& path) const
 
     LOG_INFO("[RenderCharacter] Exported skeleton with " << bodyNodes.size() << " nodes to: " << path);
 }
+
+void RenderCharacter::exportBodyScaleYAML(const std::string& path) const
+{
+    std::ofstream ofs(path);
+    if (!ofs.is_open()) {
+        LOG_ERROR("[RenderCharacter] Failed to open file: " << path);
+        return;
+    }
+
+    ofs << "metadata:" << std::endl;
+    ofs << "  generator: \"StaticCalibration\"" << std::endl;
+    ofs << "  timestamp: \"" << getCurrentTimestamp() << "\"" << std::endl;
+    ofs << std::endl;
+    ofs << "bone_scales:" << std::endl;
+
+    for (const auto& info : mSkelInfos) {
+        const std::string& boneName = std::get<0>(info);
+        const ModifyInfo& modInfo = std::get<1>(info);
+        // value[0-2] are anisotropic scales (x, y, z)
+        ofs << "  " << boneName << ": ["
+            << modInfo.value[0] << ", "
+            << modInfo.value[1] << ", "
+            << modInfo.value[2] << "]" << std::endl;
+    }
+
+    ofs << std::endl;
+    ofs << "bone_torsion:" << std::endl;
+    for (const auto& info : mSkelInfos) {
+        const std::string& boneName = std::get<0>(info);
+        const ModifyInfo& modInfo = std::get<1>(info);
+        // value[4] is torsion
+        if (std::abs(modInfo.value[4]) > 1e-6) {
+            ofs << "  " << boneName << ": " << modInfo.value[4] << std::endl;
+        }
+    }
+
+    ofs.close();
+    LOG_INFO("[RenderCharacter] Exported body scales to: " << path);
+}
+
+bool RenderCharacter::loadBodyScaleYAML(const std::string& path)
+{
+    try {
+        YAML::Node config = YAML::LoadFile(path);
+        if (!config["bone_scales"]) {
+            LOG_ERROR("[RenderCharacter] Invalid body scale file (no bone_scales): " << path);
+            return false;
+        }
+
+        // Load bone scales
+        auto scales = config["bone_scales"];
+        for (auto& info : mSkelInfos) {
+            const std::string& boneName = std::get<0>(info);
+            if (scales[boneName]) {
+                auto s = scales[boneName].as<std::vector<double>>();
+                if (s.size() >= 3) {
+                    std::get<1>(info).value[0] = s[0];
+                    std::get<1>(info).value[1] = s[1];
+                    std::get<1>(info).value[2] = s[2];
+                }
+            }
+        }
+
+        // Load torsion if present
+        if (config["bone_torsion"]) {
+            auto torsion = config["bone_torsion"];
+            for (auto& info : mSkelInfos) {
+                const std::string& boneName = std::get<0>(info);
+                if (torsion[boneName]) {
+                    std::get<1>(info).value[4] = torsion[boneName].as<double>();
+                }
+            }
+        }
+
+        // Apply to skeleton
+        applySkeletonBodyNode(mSkelInfos, mSkeleton);
+
+        LOG_INFO("[RenderCharacter] Loaded body scales from: " << path);
+        return true;
+    } catch (const YAML::Exception& e) {
+        LOG_ERROR("[RenderCharacter] YAML error loading body scales: " << e.what());
+        return false;
+    }
+}

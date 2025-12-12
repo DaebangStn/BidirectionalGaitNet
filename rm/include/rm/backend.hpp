@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rm/handle.hpp"
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,6 +24,15 @@ public:
     // Check if a resource exists at the given path
     // Path is relative to the backend's root
     virtual bool exists(const std::string& path) = 0;
+
+    // Check if a directory exists at the given path
+    // Path is relative to the backend's root
+    // Default implementation returns false (override for backends that support directories)
+    virtual bool existsDir(const std::string& path) { return false; }
+
+    // Resolve path to absolute filesystem path (for local backends)
+    // Returns empty path if not supported or path doesn't exist
+    virtual std::filesystem::path resolvePath(const std::string& path) { return {}; }
 
     // Fetch a resource, returning a handle to its data
     // Throws RMError on failure

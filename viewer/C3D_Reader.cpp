@@ -1,6 +1,7 @@
 #include <cmath>
 #include <utility>
 #include <algorithm>
+#include <filesystem>
 #include <tinyxml2.h>
 #include <ezc3d/ezc3d_all.h>
 #include "C3D_Reader.h"
@@ -205,9 +206,20 @@ void C3D_Reader::loadSkeletonFittingConfig() {
             mFittingConfig.convergenceThreshold = sf["optimization"]["convergence_threshold"].as<double>(1e-6);
             mFittingConfig.plotConvergence = sf["optimization"]["plot_convergence"].as<bool>(true);
             // SVD-based optimizer targets (3+ markers)
+            // Supports both plain string (scale=true) and object format {name, scale}
             if (sf["optimization"]["target_svd"]) {
                 for (const auto& t : sf["optimization"]["target_svd"]) {
-                    mFittingConfig.targetSvd.push_back(t.as<std::string>());
+                    SvdTarget target;
+                    if (t.IsScalar()) {
+                        // Backward compatible: plain string = scale enabled
+                        target.name = t.as<std::string>();
+                        target.optimizeScale = true;
+                    } else {
+                        // New format: {name: ..., scale: ...}
+                        target.name = t["name"].as<std::string>();
+                        target.optimizeScale = t["scale"].as<bool>(true);
+                    }
+                    mFittingConfig.targetSvd.push_back(target);
                 }
             }
 
@@ -292,6 +304,19 @@ void C3D_Reader::loadSkeletonFittingConfig() {
             LOG_VERBOSE("[Config] Symmetry params loaded: enabled=" << mFittingConfig.symmetry.enabled
                      << ", threshold=" << mFittingConfig.symmetry.threshold
                      << ", bones=" << mFittingConfig.symmetry.bones.size());
+        }
+
+        // Plantar correction parameters
+        if (sf["plantar_correction"]) {
+            auto pc = sf["plantar_correction"];
+            mFittingConfig.plantarCorrection.enabled = pc["enabled"].as<bool>(true);
+            mFittingConfig.plantarCorrection.velocityThreshold = pc["velocity_threshold"].as<double>(0.005);
+            mFittingConfig.plantarCorrection.minLockFrames = pc["min_lock_frames"].as<int>(5);
+            mFittingConfig.plantarCorrection.blendFrames = pc["blend_frames"].as<int>(3);
+            LOG_VERBOSE("[Config] Plantar correction: enabled=" << mFittingConfig.plantarCorrection.enabled
+                     << ", threshold=" << mFittingConfig.plantarCorrection.velocityThreshold
+                     << ", minFrames=" << mFittingConfig.plantarCorrection.minLockFrames
+                     << ", blendFrames=" << mFittingConfig.plantarCorrection.blendFrames);
         }
 
         // New format: marker_mappings (flat list)
@@ -398,6 +423,7 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
         Eigen::VectorXd pose = buildFramePose(i);
         mFreePoses.push_back(pose);
     }
+    refineTalus();
 
     // ========== 5. Convert to motion skeleton (if available) ==========
     if (mMotionCharacter) {
@@ -413,6 +439,44 @@ C3D* C3D_Reader::loadC3D(const std::string& path, const C3DConversionParams& par
     mCurrentC3D = nullptr;  // Clear after processing
 
     LOG_VERBOSE("[C3D_Reader] Loaded " << c3dData->getNumFrames() << " frames");
+    return c3dData;
+}
+
+// ============================================================================
+// SECTION 2b: loadC3DMarkersOnly - Load markers only without calibration/IK
+// ============================================================================
+
+C3D* C3D_Reader::loadC3DMarkersOnly(const std::string& path)
+{
+    LOG_VERBOSE("[C3D_Reader] loadC3DMarkersOnly started for: " << path);
+
+    // Parse C3D file - creates C3D* with raw markers
+    C3D* c3dData = parseC3DFile(path);
+    if (!c3dData) {
+        return nullptr;
+    }
+
+    mCurrentC3D = c3dData;
+    mFrameRate = static_cast<int>(std::lround(c3dData->getFrameRate()));
+
+    const size_t numFrames = c3dData->getNumFrames();
+    if (numFrames == 0) {
+        LOG_ERROR("[C3D_Reader] No frames found in C3D file");
+        mCurrentC3D = nullptr;
+        delete c3dData;
+        return nullptr;
+    }
+
+    // Resolve marker references for later calibration use
+    resolveMarkerReferences(c3dData->getLabels());
+
+    // Correct backward walking (modifies markers in place)
+    C3D::detectAndCorrectBackwardWalking(c3dData->getAllMarkers());
+
+    c3dData->setSourceFile(path);
+    mCurrentC3D = nullptr;
+
+    LOG_VERBOSE("[C3D_Reader] Loaded " << numFrames << " frames (markers only)");
     return c3dData;
 }
 
@@ -488,15 +552,15 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
 
     // ============ STAGE 2a: SVD-based bones (3+ markers) ============
     std::cout << "\n=== Stage 2a: SVD-based bone fitting (3+ markers) ===\n" << std::endl;
-    for (const auto& boneName : mFittingConfig.targetSvd) {
-        auto it = boneToMarkers.find(boneName);
+    for (const auto& target : mFittingConfig.targetSvd) {
+        auto it = boneToMarkers.find(target.name);
         if (it == boneToMarkers.end() || it->second.empty()) {
-            LOG_WARN("[C3D_Reader] No marker mappings found for bone: " << boneName);
+            LOG_WARN("[C3D_Reader] No marker mappings found for bone: " << target.name);
             continue;
         }
 
-        calibrateBone(boneName, it->second, mCurrentC3D->getAllMarkers());
-        mBoneOrder.push_back(boneName);
+        calibrateBone(target.name, it->second, mCurrentC3D->getAllMarkers(), target.optimizeScale);
+        mBoneOrder.push_back(target.name);
     }
 
 #ifdef USE_CERES
@@ -541,7 +605,9 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     LOG_INFO("[C3D_Reader] Multi-stage skeleton fitting complete. Final scales:");
     // Combine SVD and Ceres targets for summary
     std::vector<std::string> allTargets;
-    allTargets.insert(allTargets.end(), mFittingConfig.targetSvd.begin(), mFittingConfig.targetSvd.end());
+    for (const auto& target : mFittingConfig.targetSvd) {
+        allTargets.push_back(target.name);
+    }
     allTargets.insert(allTargets.end(), mFittingConfig.targetCeres.begin(), mFittingConfig.targetCeres.end());
     for (const auto& boneName : allTargets) {
         BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(boneName);
@@ -647,10 +713,12 @@ Eigen::Vector3d C3D_Reader::computeHipJointCenter(
 
 // Unified bone fitting - extracts S (scale) and stores R, t (global transforms)
 // Works for all bones including Pelvis
+// optimizeScale: if false, only fit R,t (pose), keep scale at 1.0
 void C3D_Reader::calibrateBone(
     const std::string& boneName,
     const std::vector<const MarkerReference*>& markers,
-    const std::vector<std::vector<Eigen::Vector3d>>& allMarkers)
+    const std::vector<std::vector<Eigen::Vector3d>>& allMarkers,
+    bool optimizeScale)
 {
     BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(boneName);
     if (!bn) {
@@ -670,10 +738,10 @@ void C3D_Reader::calibrateBone(
 
     // Run optimization - optimizeBoneScale handles coordinate transforms
     if (mFittingConfig.plotConvergence) {
-        std::cout << "\n=== Fitting " << boneName << " ===" << std::endl;
+        std::cout << "\n=== Fitting " << boneName << (optimizeScale ? "" : " (pose only)") << " ===" << std::endl;
     }
 
-    auto result = optimizeBoneScale(bn, markers, globalP);
+    auto result = optimizeBoneScale(bn, markers, globalP, optimizeScale);
 
     if (result.valid) {
         // Store scale
@@ -740,10 +808,12 @@ static Eigen::Vector3d applyScaleRatioBound(
 // Alternating optimization for anisotropic scale estimation
 // Accepts BodyNode, marker indices, and GLOBAL marker positions
 // Internally handles world-to-local transformation and returns GLOBAL transforms
+// optimizeScale: if false, only fit R,t (pose), keep scale at 1.0
 BoneFitResult C3D_Reader::optimizeBoneScale(
     BodyNode* bn,
     const std::vector<const MarkerReference*>& markers,
-    const std::vector<std::vector<Eigen::Vector3d>>& globalP)
+    const std::vector<std::vector<Eigen::Vector3d>>& globalP,
+    bool optimizeScale)
 {
     BoneFitResult out;
     out.valid = false;
@@ -891,29 +961,33 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
 
         // =====================================================
         // Step B: Shared scale update (fix {R_k, t_k})
+        // Skip if optimizeScale=false (pose-only mode)
         // =====================================================
-        Eigen::Vector3d num = Eigen::Vector3d::Zero();
-        Eigen::Vector3d den = Eigen::Vector3d::Zero();
+        if (optimizeScale) {
+            Eigen::Vector3d num = Eigen::Vector3d::Zero();
+            Eigen::Vector3d den = Eigen::Vector3d::Zero();
 
-        for (int k = 0; k < K; ++k) {
-            for (int i = 0; i < N; ++i) {
-                // Transform measured marker to body frame
-                Eigen::Vector3d y = R[k].transpose() * (p[k][i] - t[k]);
+            for (int k = 0; k < K; ++k) {
+                for (int i = 0; i < N; ++i) {
+                    // Transform measured marker to body frame
+                    Eigen::Vector3d y = R[k].transpose() * (p[k][i] - t[k]);
 
-                // Accumulate per-axis
-                num += y.cwiseProduct(q[i]);
-                den += q[i].cwiseProduct(q[i]);
+                    // Accumulate per-axis
+                    num += y.cwiseProduct(q[i]);
+                    den += q[i].cwiseProduct(q[i]);
+                }
             }
-        }
 
-        // Update scale (elementwise division)
-        const double eps = 1e-12;
-        for (int a = 0; a < 3; ++a) {
-            S(a) = (den(a) < eps) ? 1.0 : num(a) / den(a);
-        }
+            // Update scale (elementwise division)
+            const double eps = 1e-12;
+            for (int a = 0; a < 3; ++a) {
+                S(a) = (den(a) < eps) ? 1.0 : num(a) / den(a);
+            }
 
-        // Apply scale ratio bound constraint (unweighted harmonic mean)
-        S = applyScaleRatioBound(S, mFittingConfig.skelRatioBound);
+            // Apply scale ratio bound constraint (unweighted harmonic mean)
+            S = applyScaleRatioBound(S, mFittingConfig.skelRatioBound);
+        }
+        // If !optimizeScale, S remains at identity (1,1,1)
 
         // =====================================================
         // Compute Scale-change norm (metric 2)
@@ -2643,7 +2717,7 @@ void C3D_Reader::refineArmIK()
 
         double rmsBefore = std::sqrt(totalRmsBefore / numFrames);
         double rmsAfter = std::sqrt(totalRmsAfter / numFrames);
-        LOG_VERBOSE("[ArmIK] " << armJointName << ": RMS " << std::fixed << std::setprecision(4)
+        LOG_INFO("[ArmIK] " << armJointName << ": RMS " << std::fixed << std::setprecision(4)
                  << rmsBefore << " -> " << rmsAfter << " (target: " << handName << ")");
     }
 }
@@ -2841,6 +2915,259 @@ void C3D_Reader::refineLegIK()
 }
 
 // ============================================================================
+// SECTION: Talus Plantar Correction
+//   - refineTalus: Correct talus orientation during foot lock phases
+// ============================================================================
+
+// ============================================================================
+// SECTION: Plantar Correction Helpers
+//   - Helper functions for refineTalus() - modular for readability
+// ============================================================================
+namespace {
+
+/**
+ * Compute minimal rotation using Rodrigues' formula: R aligns n_from → n_to
+ * Preserves rotation around the alignment axis (e.g., yaw when aligning Y axes)
+ */
+Eigen::Matrix3d computeMinimalRotation(const Eigen::Vector3d& n_from,
+                                        const Eigen::Vector3d& n_to)
+{
+    Eigen::Vector3d v = n_from.cross(n_to);
+    double c = n_from.dot(n_to);
+
+    if (c < -0.999999) {
+        // Anti-parallel: rotate 180° around X axis
+        return Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+    }
+    if (v.squaredNorm() < 1e-12) {
+        // Already aligned
+        return Eigen::Matrix3d::Identity();
+    }
+
+    // Rodrigues: R = I + [v]× + [v]×²/(1+c)
+    Eigen::Matrix3d Vx;
+    Vx << 0, -v.z(), v.y(),
+          v.z(), 0, -v.x(),
+          -v.y(), v.x(), 0;
+    return Eigen::Matrix3d::Identity() + Vx + Vx * Vx / (1.0 + c);
+}
+
+/**
+ * Compute blend factor for smooth interpolation at phase boundaries
+ * Returns 0→1 at start, 1 in middle, 1→0 at end
+ */
+double computeBlendFactor(int frame, int startFrame, int endFrame, int blendFrames)
+{
+    int phaseLength = endFrame - startFrame + 1;
+    int frameInPhase = frame - startFrame;
+
+    // If phase is too short for blending, use full correction
+    if (phaseLength <= 2 * blendFrames) {
+        return 1.0;
+    }
+
+    // Blend in at start
+    if (frameInPhase < blendFrames) {
+        return static_cast<double>(frameInPhase + 1) / (blendFrames + 1);
+    }
+
+    // Blend out at end
+    int framesFromEnd = endFrame - frame;
+    if (framesFromEnd < blendFrames) {
+        return static_cast<double>(framesFromEnd + 1) / (blendFrames + 1);
+    }
+
+    // Full correction in middle
+    return 1.0;
+}
+
+/**
+ * Interpolate between two rotation matrices using axis-angle
+ */
+Eigen::Matrix3d slerpRotation(const Eigen::Matrix3d& R_from,
+                               const Eigen::Matrix3d& R_to,
+                               double t)
+{
+    if (t <= 0.0) return R_from;
+    if (t >= 1.0) return R_to;
+
+    // R_delta = R_to * R_from^T, then scale the angle
+    Eigen::Matrix3d R_delta = R_to * R_from.transpose();
+    Eigen::AngleAxisd aa(R_delta);
+
+    // Scale the angle by t
+    Eigen::AngleAxisd aa_scaled(aa.angle() * t, aa.axis());
+    return aa_scaled.toRotationMatrix() * R_from;
+}
+
+} // anonymous namespace
+
+void C3D_Reader::refineTalus()
+{
+    // 1. Check if enabled
+    if (!mFittingConfig.plantarCorrection.enabled) {
+        LOG_VERBOSE("[TalusRefine] Plantar correction disabled");
+        return;
+    }
+
+    // 2. Validate prerequisites
+    if (!mMotionCharacter || !mFreeCharacter) {
+        LOG_WARN("[TalusRefine] No motion or free character");
+        return;
+    }
+    if (!mCurrentC3D || mFreePoses.empty()) {
+        LOG_WARN("[TalusRefine] No C3D data or poses");
+        return;
+    }
+
+    const auto& allMarkers = mCurrentC3D->getAllMarkers();
+    int numFrames = static_cast<int>(allMarkers.size());
+    if (numFrames < 2) return;
+
+    // 3. Resolve marker indices
+    int ankleRIdx = mResolver.resolve(MarkerReference::fromNameAndLabel("", "R.Ankle"));
+    int heelRIdx = mResolver.resolve(MarkerReference::fromNameAndLabel("", "R.Heel"));
+    int toeRIdx = mResolver.resolve(MarkerReference::fromNameAndLabel("", "R.Toe"));
+    int ankleLIdx = mResolver.resolve(MarkerReference::fromNameAndLabel("", "L.Ankle"));
+    int heelLIdx = mResolver.resolve(MarkerReference::fromNameAndLabel("", "L.Heel"));
+    int toeLIdx = mResolver.resolve(MarkerReference::fromNameAndLabel("", "L.Toe"));
+
+    if (ankleRIdx < 0 || heelRIdx < 0 || toeRIdx < 0 ||
+        ankleLIdx < 0 || heelLIdx < 0 || toeLIdx < 0) {
+        LOG_WARN("[TalusRefine] Missing foot markers, skipping");
+        return;
+    }
+
+    // 4. Get parameters from config
+    const double velocityThreshold = mFittingConfig.plantarCorrection.velocityThreshold;
+    const int minLockFrames = mFittingConfig.plantarCorrection.minLockFrames;
+    const int blendFrames = mFittingConfig.plantarCorrection.blendFrames;
+
+    LOG_INFO("[TalusRefine] Detecting foot lock phases (threshold="
+             << velocityThreshold << "m, minFrames=" << minLockFrames
+             << ", blendFrames=" << blendFrames << ")...");
+
+    // 5. Detect lock phases for each foot independently
+    std::vector<FootLockPhase> allPhases;
+
+    auto detectPhasesForFoot = [&](int ankleIdx, int heelIdx, int toeIdx, bool isLeft) {
+        int lockStart = -1;
+
+        for (int f = 1; f < numFrames; ++f) {
+            const auto& curr = allMarkers[f];
+            const auto& prev = allMarkers[f - 1];
+
+            bool validCurr = curr[ankleIdx].squaredNorm() > 1e-6 &&
+                            curr[heelIdx].squaredNorm() > 1e-6 &&
+                            curr[toeIdx].squaredNorm() > 1e-6;
+            bool validPrev = prev[ankleIdx].squaredNorm() > 1e-6 &&
+                            prev[heelIdx].squaredNorm() > 1e-6 &&
+                            prev[toeIdx].squaredNorm() > 1e-6;
+
+            double velocity = 1e10;
+            if (validCurr && validPrev) {
+                double vAnkle = (curr[ankleIdx] - prev[ankleIdx]).norm();
+                double vHeel = (curr[heelIdx] - prev[heelIdx]).norm();
+                double vToe = (curr[toeIdx] - prev[toeIdx]).norm();
+                velocity = std::max({vAnkle, vHeel, vToe});
+            }
+
+            if (velocity < velocityThreshold) {
+                if (lockStart < 0) lockStart = f;
+            } else {
+                if (lockStart >= 0 && (f - lockStart) >= minLockFrames) {
+                    allPhases.push_back({lockStart, f - 1, isLeft});
+                }
+                lockStart = -1;
+            }
+        }
+
+        if (lockStart >= 0 && (numFrames - lockStart) >= minLockFrames) {
+            allPhases.push_back({lockStart, numFrames - 1, isLeft});
+        }
+    };
+
+    detectPhasesForFoot(ankleRIdx, heelRIdx, toeRIdx, false);
+    detectPhasesForFoot(ankleLIdx, heelLIdx, toeLIdx, true);
+
+    // 6. Sort by startFrame
+    std::sort(allPhases.begin(), allPhases.end(),
+        [](const FootLockPhase& a, const FootLockPhase& b) {
+            return a.startFrame < b.startFrame;
+        });
+
+    // 7. Log detected phases
+    LOG_INFO("[TalusRefine] Detected " << allPhases.size() << " foot lock phases:");
+    for (const auto& phase : allPhases) {
+        LOG_INFO("  " << (phase.isLeft ? "Left " : "Right")
+                 << " foot: frames [" << phase.startFrame << "-" << phase.endFrame
+                 << "] (" << (phase.endFrame - phase.startFrame + 1) << " frames)");
+    }
+
+    if (allPhases.empty()) {
+        LOG_INFO("[TalusRefine] No lock phases detected, skipping correction");
+        return;
+    }
+
+    // 8. Apply position + plantar correction to mFreeCharacter with smooth interpolation
+    auto freeSkel = mFreeCharacter->getSkeleton();
+    const Eigen::Vector3d n_local(0, 1, 0);   // Foot's local up direction
+    const Eigen::Vector3d n_target(0, 1, 0);  // World up
+
+    for (const auto& phase : allPhases) {
+        std::string talusName = phase.isLeft ? "TalusL" : "TalusR";
+        auto* freeJoint = freeSkel->getJoint(talusName);
+        if (!freeJoint || freeJoint->getType() != "FreeJoint") continue;
+
+        int jointIdx = freeJoint->getIndexInSkeleton(0);
+        auto* talusBn = freeJoint->getChildBodyNode();
+
+        // Capture locked position at phase start
+        if (phase.startFrame >= static_cast<int>(mFreePoses.size())) continue;
+        freeSkel->setPositions(mFreePoses[phase.startFrame]);
+        Eigen::Vector3d lockedPosition = talusBn->getWorldTransform().translation();
+
+        for (int f = phase.startFrame; f <= phase.endFrame; ++f) {
+            if (f >= static_cast<int>(mFreePoses.size())) continue;
+
+            double blend = computeBlendFactor(f, phase.startFrame, phase.endFrame, blendFrames);
+
+            freeSkel->setPositions(mFreePoses[f]);
+            Eigen::Isometry3d T_world_current = talusBn->getWorldTransform();
+
+            // Build target world transform
+            Eigen::Isometry3d T_world_target = Eigen::Isometry3d::Identity();
+
+            // Position: blend towards locked position
+            T_world_target.translation() = T_world_current.translation()
+                + blend * (lockedPosition - T_world_current.translation());
+
+            // Rotation: plantar correction with blend
+            Eigen::Matrix3d R_current = T_world_current.linear();
+            Eigen::Vector3d n_current_dir = (R_current * n_local).normalized();
+            Eigen::Matrix3d R_align = computeMinimalRotation(n_current_dir, n_target);
+            Eigen::Matrix3d R_plantar = R_align * R_current;
+            T_world_target.linear() = slerpRotation(R_current, R_plantar, blend);
+
+            // Use existing helper to back-solve for FreeJoint DOFs
+            Eigen::VectorXd jointPos = computeJointPositions(talusBn, T_world_target);
+            if (jointPos.size() == 6) {
+                mFreePoses[f].segment<6>(jointIdx) = jointPos;
+
+                // Update mBoneR_frames and mBoneT_frames for later processing
+                freeSkel->setPositions(mFreePoses[f]);
+                Eigen::Isometry3d T_updated = talusBn->getTransform();
+                mBoneR_frames[talusName][f] = T_updated.linear();
+                mBoneT_frames[talusName][f] = T_updated.translation();
+            }
+        }
+    }
+
+    LOG_INFO("[TalusRefine] Corrected position + plantar for " << allPhases.size()
+             << " lock phases (blend=" << blendFrames << " frames)");
+}
+
+// ============================================================================
 // SECTION: Symmetry Enforcement
 //   - enforceSymmetry: Balance R/L bone scales based on threshold
 // ============================================================================
@@ -2937,4 +3264,734 @@ void C3D_Reader::enforceSymmetry() {
 
     LOG_INFO("[Symmetry] Enforcement complete");
 }
+
+// ============================================================================
+// SECTION 12: Static Calibration
+//   Uses mFreeCharacter ONLY - bone-by-bone SVD fitting, single frame
+//   Outputs: bone scales + personalized marker offsets (THI, Shank, Heel, Toe)
+// ============================================================================
+
+bool C3D_Reader::hasMedialMarkers(const std::vector<std::string>& labels)
+{
+    // Check for medial markers that indicate static calibration data
+    std::vector<std::string> medialMarkers = {
+        "L.Knee.Medial", "R.Knee.Medial",
+        "L.Ankle.Medial", "R.Ankle.Medial"
+    };
+
+    for (const auto& label : labels) {
+        for (const auto& medial : medialMarkers) {
+            if (label == medial) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+StaticCalibrationResult C3D_Reader::calibrateStatic(C3D* c3dData, const std::string& staticConfigPath)
+{
+    StaticCalibrationResult result;
+
+    if (!c3dData) {
+        result.errorMessage = "No C3D data provided";
+        return result;
+    }
+
+    if (!mFreeCharacter) {
+        result.errorMessage = "No free character available";
+        return result;
+    }
+
+    LOG_INFO("[StaticCalib] Starting static calibration...");
+
+    // Store current C3D for calibration access
+    mCurrentC3D = c3dData;
+
+    // ========== 1. Load static fitting config ==========
+    std::string resolvedConfigPath = PMuscle::URIResolver::getInstance().resolve(staticConfigPath);
+    YAML::Node config;
+    try {
+        config = YAML::LoadFile(resolvedConfigPath);
+    } catch (const YAML::Exception& e) {
+        result.errorMessage = std::string("Failed to load static config: ") + e.what();
+        mCurrentC3D = nullptr;
+        return result;
+    }
+
+    // Parse config - load marker mappings
+    SkeletonFittingConfig staticConfig;
+    if (config["static_fitting"]["marker_mappings"]) {
+        for (const auto& node : config["static_fitting"]["marker_mappings"]) {
+            std::string name = node["name"].as<std::string>();
+            MarkerReference ref;
+            ref.name = name;
+
+            if (node["data_idx"]) {
+                ref = MarkerReference::fromNameAndIndex(name, node["data_idx"].as<int>());
+            } else if (node["data_label"]) {
+                ref = MarkerReference::fromNameAndLabel(name, node["data_label"].as<std::string>());
+            }
+            staticConfig.markerMappings.push_back(ref);
+        }
+    }
+
+    // Load SVD targets (static calibration always uses scale=true)
+    if (config["static_fitting"]["optimization"]["target_svd"]) {
+        for (const auto& node : config["static_fitting"]["optimization"]["target_svd"]) {
+            SvdTarget target;
+            if (node.IsScalar()) {
+                target.name = node.as<std::string>();
+            } else {
+                target.name = node["name"].as<std::string>();
+                target.optimizeScale = node["scale"].as<bool>(true);
+            }
+            staticConfig.targetSvd.push_back(target);
+        }
+    }
+
+    // ========== 2. Resolve marker labels ==========
+    mResolver.setC3DLabels(c3dData->getLabels());
+    mResolver.setMarkerSet(mMarkerSet);
+
+    for (auto& ref : staticConfig.markerMappings) {
+        if (ref.needsResolution()) {
+            ref.dataIndex = mResolver.resolve(ref);
+        }
+        mResolver.resolveOffset(ref);
+    }
+
+    // ========== 3. Compute Hip Joint Centers ==========
+    LOG_INFO("[StaticCalib] Computing hip joint centers (Harrington)...");
+    computeHipJointCenters(c3dData->getAllMarkers());
+
+    // ========== 4. Initialize skeleton to T-pose ==========
+    Eigen::VectorXd pos = mFreeCharacter->getSkeleton()->getPositions();
+    pos.setZero();
+    mFreeCharacter->getSkeleton()->setPositions(pos);
+
+    // Reset bone parameters to default
+    for (auto& info : mSkelInfos) {
+        std::get<1>(info) = ModifyInfo();
+    }
+    mFreeCharacter->applySkeletonBodyNode(mSkelInfos, mFreeCharacter->getSkeleton());
+
+    // Clear previous fitting results
+    mBoneR_frames.clear();
+    mBoneT_frames.clear();
+    mBoneOrder.clear();
+
+    // Use single frame for static calibration
+    mFitFrameStart = 0;
+    mFitFrameEnd = 0;
+
+    // ========== 5. Build bone -> marker map ==========
+    std::map<std::string, std::vector<const MarkerReference*>> boneToMarkers;
+    for (const auto& ref : staticConfig.markerMappings) {
+        if (ref.hasOffset() && ref.dataIndex >= 0) {
+            boneToMarkers[ref.boneName].push_back(&ref);
+        } else if (ref.dataIndex < 0) {
+            LOG_WARN("[StaticCalib] Marker not found in C3D: " << ref.name << " (data_label: " << ref.dataLabel << ")");
+        }
+    }
+
+    // ========== 6. SVD-based bone fitting (single frame) ==========
+    LOG_INFO("[StaticCalib] SVD-based bone fitting (single frame)...");
+    for (const auto& target : staticConfig.targetSvd) {
+        auto it = boneToMarkers.find(target.name);
+        if (it == boneToMarkers.end() || it->second.empty()) {
+            LOG_WARN("[StaticCalib] No marker mappings found for bone: " << target.name);
+            continue;
+        }
+
+        // Skip Talus bones - they use alternating optimization
+        if (target.name == "TalusL" || target.name == "TalusR") {
+            continue;
+        }
+
+        calibrateBone(target.name, it->second, c3dData->getAllMarkers(), target.optimizeScale);
+        mBoneOrder.push_back(target.name);
+
+        // Store bone scale in result
+        BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(target.name);
+        if (bn) {
+            int idx = bn->getIndexInSkeleton();
+            auto& modInfo = std::get<1>(mSkelInfos[idx]);
+            result.boneScales[target.name] = Eigen::Vector3d(modInfo.value[0], modInfo.value[1], modInfo.value[2]);
+            LOG_INFO("[StaticCalib] " << target.name << " scale: ["
+                     << modInfo.value[0] << ", " << modInfo.value[1] << ", " << modInfo.value[2] << "]");
+        }
+    }
+
+    // ========== 7. Talus alternating optimization with shared height ==========
+    LOG_INFO("[StaticCalib] Talus alternating optimization...");
+    std::vector<std::string> talusBones = {"TalusL", "TalusR"};
+    for (const auto& boneName : talusBones) {
+        auto it = boneToMarkers.find(boneName);
+        if (it == boneToMarkers.end() || it->second.size() < 4) {
+            std::string markerList;
+            if (it != boneToMarkers.end()) {
+                for (const auto* ref : it->second) {
+                    if (!markerList.empty()) markerList += ", ";
+                    markerList += ref->name;
+                }
+            }
+            LOG_WARN("[StaticCalib] Insufficient markers for " << boneName
+                     << " (need 4, got " << (it != boneToMarkers.end() ? it->second.size() : 0)
+                     << "): [" << markerList << "]");
+            continue;
+        }
+
+        double y0 = calibrateTalusWithSharedHeight(boneName, it->second, c3dData->getAllMarkers()[0]);
+        result.talusHeightOffsets[boneName] = y0;
+        mBoneOrder.push_back(boneName);
+
+        // Store bone scale in result
+        BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(boneName);
+        if (bn) {
+            int idx = bn->getIndexInSkeleton();
+            auto& modInfo = std::get<1>(mSkelInfos[idx]);
+            result.boneScales[boneName] = Eigen::Vector3d(modInfo.value[0], modInfo.value[1], modInfo.value[2]);
+            LOG_INFO("[StaticCalib] " << boneName << " scale: ["
+                     << modInfo.value[0] << ", " << modInfo.value[1] << ", " << modInfo.value[2] << "]"
+                     << ", y0: " << y0);
+        }
+    }
+
+    // ========== 8. Personalize marker offsets (back-projection) ==========
+    LOG_INFO("[StaticCalib] Personalizing marker offsets...");
+
+    // Load personalizable markers from config
+    if (config["static_fitting"]["personalizable_markers"]) {
+        const auto& markers = c3dData->getAllMarkers()[0];
+
+        for (const auto& node : config["static_fitting"]["personalizable_markers"]) {
+            std::string markerName = node["name"].as<std::string>();
+            std::string boneName = node["bone"].as<std::string>();
+            std::string type = node["type"].as<std::string>();
+
+            // Find data index for this marker
+            int dataIdx = -1;
+            for (const auto& ref : staticConfig.markerMappings) {
+                if (ref.name == markerName) {
+                    dataIdx = ref.dataIndex;
+                    break;
+                }
+            }
+
+            if (dataIdx < 0 || dataIdx >= static_cast<int>(markers.size())) {
+                LOG_WARN("[StaticCalib] Cannot find data for marker: " << markerName);
+                continue;
+            }
+
+            Eigen::Vector3d worldPos = markers[dataIdx];
+
+            if (type == "position") {
+                // Full 3D back-projection for THI, Shank markers
+                // Find original marker offset from mMarkerSet
+                Eigen::Vector3d baseOffset = Eigen::Vector3d::Zero();
+                for (const auto& m : mMarkerSet) {
+                    if (m.name == markerName) {
+                        baseOffset = m.offset;
+                        break;
+                    }
+                }
+                Eigen::Vector3d newOffset = personalizeMarkerOffset(markerName, boneName, worldPos);
+                result.personalizedOffsets[markerName] = newOffset;
+                LOG_INFO("[StaticCalib] " << markerName << ": [" << baseOffset.transpose() << "] -> [" << newOffset.transpose() << "]");
+            } else if (type == "height") {
+                // For heel/toe, use shared y0 from Talus alternating optimization
+                // The x,z components come from template, y comes from y0
+                auto y0It = result.talusHeightOffsets.find(boneName);
+                if (y0It != result.talusHeightOffsets.end()) {
+                    // Find original marker offset from mMarkerSet
+                    Eigen::Vector3d baseOffset = Eigen::Vector3d::Zero();
+                    for (const auto& m : mMarkerSet) {
+                        if (m.name == markerName) {
+                            baseOffset = m.offset;
+                            break;
+                        }
+                    }
+
+                    // Keep x,z from template, replace y with shared y0
+                    Eigen::Vector3d newOffset = baseOffset;
+                    newOffset[1] = y0It->second;  // Use body-frame height from alternating opt
+                    result.personalizedOffsets[markerName] = newOffset;
+                    LOG_INFO("[StaticCalib] " << markerName << ": [" << baseOffset.transpose() << "] -> [" << newOffset.transpose() << "]");
+                }
+            }
+        }
+    }
+
+    // ========== 9. Copy dependent scales (Foot = Talus, etc.) ==========
+    copyDependentScales();
+
+    // ========== 10. Apply scales to skeleton ==========
+    mFreeCharacter->applySkeletonBodyNode(mSkelInfos, mFreeCharacter->getSkeleton());
+
+    // ========== 11. Apply personalized offsets to mFreeCharacter markers ==========
+    {
+        auto& markers = mFreeCharacter->getMarkersForEdit();
+        int appliedCount = 0;
+        for (auto& marker : markers) {
+            auto it = result.personalizedOffsets.find(marker.name);
+            if (it != result.personalizedOffsets.end()) {
+                marker.offset = it->second;
+                appliedCount++;
+            }
+        }
+        LOG_INFO("[StaticCalib] Applied " << appliedCount << " personalized offsets to mFreeCharacter markers");
+    }
+
+    // ========== 12. Build pose for visual verification ==========
+    mFreePoses.clear();
+    mFreePoses.reserve(1);
+    Eigen::VectorXd pose = buildFramePose(0);  // Build pose for frame 0
+    mFreePoses.push_back(pose);
+    c3dData->setSkeletonPoses(mFreePoses);
+    LOG_INFO("[StaticCalib] Built skeleton pose for visual verification");
+
+    result.success = true;
+    mCurrentC3D = nullptr;
+    LOG_INFO("[StaticCalib] Static calibration complete");
+
+    return result;
+}
+
+// ============================================================================
+// SECTION 11b: calibrateDynamic - Multi-frame bone fitting + pose building
+// ============================================================================
+
+DynamicCalibrationResult C3D_Reader::calibrateDynamic(C3D* c3dData)
+{
+    DynamicCalibrationResult result;
+
+    // ========== Validation ==========
+    if (!c3dData) {
+        result.errorMessage = "No C3D data provided";
+        return result;
+    }
+
+    if (!mFreeCharacter) {
+        result.errorMessage = "No free character available";
+        return result;
+    }
+
+    const size_t numFrames = c3dData->getNumFrames();
+    if (numFrames == 0) {
+        result.errorMessage = "No frames in C3D data";
+        return result;
+    }
+
+    LOG_INFO("[DynamicCalib] Starting dynamic calibration (" << numFrames << " frames)...");
+
+    // Store current C3D for calibration access
+    mCurrentC3D = c3dData;
+
+    // ========== Stage A: Bone Fitting ==========
+    // 1. Load skeleton fitting config
+    loadSkeletonFittingConfig();
+
+    // 2. Resolve marker references (may have been done in loadC3DMarkersOnly, but ensure consistency)
+    resolveMarkerReferences(c3dData->getLabels());
+
+    // 3. Compute frame range from config
+    int totalFrames = static_cast<int>(numFrames);
+    mFitFrameStart = std::max(0, mFittingConfig.frameStart);
+    int endFrame = (mFittingConfig.frameEnd < 0) ? totalFrames : std::min(mFittingConfig.frameEnd + 1, totalFrames);
+    mFitFrameEnd = endFrame - 1;
+
+    if (mFitFrameEnd < mFitFrameStart) {
+        LOG_WARN("[DynamicCalib] Invalid frame range from config, using all frames");
+        mFitFrameStart = 0;
+        mFitFrameEnd = totalFrames - 1;
+    }
+
+    LOG_INFO("[DynamicCalib] Frame range: [" << mFitFrameStart << ", " << mFitFrameEnd << "]");
+
+    // 4. Initialize skeleton to T-pose
+    Eigen::VectorXd pos = mFreeCharacter->getSkeleton()->getPositions();
+    pos.setZero();
+    mFreeCharacter->getSkeleton()->setPositions(pos);
+
+    // 5. Multi-frame SVD bone fitting
+    C3DConversionParams params;
+    params.doCalibration = true;
+    calibrateSkeleton(params);
+
+    // 6. Symmetry enforcement
+    enforceSymmetry();
+
+    // 7. Extract bone scales from mSkelInfos
+    for (const auto& info : mSkelInfos) {
+        const std::string& boneName = std::get<0>(info);
+        const ModifyInfo& modInfo = std::get<1>(info);
+        if (!boneName.empty()) {
+            result.boneScales[boneName] = Eigen::Vector3d(modInfo.value[0], modInfo.value[1], modInfo.value[2]);
+        }
+    }
+
+    // ========== Stage B: Free Pose Building ==========
+    int numFitFrames = mFitFrameEnd - mFitFrameStart + 1;
+    mFreePoses.clear();
+    mFreePoses.reserve(numFitFrames);
+
+    LOG_INFO("[DynamicCalib] Building free poses for " << numFitFrames << " frames...");
+    for (int i = 0; i < numFitFrames; ++i) {
+        Eigen::VectorXd pose = buildFramePose(i);
+        mFreePoses.push_back(pose);
+    }
+    refineTalus();
+    result.freePoses = mFreePoses;
+
+    // ========== Stage C: Motion Conversion ==========
+    if (mMotionCharacter) {
+        LOG_INFO("[DynamicCalib] Converting to motion skeleton...");
+        mMotionResult = convertToMotionSkeleton();
+        result.motionPoses = mMotionResult.motionPoses;
+        result.motionResult = mMotionResult;
+    }
+
+    // ========== Stage D: IK Refinement ==========
+    LOG_INFO("[DynamicCalib] Refining IK...");
+    refineArmIK();
+    refineLegIK();
+
+    // Update motion poses after IK refinement
+    if (mMotionCharacter) {
+        result.motionPoses = mMotionResult.motionPoses;
+    }
+
+    // ========== Finalize ==========
+    // Store skeleton poses in C3D object for playback
+    c3dData->setSkeletonPoses(mFreePoses);
+
+    result.success = true;
+    mCurrentC3D = nullptr;
+
+    LOG_INFO("[DynamicCalib] Complete: " << numFitFrames << " frames, "
+             << result.boneScales.size() << " bone scales");
+
+    return result;
+}
+
+double C3D_Reader::calibrateTalusWithSharedHeight(
+    const std::string& boneName,
+    const std::vector<const MarkerReference*>& markers,
+    const std::vector<Eigen::Vector3d>& frameMarkers)
+{
+    // Talus alternating optimization with shared body-frame height offset
+    // Variables: R ∈ SO(3), t ∈ ℝ³, S = diag(sx, sy, sz), shared height y₀ ∈ ℝ
+
+    BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(boneName);
+    if (!bn) {
+        LOG_WARN("[TalusAltOpt] Bone not found: " << boneName);
+        return 0.0;
+    }
+
+    // Identify marker roles: ankle, ankle_medial, heel, toe
+    const MarkerReference* ankRef = nullptr;
+    const MarkerReference* ankMedRef = nullptr;
+    const MarkerReference* heeRef = nullptr;
+    const MarkerReference* toeRef = nullptr;
+
+    for (const auto* ref : markers) {
+        if (ref->name.find("ANK_tal") != std::string::npos && ref->name.find("med") == std::string::npos) {
+            ankRef = ref;
+        } else if (ref->name.find("ANK_med_tal") != std::string::npos ||
+                   ref->name.find("ank_med_tal") != std::string::npos) {
+            ankMedRef = ref;
+        } else if (ref->name.find("HEE") != std::string::npos) {
+            heeRef = ref;
+        } else if (ref->name.find(".TO") != std::string::npos) {
+            toeRef = ref;
+        }
+    }
+
+    if (!ankRef || !ankMedRef || !heeRef || !toeRef) {
+        LOG_WARN("[TalusAltOpt] Missing required markers for " << boneName);
+        return 0.0;
+    }
+
+    // Get observed world positions
+    Eigen::Vector3d p_ank = frameMarkers[ankRef->dataIndex];
+    Eigen::Vector3d p_ankm = frameMarkers[ankMedRef->dataIndex];
+    Eigen::Vector3d p_hee = frameMarkers[heeRef->dataIndex];
+    Eigen::Vector3d p_toe = frameMarkers[toeRef->dataIndex];
+
+    // Get body size for local coordinates
+    Eigen::Vector3d boneSize = (dynamic_cast<const BoxShape*>(
+        bn->getShapeNodeWith<VisualAspect>(0)->getShape().get()))->getSize();
+
+    // Template local marker positions (scaled by bone size)
+    Eigen::Vector3d x_ank = ankRef->offset.cwiseProduct(boneSize) * 0.5;
+    Eigen::Vector3d x_ankm = ankMedRef->offset.cwiseProduct(boneSize) * 0.5;
+    // For heel/toe, set base with y=0 (shared y0 will be added)
+    Eigen::Vector3d x_hee_base = heeRef->offset.cwiseProduct(boneSize) * 0.5;
+    x_hee_base[1] = 0.0;
+    Eigen::Vector3d x_toe_base = toeRef->offset.cwiseProduct(boneSize) * 0.5;
+    x_toe_base[1] = 0.0;
+
+    // Local up axis
+    Eigen::Vector3d ey(0, 1, 0);
+
+    // Initialize R, t, S from ankle landmarks using SVD/Procrustes
+    // Use ankle and ankle_medial to get initial estimate
+    Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d t = Eigen::Vector3d::Zero();
+    Eigen::Vector3d S = Eigen::Vector3d::Ones();
+    double y0 = 0.0;
+
+    // Simple initialization: compute centroid-based alignment
+    Eigen::Vector3d srcCentroid = (x_ank + x_ankm) * 0.5;
+    Eigen::Vector3d dstCentroid = (p_ank + p_ankm) * 0.5;
+    t = dstCentroid - srcCentroid;
+
+    // Alternating optimization parameters
+    const int maxIter = 20;
+    const double convergenceThreshold = 1e-4;
+    double prevCost = std::numeric_limits<double>::max();
+
+    // Track convergence history for plotting
+    std::vector<double> costHistory;
+    std::vector<double> y0History;
+
+    for (int iter = 0; iter < maxIter; ++iter) {
+        // Step 1: Update (R, t) with S, y0 fixed - SVD-based Procrustes
+        // Build point correspondences
+        Eigen::Matrix3d S_diag = S.asDiagonal();
+
+        // Local positions with current y0
+        Eigen::Vector3d x_hee = x_hee_base + y0 * boneSize[1] * 0.5 * ey;
+        Eigen::Vector3d x_toe = x_toe_base + y0 * boneSize[1] * 0.5 * ey;
+
+        // Scaled local positions
+        std::vector<Eigen::Vector3d> srcPts = {S_diag * x_ank, S_diag * x_ankm, S_diag * x_hee, S_diag * x_toe};
+        std::vector<Eigen::Vector3d> dstPts = {p_ank, p_ankm, p_hee, p_toe};
+
+        // Compute centroids
+        srcCentroid = Eigen::Vector3d::Zero();
+        dstCentroid = Eigen::Vector3d::Zero();
+        for (int i = 0; i < 4; ++i) {
+            srcCentroid += srcPts[i];
+            dstCentroid += dstPts[i];
+        }
+        srcCentroid /= 4.0;
+        dstCentroid /= 4.0;
+
+        // Build H matrix for SVD
+        Eigen::Matrix3d H = Eigen::Matrix3d::Zero();
+        for (int i = 0; i < 4; ++i) {
+            H += (srcPts[i] - srcCentroid) * (dstPts[i] - dstCentroid).transpose();
+        }
+
+        // SVD for optimal rotation
+        Eigen::JacobiSVD<Eigen::Matrix3d> svd(H, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        R = svd.matrixV() * svd.matrixU().transpose();
+
+        // Ensure proper rotation (det = +1)
+        if (R.determinant() < 0) {
+            Eigen::Matrix3d V = svd.matrixV();
+            V.col(2) *= -1;
+            R = V * svd.matrixU().transpose();
+        }
+
+        // Update translation
+        t = dstCentroid - R * srcCentroid;
+
+        // Step 2: Update S with R, t, y0 fixed - per-axis least squares
+        // For each axis, solve for optimal scale
+        for (int axis = 0; axis < 3; ++axis) {
+            double num = 0.0, denom = 0.0;
+
+            for (int i = 0; i < 4; ++i) {
+                // Source point (unscaled)
+                Eigen::Vector3d x_src;
+                if (i == 0) x_src = x_ank;
+                else if (i == 1) x_src = x_ankm;
+                else if (i == 2) x_src = x_hee_base + y0 * boneSize[1] * 0.5 * ey;
+                else x_src = x_toe_base + y0 * boneSize[1] * 0.5 * ey;
+
+                // Residual in rotated frame
+                Eigen::Vector3d res = R.transpose() * (dstPts[i] - t);
+
+                num += res[axis] * x_src[axis];
+                denom += x_src[axis] * x_src[axis];
+            }
+
+            if (std::abs(denom) > 1e-8) {
+                S[axis] = std::max(0.5, std::min(2.0, num / denom));  // Clamp scale
+            }
+        }
+
+        // Step 3: Closed-form update of y0
+        // a = R·S·eᵧ (in world frame)
+        // b_h = R·S·x^hee_base + t
+        // b_t = R·S·x^toe_base + t
+        // y₀ = [aᵀ(p^hee - b_h) + aᵀ(p^toe - b_t)] / (2·‖a‖²)
+        S_diag = S.asDiagonal();
+        Eigen::Vector3d a = R * S_diag * (boneSize[1] * 0.5 * ey);
+        Eigen::Vector3d b_h = R * S_diag * x_hee_base + t;
+        Eigen::Vector3d b_t = R * S_diag * x_toe_base + t;
+
+        double num = a.dot(p_hee - b_h) + a.dot(p_toe - b_t);
+        double denom = 2.0 * a.squaredNorm();
+        if (std::abs(denom) > 1e-8) {
+            y0 = num / denom;
+        }
+
+        // Compute cost for convergence check
+        double cost = 0.0;
+        x_hee = x_hee_base + y0 * boneSize[1] * 0.5 * ey;
+        x_toe = x_toe_base + y0 * boneSize[1] * 0.5 * ey;
+        cost += (p_ank - (R * S_diag * x_ank + t)).squaredNorm();
+        cost += (p_ankm - (R * S_diag * x_ankm + t)).squaredNorm();
+        cost += (p_hee - (R * S_diag * x_hee + t)).squaredNorm();
+        cost += (p_toe - (R * S_diag * x_toe + t)).squaredNorm();
+
+        // Record history
+        costHistory.push_back(std::sqrt(cost) * 1000.0);  // RMS in mm
+        y0History.push_back(y0);
+
+        double relDecrease = (prevCost - cost) / (prevCost + 1e-8);
+        if (relDecrease < convergenceThreshold && relDecrease >= 0) {
+            LOG_INFO("[TalusAltOpt] " << boneName << " converged at iter " << iter
+                     << ", cost=" << std::sqrt(cost) * 1000.0 << " mm, y0=" << y0);
+            break;
+        }
+        prevCost = cost;
+    }
+
+    // Plot convergence using ASCII chart
+    if (!costHistory.empty()) {
+        // Normalize y0 for visualization (scale to similar range as cost)
+        double maxCost = *std::max_element(costHistory.begin(), costHistory.end());
+        double minY0 = *std::min_element(y0History.begin(), y0History.end());
+        double maxY0 = *std::max_element(y0History.begin(), y0History.end());
+        double y0Range = maxY0 - minY0;
+
+        std::vector<double> y0Scaled;
+        for (double y : y0History) {
+            if (y0Range > 1e-8) {
+                y0Scaled.push_back((y - minY0) / y0Range * maxCost);
+            } else {
+                y0Scaled.push_back(0.0);
+            }
+        }
+
+        ascii::Asciichart chart({
+            {"RMS (mm)", costHistory},
+            {"y0 (scaled)", y0Scaled}
+        });
+        std::cout << "[TalusAltOpt] " << boneName << " convergence:\n"
+                  << chart.show_legend(true).height(6).Plot() << std::endl;
+    }
+
+    // Store bone scale
+    int idx = bn->getIndexInSkeleton();
+    auto& modInfo = std::get<1>(mSkelInfos[idx]);
+    modInfo.value[0] = S[0];
+    modInfo.value[1] = S[1];
+    modInfo.value[2] = S[2];
+
+    // Store transforms for pose building
+    mBoneR_frames[boneName] = {R};
+    mBoneT_frames[boneName] = {t};
+
+    return y0;
+}
+
+Eigen::Vector3d C3D_Reader::personalizeMarkerOffset(
+    const std::string& markerName,
+    const std::string& boneName,
+    const Eigen::Vector3d& worldPos)
+{
+    // Back-project marker position to bone-local offset
+    // For THI and Shank markers (full 3D position)
+
+    BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(boneName);
+    if (!bn) {
+        LOG_WARN("[Personalize] Bone not found: " << boneName);
+        return Eigen::Vector3d::Zero();
+    }
+
+    // Check if we have fitted transforms for this bone
+    auto rIt = mBoneR_frames.find(boneName);
+    auto tIt = mBoneT_frames.find(boneName);
+    if (rIt == mBoneR_frames.end() || tIt == mBoneT_frames.end() ||
+        rIt->second.empty() || tIt->second.empty()) {
+        LOG_WARN("[Personalize] No fitted transforms for bone: " << boneName);
+        return Eigen::Vector3d::Zero();
+    }
+
+    // Get fitted bone transform (use frame 0 for static)
+    Eigen::Matrix3d R = rIt->second[0];
+    Eigen::Vector3d t = tIt->second[0];
+
+    // Get bone scale
+    int idx = bn->getIndexInSkeleton();
+    auto& modInfo = std::get<1>(mSkelInfos[idx]);
+    Eigen::Vector3d S(modInfo.value[0], modInfo.value[1], modInfo.value[2]);
+
+    // Get bone size
+    Eigen::Vector3d boneSize = (dynamic_cast<const BoxShape*>(
+        bn->getShapeNodeWith<VisualAspect>(0)->getShape().get()))->getSize();
+
+    // Back-project to bone-local coordinates
+    // worldPos = R * diag(S) * (offset * boneSize/2) + t
+    // localPos = R^T * (worldPos - t)
+    // offset = localPos / (S * boneSize/2)
+    Eigen::Vector3d localPos = R.transpose() * (worldPos - t);
+
+    Eigen::Vector3d newOffset;
+    for (int i = 0; i < 3; ++i) {
+        double denom = S[i] * boneSize[i] * 0.5;
+        if (std::abs(denom) > 1e-8) {
+            newOffset[i] = localPos[i] / denom;
+        } else {
+            newOffset[i] = 0.0;
+        }
+    }
+
+    return newOffset;
+}
+
+void C3D_Reader::exportPersonalizedCalibration(
+    const StaticCalibrationResult& result,
+    const std::string& outputDir)
+{
+    // Export personalized markers and body scales to given directory
+    // Output files:
+    //   - static_calibrated_marker.xml
+    //   - static_calibrated_body_scale.yaml
+
+    if (!result.success) {
+        LOG_WARN("[Export] Cannot export - calibration was not successful");
+        return;
+    }
+
+    // === 1. Export marker XML (ALL markers, not just personalized ones) ===
+    std::string markerPath = outputDir + "/static_calibrated_marker.xml";
+    if (mFreeCharacter) {
+        // Use RenderCharacter's saveMarkersToXml which exports ALL markers
+        // The personalized offsets should already be applied to mFreeCharacter's markers
+        if (!mFreeCharacter->saveMarkersToXml(markerPath)) {
+            LOG_ERROR("[Export] Failed to export markers to: " << markerPath);
+            return;
+        }
+        LOG_INFO("[Export] Exported " << mFreeCharacter->getMarkers().size()
+                 << " markers (including " << result.personalizedOffsets.size()
+                 << " personalized) to: " << markerPath);
+    } else {
+        LOG_ERROR("[Export] mFreeCharacter is null, cannot export markers");
+        return;
+    }
+
+    // === 2. Export body scale YAML ===
+    std::string scalePath = outputDir + "/static_calibrated_body_scale.yaml";
+    if (mFreeCharacter) {
+        mFreeCharacter->exportBodyScaleYAML(scalePath);
+    }
+}
+
 

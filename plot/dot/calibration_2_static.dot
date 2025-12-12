@@ -1,0 +1,195 @@
+// Static Calibration Pipeline
+// Uses mFreeCharacter ONLY with medial markers for personalized offsets
+digraph static_calibration {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=0.6;
+    fontname="Helvetica";
+    newrank=true;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Helvetica",
+        fontsize=10,
+        margin="0.15,0.10"
+    ];
+
+    edge [
+        color="gray30",
+        penwidth=1.2,
+        arrowsize=0.7,
+        fontname="Helvetica",
+        fontsize=8
+    ];
+
+    // === TITLE ===
+    labelloc="t";
+    label=<<font point-size="12"><b>Static Calibration Pipeline (Single Frame)</b></font>>;
+
+    // === INPUT ===
+    subgraph cluster_input {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Input</font>>;
+
+        c3d_static [label="Static C3D File\n(static01-Static.c3d)\n[1 frame]", fillcolor="#E3F2FD"];
+        medial_markers [label="Medial Markers\nR.Knee.Medial [25]\nR.Ankle.Medial [26]\nL.Knee.Medial [27]\nL.Ankle.Medial [28]", fillcolor="#BBDEFB"];
+        static_xml [label="static.xml\n(medial marker offsets)", fillcolor="#FFF8E1"];
+        static_config [label="static_fitting.yaml", fillcolor="#FFF8E1"];
+    }
+
+    // === CHARACTER (mFreeCharacter ONLY) ===
+    subgraph cluster_character {
+        style=filled;
+        fillcolor="#E8F5E9";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Skeleton (mFreeCharacter ONLY)</font>>;
+
+        free_char [label="mFreeCharacter\n(free joints skeleton)\n126 DOFs\nbone-by-bone fitting", fillcolor="#C8E6C9"];
+        no_motion [label="mMotionCharacter\nNOT USED", fillcolor="#FFCDD2", style="rounded,filled,dashed", color="#EF5350"];
+    }
+
+    // === STAGE 1: HIP JOINT CENTERS ===
+    subgraph cluster_hjc {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage 1: Hip Joint Centers</font>>;
+
+        harrington [label="Harrington Method\n(RASI, LASI, SACR)", fillcolor="#BBDEFB"];
+        hjc_out [label="R_Hip, L_Hip\n(virtual markers)", shape=ellipse, fillcolor="white"];
+
+        harrington -> hjc_out [penwidth=2.0, color=black];
+    }
+
+    // === STAGE 2: SVD BONE FITTING ===
+    subgraph cluster_svd {
+        style=filled;
+        fillcolor="#E3F2FD";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage 2: SVD Bone Fitting (with Medial Markers)</font>>;
+
+        femur_fit [label="Femur Fitting\n{R_Hip, RKNE_fem, RKNE_med_fem}\n{L_Hip, LKNE_fem, LKNE_med_fem}\n3 anatomical landmarks", fillcolor="#BBDEFB"];
+        tibia_fit [label="Tibia Fitting\n{RKNE_tib, RKNE_med_tib,\nRANK_tib, RANK_med_tib}\n4 anatomical landmarks", fillcolor="#BBDEFB"];
+        svd_output [label="R, t, S\n(rotation, translation, scale)", shape=ellipse, fillcolor="white"];
+
+        femur_fit -> svd_output [penwidth=2.0, color=black];
+        tibia_fit -> svd_output [penwidth=2.0, color=black];
+    }
+
+    // === STAGE 3: TALUS ALTERNATING OPTIMIZATION ===
+    subgraph cluster_talus {
+        style=filled;
+        fillcolor="#FFF3E0";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage 3: Talus Alternating Optimization</font>>;
+
+        talus_markers [label="Talus Markers\n{RANK_tal, RANK_med_tal,\nRHEE, R.TO}", fillcolor="#FFE0B2"];
+
+        alt_opt [label="Alternating Optimization\n(body-frame height)", fillcolor="#FFCC80"];
+
+        step1 [label="1. Update (R, t)\nProcrustes with S, y0 fixed", fillcolor="white", fontsize=9];
+        step2 [label="2. Update S\nper-axis least squares", fillcolor="white", fontsize=9];
+        step3 [label="3. Closed-form y0\ny0 = [aT(phee-bh)+aT(ptoe-bt)]/(2||a||2)", fillcolor="#FFB74D", fontsize=9];
+
+        y0_out [label="Shared height y0\n(body-frame)", shape=ellipse, fillcolor="white"];
+
+        talus_markers -> alt_opt [penwidth=2.0, color=black];
+        alt_opt -> step1 [penwidth=1.5, color=gray50];
+        step1 -> step2 [penwidth=1.5, color=gray50];
+        step2 -> step3 [penwidth=1.5, color=gray50];
+        step3 -> step1 [penwidth=1.0, color=gray50, style=dashed, label="iterate"];
+        step3 -> y0_out [penwidth=2.0, color=black, label="converge"];
+    }
+
+    // === STAGE 4: MARKER PERSONALIZATION ===
+    subgraph cluster_personalize {
+        style=filled;
+        fillcolor="#F3E5F5";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Stage 4: Marker Personalization</font>>;
+
+        thi_back [label="THI/RTHI Back-Projection\nlocalOffset = R-1(worldPos-t) / S", fillcolor="#E1BEE7"];
+        sha_back [label="LSHA/RSHA Back-Projection\nfull 3D position", fillcolor="#E1BEE7"];
+        heel_toe [label="Heel/Toe Height Update\noffset.y = y0 (shared)", fillcolor="#CE93D8"];
+
+        personalized [label="Personalized Offsets\n{marker -> (x,y,z)}", shape=ellipse, fillcolor="white"];
+
+        thi_back -> personalized [penwidth=2.0, color=black];
+        sha_back -> personalized [penwidth=2.0, color=black];
+        heel_toe -> personalized [penwidth=2.0, color=black];
+    }
+
+    // === OUTPUT ===
+    subgraph cluster_output {
+        style=filled;
+        fillcolor="gray95";
+        color="gray70";
+        penwidth=0.5;
+        label=<<font point-size="8">Output</font>>;
+
+        result [label="StaticCalibrationResult", fillcolor="#C8E6C9"];
+        bone_scales [label="boneScales\n{bone -> (Sx, Sy, Sz)}", fillcolor="#A5D6A7"];
+        offsets [label="personalizedOffsets\n{marker -> (x,y,z)}", fillcolor="#A5D6A7"];
+        heights [label="talusHeightOffsets\n{TalusL: y0, TalusR: y0}", fillcolor="#A5D6A7"];
+
+        export [label="Export XML\n@pid:{pid}/gait/{pre|post}/\nstatic_calibrated_marker.xml", fillcolor="#81C784"];
+
+        result -> bone_scales [penwidth=1.0, color=gray50, style=dashed];
+        result -> offsets [penwidth=1.0, color=gray50, style=dashed];
+        result -> heights [penwidth=1.0, color=gray50, style=dashed];
+        offsets -> export [penwidth=2.0, color=black];
+        heights -> export [penwidth=2.0, color=black];
+    }
+
+    // === MAIN FLOW ===
+    c3d_static -> medial_markers [penwidth=1.5, color=gray50, style=dashed];
+    c3d_static -> harrington [penwidth=2.5, color=black];
+    static_xml -> free_char [penwidth=1.5, color=gray50];
+    static_config -> femur_fit [penwidth=1.0, color=gray50, style=dashed];
+
+    free_char -> femur_fit [penwidth=2.0, color="#4CAF50"];
+    free_char -> tibia_fit [penwidth=2.0, color="#4CAF50"];
+    free_char -> talus_markers [penwidth=2.0, color="#4CAF50"];
+
+    medial_markers -> femur_fit [penwidth=2.0, color="#2196F3", label="anatomical\nconstraint"];
+    medial_markers -> tibia_fit [penwidth=2.0, color="#2196F3"];
+    medial_markers -> talus_markers [penwidth=2.0, color="#2196F3"];
+
+    hjc_out -> femur_fit [penwidth=2.0, color=black];
+    svd_output -> thi_back [penwidth=2.0, color=black];
+    svd_output -> sha_back [penwidth=2.0, color=black];
+    y0_out -> heel_toe [penwidth=2.0, color=black];
+
+    svd_output -> bone_scales [penwidth=1.5, color="#4CAF50", style=dashed];
+    personalized -> result [penwidth=2.0, color=black];
+
+    // === ADVANTAGE BOX ===
+    subgraph cluster_advantage {
+        style=filled;
+        fillcolor="#E8F5E9";
+        color="#4CAF50";
+        penwidth=1.0;
+        label=<<font point-size="8" color="#2E7D32">Advantages</font>>;
+
+        advantage [label="1. Medial markers constrain bone geometry\n2. Personalized soft-tissue marker offsets\n3. Body-frame height (foot tilt invariant)\n4. Independent L/R calibration",
+                  shape=note, fillcolor="#C8E6C9", fontsize=9];
+    }
+
+    // Rank alignment
+    {rank=same; c3d_static; medial_markers; static_xml; static_config;}
+    {rank=same; free_char; no_motion;}
+    {rank=same; femur_fit; tibia_fit;}
+    {rank=same; bone_scales; offsets; heights;}
+}

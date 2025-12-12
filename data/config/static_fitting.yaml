@@ -1,0 +1,118 @@
+# Static Calibration Configuration
+# Uses static C3D files with medial markers to calibrate skeleton scales
+# and personalize soft-tissue marker offsets (THI, Shank, Heel, Toe)
+
+static_fitting:
+  # Frame range for optimization (typically single frame for static trial)
+  frame_range:
+    start: 0
+    end: 0      # Single frame for static calibration
+
+  # Static C3D labels for reference (includes medial markers):
+  # [0-24] Standard markers (same as dynamic)
+  # [25] R.Knee.Medial  [26] R.Ankle.Medial
+  # [27] L.Knee.Medial  [28] L.Ankle.Medial
+  # [29+] Virtual joint centers
+
+  marker_mappings:
+    # Pelvis markers (same as dynamic)
+    - {name: 'RASI', data_label: 'R.ASIS'}
+    - {name: 'LASI', data_label: 'L.ASIS'}
+    - {name: 'VSAC', data_label: 'V.Sacral'}
+    # Virtual hip joint centers (computed by Harrington method)
+    - {name: 'R_Hip', data_idx: 31}
+    - {name: 'L_Hip', data_idx: 32}
+
+    # FemurR markers (with medial knee marker)
+    - {name: 'RTHI', data_label: 'R.Thigh'}
+    - {name: 'RKNE_fem', data_label: 'R.Knee'}
+    - {name: 'RKNE_med_fem', data_label: 'R.Knee.Medial'}
+
+    # TibiaR markers (with medial knee and ankle markers)
+    - {name: 'RKNE_tib', data_label: 'R.Knee'}
+    - {name: 'RKNE_med_tib', data_label: 'R.Knee.Medial'}
+    - {name: 'RSHA', data_label: 'R.Shank'}
+    - {name: 'RANK_tib', data_label: 'R.Ankle'}
+    - {name: 'RANK_med_tib', data_label: 'R.Ankle.Medial'}
+
+    # TalusR markers (with medial ankle marker)
+    - {name: 'RANK_tal', data_label: 'R.Ankle'}
+    - {name: 'RANK_med_tal', data_label: 'R.Ankle.Medial'}
+    - {name: 'RHEE', data_label: 'R.Heel'}
+    - {name: 'R.TO', data_label: 'R.Toe'}
+
+    # FemurL markers (with medial knee marker)
+    - {name: 'LTHI', data_label: 'L.Thigh'}
+    - {name: 'LKNE_fem', data_label: 'L.Knee'}
+    - {name: 'LKNE_med_fem', data_label: 'L.Knee.Medial'}
+
+    # TibiaL markers (with medial knee and ankle markers)
+    - {name: 'LKNE_tib', data_label: 'L.Knee'}
+    - {name: 'LKNE_med_tib', data_label: 'L.Knee.Medial'}
+    - {name: 'LSHA', data_label: 'L.Shank'}
+    - {name: 'LANK_tib', data_label: 'L.Ankle'}
+    - {name: 'LANK_med_tib', data_label: 'L.Ankle.Medial'}
+
+    # TalusL markers (with medial ankle marker)
+    - {name: 'LANK_tal', data_label: 'L.Ankle'}
+    - {name: 'LANK_med_tal', data_label: 'L.Ankle.Medial'}
+    - {name: 'LHEE', data_label: 'L.Heel'}
+    - {name: 'L.TO', data_label: 'L.Toe'}
+
+    # Upper body markers (same as dynamic)
+    - {name: 'THEA', data_label: 'Top.Head'}
+    - {name: 'FHEA', data_label: 'Front.Head'}
+    - {name: 'RHEA', data_label: 'Rear.Head'}
+    - {name: 'RSHO', data_label: 'R.Shoulder'}
+    - {name: 'LSHO', data_label: 'L.Shoulder'}
+    - {name: 'ROFF', data_label: 'R.Offset'}
+
+  optimization:
+    max_iterations: 50
+    convergence_threshold: 1.0e-6
+
+    # SVD-based optimizer targets (requires 3+ markers)
+    # With medial markers, we have sufficient constraints
+    target_svd:
+      - Pelvis
+      - FemurR
+      - TibiaR
+      - TalusR
+      - FemurL
+      - TibiaL
+      - TalusL
+
+    # Talus alternating optimization settings
+    talus_alt_opt:
+      max_iterations: 20
+      convergence_threshold: 1.0e-4
+      regularization_lambda: 0.0    # Optional regularization for y0
+
+  # Markers to personalize (back-project after fitting)
+  personalizable_markers:
+    # Femur soft-tissue markers (full 3D back-projection)
+    - {name: 'LTHI', bone: 'FemurL', type: 'position'}
+    - {name: 'RTHI', bone: 'FemurR', type: 'position'}
+    # Tibia soft-tissue markers (full 3D back-projection)
+    - {name: 'LSHA', bone: 'TibiaL', type: 'position'}
+    - {name: 'RSHA', bone: 'TibiaR', type: 'position'}
+    # Talus markers (shared body-frame height offset)
+    - {name: 'LHEE', bone: 'TalusL', type: 'height'}
+    - {name: 'L.TO', bone: 'TalusL', type: 'height'}
+    - {name: 'RHEE', bone: 'TalusR', type: 'height'}
+    - {name: 'R.TO', bone: 'TalusR', type: 'height'}
+
+  # Symmetry enforcement (balance R/L bone scales)
+  symmetry:
+    enabled: true
+    threshold: 1.2
+
+    x: true
+    y: false
+    z: true
+    uniform: false
+
+    bones:
+      - Femur
+      - Tibia
+      - Talus

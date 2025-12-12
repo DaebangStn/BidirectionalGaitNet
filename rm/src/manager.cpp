@@ -332,6 +332,20 @@ std::filesystem::path ResourceManager::resolve(const std::string& uri_str) {
     return {};  // Empty path if not found
 }
 
+std::filesystem::path ResourceManager::resolveDir(const std::string& uri_str) {
+    URI uri = URI::parse(uri_str);
+    std::string resolved = uri.resolved_path();
+
+    auto backends = resolve_backends(uri);
+    for (auto* backend : backends) {
+        if (backend->existsDir(resolved)) {
+            return backend->resolvePath(resolved);
+        }
+    }
+
+    return {};  // Empty path if not found
+}
+
 std::vector<std::string> ResourceManager::resolve_backend_names(const std::string& uri_str) {
     URI uri = URI::parse(uri_str);
     std::vector<std::string> names;

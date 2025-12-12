@@ -37,6 +37,17 @@ enum C3DNavigationMode
 };
 
 /**
+ * @brief Calibration mode for marker fitting
+ * - Static: Uses mFreeCharacter only, single frame, medial markers for bone fitting
+ * - Dynamic: Uses both mFreeCharacter and mMotionCharacter for full motion
+ */
+enum class CalibrationMode
+{
+    Static,     // Static calibration with medial markers (single frame)
+    Dynamic     // Dynamic calibration (full motion sequence)
+};
+
+/**
  * @brief Viewer state for C3D playback
  */
 struct C3DViewerState
@@ -100,12 +111,14 @@ private:
     ShapeRenderer mShapeRenderer;
     std::string mSkeletonPath;
     std::string mMarkerConfigPath;
+    std::string mInitialMarkerPath;  // Store initial marker path for reset
     std::string mFittingConfigPath;
 
     // C3D Processing
     C3D_Reader* mC3DReader;
     Motion* mMotion;  // C3D motion only
     std::string mMotionPath;
+    bool mAutoloadFirstC3D = true;  // Auto-load first C3D file at startup
 
     // Motion source tracking
     enum class MotionSource { None, FileList, PID };
@@ -129,8 +142,8 @@ private:
 
     // PID C3D files
     std::vector<std::string> mPIDC3DFiles;      // C3D filenames for selected PID
-    int mSelectedPIDC3D = -1;                    // Selected C3D index
-    char mPIDC3DFilter[64] = "Trimmed_";         // Filter text for C3D files (default: Trimmed_)
+    int mSelectedPIDC3D = -1;                   // Selected C3D index
+    char mPIDC3DFilter[64] = "";                // Filter text for C3D files (default: Trimmed_)
 
     // Marker rendering flags
     bool mRenderC3DMarkers;
@@ -138,6 +151,7 @@ private:
     bool mRenderMarkerIndices;
     bool mRenderJointPositions = false;
     float mMarkerLabelFontSize = 18.0f;
+    float mMarkerAlpha = 0.6f;
 
     // Axis rendering flags
     bool mRenderWorldAxis = false;
@@ -181,6 +195,18 @@ private:
 
     // Skeleton export
     char mExportSkeletonName[128] = "calibrated_skeleton";
+    char mExportCalibrationName[128] = "dynamic_calibrated";
+
+    // Calibration mode
+    CalibrationMode mCalibrationMode = CalibrationMode::Dynamic;
+    bool mHasMedialMarkers = false;  // Detected from current C3D file
+    bool mHasPersonalizedCalibration = false;  // For current PID/prePost
+    StaticCalibrationResult mStaticCalibResult;
+    DynamicCalibrationResult mDynamicCalibResult;
+    std::string mStaticConfigPath = "@data/config/static_fitting.yaml";
+
+    // Personalized calibration scale path (populated when loaded)
+    std::string mPersonalizedScalePath;
 
     // Playback state
     C3DViewerState mMotionState;
@@ -256,6 +282,7 @@ private:
     void scanPIDList();
     void scanPIDC3DFiles();
     void loadPIDC3DFile(const std::string& filename);
+    bool loadPersonalizedCalibration(const std::string& inputDir);
 
     // Motion source helper
     std::string getCurrentMotionPath() const;

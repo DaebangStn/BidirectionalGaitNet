@@ -53,6 +53,7 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     , mMouseY(0)
     , mSkeletonPath(skeletonPath)
     , mMarkerConfigPath(markerPath)
+    , mInitialMarkerPath(markerPath)
     , mFittingConfigPath(configPath)
     , mC3DReader(nullptr)
     , mMotion(nullptr)
@@ -141,9 +142,9 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     // Create C3D Reader
     mC3DReader = new C3D_Reader(mFittingConfigPath, mMarkerConfigPath, mFreeCharacter.get(), mMotionCharacter.get());
 
-    // Scan for C3D files and autoload first one
+    // Scan for C3D files and autoload first one (if enabled)
     scanC3DFiles();
-    if (!mMotionList.empty()) {
+    if (mAutoloadFirstC3D && !mMotionList.empty()) {
         mSelectedMotion = 0;
         loadC3DFile(mMotionList[0]);
         LOG_INFO("[C3DProcessor] Autoloaded first C3D file: " << mMotionList[0]);
@@ -382,14 +383,45 @@ void C3DProcessorApp::loadRenderConfig()
         }
 
         if (config["c3d"]) {
-            if (config["c3d"]["motion_char_offset"]) {
-                auto offset = config["c3d"]["motion_char_offset"];
+            auto c3d = config["c3d"];
+
+            // Auto-load first C3D at startup
+            if (c3d["autoload_first"]) mAutoloadFirstC3D = c3d["autoload_first"].as<bool>();
+
+            if (c3d["motion_char_offset"]) {
+                auto offset = c3d["motion_char_offset"];
                 if (offset.IsSequence() && offset.size() == 3) {
                     mMotionCharacterOffset.x() = offset[0].as<double>();
                     mMotionCharacterOffset.y() = offset[1].as<double>();
                     mMotionCharacterOffset.z() = offset[2].as<double>();
                 }
             }
+
+            // Render mode
+            if (c3d["mode"]) {
+                std::string mode = c3d["mode"].as<std::string>();
+                if (mode == "primitive") mRenderMode = RenderMode::Primitive;
+                else if (mode == "mesh") mRenderMode = RenderMode::Mesh;
+                else if (mode == "wireframe") mRenderMode = RenderMode::Wireframe;
+            }
+
+            // Character visibility
+            if (c3d["free_character"]) mRenderFreeCharacter = c3d["free_character"].as<bool>();
+            if (c3d["motion_character"]) mRenderMotionCharacter = c3d["motion_character"].as<bool>();
+            if (c3d["motion_char_markers"]) mRenderMotionCharMarkers = c3d["motion_char_markers"].as<bool>();
+
+            // Marker visibility
+            if (c3d["c3d_markers"]) mRenderC3DMarkers = c3d["c3d_markers"].as<bool>();
+            if (c3d["skeleton_markers"]) mRenderExpectedMarkers = c3d["skeleton_markers"].as<bool>();
+            if (c3d["joint_positions"]) mRenderJointPositions = c3d["joint_positions"].as<bool>();
+            if (c3d["marker_labels"]) mRenderMarkerIndices = c3d["marker_labels"].as<bool>();
+            if (c3d["marker_label_font_size"]) mMarkerLabelFontSize = c3d["marker_label_font_size"].as<float>();
+            if (c3d["marker_alpha"]) mMarkerAlpha = c3d["marker_alpha"].as<float>();
+
+            // Axis visualization
+            if (c3d["world_axis"]) mRenderWorldAxis = c3d["world_axis"].as<bool>();
+            if (c3d["skeleton_axis"]) mRenderSkeletonAxis = c3d["skeleton_axis"].as<bool>();
+            if (c3d["axis_length"]) mAxisLength = c3d["axis_length"].as<float>();
         }
     } catch (const std::exception& e) {
         LOG_WARN("[C3DProcessor] Could not load render.yaml: " << e.what());
@@ -770,12 +802,9 @@ void C3DProcessorApp::drawSkeleton()
     };
 
     // Render mFreeCharacter (light gray, for bone-by-bone debugging)
-    if (mFreeCharacter && mRenderFreeCharacter && mMotionState.currentPose.size() > 0) {
+    if (mFreeCharacter && mRenderFreeCharacter) {
         auto skel = mFreeCharacter->getSkeleton();
-        if (skel) {
-            skel->setPositions(mMotionState.currentPose);
-            renderSkeleton(skel, Eigen::Vector4d(0.8, 0.8, 0.8, 0.9));
-        }
+        if (skel) renderSkeleton(skel, Eigen::Vector4d(0.8, 0.8, 0.8, 0.9));
     }
 
     // Render mMotionCharacter (blue tint, for motion playback)
@@ -795,6 +824,8 @@ void C3DProcessorApp::drawSkeleton()
 void C3DProcessorApp::drawMarkers()
 {
     glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // Get matrices and ImGui context for label rendering
     GLdouble modelview[16], projection[16];
@@ -835,7 +866,7 @@ void C3DProcessorApp::drawMarkers()
         Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
 
         if (mRenderC3DMarkers && !mMotionState.currentMarkers.empty()) {
-            glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
+            glColor4f(0.4f, 1.0f, 0.2f, mMarkerAlpha);
             for (size_t i = 0; i < mMotionState.currentMarkers.size(); ++i) {
                 // Skip hidden markers
                 if (mHiddenC3DMarkers.find(static_cast<int>(i)) != mHiddenC3DMarkers.end())
@@ -852,7 +883,7 @@ void C3DProcessorApp::drawMarkers()
 
     // 2. Skeleton markers (expected from skeleton pose) - red (FreeCharacter)
     if (mRenderExpectedMarkers && mFreeCharacter && mFreeCharacter->hasMarkers()) {
-        glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+        glColor4f(1.0f, 0.0f, 0.0f, mMarkerAlpha);
         const auto& skelMarkers = mFreeCharacter->getMarkers();
         auto expectedMarkers = mFreeCharacter->getExpectedMarkerPositions();
         for (size_t i = 0; i < expectedMarkers.size(); ++i) {
@@ -869,7 +900,7 @@ void C3DProcessorApp::drawMarkers()
 
     // 2b. Skeleton markers for MotionCharacter - orange (with offset)
     if (mRenderMotionCharMarkers && mMotionCharacter && mMotionCharacter->hasMarkers()) {
-        glColor4f(1.0f, 0.5f, 0.0f, 1.0f);  // Orange
+        glColor4f(1.0f, 0.5f, 0.0f, mMarkerAlpha);  // Orange
         const auto& skelMarkers = mMotionCharacter->getMarkers();
         auto expectedMarkers = mMotionCharacter->getExpectedMarkerPositions();
         for (size_t i = 0; i < expectedMarkers.size(); ++i) {
@@ -889,7 +920,7 @@ void C3DProcessorApp::drawMarkers()
     if (mRenderJointPositions && mFreeCharacter) {
         auto skel = mFreeCharacter->getSkeleton();
         if (skel) {
-            glColor4f(0.6f, 0.2f, 0.8f, 1.0f);
+            glColor4f(0.6f, 0.2f, 0.8f, mMarkerAlpha);
             for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
                 const BodyNode* bn = skel->getBodyNode(i);
                 if (!bn) continue;
@@ -1067,38 +1098,105 @@ void C3DProcessorApp::drawPlaybackSection()
 void C3DProcessorApp::drawMarkerFittingSection()
 {
     if (collapsingHeaderWithControls("Marker Fitting")) {
-        if (ImGui::Button("Fit Skeleton to C3D")) {
-            if (mC3DReader && mMotion && mSelectedMotion >= 0) {
-                C3DConversionParams params;
-                params.doCalibration = true;
-                mMotion = mC3DReader->loadC3D(mMotionList[mSelectedMotion], params);
-                LOG_INFO("[C3DProcessor] Reloaded with calibration");
+        // Static Calibration UI
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Static Calibration");
+        if (mHasMedialMarkers) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "[Medial Markers Detected]");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Calibrate##Static")) {
+            if (mC3DReader && mMotion) {
+                C3D* c3dData = dynamic_cast<C3D*>(mMotion);
+                if (c3dData) {
+                    mStaticCalibResult = mC3DReader->calibrateStatic(c3dData, mStaticConfigPath);
+                    if (mStaticCalibResult.success) {
+                        LOG_INFO("[C3DProcessor] Static calibration completed successfully");
+                        if (mFreeCharacter) {
+                            auto& markers = mFreeCharacter->getMarkersForEdit();
+                            for (auto& marker : markers) {
+                                auto it = mStaticCalibResult.personalizedOffsets.find(marker.name);
+                                if (it != mStaticCalibResult.personalizedOffsets.end()) {
+                                    marker.offset = it->second;
+                                }
+                            }
+                            LOG_INFO("[C3DProcessor] Applied " << mStaticCalibResult.personalizedOffsets.size()
+                                     << " personalized marker offsets");
+                        }
+                    } else {
+                        LOG_ERROR("[C3DProcessor] Static calibration failed: " << mStaticCalibResult.errorMessage);
+                    }
+                } else {
+                    LOG_ERROR("[C3DProcessor] No C3D data available. Load a C3D file first.");
+                }
             }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Export##Static")) {
+            if (mStaticCalibResult.success && mResourceManager) {
+                if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
+                    std::string pid = mPIDList[mSelectedPID];
+                    std::string prePost = mPreOp ? "pre" : "post";
+                    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+                    std::string outputDir = mResourceManager->resolveDir(pattern);
+                    if (!outputDir.empty()) {
+                        mC3DReader->exportPersonalizedCalibration(mStaticCalibResult, outputDir);
+                        LOG_INFO("[C3DProcessor] Exported personalized calibration for PID " << pid);
+                        mHasPersonalizedCalibration = true;
+                    }
+                }
+            }
+        }
+
+        // Show static calibration results
+        if (mStaticCalibResult.success) {
+            if (ImGui::TreeNode("Static Results")) {
+                if (ImGui::TreeNode("Bone Scales")) {
+                    for (const auto& [name, scale] : mStaticCalibResult.boneScales) {
+                        ImGui::Text("%s: (%.3f, %.3f, %.3f)", name.c_str(), scale.x(), scale.y(), scale.z());
+                    }
+                    ImGui::TreePop();
+                }
+                if (ImGui::TreeNode("Personalized Offsets")) {
+                    for (const auto& [name, offset] : mStaticCalibResult.personalizedOffsets) {
+                        ImGui::Text("%s: (%.4f, %.4f, %.4f)", name.c_str(), offset.x(), offset.y(), offset.z());
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::TreePop();
+            }
+        }
+
+        ImGui::Separator();
+
+        // Dynamic Calibration UI
+        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.7f, 1.0f), "Dynamic Calibration");
+        ImGui::SameLine();
+        if (ImGui::Button("Calibrate and Track##Dynamic")) {
+            if (mC3DReader && mMotion) {
+                C3D* c3dData = dynamic_cast<C3D*>(mMotion);
+                if (c3dData) {
+                    mDynamicCalibResult = mC3DReader->calibrateDynamic(c3dData);
+                    if (mDynamicCalibResult.success) {
+                        LOG_INFO("[C3DProcessor] Dynamic calibration completed: "
+                                 << mDynamicCalibResult.freePoses.size() << " frames");
+                    } else {
+                        LOG_ERROR("[C3DProcessor] Dynamic calibration failed: " << mDynamicCalibResult.errorMessage);
+                    }
+                } else {
+                    LOG_ERROR("[C3DProcessor] No C3D data available. Load a C3D file first.");
+                }
+            }
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Clear Motion & Zero Pose")) {
+            clearMotionAndZeroPose();
         }
         ImGui::SameLine();
         if (ImGui::Button("Reset Skeleton")) {
             if (mFreeCharacter) mFreeCharacter->resetSkeletonToDefault();
-        }
-
-        // IK Refinement buttons
-        if (ImGui::Button("Refine Arm IK")) {
-            if (mC3DReader) {
-                mC3DReader->loadSkeletonFittingConfig();
-                mC3DReader->refineArmIK();
-                LOG_INFO("[C3DProcessor] Arm IK refinement completed");
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Refine Leg IK")) {
-            if (mC3DReader) {
-                mC3DReader->loadSkeletonFittingConfig();
-                mC3DReader->refineLegIK();
-                LOG_INFO("[C3DProcessor] Leg IK refinement completed");
-            }
-        }
-
-        if (ImGui::Button("Clear Motion & Zero Pose")) {
-            clearMotionAndZeroPose();
+            if (mMotionCharacter) mMotionCharacter->resetSkeletonToDefault();
         }
     }
 }
@@ -1428,6 +1526,7 @@ void C3DProcessorApp::drawRenderingPanel()
         ImGui::Checkbox("Joint Positions", &mRenderJointPositions);
         ImGui::Checkbox("Marker Labels", &mRenderMarkerIndices);
         ImGui::SliderFloat("Label Font Size", &mMarkerLabelFontSize, 10.0f, 32.0f, "%.0f");
+        ImGui::SliderFloat("Marker Alpha", &mMarkerAlpha, 0.0f, 1.0f, "%.2f");
     }
 
     // Axis Visualization section
@@ -2114,17 +2213,22 @@ void C3DProcessorApp::scanC3DFiles()
 {
     mMotionList.clear();
 
-    // Get search paths from C3D_Reader or use default
-    std::vector<std::string> searchPaths = {"data/c3d", "data/motion"};
+    if (!mResourceManager) {
+        LOG_WARN("[C3DProcessor] Resource manager not initialized");
+        return;
+    }
 
-    for (const auto& basePath : searchPaths) {
+    // Search paths using RM endpoints
+    std::vector<std::string> searchPatterns = {"@data/c3d", "@data/motion"};
+
+    for (const auto& pattern : searchPatterns) {
         try {
-            PMuscle::URIResolver& resolver = PMuscle::URIResolver::getInstance();
-            std::string resolvedPath = resolver.resolve(basePath);
+            // Resolve directory path
+            std::string dirPath = mResourceManager->resolveDir(pattern);
+            if (dirPath.empty() || !fs::exists(dirPath)) continue;
 
-            if (!fs::exists(resolvedPath)) continue;
-
-            for (const auto& entry : fs::recursive_directory_iterator(resolvedPath)) {
+            // Recursively scan for .c3d files
+            for (const auto& entry : fs::recursive_directory_iterator(dirPath)) {
                 if (entry.is_regular_file()) {
                     std::string ext = entry.path().extension().string();
                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -2133,8 +2237,10 @@ void C3DProcessorApp::scanC3DFiles()
                     }
                 }
             }
+        } catch (const rm::RMError& e) {
+            LOG_WARN("[C3DProcessor] Error scanning " << pattern << ": " << e.what());
         } catch (const std::exception& e) {
-            LOG_WARN("[C3DProcessor] Error scanning " << basePath << ": " << e.what());
+            LOG_WARN("[C3DProcessor] Error scanning " << pattern << ": " << e.what());
         }
     }
 
@@ -2161,10 +2267,8 @@ void C3DProcessorApp::loadC3DFile(const std::string& path)
     mMotionState = C3DViewerState();
     mGraphData->clear_all();
 
-    // Load C3D
-    C3DConversionParams params;
-    params.doCalibration = true;
-    mMotion = mC3DReader->loadC3D(path, params);
+    // Load C3D (markers only - calibration triggered separately via UI)
+    mMotion = mC3DReader->loadC3DMarkersOnly(path);
 
     if (mMotion) {
         mMotionPath = path;
@@ -2179,6 +2283,12 @@ void C3DProcessorApp::loadC3DFile(const std::string& path)
             auto markers = c3dMotion->getMarkers(0);
             double heightOffset = computeMarkerHeightCalibration(markers);
             mMotionState.displayOffset = Eigen::Vector3d(0, heightOffset, 0);
+        }
+
+        // Detect medial markers for static calibration
+        mHasMedialMarkers = C3D_Reader::hasMedialMarkers(c3dMotion->getLabels());
+        if (mHasMedialMarkers) {
+            LOG_INFO("[C3DProcessor] Medial markers detected - static calibration available");
         }
 
         // Initialize viewer time
@@ -2296,6 +2406,7 @@ void C3DProcessorApp::evaluateMarkerPlayback(const MarkerPlaybackContext& contex
                 // Apply display offset
                 pose.segment<3>(3) += markerState.displayOffset + markerState.cycleAccumulation;
                 mMotionState.currentPose = pose;
+                skel->setPositions(pose);
             }
         }
     }
@@ -2689,7 +2800,7 @@ void C3DProcessorApp::drawClinicalDataSection()
 {
     if (!mResourceManager) return;
 
-    if (collapsingHeaderWithControls("Clinical Data (PID)")) {
+    if (collapsingHeaderWithControls("Clinical Data")) {
         // PID Filter and Refresh
         ImGui::SetNextItemWidth(150);
         if (ImGui::InputText("##PIDFilter", mPIDFilter, sizeof(mPIDFilter))) {
@@ -2755,14 +2866,84 @@ void C3DProcessorApp::drawClinicalDataSection()
             }
         }
 
+        // Static Calibration Status (only if PID selected)
+        if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
+            ImGui::Separator();
+            ImGui::Text("Static Calibration:");
+            ImGui::SameLine();
+            if (mHasPersonalizedCalibration) {
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Available");
+                ImGui::SameLine();
+                if (ImGui::Button("Load calibration")) {
+                    std::string pid = mPIDList[mSelectedPID];
+                    std::string prePost = mPreOp ? "pre" : "post";
+                    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+                    std::string inputDir = mResourceManager->resolveDir(pattern);
+                    if (loadPersonalizedCalibration(inputDir)) {
+                        LOG_INFO("[C3DProcessor] Loaded personalized calibration for " << pid << " (" << prePost << ")");
+                    }
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Not Available");
+            }
+
+            // Export calibration
+            ImGui::SetNextItemWidth(150);
+            ImGui::InputText("##exportCalibName", mExportCalibrationName, sizeof(mExportCalibrationName));
+            ImGui::SameLine();
+
+            // Check if file exists and show warning
+            std::string pid = mPIDList[mSelectedPID];
+            std::string prePost = mPreOp ? "pre" : "post";
+            std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+            std::string outputDir = mResourceManager->resolveDir(pattern);
+            std::string skelPath = outputDir + "/" + mExportCalibrationName + ".yaml";
+            bool fileExists = std::filesystem::exists(skelPath);
+
+            if (fileExists) {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Overwrite");
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("Export Skeleton")) {
+                if (mMotionCharacter) {
+                    mMotionCharacter->exportSkeletonYAML(skelPath);
+                    LOG_INFO("[C3DProcessor] Exported skeleton to: " << skelPath);
+                }
+            }
+
+            if (ImGui::Button("Reset calibration")) {
+                // Reload initial markers and reset skeleton
+                if (mFreeCharacter) {
+                    mFreeCharacter->loadMarkers(mInitialMarkerPath);
+                    mFreeCharacter->resetSkeletonToDefault();
+                }
+                if (mMotionCharacter) {
+                    mMotionCharacter->loadMarkers(mInitialMarkerPath);
+                    mMotionCharacter->resetSkeletonToDefault();
+                }
+                mMarkerConfigPath = mInitialMarkerPath;
+                mPersonalizedScalePath.clear();
+                LOG_INFO("[C3DProcessor] Reset calibration to initial state");
+            }
+
+        }
+
         // C3D Files section (only if PID selected)
         if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
             ImGui::Separator();
             ImGui::Text("C3D Files: (%zu files)", mPIDC3DFiles.size());
 
             // C3D Filter
-            ImGui::SetNextItemWidth(150);
+            ImGui::SetNextItemWidth(100);
             ImGui::InputText("##PIDC3DFilter", mPIDC3DFilter, sizeof(mPIDC3DFilter));
+            ImGui::SameLine();
+            if (ImGui::Button("Trim##C3DFilter")) {
+                strncpy(mPIDC3DFilter, "Trimmed_", sizeof(mPIDC3DFilter) - 1);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("X##C3DFilter")) {
+                mPIDC3DFilter[0] = '\0';
+            }
 
             // C3D List
             if (ImGui::BeginListBox("##PIDC3DList", ImVec2(-1, 150))) {
@@ -2839,6 +3020,7 @@ void C3DProcessorApp::scanPIDC3DFiles()
 {
     mPIDC3DFiles.clear();
     mSelectedPIDC3D = -1;
+    mHasPersonalizedCalibration = false;
 
     if (!mResourceManager || mSelectedPID < 0 || mSelectedPID >= static_cast<int>(mPIDList.size())) {
         return;
@@ -2849,6 +3031,12 @@ void C3DProcessorApp::scanPIDC3DFiles()
     std::string pattern = "@pid:" + pid + "/gait/" + prePost;
 
     try {
+        // Check for personalized calibration files
+        std::string dirPath = mResourceManager->resolveDir(pattern);
+        std::string markerPath = dirPath + "/static_calibrated_marker.xml";
+        std::string scalePath = dirPath + "/static_calibrated_body_scale.yaml";
+        mHasPersonalizedCalibration = std::filesystem::exists(markerPath) && std::filesystem::exists(scalePath);
+
         auto files = mResourceManager->list(pattern);
         for (const auto& file : files) {
             // Filter for .c3d files only
@@ -2884,6 +3072,58 @@ void C3DProcessorApp::loadPIDC3DFile(const std::string& filename)
     } catch (const rm::RMError& e) {
         LOG_ERROR("[C3DProcessor] Failed to fetch C3D: " << e.what());
     }
+}
+
+bool C3DProcessorApp::loadPersonalizedCalibration(const std::string& inputDir)
+{
+    // Load personalized markers and body scales from given directory
+    // Input files:
+    //   - static_calibrated_marker.xml
+    //   - static_calibrated_body_scale.yaml
+
+    std::string markerPath = inputDir + "/static_calibrated_marker.xml";
+    std::string scalePath = inputDir + "/static_calibrated_body_scale.yaml";
+
+    // Check if files exist
+    if (!std::filesystem::exists(markerPath)) {
+        LOG_WARN("[Load] Marker file not found: " << markerPath);
+        return false;
+    }
+    if (!std::filesystem::exists(scalePath)) {
+        LOG_WARN("[Load] Body scale file not found: " << scalePath);
+        return false;
+    }
+
+    // === 1. Load body scales ===
+    if (mFreeCharacter && !mFreeCharacter->loadBodyScaleYAML(scalePath)) {
+        LOG_ERROR("[Load] Failed to load body scales");
+        return false;
+    }
+
+    // Apply same scales to motion character if available
+    if (mMotionCharacter && mFreeCharacter) {
+        auto& freeInfos = mFreeCharacter->getSkelInfos();
+        auto& motionInfos = mMotionCharacter->getSkelInfos();
+        for (size_t i = 0; i < freeInfos.size() && i < motionInfos.size(); ++i) {
+            std::get<1>(motionInfos[i]) = std::get<1>(freeInfos[i]);
+        }
+        mMotionCharacter->applySkeletonBodyNode(motionInfos, mMotionCharacter->getSkeleton());
+    }
+
+    // === 2. Load personalized markers ===
+    if (mFreeCharacter) {
+        mFreeCharacter->loadMarkers(markerPath);
+    }
+    if (mMotionCharacter) {
+        mMotionCharacter->loadMarkers(markerPath);
+    }
+
+    // Store loaded paths for display
+    mMarkerConfigPath = markerPath;
+    mPersonalizedScalePath = scalePath;
+
+    LOG_INFO("[Load] Loaded personalized calibration from: " << inputDir);
+    return true;
 }
 
 std::string C3DProcessorApp::getCurrentMotionPath() const
@@ -2928,9 +3168,13 @@ void C3DProcessorApp::reloadCurrentMotion(bool withCalibration)
     mGraphData->clear_all();
 
     // Reload with calibration option
-    C3DConversionParams params;
-    params.doCalibration = withCalibration;
-    mMotion = mC3DReader->loadC3D(path, params);
+    if (withCalibration) {
+        C3DConversionParams params;
+        params.doCalibration = true;
+        mMotion = mC3DReader->loadC3D(path, params);
+    } else {
+        mMotion = mC3DReader->loadC3DMarkersOnly(path);
+    }
 
     if (mMotion) {
         mMotionPath = path;

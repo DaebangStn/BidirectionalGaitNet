@@ -74,6 +74,10 @@ public:
     // Skeleton export (bakes calibrated geometry)
     void exportSkeletonYAML(const std::string& path) const;
 
+    // Body scale export/load (for static calibration persistence)
+    void exportBodyScaleYAML(const std::string& path) const;
+    bool loadBodyScaleYAML(const std::string& path);
+
 private:
     // Skeleton metadata parsing
     void parseSkeletonMetadata(const std::string& path);
