@@ -569,8 +569,8 @@ void C3D_Reader::computeHipJointCenters(
     const int IDX_RASI = 10;
     const int IDX_LASI = 11;
     const int IDX_VSAC = 12;  // SACR equivalent
-    const int IDX_RHJC = 25;  // R_Hip virtual marker
-    const int IDX_LHJC = 26;  // L_Hip virtual marker
+    const int IDX_RHJC = 31;  // R_Hip virtual marker
+    const int IDX_LHJC = 32;  // L_Hip virtual marker
 
     for (size_t frame = 0; frame < allMarkers.size(); ++frame) {
         auto& markers = allMarkers[frame];

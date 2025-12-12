@@ -19,8 +19,8 @@ skeleton_fitting:
     - {name: 'LASI', data_label: 'L.ASIS'}
     - {name: 'VSAC', data_label: 'V.Sacral'}
     # Virtual hip joint centers (computed by Harrington method, indices 25, 26, do not specify by data_label because it is computed automatically)
-    - {name: 'R_Hip', data_idx: 25}
-    - {name: 'L_Hip', data_idx: 26}
+    - {name: 'R_Hip', data_idx: 31}
+    - {name: 'L_Hip', data_idx: 32}
 
     # FemurR markers
     - {name: 'RTHI', data_label: 'R.Thigh'}
