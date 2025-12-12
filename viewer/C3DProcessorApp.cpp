@@ -794,16 +794,7 @@ void C3DProcessorApp::drawSkeleton()
 
 void C3DProcessorApp::drawMarkers()
 {
-    if (!mMotion || mMotion->getSourceType() != "c3d") return;
-
     glDisable(GL_LIGHTING);
-
-    C3D* c3dMotion = static_cast<C3D*>(mMotion);
-    const auto& dataLabels = c3dMotion->getLabels();
-
-    // 1. Data markers (from C3D capture) - green
-    // Apply cycleAccumulation + displayOffset so markers move forward with skeleton
-    Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
 
     // Get matrices and ImGui context for label rendering
     GLdouble modelview[16], projection[16];
@@ -834,18 +825,28 @@ void C3DProcessorApp::drawMarkers()
         }
     };
 
-    if (mRenderC3DMarkers && !mMotionState.currentMarkers.empty()) {
-        glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
-        for (size_t i = 0; i < mMotionState.currentMarkers.size(); ++i) {
-            // Skip hidden markers
-            if (mHiddenC3DMarkers.find(static_cast<int>(i)) != mHiddenC3DMarkers.end())
-                continue;
-            const auto& marker = mMotionState.currentMarkers[i];
-            if (!marker.array().isFinite().all()) continue;
-            Eigen::Vector3d offsetMarker = marker + markerOffset;
-            GUI::DrawSphere(offsetMarker, 0.0125);
-            std::string name = (i < dataLabels.size()) ? dataLabels[i] : "";
-            renderLabel(offsetMarker, static_cast<int>(i), name, -20.0f);
+    // 1. Data markers (from C3D capture) - green
+    // Only render if we have C3D motion loaded
+    if (mMotion && mMotion->getSourceType() == "c3d") {
+        C3D* c3dMotion = static_cast<C3D*>(mMotion);
+        const auto& dataLabels = c3dMotion->getLabels();
+
+        // Apply cycleAccumulation + displayOffset so markers move forward with skeleton
+        Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
+
+        if (mRenderC3DMarkers && !mMotionState.currentMarkers.empty()) {
+            glColor4f(0.4f, 1.0f, 0.2f, 1.0f);
+            for (size_t i = 0; i < mMotionState.currentMarkers.size(); ++i) {
+                // Skip hidden markers
+                if (mHiddenC3DMarkers.find(static_cast<int>(i)) != mHiddenC3DMarkers.end())
+                    continue;
+                const auto& marker = mMotionState.currentMarkers[i];
+                if (!marker.array().isFinite().all()) continue;
+                Eigen::Vector3d offsetMarker = marker + markerOffset;
+                GUI::DrawSphere(offsetMarker, 0.0125);
+                std::string name = (i < dataLabels.size()) ? dataLabels[i] : "";
+                renderLabel(offsetMarker, static_cast<int>(i), name, -20.0f);
+            }
         }
     }
 

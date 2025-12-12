@@ -24,3 +24,17 @@ target_link_libraries(hdf_dof_remapper
 target_include_directories(hdf_dof_remapper PRIVATE
     ${HDF5_INCLUDE_DIRS}
 )
+
+# C3D Merge Tool - Merge Trimmed_*.c3d files into unified C3D
+find_package(ezc3d CONFIG REQUIRED)
+
+add_executable(c3d_merge c3d_merge.cpp)
+
+target_link_libraries(c3d_merge
+    rm
+    ezc3d
+)
+
+target_include_directories(c3d_merge PRIVATE
+    ${CMAKE_SOURCE_DIR}/rm/include
+)

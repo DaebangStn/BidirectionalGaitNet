@@ -126,15 +126,28 @@ std::string PidBackend::fetch_metadata_field(const MetadataFieldRequest& request
 }
 
 std::filesystem::path PidBackend::transform_gait_path(const GaitPathComponents& components) const {
-    // Build: {root}/{pid}/gait/{pre|post}/Generated_C3D_files[/{filename}]
-    auto transformed = root_ / components.patient_id / "gait" /
-                       components.timepoint / "Generated_C3D_files";
+    // Build base path: {root}/{pid}/gait/{pre|post}
+    auto base_path = root_ / components.patient_id / "gait" / components.timepoint;
 
-    if (!components.filename.empty()) {
-        transformed /= components.filename;
+    if (components.filename.empty()) {
+        return base_path;
     }
 
-    return transformed;
+    // For files, check both locations:
+    // 1. gait/{pre|post}/{filename} (new location for Trimmed_unified.c3d)
+    // 2. gait/{pre|post}/Generated_C3D_files/{filename} (legacy location)
+    auto direct_path = base_path / components.filename;
+    if (std::filesystem::exists(direct_path)) {
+        return direct_path;
+    }
+
+    auto generated_path = base_path / "Generated_C3D_files" / components.filename;
+    if (std::filesystem::exists(generated_path)) {
+        return generated_path;
+    }
+
+    // Default to direct path (for new files to be created)
+    return direct_path;
 }
 
 std::filesystem::path PidBackend::resolve(const std::string& path) const {
@@ -255,39 +268,48 @@ std::vector<std::string> PidBackend::list(const std::string& pattern) {
     auto gait_components = parse_gait_path(pattern);
 
     if (gait_components) {
-        // Gait path: list c3d files from Generated_C3D_files directory
-        auto transformed_path = transform_gait_path(*gait_components);
+        // Gait path: list c3d files from both locations:
+        // 1. gait/{pre|post}/ (direct)
+        // 2. gait/{pre|post}/Generated_C3D_files/ (legacy)
+        auto base_path = root_ / gait_components->patient_id / "gait" / gait_components->timepoint;
+        auto generated_path = base_path / "Generated_C3D_files";
 
-        if (!std::filesystem::exists(transformed_path) ||
-            !std::filesystem::is_directory(transformed_path)) {
-            return results;  // Empty result if directory doesn't exist
-        }
+        std::unordered_set<std::string> seen;  // To avoid duplicates
 
-        // Check if we have a filename pattern (glob)
-        if (!gait_components->filename.empty()) {
-            // Pattern matching within the directory
-            for (auto& entry : std::filesystem::directory_iterator(transformed_path, ec)) {
+        auto collect_c3d_files = [&](const std::filesystem::path& dir_path) {
+            if (!std::filesystem::exists(dir_path) || !std::filesystem::is_directory(dir_path)) {
+                return;
+            }
+
+            for (auto& entry : std::filesystem::directory_iterator(dir_path, ec)) {
                 if (entry.is_regular_file()) {
                     std::string filename = entry.path().filename().string();
-                    if (match_glob(filename, gait_components->filename)) {
-                        results.push_back(filename);
+
+                    // Check if we have a filename pattern (glob)
+                    if (!gait_components->filename.empty()) {
+                        if (match_glob(filename, gait_components->filename)) {
+                            if (seen.find(filename) == seen.end()) {
+                                results.push_back(filename);
+                                seen.insert(filename);
+                            }
+                        }
+                    } else {
+                        // List all .c3d files
+                        if (filename.size() > 4 &&
+                            filename.substr(filename.size() - 4) == ".c3d") {
+                            if (seen.find(filename) == seen.end()) {
+                                results.push_back(filename);
+                                seen.insert(filename);
+                            }
+                        }
                     }
                 }
             }
-        } else {
-            // List only Trimmed_*.c3d files in the directory
-            for (auto& entry : std::filesystem::directory_iterator(transformed_path, ec)) {
-                if (entry.is_regular_file()) {
-                    std::string filename = entry.path().filename().string();
-                    // Only return Trimmed_*.c3d files
-                    if (filename.size() > 4 &&
-                        filename.substr(filename.size() - 4) == ".c3d" &&
-                        filename.substr(0, 8) == "Trimmed_") {
-                        results.push_back(filename);
-                    }
-                }
-            }
-        }
+        };
+
+        // Collect from both locations (direct first, then Generated_C3D_files)
+        collect_c3d_files(base_path);
+        collect_c3d_files(generated_path);
 
         // Sort results for consistent ordering
         std::sort(results.begin(), results.end());

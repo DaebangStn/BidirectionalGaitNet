@@ -130,7 +130,7 @@ private:
     // PID C3D files
     std::vector<std::string> mPIDC3DFiles;      // C3D filenames for selected PID
     int mSelectedPIDC3D = -1;                    // Selected C3D index
-    char mPIDC3DFilter[64] = "";                 // Filter text for C3D files
+    char mPIDC3DFilter[64] = "Trimmed_";         // Filter text for C3D files (default: Trimmed_)
 
     // Marker rendering flags
     bool mRenderC3DMarkers;
