@@ -346,6 +346,27 @@ std::filesystem::path ResourceManager::resolveDir(const std::string& uri_str) {
     return {};  // Empty path if not found
 }
 
+std::filesystem::path ResourceManager::resolveDirCreate(const std::string& uri_str) {
+    URI uri = URI::parse(uri_str);
+    std::string resolved = uri.resolved_path();
+
+    auto backends = resolve_backends(uri);
+    for (auto* backend : backends) {
+        // First check if directory exists
+        if (backend->existsDir(resolved)) {
+            return backend->resolvePath(resolved);
+        }
+        // Try to create directory using first backend that can resolve the path
+        auto dir_path = backend->resolvePath(resolved);
+        if (!dir_path.empty()) {
+            std::filesystem::create_directories(dir_path);
+            return dir_path;
+        }
+    }
+
+    return {};  // Empty path if backend resolution fails
+}
+
 std::vector<std::string> ResourceManager::resolve_backend_names(const std::string& uri_str) {
     URI uri = URI::parse(uri_str);
     std::vector<std::string> names;

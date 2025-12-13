@@ -223,9 +223,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
     initializeCameraPresets();
     loadCameraPreset(0);
 
-    // Initialize motion load mode with default value
-    mMotionLoadMode = "hdf5";  // Default: load both NPZ and HDF5
-
     // Parse command-line arguments using Boost.Program_options
     namespace po = boost::program_options;
 
@@ -362,10 +359,30 @@ GLFWApp::GLFWApp(int argc, char **argv)
     glfwSetScrollCallback(mWindow, scrollCallback);
 
     ImGui::CreateContext();
+    ImPlot::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // Load font with Korean glyph support
+    ImFontConfig fontConfig;
+    fontConfig.MergeMode = false;
+
+    // Try to load Noto Sans CJK for Korean support
+    const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+    if (std::filesystem::exists(fontPath)) {
+        // Load with full Korean range
+        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
+            io.Fonts->GetGlyphRangesKorean());
+        LOG_INFO("[GLFWApp] Loaded Korean font: " << fontPath);
+    } else {
+        // Fallback to default font
+        io.Fonts->AddFontDefault();
+        LOG_WARN("[GLFWApp] Korean font not found, using default");
+    }
+
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
     ImGui_ImplOpenGL3_Init("#version 150");
-    ImPlot::CreateContext();
 
     mns = py::module::import("__main__").attr("__dict__");
     py::module::import("sys").attr("path").attr("insert")(1, "python");
@@ -450,6 +467,16 @@ GLFWApp::GLFWApp(int argc, char **argv)
 
     // Scan motion files (HDF only - C3D moved to c3d_processor)
     scanMotionFiles();
+
+    // Initialize Resource Manager for PID-based access
+    try {
+        mResourceManager = std::make_unique<rm::ResourceManager>("data/rm_config.yaml");
+        scanPIDList();
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[GLFWApp] Resource manager init failed: " << e.what());
+    } catch (...) {
+        LOG_WARN("[GLFWApp] Resource manager init failed");
+    }
 
     // Load simulation environment on startup if enabled (default: true)
     if (mLoadSimulationOnStartup) {
@@ -546,10 +573,6 @@ void GLFWApp::loadRenderConfig()
                           << (mResetPhase < 0.0 ? " (randomized)" : ""));
             }
 
-            if (config["glfwapp"]["motion_load_mode"]) {
-                mMotionLoadMode = config["glfwapp"]["motion_load_mode"].as<std::string>();
-            }
-
             if (config["glfwapp"]["load_simulation"]) {
                 mLoadSimulationOnStartup = config["glfwapp"]["load_simulation"].as<bool>();
             }
@@ -586,8 +609,7 @@ void GLFWApp::loadRenderConfig()
                      << ", Control: " << mControlPanelWidth
                      << ", Plot: " << mPlotPanelWidth
                      << ", Rollout: " << mDefaultRolloutCount
-                     << ", Playback Speed: " << mViewerPlaybackSpeed
-                     << ", Motion Load Mode: " << mMotionLoadMode); 
+                     << ", Playback Speed: " << mViewerPlaybackSpeed); 
 
     } catch (const std::exception& e) {
         std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
@@ -1415,7 +1437,7 @@ void GLFWApp::drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &colo
 
 void GLFWApp::drawKinematicsControlPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(400, mHeight - 80), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(400, (mHeight - 80)), ImGuiCond_Once);
     ImGui::SetNextWindowPos(ImVec2(mControlPanelWidth + 10, 10), ImGuiCond_Once);
     ImGui::Begin("Kinematics Control");
 
@@ -1618,6 +1640,9 @@ void GLFWApp::drawKinematicsControlPanel()
         // }
 
     }
+
+    // Clinical Data Section (PID-based HDF access)
+    drawClinicalDataSection();
 
     // Bone Scale Control - uses RenderCharacter's cached scale info
     if (mMotionCharacter && ImGui::CollapsingHeader("Bone Scale"))
@@ -3606,9 +3631,18 @@ void GLFWApp::drawSimControlPanel()
                              filePathName.find(".hdf5") != std::string::npos) {
                         // Load HDF5 file (single-cycle extracted format)
                         HDF* hdf = new HDF(filePathName);
-                        hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
-                        newMotion = hdf;
-                        LOG_INFO("[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames");
+
+                        // Validate DOF match between skeleton and motion
+                        int skelDof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
+                        int motionDof = hdf->getValuesPerFrame();
+                        if (skelDof != motionDof) {
+                            LOG_WARN("[RefMotion] DOF mismatch: skeleton has " << skelDof << " DOFs, motion has " << motionDof << " DOFs. Skipping load.");
+                            delete hdf;
+                        } else {
+                            hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+                            newMotion = hdf;
+                            LOG_INFO("[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames");
+                        }
                     }
                     else if (filePathName.find(".c3d") != std::string::npos) {
                         // C3D processing moved to c3d_processor executable
@@ -4833,9 +4867,16 @@ double GLFWApp::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pos
         return 0.0;
     }
 
+    // Safety check: validate DOF match to prevent Eigen assertion failure
+    auto skel = mMotionCharacter->getSkeleton();
+    if (motion_pose.size() != skel->getNumDofs()) {
+        LOG_WARN("[computeMotionHeightCalibration] DOF mismatch: motion_pose has " << motion_pose.size() << " values, skeleton has " << skel->getNumDofs() << " DOFs. Returning 0.");
+        return 0.0;
+    }
+
     // Temporarily set the motion character to the pose we want to calibrate
-    Eigen::VectorXd original_pose = mMotionCharacter->getSkeleton()->getPositions();
-    mMotionCharacter->getSkeleton()->setPositions(motion_pose);
+    Eigen::VectorXd original_pose = skel->getPositions();
+    skel->setPositions(motion_pose);
 
     // Phase 1: Find the lowest body node Y position
     double lowest_y = std::numeric_limits<double>::max();
@@ -5079,6 +5120,13 @@ void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &co
 {
     if (!mMotionCharacter) return;
     auto skel = mMotionCharacter->getSkeleton();
+
+    // Safety check: validate DOF match to prevent Eigen assertion failure
+    if (pos.size() != skel->getNumDofs()) {
+        LOG_WARN("[drawSkeleton] DOF mismatch: pos has " << pos.size() << " values, skeleton has " << skel->getNumDofs() << " DOFs. Skipping render.");
+        return;
+    }
+
     skel->setPositions(pos);
 
     // glDepthMask(GL_FALSE);
@@ -5843,6 +5891,7 @@ void GLFWApp::loadMotionFile(const std::string& path)
     namespace fs = std::filesystem;
     std::string ext = fs::path(path).extension().string();
     Motion* motion = nullptr;
+    LOG_INFO("[Motion] Loading motion file: " << path);
 
     if (ext == ".c3d") {
         // C3D processing moved to c3d_processor executable
@@ -5856,6 +5905,21 @@ void GLFWApp::loadMotionFile(const std::string& path)
     }
 
     if (motion) {
+        // Validate DOF match between skeleton and motion
+        if (!mMotionCharacter || !mMotionCharacter->getSkeleton()) {
+            LOG_WARN("[Motion] No motion character loaded. Skipping motion load.");
+            delete motion;
+            return;
+        }
+
+        int skelDof = mMotionCharacter->getSkeleton()->getNumDofs();
+        int motionDof = motion->getValuesPerFrame();
+        if (skelDof != motionDof) {
+            LOG_WARN("[Motion] DOF mismatch: skeleton has " << skelDof << " DOFs, motion has " << motionDof << " DOFs. Skipping load.");
+            delete motion;
+            return;
+        }
+
         setMotion(motion);
         mMotionPath = path;  // Store path for reloading
         mMotionState.cycleDistance = computeMotionCycleDistance(motion);
@@ -5865,6 +5929,173 @@ void GLFWApp::loadMotionFile(const std::string& path)
         LOG_INFO("[Motion] Loaded: " << path);
     } else {
         LOG_ERROR("[Motion] Failed to load: " << path);
+    }
+}
+
+// =============================================================================
+// Clinical Data (PID-based HDF access) Methods
+// =============================================================================
+
+void GLFWApp::scanPIDList()
+{
+    mPIDList.clear();
+    mPIDNames.clear();
+    mPIDGMFCS.clear();
+    mSelectedPID = -1;
+    mPIDHDFFiles.clear();
+    mSelectedPIDHDF = -1;
+
+    if (!mResourceManager) return;
+
+    try {
+        auto entries = mResourceManager->list("@pid:");
+        for (const auto& entry : entries) {
+            mPIDList.push_back(entry);
+        }
+        std::sort(mPIDList.begin(), mPIDList.end());
+
+        mPIDNames.resize(mPIDList.size());
+        mPIDGMFCS.resize(mPIDList.size());
+        for (size_t i = 0; i < mPIDList.size(); ++i) {
+            try {
+                auto h = mResourceManager->fetch("@pid:" + mPIDList[i] + "/name");
+                mPIDNames[i] = h.as_string();
+            } catch (...) { mPIDNames[i] = ""; }
+            try {
+                auto h = mResourceManager->fetch("@pid:" + mPIDList[i] + "/gmfcs");
+                mPIDGMFCS[i] = h.as_string();
+            } catch (...) { mPIDGMFCS[i] = ""; }
+        }
+        LOG_INFO("[GLFWApp] Found " << mPIDList.size() << " PIDs");
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[GLFWApp] Failed to list PIDs: " << e.what());
+    }
+}
+
+void GLFWApp::scanPIDHDFFiles()
+{
+    mPIDHDFFiles.clear();
+    mSelectedPIDHDF = -1;
+
+    if (!mResourceManager || mSelectedPID < 0 ||
+        mSelectedPID >= static_cast<int>(mPIDList.size())) return;
+
+    const std::string& pid = mPIDList[mSelectedPID];
+    std::string prePost = mPreOp ? "pre" : "post";
+    std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
+
+    try {
+        auto files = mResourceManager->list(pattern);
+        for (const auto& file : files) {
+            std::string lower = file;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if ((lower.size() > 3 && lower.substr(lower.size() - 3) == ".h5") ||
+                (lower.size() > 5 && lower.substr(lower.size() - 5) == ".hdf5")) {
+                // Extract just the filename (list() returns filenames, not paths)
+                std::filesystem::path p(file);
+                mPIDHDFFiles.push_back(p.filename().string());
+            }
+        }
+        std::sort(mPIDHDFFiles.begin(), mPIDHDFFiles.end());
+        LOG_INFO("[GLFWApp] Found " << mPIDHDFFiles.size() << " HDF files for PID " << pid);
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[GLFWApp] Failed to list HDF files: " << e.what());
+    }
+}
+
+void GLFWApp::loadPIDHDFFile(const std::string& filename)
+{
+    if (!mResourceManager || mSelectedPID < 0) return;
+
+    const std::string& pid = mPIDList[mSelectedPID];
+    std::string prePost = mPreOp ? "pre" : "post";
+    std::string uri = "@pid:" + pid + "/gait/" + prePost + "/h5/" + filename;
+
+    try {
+        auto handle = mResourceManager->fetch(uri);
+        std::filesystem::path localPath = handle.local_path();
+        loadMotionFile(localPath.string());
+        LOG_INFO("[GLFWApp] Loaded PID HDF: " << uri);
+    } catch (const rm::RMError& e) {
+        LOG_ERROR("[GLFWApp] Failed to fetch HDF: " << e.what());
+    }
+}
+
+void GLFWApp::drawClinicalDataSection()
+{
+    if (!mResourceManager) return;
+
+    if (ImGui::CollapsingHeader("Clinical Data")) {
+        // PID Filter + Refresh
+        ImGui::SetNextItemWidth(150);
+        ImGui::InputText("##PIDFilter", mPIDFilter, sizeof(mPIDFilter));
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh##PID")) scanPIDList();
+        ImGui::SameLine();
+        ImGui::Text("%zu PIDs", mPIDList.size());
+
+        // PID ListBox
+        if (ImGui::BeginListBox("##PIDList", ImVec2(-1, 150))) {
+            for (int i = 0; i < static_cast<int>(mPIDList.size()); ++i) {
+                const auto& pid = mPIDList[i];
+                const std::string& name = mPIDNames[i];
+                const std::string& gmfcs = mPIDGMFCS[i];
+
+                std::string displayStr = pid;
+                if (!name.empty() && !gmfcs.empty())
+                    displayStr = pid + " (" + name + ", " + gmfcs + ")";
+                else if (!name.empty())
+                    displayStr = pid + " (" + name + ")";
+                else if (!gmfcs.empty())
+                    displayStr = pid + " (" + gmfcs + ")";
+
+                // Filter
+                if (mPIDFilter[0] && pid.find(mPIDFilter) == std::string::npos &&
+                    name.find(mPIDFilter) == std::string::npos &&
+                    gmfcs.find(mPIDFilter) == std::string::npos) continue;
+
+                if (ImGui::Selectable(displayStr.c_str(), i == mSelectedPID)) {
+                    if (i != mSelectedPID) {
+                        mSelectedPID = i;
+                        scanPIDHDFFiles();
+                    }
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        // Pre/Post toggle
+        if (ImGui::RadioButton("Pre-op", mPreOp)) {
+            if (!mPreOp) { mPreOp = true; if (mSelectedPID >= 0) scanPIDHDFFiles(); }
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Post-op", !mPreOp)) {
+            if (mPreOp) { mPreOp = false; if (mSelectedPID >= 0) scanPIDHDFFiles(); }
+        }
+
+        // HDF Files section
+        if (mSelectedPID >= 0) {
+            ImGui::Separator();
+            ImGui::Text("HDF Files: %zu", mPIDHDFFiles.size());
+
+            ImGui::SetNextItemWidth(100);
+            ImGui::InputText("##HDFFilter", mPIDHDFFilter, sizeof(mPIDHDFFilter));
+            ImGui::SameLine();
+            if (ImGui::Button("X##HDFClear")) mPIDHDFFilter[0] = '\0';
+
+            if (ImGui::BeginListBox("##HDFList", ImVec2(-1, 150))) {
+                for (int i = 0; i < static_cast<int>(mPIDHDFFiles.size()); ++i) {
+                    const auto& f = mPIDHDFFiles[i];
+                    if (mPIDHDFFilter[0] && f.find(mPIDHDFFilter) == std::string::npos) continue;
+
+                    if (ImGui::Selectable(f.c_str(), i == mSelectedPIDHDF)) {
+                        mSelectedPIDHDF = i;
+                        loadPIDHDFFile(f);
+                    }
+                }
+                ImGui::EndListBox();
+            }
+        }
     }
 }
 

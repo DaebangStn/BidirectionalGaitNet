@@ -29,9 +29,12 @@ std::string PidBackend::name() const {
 
 std::optional<PidBackend::GaitPathComponents> PidBackend::parse_gait_path(const std::string& path) const {
     // Pattern: {patient_id}/gait/{pre|post}[/{filename}]
+    // Only matches gait paths for c3d file listing, NOT nested directories
     // Examples:
     //   "12964246/gait/pre" -> {patient_id="12964246", timepoint="pre", filename=""}
     //   "12964246/gait/post/walk01-Dynamic.c3d" -> {patient_id="12964246", timepoint="post", filename="walk01-Dynamic.c3d"}
+    //   "12964246/gait/pre/*.c3d" -> {patient_id="12964246", timepoint="pre", filename="*.c3d"}
+    //   "12964246/gait/pre/h5" -> NOT a gait path (subdirectory), returns nullopt
 
     std::vector<std::string> parts;
     std::istringstream iss(path);
@@ -56,12 +59,37 @@ std::optional<PidBackend::GaitPathComponents> PidBackend::parse_gait_path(const 
         return std::nullopt;
     }
 
+    // If more than 4 parts, it's a nested directory path, not a gait path
+    if (parts.size() > 4) {
+        return std::nullopt;
+    }
+
+    // If exactly 4 parts, the 4th must look like a c3d file or wildcard pattern
+    if (parts.size() == 4) {
+        const std::string& filename = parts[3];
+        bool is_c3d_pattern = false;
+        
+        // Check if it ends with .c3d
+        if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".c3d") {
+            is_c3d_pattern = true;
+        }
+        // Check if it contains wildcards (glob pattern for c3d files)
+        else if (filename.find('*') != std::string::npos || filename.find('?') != std::string::npos) {
+            is_c3d_pattern = true;
+        }
+        
+        // If 4th part doesn't look like a c3d file/pattern, treat as directory path
+        if (!is_c3d_pattern) {
+            return std::nullopt;
+        }
+    }
+
     GaitPathComponents components;
     components.patient_id = parts[0];
     components.timepoint = parts[2];
 
-    // If there are more parts, the 4th is the filename
-    if (parts.size() >= 4) {
+    // If there are 4 parts and we got here, the 4th is a valid c3d filename/pattern
+    if (parts.size() == 4) {
         components.filename = parts[3];
     }
 
@@ -371,17 +399,18 @@ std::vector<std::string> PidBackend::list(const std::string& pattern) {
         if (std::filesystem::is_directory(full_path)) {
             bool dirs_only = pattern.empty();
 
-            for (auto& entry : std::filesystem::directory_iterator(full_path, ec)) {
+            std::error_code iter_ec;
+            for (auto& entry : std::filesystem::directory_iterator(full_path, iter_ec)) {
+                if (iter_ec) break;  // Stop on iteration error
                 if (dirs_only && !entry.is_directory()) {
                     continue;
                 }
-                auto rel_path = std::filesystem::relative(entry.path(), root_, ec);
-                if (!ec) {
-                    results.push_back(rel_path.string());
-                }
+                // Return just the filename for consistency with gait path behavior
+                results.push_back(entry.path().filename().string());
             }
         } else if (std::filesystem::is_regular_file(full_path)) {
-            results.push_back(pattern);
+            // Return just the filename
+            results.push_back(std::filesystem::path(pattern).filename().string());
         }
     }
 

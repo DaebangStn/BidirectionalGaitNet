@@ -196,6 +196,7 @@ private:
     // Skeleton export
     char mExportSkeletonName[128] = "calibrated_skeleton";
     char mExportCalibrationName[128] = "dynamic_calibrated";
+    char mExportHDFName[256] = "";  // Empty = use C3D stem
 
     // Calibration mode
     CalibrationMode mCalibrationMode = CalibrationMode::Dynamic;
@@ -277,6 +278,9 @@ private:
     void drawJointAngleSection();
     void drawJointOffsetSection();
     void drawClinicalDataSection();
+
+    // HDF export
+    void exportMotionToHDF5();
 
     // PID scanner methods
     void scanPIDList();

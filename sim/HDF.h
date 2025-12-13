@@ -50,7 +50,7 @@ public:
 
     // Extended interface for legacy ViewerMotion compatibility
     Eigen::VectorXd getRawMotionData() const override;
-    int getValuesPerFrame() const override { return 56; }  // HDF uses skeleton DOF
+    int getValuesPerFrame() const override { return mDofPerFrame; }  // Actual DOF from file
     std::vector<double> getTimestamps() const override;
     int getTotalTimesteps() const override { return mMotionData.rows(); }
     int getTimestepsPerCycle() const override { return mMotionData.rows(); }

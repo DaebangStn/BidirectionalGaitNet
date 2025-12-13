@@ -1,0 +1,11 @@
+app:
+  title: "Marker Error Browser"
+  default_view: "marker_error_heatmap"
+
+views:
+  - id: "marker_error_heatmap"
+    label: "Marker Error Heatmap"
+    module: "views.marker_error_heatmap"
+  - id: "mean_error_timeseries"
+    label: "Mean Error Time Series"
+    module: "views.mean_error_timeseries"

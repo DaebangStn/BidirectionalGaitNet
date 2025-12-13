@@ -53,6 +53,7 @@ target_link_libraries(viewer
         ${HDF5_CXX_LIBRARIES}
         ezc3d
         Boost::program_options
+        rm
 )
 
 # Conditionally link Ceres and add compile definition

@@ -82,6 +82,10 @@ public:
     // Returns empty path if directory not found
     std::filesystem::path resolveDir(const std::string& uri_str);
 
+    // Resolve URI to directory path, creating if it doesn't exist
+    // Returns empty path only if backend resolution fails
+    std::filesystem::path resolveDirCreate(const std::string& uri_str);
+
     // Get backend names for a URI (based on prefix routing)
     std::vector<std::string> resolve_backend_names(const std::string& uri_str);
 

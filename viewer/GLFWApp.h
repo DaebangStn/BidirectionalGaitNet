@@ -18,6 +18,7 @@
 #include <imgui_internal.h>
 // C3D_Reader moved to c3d_processor
 #include "motion/MotionProcessor.h"
+#include "rm/rm.hpp"
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
 #include "ImGuiFileDialog.h"
@@ -339,6 +340,28 @@ private:
     void scanMotionFiles();                 // Scan directories for motion files
     void loadMotionFile(const std::string& path);  // Load motion on-demand
 
+    // Resource Manager for PID-based access
+    std::unique_ptr<rm::ResourceManager> mResourceManager;
+
+    // Clinical Data (PID) browser state
+    std::vector<std::string> mPIDList;
+    std::vector<std::string> mPIDNames;
+    std::vector<std::string> mPIDGMFCS;
+    int mSelectedPID = -1;
+    char mPIDFilter[64] = "";
+    bool mPreOp = true;
+
+    // HDF files for selected PID
+    std::vector<std::string> mPIDHDFFiles;
+    int mSelectedPIDHDF = -1;
+    char mPIDHDFFilter[64] = "";
+
+    // Clinical Data (PID-based HDF access) methods
+    void drawClinicalDataSection();
+    void scanPIDList();
+    void scanPIDHDFFiles();
+    void loadPIDHDFFile(const std::string& filename);
+
     // Motion Buffer
     std::vector<Eigen::VectorXd> mMotionBuffer;
     std::vector<Eigen::Matrix3d> mJointCalibration;
@@ -398,7 +421,6 @@ private:
                                        RenderCharacter* character,
                                        int value_per_frame);
 
-    std::string mMotionLoadMode;  // Motion loading mode: "no" to disable, otherwise loads HDF and C3D
     bool mLoadSimulationOnStartup = true;  // Whether to load simulation environment on startup
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
         if (!mMotionCharacter || !mRenderEnv) return;

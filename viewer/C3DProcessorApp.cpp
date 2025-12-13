@@ -8,6 +8,7 @@
 #include <fstream>
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
+#include <H5Cpp.h>
 
 using namespace dart::dynamics;
 namespace fs = std::filesystem;
@@ -1189,6 +1190,23 @@ void C3DProcessorApp::drawMarkerFittingSection()
             }
         }
 
+        // Export HDF - same line as calibrate button
+        ImGui::SameLine();
+
+        bool canExportHDF = mDynamicCalibResult.success
+                         && !mDynamicCalibResult.motionPoses.empty()
+                         && mResourceManager != nullptr
+                         && mSelectedPID >= 0;
+
+        if (!canExportHDF) ImGui::BeginDisabled();
+        if (ImGui::Button("Export HDF")) {
+            exportMotionToHDF5();
+        }
+        if (!canExportHDF) ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputTextWithHint("##hdfname", "filename", mExportHDFName, sizeof(mExportHDFName));
+
         ImGui::Separator();
         if (ImGui::Button("Clear Motion & Zero Pose")) {
             clearMotionAndZeroPose();
@@ -1398,6 +1416,188 @@ void C3DProcessorApp::drawSkeletonExportSection()
                 LOG_INFO("[C3DProcessor] Exported calibrated skeleton to: " + outputPath);
             }
         }
+    }
+}
+
+void C3DProcessorApp::exportMotionToHDF5()
+{
+    // 1. Resolve output path via PID URI
+    std::string pid = mPIDList[mSelectedPID];
+    std::string prePost = mPreOp ? "pre" : "post";
+    std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
+    std::string outputDir = mResourceManager->resolveDirCreate(pattern);
+
+    if (outputDir.empty()) {
+        LOG_ERROR("[C3DProcessor] Failed to resolve PID directory: " << pattern);
+        return;
+    }
+
+    // 2. Determine filename (use C3D stem if not specified)
+    std::string filename;
+    if (std::strlen(mExportHDFName) > 0) {
+        filename = mExportHDFName;
+    } else {
+        filename = fs::path(mMotionPath).stem().string();
+    }
+    std::string outputPath = outputDir + "/" + filename + ".h5";
+
+    try {
+        H5::H5File file(outputPath, H5F_ACC_TRUNC);
+
+        const auto& poses = mDynamicCalibResult.motionPoses;
+        int numFrames = static_cast<int>(poses.size());
+        int dofPerFrame = poses.empty() ? 56 : static_cast<int>(poses[0].size());
+        int frameRate = mC3DReader ? mC3DReader->getFrameRate() : 100;
+
+        // 3. Write /motions (numFrames x DOF)
+        hsize_t dims_motions[2] = {(hsize_t)numFrames, (hsize_t)dofPerFrame};
+        H5::DataSpace space_motions(2, dims_motions);
+        H5::DataSet ds_motions = file.createDataSet("/motions", H5::PredType::NATIVE_FLOAT, space_motions);
+
+        std::vector<float> motionBuffer(numFrames * dofPerFrame);
+        for (int f = 0; f < numFrames; ++f) {
+            for (int d = 0; d < dofPerFrame; ++d) {
+                motionBuffer[f * dofPerFrame + d] = static_cast<float>(poses[f][d]);
+            }
+        }
+        ds_motions.write(motionBuffer.data(), H5::PredType::NATIVE_FLOAT);
+
+        // 4. Write /phase (normalized 0-1)
+        hsize_t dims_1d[1] = {(hsize_t)numFrames};
+        H5::DataSpace space_1d(1, dims_1d);
+        H5::DataSet ds_phase = file.createDataSet("/phase", H5::PredType::NATIVE_FLOAT, space_1d);
+
+        std::vector<float> phaseBuffer(numFrames);
+        for (int f = 0; f < numFrames; ++f) {
+            phaseBuffer[f] = static_cast<float>(f) / static_cast<float>(numFrames - 1);
+        }
+        ds_phase.write(phaseBuffer.data(), H5::PredType::NATIVE_FLOAT);
+
+        // 5. Write /time
+        H5::DataSet ds_time = file.createDataSet("/time", H5::PredType::NATIVE_FLOAT, space_1d);
+        double dt = 1.0 / frameRate;
+        std::vector<float> timeBuffer(numFrames);
+        for (int f = 0; f < numFrames; ++f) {
+            timeBuffer[f] = static_cast<float>(f * dt);
+        }
+        ds_time.write(timeBuffer.data(), H5::PredType::NATIVE_FLOAT);
+
+        // 6. Write metadata as HDF5 attributes on root group
+        H5::Group root = file.openGroup("/");
+        H5::DataSpace scalarSpace(H5S_SCALAR);
+
+        // String attributes helper
+        auto writeStrAttr = [&](const char* name, const std::string& value) {
+            H5::StrType strType(H5::PredType::C_S1, value.size() + 1);
+            H5::Attribute attr = root.createAttribute(name, strType, scalarSpace);
+            attr.write(strType, value.c_str());
+        };
+
+        // Integer attributes
+        auto writeIntAttr = [&](const char* name, int value) {
+            H5::Attribute attr = root.createAttribute(name, H5::PredType::NATIVE_INT, scalarSpace);
+            attr.write(H5::PredType::NATIVE_INT, &value);
+        };
+
+        writeStrAttr("source_type", "c3d_dynamic_calibration");
+        writeStrAttr("c3d_file", fs::path(mMotionPath).filename().string());
+        writeIntAttr("frame_rate", frameRate);
+        writeIntAttr("num_frames", numFrames);
+        writeIntAttr("dof_per_frame", dofPerFrame);
+        writeStrAttr("pid", pid);
+        writeStrAttr("pre_post", prePost);
+
+        // 7. Compute and write marker tracking errors for both characters
+        C3D* c3dMotion = static_cast<C3D*>(mMotion);
+        const auto& config = mC3DReader->getFittingConfig();
+        const auto& mappings = config.markerMappings;
+        int numMarkers = static_cast<int>(mappings.size());
+
+        if (numMarkers > 0) {
+            // Create /marker_error group
+            H5::Group errorGroup = file.createGroup("/marker_error");
+
+            // Helper lambda to compute and write errors for a character
+            auto writeCharacterErrors = [&](RenderCharacter* character,
+                                            const std::vector<Eigen::VectorXd>& charPoses,
+                                            const std::string& groupName) {
+                if (!character || charPoses.empty()) return;
+
+                H5::Group charGroup = errorGroup.createGroup(groupName);
+                auto skel = character->getSkeleton();
+
+                std::vector<float> errorBuffer(numFrames * numMarkers, 0.0f);
+                std::vector<float> meanBuffer(numFrames, 0.0f);
+
+                for (int f = 0; f < numFrames; ++f) {
+                    skel->setPositions(charPoses[f]);
+                    auto expectedMarkers = character->getExpectedMarkerPositions();
+                    const auto& c3dMarkers = c3dMotion->getMarkers(f);
+                    const auto& skelMarkers = character->getMarkers();
+
+                    double frameErrorSum = 0.0;
+                    int validCount = 0;
+
+                    for (int m = 0; m < numMarkers; ++m) {
+                        const auto& mapping = mappings[m];
+                        int dataIdx = mapping.dataIndex;
+
+                        // Find skeleton marker index
+                        int skelIdx = -1;
+                        for (size_t j = 0; j < skelMarkers.size(); ++j) {
+                            if (skelMarkers[j].name == mapping.name) {
+                                skelIdx = static_cast<int>(j);
+                                break;
+                            }
+                        }
+
+                        bool hasData = dataIdx >= 0 && dataIdx < (int)c3dMarkers.size();
+                        bool hasSkel = skelIdx >= 0 && skelIdx < (int)expectedMarkers.size();
+
+                        if (hasData && hasSkel) {
+                            Eigen::Vector3d dataM = c3dMarkers[dataIdx];
+                            Eigen::Vector3d skelM = expectedMarkers[skelIdx];
+                            if (dataM.array().isFinite().all() && skelM.array().isFinite().all()) {
+                                double err = (dataM - skelM).norm() * 1000.0;  // mm
+                                errorBuffer[f * numMarkers + m] = static_cast<float>(err);
+                                frameErrorSum += err;
+                                validCount++;
+                            }
+                        }
+                    }
+                    meanBuffer[f] = validCount > 0 ? static_cast<float>(frameErrorSum / validCount) : 0.0f;
+                }
+
+                // Write data (numFrames x numMarkers)
+                hsize_t dims_error[2] = {(hsize_t)numFrames, (hsize_t)numMarkers};
+                H5::DataSpace space_error(2, dims_error);
+                H5::DataSet ds_data = charGroup.createDataSet("data", H5::PredType::NATIVE_FLOAT, space_error);
+                ds_data.write(errorBuffer.data(), H5::PredType::NATIVE_FLOAT);
+
+                // Write mean (numFrames,)
+                H5::DataSet ds_mean = charGroup.createDataSet("mean", H5::PredType::NATIVE_FLOAT, space_1d);
+                ds_mean.write(meanBuffer.data(), H5::PredType::NATIVE_FLOAT);
+            };
+
+            // Write errors for both characters
+            writeCharacterErrors(mFreeCharacter.get(), mDynamicCalibResult.freePoses, "free");
+            writeCharacterErrors(mMotionCharacter.get(), mDynamicCalibResult.motionPoses, "motion");
+
+            // Write marker names as root attribute
+            std::string namesStr;
+            for (size_t i = 0; i < mappings.size(); ++i) {
+                if (i > 0) namesStr += ",";
+                namesStr += mappings[i].name;
+            }
+            writeStrAttr("marker_names", namesStr);
+            writeIntAttr("num_markers", numMarkers);
+        }
+
+        file.close();
+        LOG_INFO("[C3DProcessor] Exported HDF5 motion to: " << outputPath);
+
+    } catch (const H5::Exception& e) {
+        LOG_ERROR("[C3DProcessor] HDF5 export error: " << e.getDetailMsg());
     }
 }
 
