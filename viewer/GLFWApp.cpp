@@ -1,6 +1,6 @@
 #include "GLFWApp.h"
 #include "PlaybackUtils.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "stb_image.h"
 #include "stb_image_write.h"
 #include <filesystem>
@@ -520,10 +520,8 @@ Eigen::Vector3d GLFWApp::computeMotionCycleDistance(Motion* motion)
 void GLFWApp::loadRenderConfig()
 {
     try {
-        // Use URIResolver to resolve the config path
-        PMuscle::URIResolver& resolver = PMuscle::URIResolver::getInstance();
-        resolver.initialize();
-        std::string resolved_path = resolver.resolve("render.yaml");
+        // Use rm::resolve to resolve the config path
+        std::string resolved_path = rm::resolve("render.yaml");
 
         LOG_VERBOSE("[Config] Loading render config from: " << resolved_path);
 
@@ -1163,7 +1161,7 @@ void GLFWApp::initializeMotionCharacter(const std::string& metadata)
             YAML::Node config = YAML::Load(metadata);
             if (config["environment"] && config["environment"]["skeleton"] && config["environment"]["skeleton"]["file"]) {
                 skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
-                skelPath = PMuscle::URIResolver::getInstance().resolve(skelPath);
+                skelPath = rm::resolve(skelPath);
             }
         } catch (const std::exception& e) {
             LOG_WARN("[Motion] Failed to parse metadata for skeleton path: " << e.what());

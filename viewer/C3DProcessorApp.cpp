@@ -1,6 +1,6 @@
 #include "C3DProcessorApp.h"
 #include "DARTHelper.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include "PlotUtils.h"
 #include <cstring>
@@ -76,9 +76,6 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     // Initialize graph data buffer
     mGraphData = new CBufferData<double>();
     mGraphData->register_key("marker_error_mean", 1000);
-
-    // Initialize URI resolver
-    PMuscle::URIResolver::getInstance().initialize();
 
     // Camera defaults
     mEye = Eigen::Vector3d(0.0, 0.0, 2.5);
@@ -354,9 +351,7 @@ void C3DProcessorApp::setCamera()
 void C3DProcessorApp::loadRenderConfig()
 {
     try {
-        PMuscle::URIResolver& resolver = PMuscle::URIResolver::getInstance();
-        resolver.initialize();
-        std::string resolved_path = resolver.resolve("render.yaml");
+        std::string resolved_path = rm::resolve("render.yaml");
 
         YAML::Node config = YAML::LoadFile(resolved_path);
 
@@ -3097,7 +3092,11 @@ void C3DProcessorApp::drawClinicalDataSection()
             std::string prePost = mPreOp ? "pre" : "post";
             std::string pattern = "@pid:" + pid + "/gait/" + prePost;
             std::string outputDir = mResourceManager->resolveDir(pattern);
-            std::string skelPath = outputDir + "/" + mExportCalibrationName + ".yaml";
+            std::string skelDir = outputDir + "/skeleton";
+            if (!std::filesystem::exists(skelDir)) {
+                std::filesystem::create_directories(skelDir);
+            }
+            std::string skelPath = skelDir + "/" + mExportCalibrationName + ".yaml";
             bool fileExists = std::filesystem::exists(skelPath);
 
             if (fileExists) {

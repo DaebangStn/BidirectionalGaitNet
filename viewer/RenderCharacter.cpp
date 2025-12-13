@@ -1,6 +1,6 @@
 #include "RenderCharacter.h"
 #include "DARTHelper.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include <tinyxml2.h>
 #include <yaml-cpp/yaml.h>
@@ -236,7 +236,7 @@ void RenderCharacter::loadMarkers(const std::string& markerPath)
     mMarkers.clear();
 
     // Resolve URI scheme (e.g., @data/ -> absolute path)
-    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(markerPath);
+    std::string resolvedPath = rm::resolve(markerPath);
 
     tinyxml2::XMLDocument doc;
     if (doc.LoadFile(resolvedPath.c_str()) != tinyxml2::XML_SUCCESS) {
@@ -481,7 +481,7 @@ void RenderCharacter::resetSkeletonToDefault()
 void RenderCharacter::parseSkeletonMetadata(const std::string& path)
 {
     // Resolve URI scheme
-    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+    std::string resolvedPath = rm::resolve(path);
 
     // Detect format by extension
     std::string ext;

@@ -1,4 +1,5 @@
 #include "rm/backends/pid.hpp"
+#include "rm/pid_path.hpp"
 #include "rm/error.hpp"
 #include <fstream>
 #include <regex>
@@ -28,71 +29,28 @@ std::string PidBackend::name() const {
 }
 
 std::optional<PidBackend::GaitPathComponents> PidBackend::parse_gait_path(const std::string& path) const {
-    // Pattern: {patient_id}/gait/{pre|post}[/{filename}]
-    // Only matches gait paths for c3d file listing, NOT nested directories
-    // Examples:
-    //   "12964246/gait/pre" -> {patient_id="12964246", timepoint="pre", filename=""}
-    //   "12964246/gait/post/walk01-Dynamic.c3d" -> {patient_id="12964246", timepoint="post", filename="walk01-Dynamic.c3d"}
-    //   "12964246/gait/pre/*.c3d" -> {patient_id="12964246", timepoint="pre", filename="*.c3d"}
-    //   "12964246/gait/pre/h5" -> NOT a gait path (subdirectory), returns nullopt
-
-    std::vector<std::string> parts;
-    std::istringstream iss(path);
-    std::string part;
-    while (std::getline(iss, part, '/')) {
-        if (!part.empty()) {
-            parts.push_back(part);
-        }
-    }
-
-    // Need at least 3 parts: {pid}/gait/{pre|post}
-    if (parts.size() < 3) {
+    // Delegate to shared resolver
+    auto result = PidPathResolver::parse_gait_path(path);
+    if (!result) {
         return std::nullopt;
     }
-
-    // Check for gait path pattern
-    if (parts[1] != "gait") {
-        return std::nullopt;
-    }
-
-    if (parts[2] != "pre" && parts[2] != "post") {
-        return std::nullopt;
-    }
-
-    // If more than 4 parts, it's a nested directory path, not a gait path
-    if (parts.size() > 4) {
-        return std::nullopt;
-    }
-
-    // If exactly 4 parts, the 4th must look like a c3d file or wildcard pattern
-    if (parts.size() == 4) {
-        const std::string& filename = parts[3];
-        bool is_c3d_pattern = false;
-        
-        // Check if it ends with .c3d
-        if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".c3d") {
-            is_c3d_pattern = true;
-        }
-        // Check if it contains wildcards (glob pattern for c3d files)
-        else if (filename.find('*') != std::string::npos || filename.find('?') != std::string::npos) {
-            is_c3d_pattern = true;
-        }
-        
-        // If 4th part doesn't look like a c3d file/pattern, treat as directory path
-        if (!is_c3d_pattern) {
-            return std::nullopt;
-        }
-    }
-
     GaitPathComponents components;
-    components.patient_id = parts[0];
-    components.timepoint = parts[2];
+    components.patient_id = result->patient_id;
+    components.timepoint = result->timepoint;
+    components.filename = result->filename;
+    return components;
+}
 
-    // If there are 4 parts and we got here, the 4th is a valid c3d filename/pattern
-    if (parts.size() == 4) {
-        components.filename = parts[3];
+std::optional<PidBackend::H5PathComponents> PidBackend::parse_h5_path(const std::string& path) const {
+    // Delegate to shared resolver
+    auto result = PidPathResolver::parse_h5_path(path);
+    if (!result) {
+        return std::nullopt;
     }
-
+    H5PathComponents components;
+    components.patient_id = result->patient_id;
+    components.timepoint = result->timepoint;
+    components.filename = result->filename;
     return components;
 }
 
@@ -178,6 +136,18 @@ std::filesystem::path PidBackend::transform_gait_path(const GaitPathComponents& 
     return direct_path;
 }
 
+std::filesystem::path PidBackend::transform_h5_path(const H5PathComponents& components) const {
+    // Build base path: {root}/{pid}/gait/{pre|post}/h5
+    auto base_path = root_ / components.patient_id / "gait" / components.timepoint / "h5";
+
+    if (components.filename.empty()) {
+        return base_path;
+    }
+
+    // Return full path to file
+    return base_path / components.filename;
+}
+
 std::filesystem::path PidBackend::resolve(const std::string& path) const {
     // Check if this is a gait path that needs transformation
     auto gait_components = parse_gait_path(path);
@@ -185,7 +155,13 @@ std::filesystem::path PidBackend::resolve(const std::string& path) const {
         return transform_gait_path(*gait_components);
     }
 
-    // Non-gait path: resolve directly
+    // Check if this is an h5 path that needs transformation
+    auto h5_components = parse_h5_path(path);
+    if (h5_components) {
+        return transform_h5_path(*h5_components);
+    }
+
+    // Non-gait/h5 path: resolve directly
     if (path.empty()) {
         return root_;
     } else if (path[0] == '/') {
@@ -300,6 +276,58 @@ bool PidBackend::match_glob(const std::string& text, const std::string& pattern)
 std::vector<std::string> PidBackend::list(const std::string& pattern) {
     std::vector<std::string> results;
     std::error_code ec;
+
+    // Check if this is an h5 path
+    auto h5_components = parse_h5_path(pattern);
+
+    if (h5_components) {
+        // H5 path: list *.h5 and *.hdf files recursively from gait/{pre|post}/h5/
+        auto h5_dir = root_ / h5_components->patient_id / "gait" / h5_components->timepoint / "h5";
+
+        if (!std::filesystem::exists(h5_dir) || !std::filesystem::is_directory(h5_dir)) {
+            return results;
+        }
+
+        std::unordered_set<std::string> seen;
+
+        auto is_h5_file = [](const std::string& filename) {
+            if (filename.size() > 3 && filename.substr(filename.size() - 3) == ".h5") {
+                return true;
+            }
+            if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".hdf") {
+                return true;
+            }
+            return false;
+        };
+
+        // Recursive search for h5/hdf files
+        for (auto& entry : std::filesystem::recursive_directory_iterator(h5_dir, ec)) {
+            if (entry.is_regular_file()) {
+                std::string filename = entry.path().filename().string();
+                auto rel_path = std::filesystem::relative(entry.path(), h5_dir, ec);
+                std::string rel_str = rel_path.string();
+
+                // Check if we have a filename pattern (glob)
+                if (!h5_components->filename.empty()) {
+                    if (match_glob(rel_str, h5_components->filename) || match_glob(filename, h5_components->filename)) {
+                        if (seen.insert(rel_str).second) {
+                            results.push_back(rel_str);
+                        }
+                    }
+                } else {
+                    // List all .h5 and .hdf files
+                    if (is_h5_file(filename)) {
+                        if (seen.insert(rel_str).second) {
+                            results.push_back(rel_str);
+                        }
+                    }
+                }
+            }
+        }
+
+        std::sort(results.begin(), results.end());
+        return results;
+    }
 
     // Check if this is a gait path
     auto gait_components = parse_gait_path(pattern);

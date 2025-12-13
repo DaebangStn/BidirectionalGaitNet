@@ -53,10 +53,6 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
     // Create thread pool
     pool_ = std::make_unique<ThreadPool>(num_envs);
 
-    // IMPORTANT: Initialize URIResolver eagerly in main thread BEFORE parallel environment creation
-    // This eliminates the need for thread synchronization during Environment::initialize()
-    PMuscle::URIResolver::getInstance().initialize();
-
     // Create environments in parallel
     envs_.resize(num_envs);
 

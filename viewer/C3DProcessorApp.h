@@ -195,7 +195,7 @@ private:
 
     // Skeleton export
     char mExportSkeletonName[128] = "calibrated_skeleton";
-    char mExportCalibrationName[128] = "dynamic_calibrated";
+    char mExportCalibrationName[128] = "dynamic";
     char mExportHDFName[256] = "";  // Empty = use C3D stem
 
     // Calibration mode

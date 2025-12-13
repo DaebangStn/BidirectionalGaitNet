@@ -3,6 +3,7 @@
 #include "rm/backends/local.hpp"
 #include "rm/backends/ftp.hpp"
 #include "rm/backends/pid.hpp"
+#include "Log.h"
 #include <yaml-cpp/yaml.h>
 #include <unordered_set>
 #include <fstream>
@@ -94,10 +95,12 @@ void ResourceManager::load_config(const std::string& config_path) {
                 ftp_config.password = backend_config["password"].as<std::string>();
                 ftp_config.port = backend_config["port"].as<int>(21);
                 ftp_config.root = backend_config["root"].as<std::string>("");
+                ftp_config.pid_style = backend_config["pid_style"].as<bool>(false);
 
                 named_backends_[name] = std::make_unique<FTPBackend>(ftp_config);
                 std::cout << "[rm] Backend '" << name << "': ftp " << ftp_config.host
-                          << " (" << ftp_config.ip << ":" << ftp_config.port << ")" << std::endl;
+                          << " (" << ftp_config.ip << ":" << ftp_config.port << ")"
+                          << (ftp_config.pid_style ? " [pid_style]" : "") << std::endl;
 
             } else {
                 std::cerr << "[rm] Warning: Unknown backend type '" << type << "' for '" << name << "'" << std::endl;
@@ -314,21 +317,51 @@ std::vector<std::string> ResourceManager::list(const std::string& pattern) {
 }
 
 std::filesystem::path ResourceManager::resolve(const std::string& uri_str) {
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+
     URI uri = URI::parse(uri_str);
     std::string resolved = uri.resolved_path();
 
+    LOG_VERBOSE("[rm] resolve(\"" << uri_str << "\") -> path: \"" << resolved << "\"");
+
+    // Check cache first
+    auto cached_path = cache_path_for(uri_str);
+    if (std::filesystem::exists(cached_path)) {
+        LOG_VERBOSE("[rm] resolve: found in cache: " << cached_path);
+        return cached_path;
+    }
+
     auto backends = resolve_backends(uri);
+    LOG_VERBOSE("[rm] resolve: " << backends.size() << " backend(s) for prefix '" << uri.prefix() << "'");
+
     for (auto* backend : backends) {
+        LOG_VERBOSE("[rm] resolve: checking backend '" << backend->name() << "'");
         if (backend->exists(resolved)) {
             try {
+                LOG_VERBOSE("[rm] resolve: found in '" << backend->name() << "', fetching...");
                 auto handle = backend->fetch(resolved);
-                return handle.local_path();
-            } catch (const RMError&) {
+
+                // If backend returns a local path, use it directly
+                if (!handle.local_path().empty()) {
+                    LOG_VERBOSE("[rm] resolve: got local_path: " << handle.local_path());
+                    return handle.local_path();
+                }
+
+                // Otherwise, cache the in-memory data and return cached path
+                LOG_VERBOSE("[rm] resolve: caching in-memory data to: " << cached_path);
+                write_cache(uri_str, handle);
+                return cached_path;
+
+            } catch (const RMError& e) {
+                LOG_WARN("[rm] resolve: fetch failed from '" << backend->name() << "': " << e.what());
                 continue;
             }
+        } else {
+            LOG_VERBOSE("[rm] resolve: not found in '" << backend->name() << "'");
         }
     }
 
+    LOG_ERROR("[rm] resolve: \"" << uri_str << "\" not found in any backend");
     return {};  // Empty path if not found
 }
 

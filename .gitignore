@@ -35,6 +35,7 @@ slurm-*.out
 error_log.txt
 
 tmp/
+.tmp/
 *temp/
 distillation/
 experiments/

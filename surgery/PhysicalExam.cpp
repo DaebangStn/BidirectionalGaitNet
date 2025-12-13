@@ -1,7 +1,7 @@
 #include <glad/glad.h>
 #include "PhysicalExam.h"
 #include "Log.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "GLfunctions.h"
 #include "SurgeryScript.h"
 #include <yaml-cpp/yaml.h>
@@ -188,9 +188,7 @@ PhysicalExam::~PhysicalExam() {
 
 void PhysicalExam::loadRenderConfig() {
     try {
-        PMuscle::URIResolver& resolver = PMuscle::URIResolver::getInstance();
-        resolver.initialize();
-        std::string resolved_path = resolver.resolve("render.yaml");
+        std::string resolved_path = rm::resolve("render.yaml");
 
         LOG_INFO("[Config] Loading render config from: " << resolved_path);
 
@@ -421,10 +419,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     mSubjectMusclePath = muscle_path;
 
     // Resolve URIs
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-
-    std::string resolved_skel = resolver.resolve(skel_path);
+    std::string resolved_skel = rm::resolve(skel_path);
 
     LOG_INFO("Loading skeleton: " << resolved_skel);
 
@@ -602,9 +597,7 @@ double PhysicalExam::computePassiveForce() {
 
 void PhysicalExam::loadExamSetting(const std::string& config_path) {
     // Resolve URI if needed
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-    std::string resolved_config_path = resolver.resolve(config_path);
+    std::string resolved_config_path = rm::resolve(config_path);
     
     LOG_INFO("Loading exam setting from: " << resolved_config_path);
     
@@ -644,10 +637,9 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
             if (trial_ref["file"]) {
                 // Load trial from external file
                 std::string trial_file = trial_ref["file"].as<std::string>();
-                
+
                 // Resolve URI if needed
-                URIResolver& resolver = URIResolver::getInstance();
-                std::string resolved_path = resolver.resolve(trial_file);
+                std::string resolved_path = rm::resolve(trial_file);
                 
                 LOG_INFO("  Loading trial from file: " << resolved_path);
                 trial_node = YAML::LoadFile(resolved_path);
@@ -1213,9 +1205,7 @@ void PhysicalExam::drawSurgeryPanel() {
 
             // Construct URI path and resolve it for export
             std::string recordingUriPath = std::string("@data/surgery/") + recordingFilenameWithExt;
-            URIResolver& recordingResolver = URIResolver::getInstance();
-            recordingResolver.initialize();
-            std::string recordingResolvedPath = recordingResolver.resolve(recordingUriPath);
+            std::string recordingResolvedPath = rm::resolve(recordingUriPath);
 
             // Export button
             if (ImGui::Button("Export##Surgery")) {
@@ -1246,9 +1236,7 @@ void PhysicalExam::drawSurgeryPanel() {
 
         // Construct URI path and resolve it for loading
         std::string loadUriPath = std::string("@data/surgery/") + loadFilenameWithExt;
-        URIResolver& loadResolver = URIResolver::getInstance();
-        loadResolver.initialize();
-        std::string loadResolvedPath = loadResolver.resolve(loadUriPath);
+        std::string loadResolvedPath = rm::resolve(loadUriPath);
 
         // Load button
         if (ImGui::Button("Load##Surgery")) {
@@ -1730,9 +1718,7 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
     filenameWithExt += extension;
 
     std::string uriPath = std::string("@data/muscle/") + filenameWithExt;
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-    std::string resolvedPath = resolver.resolve(uriPath);
+    std::string resolvedPath = rm::resolve(uriPath);
 
     // Save button (with debounce to prevent duplicate saves on double-click)
     if (ImGui::Button("Save##Muscle")) {
@@ -1813,9 +1799,7 @@ void PhysicalExam::drawSaveSkeletonConfigSection() {
     filenameWithExt += extension;
 
     std::string uriPath = std::string("@data/skeleton/") + filenameWithExt;
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-    std::string resolvedPath = resolver.resolve(uriPath);
+    std::string resolvedPath = rm::resolve(uriPath);
 
     // Save button (with debounce to prevent duplicate saves on double-click)
     if (ImGui::Button("Save##Skeleton")) {
@@ -5940,9 +5924,7 @@ void PhysicalExam::loadSurgeryScript() {
 
         // Construct URI path and resolve it
         std::string loadUriPath = std::string("@data/surgery/") + loadFilenameWithExt;
-        URIResolver& resolver = URIResolver::getInstance();
-        resolver.initialize();
-        std::string loadResolvedPath = resolver.resolve(loadUriPath);
+        std::string loadResolvedPath = rm::resolve(loadUriPath);
 
         mLoadedScript = SurgeryScript::loadFromFile(loadResolvedPath);
 

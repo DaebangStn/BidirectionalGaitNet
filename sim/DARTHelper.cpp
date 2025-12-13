@@ -364,7 +364,7 @@ static Eigen::Isometry3d yaml_to_transform(const YAML::Node& R, const YAML::Node
 
 dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 {
-	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+	std::string resolvedPath = rm::resolve(path);
 	
 	// Hardcoded default damping
 	const double defaultDamping = 0.4;
@@ -552,7 +552,7 @@ dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 		if (obj_file != "None")
 		{
 			std::string obj_uri = "@data/skeleton/OBJ/" + obj_file;
-			std::string obj_path = PMuscle::URIResolver::getInstance().resolve(obj_uri);
+			std::string obj_path = rm::resolve(obj_uri);
 			const aiScene *scene = MeshShape::loadMesh(std::string(obj_path));
 
 			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(Eigen::Vector3d(0.01, 0.01, 0.01), scene));
@@ -572,7 +572,7 @@ dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 
 dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
 {
-	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+	std::string resolvedPath = rm::resolve(path);
 
 	// Detect format from file extension
 	std::string ext;
@@ -604,7 +604,7 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 	bool isBVH = (flags & SKEL_REMOVE_JOINT_LIMIT) != 0;
 	bool allFreeJoints = (flags & SKEL_FREE_JOINTS) != 0;
 
-	std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+	std::string resolvedPath = rm::resolve(path);
 	LOG_VERBOSE("[DARTHelper] Building skeleton from YAML file : " << resolvedPath);
 
 	YAML::Node doc = YAML::LoadFile(resolvedPath);
@@ -741,7 +741,7 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 		if (body["obj"]) {
 			std::string obj_file = body["obj"].as<std::string>();
 			std::string obj_uri = "@data/skeleton/OBJ/" + obj_file;
-			std::string obj_path = PMuscle::URIResolver::getInstance().resolve(obj_uri);
+			std::string obj_path = rm::resolve(obj_uri);
 			const aiScene *scene = MeshShape::loadMesh(std::string(obj_path));
 
 			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(Eigen::Vector3d(0.01, 0.01, 0.01), scene));

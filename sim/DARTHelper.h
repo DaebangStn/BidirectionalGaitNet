@@ -5,7 +5,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <experimental/filesystem>
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 
 using namespace dart::dynamics;
 

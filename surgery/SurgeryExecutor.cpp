@@ -1,5 +1,5 @@
 #include "SurgeryExecutor.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include "DARTHelper.h"
 #include <iostream>
@@ -27,11 +27,8 @@ void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::str
     mSubjectMusclePath = muscle_path;
 
     // Resolve URIs
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-
-    std::string resolved_skel = resolver.resolve(skel_path);
-    std::string resolved_muscle = resolver.resolve(muscle_path);
+    std::string resolved_skel = rm::resolve(skel_path);
+    std::string resolved_muscle = rm::resolve(muscle_path);
 
     LOG_INFO("Loading skeleton: " << resolved_skel);
     LOG_INFO("Loading muscle: " << resolved_muscle);
@@ -136,9 +133,7 @@ void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {
     // If XML path provided, reload muscles from file (resets anchors + parameters)
     if (!muscle_xml_path.empty()) {
         // Resolve URI before loading
-        URIResolver& resolver = URIResolver::getInstance();
-        resolver.initialize();
-        std::string resolved_path = resolver.resolve(muscle_xml_path);
+        std::string resolved_path = rm::resolve(muscle_xml_path);
 
         LOG_INFO("[Surgery] Reloading muscles from XML: " << resolved_path);
 
@@ -619,9 +614,7 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
     }
 
     // Resolve URI path if needed
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-    std::string resolved_path = resolver.resolve(path);
+    std::string resolved_path = rm::resolve(path);
 
     // Auto-detect format from file extension
     std::string ext;
@@ -1152,9 +1145,7 @@ void SurgeryExecutor::exportSkeleton(const std::string& path) {
     }
 
     // Resolve URI path if needed
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-    std::string resolved_path = resolver.resolve(path);
+    std::string resolved_path = rm::resolve(path);
 
     // Detect format from file extension
     std::string ext;

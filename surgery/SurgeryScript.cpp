@@ -1,5 +1,5 @@
 #include "SurgeryScript.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include <fstream>
 #include <sstream>
@@ -11,9 +11,7 @@ std::vector<std::unique_ptr<SurgeryOperation>> SurgeryScript::loadFromFile(const
     std::vector<std::unique_ptr<SurgeryOperation>> operations;
     
     // Resolve URI if needed
-    URIResolver& resolver = URIResolver::getInstance();
-    resolver.initialize();
-    std::string resolved_path = resolver.resolve(filepath);
+    std::string resolved_path = rm::resolve(filepath);
     
     LOG_INFO("[SurgeryScript] Loading from: " << resolved_path);
     

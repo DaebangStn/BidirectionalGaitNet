@@ -19,4 +19,5 @@ target_link_libraries(sim PUBLIC
         ${HDF5_CXX_LIBRARIES}
         ezc3d
         ${TORCH_LIBRARIES}
+        rm
 )

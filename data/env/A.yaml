@@ -3,7 +3,8 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@data/skeleton/base.xml"
+    file: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
+    # file: "@data/skeleton/base.xml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
@@ -12,11 +13,12 @@ environment:
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    file: "@data/motion/walk.h5"
+    # file: "@data/motion/walk.h5"
+    file: "@pid:12964246/h5/pre/Trimmed_walk02-Dynamic.h5"
 
   # Muscle System
   muscle:
-    file: "@data/muscle/distribute_lower_only.xml"
+    file: "@data/muscle/base.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true

@@ -1,6 +1,6 @@
 #include "NoiseInjector.h"
 #include "Character.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
@@ -191,7 +191,7 @@ void NoiseInjector::loadConfig(const std::string& config_path)
 {
     try {
         // Resolve URI if needed
-        std::string resolved_path = PMuscle::URIResolver::getInstance().resolve(config_path);
+        std::string resolved_path = rm::resolve(config_path);
 
         YAML::Node config = YAML::LoadFile(resolved_path);
         YAML::Node ni_config = config["noise_injection"];

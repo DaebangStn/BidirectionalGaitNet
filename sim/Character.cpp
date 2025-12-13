@@ -1,5 +1,5 @@
 #include "Character.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include <limits>
 #include <algorithm>
@@ -317,7 +317,7 @@ Character::Character(std::string path, int skelFlags)
     }
 
     // Always resolve paths through UriResolver for backwards compatibility
-    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+    std::string resolvedPath = rm::resolve(path);
 
     mSkeleton = BuildFromFile(resolvedPath, skelFlags);
     mSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));

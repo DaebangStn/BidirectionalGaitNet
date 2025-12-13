@@ -1,5 +1,5 @@
 #include "Environment.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "CBufferData.h"
 #include "NPZ.h"
 #include "HDF.h"
@@ -31,9 +31,6 @@ Environment::Environment()
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
     mEnforceSymmetry(false), mLimitY(0.6)
 {
-    // Initialize URI resolver for path resolution
-    PMuscle::URIResolver::getInstance().initialize();
-
     mWorld = std::make_shared<dart::simulation::World>();
     mIsResidual = true;
     mSimulationCount = 0;
@@ -118,7 +115,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     if (TiXmlElement* skeletonElem = doc.FirstChildElement("skeleton"))
     {
         std::string skeletonPath = Trim(std::string(skeletonElem->GetText()));
-        std::string resolvedSkeletonPath = PMuscle::URIResolver::getInstance().resolve(skeletonPath);
+        std::string resolvedSkeletonPath = rm::resolve(skeletonPath);
         mCharacter = new Character(resolvedSkeletonPath, SKEL_DEFAULT);
 
         std::string _actTypeString;
@@ -148,7 +145,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
             mUseJointState = doc.FirstChildElement("useJointState")->BoolText();
 
         std::string muscle_path = Trim(std::string(doc.FirstChildElement("muscle")->GetText()));
-        std::string resolvedMusclePath = PMuscle::URIResolver::getInstance().resolve(muscle_path);
+        std::string resolvedMusclePath = rm::resolve(muscle_path);
         mCharacter->setMuscles(resolvedMusclePath, useVelocityForce, meshLbsWeight);
         mUseMuscle = true;
     }
@@ -170,7 +167,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mNumActuatorAction = mCharacter->getMuscles().size();
     }
     // Ground Loading (hardcoded)
-    mGround = BuildFromFile(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"), SKEL_DEFAULT);
+    mGround = BuildFromFile(rm::resolve("@data/ground.xml"), SKEL_DEFAULT);
 
     // Controller Setting (hardcoded)
     mIsResidual = true;
@@ -243,7 +240,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     if (doc.FirstChildElement("bvh") != NULL)
     {
         std::string bvh_path = Trim(std::string(doc.FirstChildElement("bvh")->GetText()));
-        std::string resolvedBvhPath = PMuscle::URIResolver::getInstance().resolve(bvh_path);
+        std::string resolvedBvhPath = rm::resolve(bvh_path);
         LOG_VERBOSE("[Environment] BVH Path resolved: " << bvh_path << " -> " << resolvedBvhPath);
         BVH *new_bvh = new BVH(resolvedBvhPath);
         new_bvh->setMode(std::string(doc.FirstChildElement("bvh")->Attribute("symmetry")) == "true");
@@ -254,7 +251,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     else if (doc.FirstChildElement("npz") != NULL)
     {
         std::string npz_path = Trim(std::string(doc.FirstChildElement("npz")->GetText()));
-        std::string resolvedNpzPath = PMuscle::URIResolver::getInstance().resolve(npz_path);
+        std::string resolvedNpzPath = rm::resolve(npz_path);
         LOG_VERBOSE("[Environment] NPZ Path resolved: " << npz_path << " -> " << resolvedNpzPath);
         NPZ *new_npz = new NPZ(resolvedNpzPath);
 
@@ -268,7 +265,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
             hdfElement = doc.FirstChildElement("h5");
 
         std::string hdf_path = Trim(std::string(hdfElement->GetText()));
-        std::string resolvedHdfPath = PMuscle::URIResolver::getInstance().resolve(hdf_path);
+        std::string resolvedHdfPath = rm::resolve(hdf_path);
         LOG_VERBOSE("[Environment] HDF Path resolved: " << hdf_path << " -> " << resolvedHdfPath);
 
         HDF *new_hdf = new HDF(resolvedHdfPath);
@@ -479,7 +476,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
             int idx = 0;
             for (TiXmlElement *network = networks->FirstChildElement(); network != NULL; network = network->NextSiblingElement()) {
                 std::string networkPath = network->GetText();
-                std::string resolvedNetworkPath = PMuscle::URIResolver::getInstance().resolve(networkPath);
+                std::string resolvedNetworkPath = rm::resolve(networkPath);
                 mPrevNetworks.push_back(loadPrevNetworks(resolvedNetworkPath, (idx++ == 0)));
             }
 
@@ -542,7 +539,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     if (env["skeleton"]) {
         auto skel = env["skeleton"];
         std::string skelPath = skel["file"].as<std::string>();
-        std::string resolved = PMuscle::URIResolver::getInstance().resolve(skelPath);
+        std::string resolved = rm::resolve(skelPath);
         bool selfCollide = skel["self_collide"].as<bool>(false);
         int skelFlags = SKEL_DEFAULT;
         if (selfCollide) skelFlags |= SKEL_COLLIDE_ALL;
@@ -564,7 +561,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mUseJointState = muscle["use_joint_state"].as<bool>(false);
 
         std::string musclePath = muscle["file"].as<std::string>();
-        std::string resolved = PMuscle::URIResolver::getInstance().resolve(musclePath);
+        std::string resolved = rm::resolve(musclePath);
         mCharacter->setMuscles(resolved, useVelForce, meshLbs);
         mUseMuscle = true;
 
@@ -581,7 +578,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         auto ni = env["noise_injection"];
         if (ni["file"]) {
             std::string niPath = ni["file"].as<std::string>();
-            std::string resolved = PMuscle::URIResolver::getInstance().resolve(niPath);
+            std::string resolved = rm::resolve(niPath);
             mNoiseInjector = std::make_unique<NoiseInjector>(resolved, mWorld->getTimeStep());
             LOG_INFO("[Environment] Loaded noise injection config: " << resolved);
         }
@@ -619,7 +616,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     }
 
     // === Ground === (hardcoded)
-    mGround = BuildFromFile(PMuscle::URIResolver::getInstance().resolve("@data/ground.xml"), SKEL_DEFAULT);
+    mGround = BuildFromFile(rm::resolve("@data/ground.xml"), SKEL_DEFAULT);
 
     // === Motion === (hardcoded)
     // Height calibration is always applied in strict mode (no config needed)
@@ -674,7 +671,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     if (env["motion"]) {
         auto motion = env["motion"];
         std::string motionPath = motion["file"].as<std::string>();
-        std::string resolved = PMuscle::URIResolver::getInstance().resolve(motionPath);
+        std::string resolved = rm::resolve(motionPath);
 
         std::string motionType = motion["type"].as<std::string>();
         if (motionType == "h5" || motionType == "hdf") {

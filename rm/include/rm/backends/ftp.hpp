@@ -13,6 +13,7 @@ struct FTPConfig {
     std::string password;
     int port = 21;
     std::string root;      // Root path on FTP server
+    bool pid_style = false; // Use PID-style path transformation (h5/ -> gait/{pre|post}/h5/)
 };
 
 // FTP backend using libcurl

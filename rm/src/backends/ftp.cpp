@@ -1,5 +1,7 @@
 #include "rm/backends/ftp.hpp"
+#include "rm/pid_path.hpp"
 #include "rm/error.hpp"
+#include "Log.h"
 #include <curl/curl.h>
 #include <sstream>
 #include <algorithm>
@@ -68,12 +70,21 @@ std::string FTPBackend::build_url(const std::string& path) const {
         url += config_.root;
     }
 
+    // Transform path if pid_style is enabled
+    std::string transformed_path = path;
+    if (config_.pid_style && !path.empty()) {
+        transformed_path = PidPathResolver::transform_path(path);
+        if (transformed_path != path) {
+            LOG_VERBOSE("[ftp] pid_style transform: " << path << " -> " << transformed_path);
+        }
+    }
+
     // Add requested path
-    if (!path.empty()) {
-        if (path[0] != '/' && (url.empty() || url.back() != '/')) {
+    if (!transformed_path.empty()) {
+        if (transformed_path[0] != '/' && (url.empty() || url.back() != '/')) {
             url += "/";
         }
-        url += path;
+        url += transformed_path;
     }
 
     return url;
@@ -88,6 +99,8 @@ bool FTPBackend::exists(const std::string& path) {
     CurlHandle curl;
     std::string url = build_url(path);
 
+    LOG_VERBOSE("[ftp] exists() checking: " << url);
+
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     curl_easy_setopt(curl, CURLOPT_USERPWD, build_userpass().c_str());
@@ -98,11 +111,16 @@ bool FTPBackend::exists(const std::string& path) {
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &dummy);
 
     CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        LOG_WARN("[ftp] exists() failed for " << url << ": " << curl_easy_strerror(res));
+    }
     return res == CURLE_OK;
 }
 
 std::vector<std::byte> FTPBackend::download_to_memory(const std::string& url) {
     std::vector<std::byte> buffer;
+
+    LOG_VERBOSE("[ftp] downloading: " << url);
 
     CurlHandle curl;
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -113,10 +131,12 @@ std::vector<std::byte> FTPBackend::download_to_memory(const std::string& url) {
     CURLcode res = curl_easy_perform(curl);
 
     if (res != CURLE_OK) {
+        LOG_ERROR("[ftp] download failed for " << url << ": " << curl_easy_strerror(res));
         throw RMError(ErrorCode::NetworkError, url,
             std::string("FTP download failed: ") + curl_easy_strerror(res));
     }
 
+    LOG_VERBOSE("[ftp] downloaded " << buffer.size() << " bytes");
     return buffer;
 }
 

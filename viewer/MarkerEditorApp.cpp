@@ -1,6 +1,6 @@
 #include "MarkerEditorApp.h"
 #include "DARTHelper.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include <cstring>
 #include <algorithm>
@@ -45,9 +45,6 @@ MarkerEditorApp::MarkerEditorApp(int argc, char** argv)
     std::strcpy(mNewMarkerName, "NewMarker");
     std::strcpy(mExportSkeletonPath, "data/skeleton/edited.yaml");
     mSelectedBodyNodeIndex = -1;
-
-    // Initialize URI resolver for @data/ scheme
-    PMuscle::URIResolver::getInstance().initialize();
 
     // Default paths
     mSkeletonPath = "@data/skeleton/base.xml";
@@ -1127,7 +1124,7 @@ void MarkerEditorApp::loadSkeleton(const std::string& path)
 {
     try {
         // Resolve URI scheme (e.g., @data/ -> absolute path)
-        std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+        std::string resolvedPath = rm::resolve(path);
         mCharacter = std::make_unique<RenderCharacter>(resolvedPath);
         mSkeletonPath = path;  // Keep original path for display
         LOG_INFO("[MarkerEditor] Loaded skeleton: " << resolvedPath);
@@ -1141,7 +1138,7 @@ void MarkerEditorApp::loadMarkers(const std::string& path)
 {
     if (!mCharacter) return;
     // Resolve URI scheme (e.g., @data/ -> absolute path)
-    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(path);
+    std::string resolvedPath = rm::resolve(path);
     mCharacter->loadMarkers(resolvedPath);
     mMarkerPath = path;  // Keep original path for display
     mSelectedMarkerIndex = -1;
@@ -1171,7 +1168,7 @@ void MarkerEditorApp::updateBodyNodeNames()
 void MarkerEditorApp::loadRenderConfig()
 {
     try {
-        std::string resolved_path = PMuscle::URIResolver::getInstance().resolve("render.yaml");
+        std::string resolved_path = rm::resolve("render.yaml");
         YAML::Node config = YAML::LoadFile(resolved_path);
 
         if (config["geometry"] && config["geometry"]["window"]) {
@@ -1394,7 +1391,7 @@ void MarkerEditorApp::exportSkeleton(const std::string& path)
     // Resolve path
     std::string resolved_path = path;
     if (path.find("@data/") == 0) {
-        resolved_path = PMuscle::URIResolver::getInstance().resolve(path);
+        resolved_path = rm::resolve(path);
     }
 
     std::ofstream ofs(resolved_path);

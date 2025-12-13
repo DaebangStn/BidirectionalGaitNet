@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    // Convert relative data/ paths to @data/ format for URIResolver
+    // Convert relative data/ paths to @data/ format for rm::resolve
     auto convertPath = [](const std::string& path) -> std::string {
         if (path.find("data/") == 0) {
             return "@" + path;

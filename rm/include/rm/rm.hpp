@@ -8,6 +8,7 @@
 #include "rm/handle.hpp"
 #include "rm/backend.hpp"
 #include "rm/manager.hpp"
+#include "rm/global.hpp"
 
 // Backend implementations
 #include "rm/backends/local.hpp"

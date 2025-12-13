@@ -9,7 +9,7 @@
 #include "CeresOptimizer.h"
 #endif
 #include "C3D.h"
-#include "UriResolver.h"
+#include "rm/rm.hpp"
 #include "Log.h"
 #include "ascii.h"
 
@@ -45,7 +45,7 @@ C3D_Reader::C3D_Reader(std::string fitting_config_path, std::string marker_path,
     mFrameRate = 60;
 
     // Resolve URI scheme (e.g., @data/ -> absolute path)
-    std::string resolvedPath = PMuscle::URIResolver::getInstance().resolve(marker_path);
+    std::string resolvedPath = rm::resolve(marker_path);
 
     tinyxml2::XMLDocument doc;
     doc.LoadFile(resolvedPath.c_str());
@@ -185,7 +185,7 @@ void C3D_Reader::loadSkeletonFittingConfig() {
     mFittingConfig = SkeletonFittingConfig();
 
     // Resolve URI scheme if present
-    std::string configPath = PMuscle::URIResolver::getInstance().resolve(mFittingConfigPath);
+    std::string configPath = rm::resolve(mFittingConfigPath);
 
     try {
         YAML::Node yaml = YAML::LoadFile(configPath);
@@ -3309,7 +3309,7 @@ StaticCalibrationResult C3D_Reader::calibrateStatic(C3D* c3dData, const std::str
     mCurrentC3D = c3dData;
 
     // ========== 1. Load static fitting config ==========
-    std::string resolvedConfigPath = PMuscle::URIResolver::getInstance().resolve(staticConfigPath);
+    std::string resolvedConfigPath = rm::resolve(staticConfigPath);
     YAML::Node config;
     try {
         config = YAML::LoadFile(resolvedConfigPath);
