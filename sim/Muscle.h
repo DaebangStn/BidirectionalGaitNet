@@ -65,6 +65,7 @@ public:
 	Eigen::VectorXd Getdl_dtheta();
 
 	double GetLengthRatio() { return lmt / lmt_ref; };
+	double GetLmNorm() const { return lm_norm; }
 	std::string GetName() { return name; }
 
 public:

@@ -63,6 +63,15 @@ struct RecordConfig {
         bool cumulative = false;       // Record cumulative energy per cycle (computed in Python filter)
     } metabolic;
 
+    // Muscle recording (per-muscle vectors stored in matrix_data)
+    struct MuscleConfig {
+        bool enabled = false;
+        bool activation = false;   // Per-muscle activation vector
+        bool passive = false;      // Per-muscle passive force vector
+        bool force = false;        // Per-muscle total force vector
+        bool lm_norm = false;      // Per-muscle normalized length (lm_rel / lm_opt)
+    } muscle;
+
     static RecordConfig LoadFromYAML(const std::string& yaml_path);
 };
 

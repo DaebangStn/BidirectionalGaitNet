@@ -13,7 +13,8 @@ PYBIND11_MODULE(pysamplerollout, m) {
     py::class_<RecordConfig>(m, "RecordConfig")
         .def(py::init<>())
         .def_static("load_from_yaml", &RecordConfig::LoadFromYAML)
-        .def_readwrite("metabolic", &RecordConfig::metabolic);
+        .def_readwrite("metabolic", &RecordConfig::metabolic)
+        .def_readwrite("muscle", &RecordConfig::muscle);
 
     py::class_<RecordConfig::MetabolicConfig>(m, "MetabolicConfig")
         .def(py::init<>())
@@ -21,6 +22,14 @@ PYBIND11_MODULE(pysamplerollout, m) {
         .def_readwrite("type", &RecordConfig::MetabolicConfig::type)
         .def_readwrite("step_energy", &RecordConfig::MetabolicConfig::step_energy)
         .def_readwrite("cumulative", &RecordConfig::MetabolicConfig::cumulative);
+
+    py::class_<RecordConfig::MuscleConfig>(m, "MuscleConfig")
+        .def(py::init<>())
+        .def_readwrite("enabled", &RecordConfig::MuscleConfig::enabled)
+        .def_readwrite("activation", &RecordConfig::MuscleConfig::activation)
+        .def_readwrite("passive", &RecordConfig::MuscleConfig::passive)
+        .def_readwrite("force", &RecordConfig::MuscleConfig::force)
+        .def_readwrite("lm_norm", &RecordConfig::MuscleConfig::lm_norm);
 
     // RolloutSampleEnv binding
     py::class_<RolloutSampleEnv>(m, "RolloutSampleEnv")

@@ -9,12 +9,12 @@ record:
     lm_norm: true
 
   kinematics:
-    enabled: false
+    enabled: true
     all: true
     root: true
 
     angle:
-      enabled: false
+      enabled: true
       hip: true
       knee: true
       ankle: true
@@ -24,6 +24,10 @@ record:
       hip: true
       knee: true
       ankle: true
+
+  metabolic:
+    enabled: true
+    type: "MA"
 
 sample:
   cycle: 30

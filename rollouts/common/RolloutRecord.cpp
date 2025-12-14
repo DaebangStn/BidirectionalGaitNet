@@ -66,6 +66,15 @@ RecordConfig RecordConfig::LoadFromYAML(const std::string& yaml_path) {
             config.metabolic.cumulative = record["metabolic"]["cumulative"].as<bool>(false);
         }
 
+        // Muscle configuration
+        if (record["muscle"] && record["muscle"]["enabled"].as<bool>(false)) {
+            config.muscle.enabled = true;
+            config.muscle.activation = record["muscle"]["activation"].as<bool>(false);
+            config.muscle.passive = record["muscle"]["passive"].as<bool>(false);
+            config.muscle.force = record["muscle"]["force"].as<bool>(false);
+            config.muscle.lm_norm = record["muscle"]["lm_norm"].as<bool>(false);
+        }
+
     } catch (const YAML::Exception& e) {
         std::cerr << "Error loading record config: " << e.what() << std::endl;
     }
@@ -127,6 +136,14 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
     if (config.metabolic.enabled) {
         if (config.metabolic.step_energy) fields.push_back("metabolic/step_energy");
         // Note: metabolic/cumulative is NOT a field - it's a cycle-level attribute
+    }
+
+    // Muscle fields (vector data - stored in matrix_data)
+    if (config.muscle.enabled) {
+        if (config.muscle.activation) fields.push_back("muscle/activation");
+        if (config.muscle.passive) fields.push_back("muscle/passive");
+        if (config.muscle.force) fields.push_back("muscle/force");
+        if (config.muscle.lm_norm) fields.push_back("muscle/lm_norm");
     }
 
     return fields;

@@ -205,6 +205,43 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
         data["metabolic/step_energy"] = stepEnergy;
     }
 
+    // Muscle recording (vector data -> matrix_data)
+    if (mRecordConfig.muscle.enabled) {
+        auto character = mEnv.getCharacter();
+        const auto& muscles = character->getMuscles();
+        int numMuscles = muscles.size();
+
+        if (mRecordConfig.muscle.activation) {
+            Eigen::VectorXd activations = character->getActivations();
+            record->addVector("muscle/activation", mEnv.getSimulationCount() - 1,
+                             activations.cast<float>());
+        }
+
+        if (mRecordConfig.muscle.passive) {
+            Eigen::VectorXf passive(numMuscles);
+            for (int i = 0; i < numMuscles; i++) {
+                passive[i] = static_cast<float>(muscles[i]->Getf_p());
+            }
+            record->addVector("muscle/passive", mEnv.getSimulationCount() - 1, passive);
+        }
+
+        if (mRecordConfig.muscle.force) {
+            Eigen::VectorXf force(numMuscles);
+            for (int i = 0; i < numMuscles; i++) {
+                force[i] = static_cast<float>(muscles[i]->GetForce());
+            }
+            record->addVector("muscle/force", mEnv.getSimulationCount() - 1, force);
+        }
+
+        if (mRecordConfig.muscle.lm_norm) {
+            Eigen::VectorXf lm_norm(numMuscles);
+            for (int i = 0; i < numMuscles; i++) {
+                lm_norm[i] = static_cast<float>(muscles[i]->GetLmNorm());
+            }
+            record->addVector("muscle/lm_norm", mEnv.getSimulationCount() - 1, lm_norm);
+        }
+    }
+
     record->add(mEnv.getSimulationCount() - 1, data);
 }
 
