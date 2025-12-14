@@ -203,6 +203,12 @@ def run_sample_rollout(
         'commit_message': git_info.get('commit_message', '')
     }
 
+    # Add muscle names when muscle recording is enabled
+    record_config = config.get('record', {})
+    muscle_config = record_config.get('muscle', {})
+    if muscle_config.get('enabled', False):
+        file_config['muscle_names'] = env.get_muscle_names()
+
     # 9. Run rollouts and collect data
     rollout_data = []
     success_count = 0
@@ -301,7 +307,7 @@ Examples:
                         help="Path to checkpoint directory")
     parser.add_argument("--config", default="data/rollout/config/angle.yaml",
                         help="Path to record config YAML (default: data/rollout/config/angle.yaml)")
-    parser.add_argument("--param-file", default=None,
+    parser.add_argument("--param-file", default="data/rollout/param/default_params.csv",
                         help="CSV file with parameter sweep (optional)")
     parser.add_argument("--num-samples", type=int, default=1,
                         help="Number of random samples (when --param-file not provided, default: 1)")

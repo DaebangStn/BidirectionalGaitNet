@@ -6,6 +6,16 @@ views:
   - id: "marker_error_heatmap"
     label: "Marker Error Heatmap"
     module: "views.marker_error_heatmap"
+    sources: ["pid"]
   - id: "mean_error_timeseries"
     label: "Mean Error Time Series"
     module: "views.mean_error_timeseries"
+    sources: ["pid"]
+  - id: "angle_gait_cycle"
+    label: "Joint Angles vs Gait Cycle"
+    module: "views.angle_gait_cycle"
+    sources: ["sampled"]
+  - id: "muscle_heatmap"
+    label: "Muscle Activity Heatmap"
+    module: "views.muscle_heatmap"
+    sources: ["sampled"]

@@ -56,6 +56,7 @@ public:
     int GetSkeletonDOF() const;
     double GetMass() const;
     std::vector<std::string> GetParameterNames();
+    std::vector<std::string> GetMuscleNames();
     std::vector<std::string> GetRecordFields() const;
     bool IsHierarchical() const { return mUseMuscle; }
 

@@ -1202,6 +1202,24 @@ void C3DProcessorApp::drawMarkerFittingSection()
         ImGui::SetNextItemWidth(100);
         ImGui::InputTextWithHint("##hdfname", "filename", mExportHDFName, sizeof(mExportHDFName));
 
+        // Check if destination file exists and show warning
+        if (canExportHDF) {
+            std::string pid = mPIDList[mSelectedPID];
+            std::string prePost = mPreOp ? "pre" : "post";
+            std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
+            std::string outputDir = mResourceManager->resolveDir(pattern);
+            if (!outputDir.empty()) {
+                std::string filename = (std::strlen(mExportHDFName) > 0)
+                    ? mExportHDFName
+                    : fs::path(mMotionPath).stem().string();
+                std::string outputPath = outputDir + "/" + filename + ".h5";
+                if (fs::exists(outputPath)) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "File exists!");
+                }
+            }
+        }
+
         ImGui::Separator();
         if (ImGui::Button("Clear Motion & Zero Pose")) {
             clearMotionAndZeroPose();

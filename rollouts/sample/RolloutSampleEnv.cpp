@@ -197,6 +197,63 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
                 data["anvel/AnkleR"] = skel->getJoint("TalusR")->getVelocity(0);
             }
         }
+
+        // Sway recording
+        if (mRecordConfig.kinematics.sway.enabled) {
+            const double root_x = skel->getRootBodyNode()->getCOM()[0];
+
+            if (mRecordConfig.kinematics.sway.foot) {
+                data["sway/FootR"] = skel->getBodyNode("TalusR")->getCOM()[0] - root_x;
+                data["sway/FootL"] = skel->getBodyNode("TalusL")->getCOM()[0] - root_x;
+            }
+
+            if (mRecordConfig.kinematics.sway.toe) {
+                data["sway/ToeR"] = skel->getBodyNode("FootThumbR")->getCOM()[1];
+                data["sway/ToeL"] = skel->getBodyNode("FootThumbL")->getCOM()[1];
+            }
+
+            if (mRecordConfig.kinematics.sway.fpa || mRecordConfig.kinematics.sway.anteversion) {
+                // Right FPA
+                const Eigen::Isometry3d& footTransformR = skel->getBodyNode("TalusR")->getWorldTransform();
+                Eigen::Vector3d footForwardR = footTransformR.linear() * Eigen::Vector3d::UnitZ();
+                Eigen::Vector2d footForwardXZR(footForwardR[0], footForwardR[2]);
+                double fpaR = 0.0;
+                if (footForwardXZR.norm() > 1e-8) {
+                    footForwardXZR.normalize();
+                    fpaR = std::atan2(footForwardXZR[0], footForwardXZR[1]) * 180.0 / M_PI;
+                    if (fpaR > 90.0) fpaR -= 180.0;
+                    else if (fpaR < -90.0) fpaR += 180.0;
+                }
+
+                // Left FPA
+                const Eigen::Isometry3d& footTransformL = skel->getBodyNode("TalusL")->getWorldTransform();
+                Eigen::Vector3d footForwardL = footTransformL.linear() * Eigen::Vector3d::UnitZ();
+                Eigen::Vector2d footForwardXZL(footForwardL[0], footForwardL[2]);
+                double fpaL = 0.0;
+                if (footForwardXZL.norm() > 1e-8) {
+                    footForwardXZL.normalize();
+                    fpaL = std::atan2(footForwardXZL[0], footForwardXZL[1]) * 180.0 / M_PI;
+                }
+
+                if (mRecordConfig.kinematics.sway.fpa) {
+                    data["sway/FPA_R"] = fpaR;
+                    data["sway/FPA_L"] = fpaL;
+                }
+
+                if (mRecordConfig.kinematics.sway.anteversion) {
+                    const double jointIRR = (skel->getJoint("FemurR")->getPosition(1) +
+                                             skel->getJoint("TalusR")->getPosition(1)) * 180.0 / M_PI;
+                    const double jointIRL = (skel->getJoint("FemurL")->getPosition(1) +
+                                             skel->getJoint("TalusL")->getPosition(1)) * 180.0 / M_PI;
+                    data["sway/AnteversionR"] = jointIRR - fpaR;
+                    data["sway/AnteversionL"] = jointIRL - fpaL;
+                }
+            }
+
+            if (mRecordConfig.kinematics.sway.torso) {
+                data["sway/Torso"] = skel->getBodyNode("Torso")->getCOM()[0] - root_x;
+            }
+        }
     }
 
     // Metabolic energy recording
@@ -367,6 +424,16 @@ double RolloutSampleEnv::GetMass() const {
 std::vector<std::string> RolloutSampleEnv::GetParameterNames() {
     const std::vector<std::string>& param_names = mEnv.getParamName();
     return std::vector<std::string>(param_names.begin(), param_names.end());
+}
+
+std::vector<std::string> RolloutSampleEnv::GetMuscleNames() {
+    const auto& muscles = mEnv.getCharacter()->getMuscles();
+    std::vector<std::string> names;
+    names.reserve(muscles.size());
+    for (const auto& muscle : muscles) {
+        names.push_back(muscle->GetName());
+    }
+    return names;
 }
 
 std::vector<std::string> RolloutSampleEnv::GetRecordFields() const {

@@ -53,6 +53,16 @@ struct RecordConfig {
             bool knee = false;
             bool ankle = false;
         } anvel;
+
+        // Sway and foot progression
+        struct SwayConfig {
+            bool enabled = false;
+            bool foot = false;        // sway/FootR, sway/FootL (X position relative to root)
+            bool toe = false;         // sway/ToeR, sway/ToeL (Y position)
+            bool fpa = false;         // sway/FPA_R, sway/FPA_L (Foot Progression Angle)
+            bool anteversion = false; // sway/AnteversionR, sway/AnteversionL
+            bool torso = false;       // sway/Torso (X position relative to root)
+        } sway;
     } kinematics;
 
     // Metabolic energy

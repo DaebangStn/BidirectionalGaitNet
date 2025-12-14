@@ -241,6 +241,11 @@ def save_to_hdf5(rollout_data: List[Tuple],
                 param_names_str = [name.encode('utf-8') for name in config['parameter_names']]
                 f.create_dataset('parameter_names', data=param_names_str, dtype=h5py.string_dtype())
 
+            # Store muscle names as dataset at root level (when muscle recording is enabled)
+            if config.get('muscle_names'):
+                muscle_names_str = [name.encode('utf-8') for name in config['muscle_names']]
+                f.create_dataset('muscle_names', data=muscle_names_str, dtype=h5py.string_dtype())
+
             # Initialize statistics (will be updated in finalize)
             f.attrs['total_samples'] = 0
             f.attrs['failed_samples'] = 0

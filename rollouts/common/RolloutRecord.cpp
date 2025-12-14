@@ -55,6 +55,16 @@ RecordConfig RecordConfig::LoadFromYAML(const std::string& yaml_path) {
                 config.kinematics.anvel.knee = record["kinematics"]["anvel"]["knee"].as<bool>(false);
                 config.kinematics.anvel.ankle = record["kinematics"]["anvel"]["ankle"].as<bool>(false);
             }
+
+            // Sway configuration
+            if (record["kinematics"]["sway"] && record["kinematics"]["sway"]["enabled"].as<bool>(false)) {
+                config.kinematics.sway.enabled = true;
+                config.kinematics.sway.foot = record["kinematics"]["sway"]["foot"].as<bool>(false);
+                config.kinematics.sway.toe = record["kinematics"]["sway"]["toe"].as<bool>(false);
+                config.kinematics.sway.fpa = record["kinematics"]["sway"]["fpa"].as<bool>(false);
+                config.kinematics.sway.anteversion = record["kinematics"]["sway"]["anteversion"].as<bool>(false);
+                config.kinematics.sway.torso = record["kinematics"]["sway"]["torso"].as<bool>(false);
+            }
         }
 
         // Metabolic configuration
@@ -129,6 +139,29 @@ std::vector<std::string> RolloutRecord::FieldsFromConfig(const RecordConfig& con
             if (config.kinematics.anvel.hip) fields.push_back("anvel/HipR");
             if (config.kinematics.anvel.knee) fields.push_back("anvel/KneeR");
             if (config.kinematics.anvel.ankle) fields.push_back("anvel/AnkleR");
+        }
+
+        // Sway fields
+        if (config.kinematics.sway.enabled) {
+            if (config.kinematics.sway.foot) {
+                fields.push_back("sway/FootR");
+                fields.push_back("sway/FootL");
+            }
+            if (config.kinematics.sway.toe) {
+                fields.push_back("sway/ToeR");
+                fields.push_back("sway/ToeL");
+            }
+            if (config.kinematics.sway.fpa) {
+                fields.push_back("sway/FPA_R");
+                fields.push_back("sway/FPA_L");
+            }
+            if (config.kinematics.sway.anteversion) {
+                fields.push_back("sway/AnteversionR");
+                fields.push_back("sway/AnteversionL");
+            }
+            if (config.kinematics.sway.torso) {
+                fields.push_back("sway/Torso");
+            }
         }
     }
 

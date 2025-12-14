@@ -9,14 +9,27 @@ record:
     angle:
       enabled: true
       hip: true
+      hip_ir: true
+      hip_ab: true
       knee: true
       ankle: true
+      pelvic_tilt: true
+      pelvic_rotation: true
+      pelvic_obliquity: true
 
     anvel:
       enabled: false
       hip: true
       knee: true
       ankle: true
+
+    sway:
+      enabled: true
+      foot: true
+      toe: true
+      fpa: true
+      anteversion: true
+      torso: true
 
 sample:
   cycle: 30

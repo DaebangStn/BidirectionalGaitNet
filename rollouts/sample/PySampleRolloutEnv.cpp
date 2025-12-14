@@ -66,6 +66,8 @@ PYBIND11_MODULE(pysamplerollout, m) {
              "Get character mass")
         .def("get_parameter_names", &RolloutSampleEnv::GetParameterNames,
              "Get list of parameter names")
+        .def("get_muscle_names", &RolloutSampleEnv::GetMuscleNames,
+             "Get list of muscle names")
         .def("get_record_fields", &RolloutSampleEnv::GetRecordFields,
              "Get list of record field names")
         .def("is_hierarchical", &RolloutSampleEnv::IsHierarchical,
