@@ -209,6 +209,10 @@ int RolloutEnvironment::getGaitCycleCount() {
     return mEnv.getGaitCycleCount();
 }
 
+int RolloutEnvironment::GetCycleCount() {
+    return mEnv.getGaitCycleCount();
+}
+
 Eigen::VectorXd RolloutEnvironment::InterpolatePose(const Eigen::VectorXd& pose1,
                                                      const Eigen::VectorXd& pose2,
                                                      double t,

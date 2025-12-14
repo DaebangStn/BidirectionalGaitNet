@@ -61,6 +61,12 @@ PYBIND11_MODULE(pysamplerollout, m) {
              "Get list of record field names")
         .def("is_hierarchical", &RolloutSampleEnv::IsHierarchical,
              "Check if using hierarchical (muscle) control")
+        .def("interpolate_pose", &RolloutSampleEnv::InterpolatePose,
+             py::arg("pose1"),
+             py::arg("pose2"),
+             py::arg("t"),
+             py::arg("extrapolate_root") = false,
+             "Skeleton-aware pose interpolation using Character::interpolatePose")
 
         // Properties
         .def_property_readonly("target_cycles", &RolloutSampleEnv::GetTargetCycles,

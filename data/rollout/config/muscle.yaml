@@ -1,0 +1,60 @@
+record:
+  foot: true
+
+  muscle:
+    enabled: true
+    activation: true
+    passive: true
+    force: true
+
+  kinematics:
+    enabled: false
+    all: true
+    root: true
+
+    angle:
+      enabled: false
+      hip: true
+      knee: true
+      ankle: true
+
+    anvel:
+      enabled: false
+      hip: true
+      knee: true
+      ankle: true
+
+sample:
+  cycle: 30
+
+# Data filtering and processing pipeline
+filters:
+  # Remove cycles with outlier step counts (statistical filtering)
+  drop_outlier_cycles:
+    enabled: true
+    outlier_ratio: 0.2  # Drop cycles outside (1±0.2)*mean_steps range
+
+  # Remove first N cycles (transient behavior)
+  drop_first_n_cycles:
+    enabled: true
+    n: 10
+
+  # Remove last M cycles (unstable final cycles)
+  drop_last_m_cycles:
+    enabled: true
+    m: 5
+
+  # Compute travel distance from root position
+  compute_travel_distance:
+    enabled: false
+
+  # Average and interpolate cycle-level array data to param-level
+  average_filter:
+    enabled: true
+    num_samples: 500
+    # Per-key interpolation methods
+    motion:  # Skeleton-aware interpolation (requires Python bindings)
+      - motions
+    linear:  # Simple linear interpolation (faster)
+      - time       # Automatic field (scalar)
+      - phase      # Automatic field (scalar)

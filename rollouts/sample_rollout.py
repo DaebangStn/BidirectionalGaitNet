@@ -5,15 +5,11 @@ Loads checkpoint via cleanrl_model.py, runs rollouts sequentially using C++ libt
 inference, saves results to HDF5.
 
 Usage:
-    python -m rollouts.sample_rollout --checkpoint <path> --config <path> --output <path>
-    python -m rollouts.sample_rollout --checkpoint <path> --config <path> --param-file <csv>
+    python -m rollouts.sample_rollout --checkpoint <path>
+    python -m rollouts.sample_rollout --checkpoint <path> --param-file <csv>
 
 Example:
-    python -m rollouts.sample_rollout \\
-        --checkpoint checkpoints/latest \\
-        --config data/rollout/default.yaml \\
-        --output sampled/rollout.h5 \\
-        --num-samples 10
+    python -m rollouts.sample_rollout --checkpoint runs/latest --num-samples 10
 """
 
 import argparse
@@ -31,8 +27,8 @@ from rollouts.sample.pysamplerollout import RolloutSampleEnv, RecordConfig
 # Use cleanrl_model.py for checkpoint loading (NOT ray_model.py)
 from python.cleanrl_model import loading_network, loading_metadata
 
-# Reuse utilities from existing ray implementation
-from python.rollout.rollout_worker import (
+# Reuse utilities (non-ray)
+from python.rollout.utils import (
     load_config_yaml,
     load_parameters_from_csv,
     get_git_info,
@@ -185,8 +181,8 @@ def run_sample_rollout(
         print(f"Using random parameter sampling ({num_samples} samples)")
         parameters = [(i, None) for i in range(num_samples)]
 
-    # 7. Create filter pipeline
-    filter_pipeline = FilterPipeline.from_config(filter_config, config, env=None)
+    # 7. Create filter pipeline (pass env for motion interpolation)
+    filter_pipeline = FilterPipeline.from_config(filter_config, config, env=env)
     filter_pipeline.print_pipeline()
 
     # 8. Prepare config for HDF5 metadata
@@ -228,9 +224,11 @@ def run_sample_rollout(
 
             # Apply filters
             if data.shape[0] > 0:
-                filtered_data, filtered_matrix_data, filtered_fields, param_attributes = filter_pipeline.apply(
-                    data, matrix_data, fields
+                _, filtered_data, filtered_matrix_data, filtered_fields, _, _ = filter_pipeline.apply(
+                    param_idx, data, matrix_data, fields, success, param_state
                 )
+                # Extract param_attributes from matrix_data if present
+                param_attributes = filtered_matrix_data.pop('_averaged_attributes', {})
             else:
                 filtered_data = data
                 filtered_matrix_data = matrix_data
@@ -290,16 +288,19 @@ def main():
         epilog="""
 Examples:
   # Random sampling with 10 samples
-  python -m rollouts.sample_rollout --checkpoint ckpts/latest --config data/rollout/default.yaml --num-samples 10
+  python -m rollouts.sample_rollout --checkpoint ckpts/latest --num-samples 10
 
   # Parameter sweep from CSV
-  python -m rollouts.sample_rollout --checkpoint ckpts/latest --config data/rollout/default.yaml --param-file params.csv
+  python -m rollouts.sample_rollout --checkpoint ckpts/latest --param-file params.csv
+
+  # Custom config
+  python -m rollouts.sample_rollout --checkpoint ckpts/latest --config data/rollout/config/metabolic.yaml
 """
     )
     parser.add_argument("--checkpoint", required=True,
                         help="Path to checkpoint directory")
-    parser.add_argument("--config", required=True,
-                        help="Path to record config YAML")
+    parser.add_argument("--config", default="data/rollout/config/angle.yaml",
+                        help="Path to record config YAML (default: data/rollout/config/angle.yaml)")
     parser.add_argument("--param-file", default=None,
                         help="CSV file with parameter sweep (optional)")
     parser.add_argument("--num-samples", type=int, default=1,

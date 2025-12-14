@@ -4,8 +4,9 @@
 #include <cmath>
 #include <iostream>
 
-RolloutSampleEnv::RolloutSampleEnv(const std::string& metadata_xml) {
-    mEnv.initialize_xml(metadata_xml);
+RolloutSampleEnv::RolloutSampleEnv(const std::string& metadata) {
+    // Use initialize() which auto-detects XML vs YAML format
+    mEnv.initialize(metadata);
     mEnv.reset();
     mUseMuscle = mEnv.isTwoLevelController();
 }
@@ -93,6 +94,13 @@ void RolloutSampleEnv::SetParameters(const std::map<std::string, double>& params
 
     // Set the parameter state (normalized=false, doOptimization=true)
     mEnv.setParamState(param_state, false, true);
+}
+
+Eigen::VectorXd RolloutSampleEnv::InterpolatePose(const Eigen::VectorXd& pose1,
+                                                   const Eigen::VectorXd& pose2,
+                                                   double t,
+                                                   bool extrapolate_root) {
+    return mEnv.getCharacter()->interpolatePose(pose1, pose2, t, extrapolate_root);
 }
 
 void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
@@ -236,8 +244,13 @@ py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
         // Step environment
         mEnv.setAction(action.cast<double>().eval());
         mEnv.preStep();
-        for (int i = 0; i < mEnv.getNumSubSteps(); i++) {
+
+        int numSubSteps = mEnv.getNumSubSteps();
+        for (int i = 0; i < numSubSteps; i++) {
             mEnv.muscleStep();
+            // Clear gait cycle flag immediately after each muscleStep
+            // to prevent mWorldPhaseCount from incrementing multiple times
+            mEnv.clearGaitCycleComplete();
             RecordStep(&record);
 
             // Track cumulative energy per cycle

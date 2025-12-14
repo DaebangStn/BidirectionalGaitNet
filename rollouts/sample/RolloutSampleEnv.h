@@ -59,6 +59,12 @@ public:
     std::vector<std::string> GetRecordFields() const;
     bool IsHierarchical() const { return mUseMuscle; }
 
+    // Skeleton-aware pose interpolation
+    Eigen::VectorXd InterpolatePose(const Eigen::VectorXd& pose1,
+                                    const Eigen::VectorXd& pose2,
+                                    double t,
+                                    bool extrapolate_root = false);
+
     // Direct access (for debugging)
     int GetTargetCycles() const { return mTargetCycles; }
     RecordConfig GetRecordConfig() const { return mRecordConfig; }

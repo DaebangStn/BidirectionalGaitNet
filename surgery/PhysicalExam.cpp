@@ -428,7 +428,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
 
     // Load muscles if path is provided and mUseMuscle is true
     if (!muscle_path.empty() && mUseMuscle) {
-        std::string resolved_muscle = resolver.resolve(muscle_path);
+        std::string resolved_muscle = rm::resolve(muscle_path);
         LOG_INFO("Loading muscle: " << resolved_muscle);
         mCharacter->setMuscles(resolved_muscle);
 

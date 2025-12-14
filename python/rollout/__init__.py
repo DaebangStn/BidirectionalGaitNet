@@ -1,29 +1,25 @@
 """
 Rollout module for BidirectionalGaitNet
 
-This module contains rollout execution, worker management, and CLI interface.
+Non-ray utilities only. For ray workers, import directly:
+  from python.rollout.rollout_worker import PolicyWorker, EnvWorker, FileWorker
+  from python.rollout.ray_rollout import run_rollout, create_sample_directory
 """
 
-from .rollout_worker import (
-    PolicyWorker,
-    EnvWorker,
-    FileWorker,
+from .utils import (
+    RolloutData,
     load_metadata_from_checkpoint,
     load_config_yaml,
     load_parameters_from_csv,
     get_git_info,
+    save_to_hdf5,
 )
 
-from .ray_rollout import run_rollout, create_sample_directory
-
 __all__ = [
-    'PolicyWorker',
-    'EnvWorker',
-    'FileWorker',
+    'RolloutData',
     'load_metadata_from_checkpoint',
     'load_config_yaml',
     'load_parameters_from_csv',
     'get_git_info',
-    'run_rollout',
-    'create_sample_directory',
+    'save_to_hdf5',
 ]

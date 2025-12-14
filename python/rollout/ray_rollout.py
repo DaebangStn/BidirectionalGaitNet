@@ -14,10 +14,12 @@ from python.rollout.pyrollout import RolloutEnvironment, RolloutRecord, RecordCo
 from python.ray_model import SelectiveUnpickler
 from python.uri_resolver import resolve_path
 from python.log_config import log_verbose
-from python.rollout.rollout_worker import (
-    PolicyWorker, EnvWorker, FileWorker,
-    load_metadata_from_checkpoint, load_config_yaml, load_parameters_from_csv,
-    get_git_info
+from python.rollout.rollout_worker import PolicyWorker, EnvWorker, FileWorker
+from python.rollout.utils import (
+    load_metadata_from_checkpoint,
+    load_config_yaml,
+    load_parameters_from_csv,
+    get_git_info,
 )
 
 def create_sample_directory(sample_top_dir: str,
