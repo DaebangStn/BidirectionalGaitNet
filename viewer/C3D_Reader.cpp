@@ -10,6 +10,9 @@
 #endif
 #include "C3D.h"
 #include "rm/rm.hpp"
+
+// #define LOG_LEVEL LOG_LEVEL_VERBOSE
+
 #include "Log.h"
 #include "ascii.h"
 
@@ -560,7 +563,13 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         }
 
         calibrateBone(target.name, it->second, mCurrentC3D->getAllMarkers(), target.optimizeScale);
-        mBoneOrder.push_back(target.name);
+
+        // Only add to mBoneOrder if transforms were successfully stored
+        if (mBoneR_frames.count(target.name) && mBoneT_frames.count(target.name)) {
+            mBoneOrder.push_back(target.name);
+        } else {
+            LOG_WARN("[Fitting] Failed to store transforms for bone: " << target.name);
+        }
     }
 
 #ifdef USE_CERES
@@ -568,7 +577,12 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     runCeresBoneFitting(mFittingConfig, boneToMarkers, mCurrentC3D->getAllMarkers(),
                         mCharacter, mSkelInfos, mBoneR_frames, mBoneT_frames);
     for (const auto& boneName : mFittingConfig.targetCeres) {
-        mBoneOrder.push_back(boneName);
+        // Only add to mBoneOrder if transforms were successfully stored
+        if (mBoneR_frames.count(boneName) && mBoneT_frames.count(boneName)) {
+            mBoneOrder.push_back(boneName);
+        } else {
+            LOG_WARN("[Fitting] Failed to store transforms for Ceres bone: " << boneName);
+        }
     }
 #else
     // ============ STAGE 2b Fallback: Marker-distance scaling for arms ============
@@ -1117,11 +1131,27 @@ Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx)
 
     // Process all fitted bones in mBoneOrder (preserves config order)
     for (const auto& boneName : mBoneOrder) {
+        LOG_VERBOSE("[buildFramePose] Processing bone: " << boneName);
 
-        // Check if we have transforms for this bone
-        auto it = mBoneR_frames.find(boneName);
-        if (it == mBoneR_frames.end() || it->second.empty()) continue;
-        if (fitFrameIdx >= (int)it->second.size()) continue;
+        // Check if we have transforms for this bone in both R and T maps
+        auto itR = mBoneR_frames.find(boneName);
+        auto itT = mBoneT_frames.find(boneName);
+        if (itR == mBoneR_frames.end() || itR->second.empty()) {
+            LOG_WARN("[buildFramePose] Skipping " << boneName << ": no R transforms");
+            continue;
+        }
+        if (itT == mBoneT_frames.end() || itT->second.empty()) {
+            LOG_WARN("[buildFramePose] Skipping " << boneName << ": no T transforms");
+            continue;
+        }
+        if (fitFrameIdx >= (int)itR->second.size()) {
+            LOG_WARN("[buildFramePose] Skipping " << boneName << ": R frame " << fitFrameIdx << " >= " << itR->second.size());
+            continue;
+        }
+        if (fitFrameIdx >= (int)itT->second.size()) {
+            LOG_WARN("[buildFramePose] Skipping " << boneName << ": T frame " << fitFrameIdx << " >= " << itT->second.size());
+            continue;
+        }
 
         auto* bn = mFreeCharacter->getSkeleton()->getBodyNode(boneName);
         if (!bn) {
@@ -1131,8 +1161,8 @@ Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx)
 
         // Get stored global transform (bodynode world position/orientation from fitting)
         Eigen::Isometry3d bodynodeGlobalT = Eigen::Isometry3d::Identity();
-        bodynodeGlobalT.linear() = it->second[fitFrameIdx];
-        bodynodeGlobalT.translation() = mBoneT_frames.at(boneName)[fitFrameIdx];
+        bodynodeGlobalT.linear() = itR->second[fitFrameIdx];
+        bodynodeGlobalT.translation() = itT->second[fitFrameIdx];
 
         // Compute joint positions from global transform
         Eigen::VectorXd jointPos = computeJointPositions(bn, bodynodeGlobalT);
@@ -1155,11 +1185,17 @@ Eigen::VectorXd C3D_Reader::buildFramePose(int fitFrameIdx)
 
 void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
 {
-    if (!mCurrentC3D) return;
+    if (!mCurrentC3D) {
+        LOG_INFO("[computeArmRotations] No mCurrentC3D, returning");
+        return;
+    }
 
     int frameIdx = mFitFrameStart + fitFrameIdx;
     const auto& allMarkers = mCurrentC3D->getAllMarkers();
-    if (frameIdx >= (int)allMarkers.size()) return;
+    if (frameIdx >= (int)allMarkers.size()) {
+        LOG_INFO("[computeArmRotations] frameIdx out of range, returning");
+        return;
+    }
 
     const auto& markers = allMarkers[frameIdx];
 
@@ -1174,6 +1210,10 @@ void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
     int LWRI_idx = mFittingConfig.getDataIndexForMarker("LWRI");
 
     auto skel = mFreeCharacter->getSkeleton();
+    if (!skel) {
+        LOG_WARN("[computeArmRotations] No skeleton, returning");
+        return;
+    }
 
     // Helper: get marker local position on bone from mMarkerSet
     auto getMarkerLocalPos = [&](const std::string& markerName) -> Eigen::Vector3d {
@@ -1492,15 +1532,26 @@ void C3D_Reader::computeArmRotations(int fitFrameIdx, Eigen::VectorXd& pos)
 
         // ========== Store final transforms in mBoneR_frames/mBoneT_frames ==========
         // Read from skeleton after all heuristics are applied
+        // Only store if the bone already has an entry in the maps with enough frames
         if (upperBn) {
-            Eigen::Isometry3d T = upperBn->getTransform();
-            mBoneR_frames[upperBoneName][fitFrameIdx] = T.linear();
-            mBoneT_frames[upperBoneName][fitFrameIdx] = T.translation();
+            auto itR = mBoneR_frames.find(upperBoneName);
+            auto itT = mBoneT_frames.find(upperBoneName);
+            if (itR != mBoneR_frames.end() && itT != mBoneT_frames.end() &&
+                fitFrameIdx < (int)itR->second.size() && fitFrameIdx < (int)itT->second.size()) {
+                Eigen::Isometry3d T = upperBn->getTransform();
+                itR->second[fitFrameIdx] = T.linear();
+                itT->second[fitFrameIdx] = T.translation();
+            }
         }
         if (lowerBn) {
-            Eigen::Isometry3d T = lowerBn->getTransform();
-            mBoneR_frames[lowerBoneName][fitFrameIdx] = T.linear();
-            mBoneT_frames[lowerBoneName][fitFrameIdx] = T.translation();
+            auto itR = mBoneR_frames.find(lowerBoneName);
+            auto itT = mBoneT_frames.find(lowerBoneName);
+            if (itR != mBoneR_frames.end() && itT != mBoneT_frames.end() &&
+                fitFrameIdx < (int)itR->second.size() && fitFrameIdx < (int)itT->second.size()) {
+                Eigen::Isometry3d T = lowerBn->getTransform();
+                itR->second[fitFrameIdx] = T.linear();
+                itT->second[fitFrameIdx] = T.translation();
+            }
         }
     }
 }
@@ -3410,7 +3461,14 @@ StaticCalibrationResult C3D_Reader::calibrateStatic(C3D* c3dData, const std::str
         }
 
         calibrateBone(target.name, it->second, c3dData->getAllMarkers(), target.optimizeScale);
-        mBoneOrder.push_back(target.name);
+
+        // Only add to mBoneOrder if transforms were successfully stored
+        if (mBoneR_frames.count(target.name) && mBoneT_frames.count(target.name)) {
+            mBoneOrder.push_back(target.name);
+        } else {
+            LOG_WARN("[StaticCalib] Failed to store transforms for bone: " << target.name);
+            continue;
+        }
 
         // Store bone scale in result
         BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(target.name);
@@ -3444,7 +3502,14 @@ StaticCalibrationResult C3D_Reader::calibrateStatic(C3D* c3dData, const std::str
 
         double y0 = calibrateTalusWithSharedHeight(boneName, it->second, c3dData->getAllMarkers()[0]);
         result.talusHeightOffsets[boneName] = y0;
-        mBoneOrder.push_back(boneName);
+
+        // Only add to mBoneOrder if transforms were successfully stored
+        if (mBoneR_frames.count(boneName) && mBoneT_frames.count(boneName)) {
+            mBoneOrder.push_back(boneName);
+        } else {
+            LOG_WARN("[StaticCalib] Failed to store transforms for Talus: " << boneName);
+            continue;
+        }
 
         // Store bone scale in result
         BodyNode* bn = mFreeCharacter->getSkeleton()->getBodyNode(boneName);
@@ -3879,12 +3944,14 @@ double C3D_Reader::calibrateTalusWithSharedHeight(
             }
         }
 
-        ascii::Asciichart chart({
-            {"RMS (mm)", costHistory},
-            {"y0 (scaled)", y0Scaled}
-        });
-        std::cout << "[TalusAltOpt] " << boneName << " convergence:\n"
-                  << chart.show_legend(true).height(6).Plot() << std::endl;
+        if (mFittingConfig.plotConvergence) {
+            ascii::Asciichart chart({
+                {"RMS (mm)", costHistory},
+                {"y0 (scaled)", y0Scaled}
+            });
+            std::cout << "[TalusAltOpt] " << boneName << " convergence:\n"
+                      << chart.show_legend(true).height(6).Plot() << std::endl;
+        }
     }
 
     // Store bone scale

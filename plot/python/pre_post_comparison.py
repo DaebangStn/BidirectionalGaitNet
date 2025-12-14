@@ -18,13 +18,15 @@ from utils import set_plot, style_axis
 # =============================================================================
 # CONFIGURATION - Edit these to select which metrics to plot
 # =============================================================================
+GMFCS = 3  # Set to 1, 2, or 3 to filter by GMFCS level; None = no filter
+
 METRICS = [
-    # ('height', 'Height (cm)', lambda d: d.get('height')),
-    # ('weight', 'Weight (kg)', lambda d: d.get('weight')),
-    ('foot_left_length', 'Foot Left Length (cm)', lambda d: d.get('foot', {}).get('left', {}).get('length')),
-    ('foot_left_width', 'Foot Left Width (cm)', lambda d: d.get('foot', {}).get('left', {}).get('width')),
-    ('foot_right_length', 'Foot Right Length (cm)', lambda d: d.get('foot', {}).get('right', {}).get('length')),
-    ('foot_right_width', 'Foot Right Width (cm)', lambda d: d.get('foot', {}).get('right', {}).get('width')),
+    ('height', 'Height (cm)', lambda d: d.get('height')),
+    ('weight', 'Weight (kg)', lambda d: d.get('weight')),
+    # ('foot_left_length', 'Foot Left Length (cm)', lambda d: d.get('foot', {}).get('left', {}).get('length')),
+    # ('foot_left_width', 'Foot Left Width (cm)', lambda d: d.get('foot', {}).get('left', {}).get('width')),
+    # ('foot_right_length', 'Foot Right Length (cm)', lambda d: d.get('foot', {}).get('right', {}).get('length')),
+    # ('foot_right_width', 'Foot Right Width (cm)', lambda d: d.get('foot', {}).get('right', {}).get('width')),
 ]
 
 # Color map for patients
@@ -46,27 +48,38 @@ def get_metric_value(data, extractor):
 def main():
     # 1. List all PIDs
     pids = rm_mgr.list("@pid")
-    n_pids = len(pids)
-    print(f"Found {n_pids} patients: {pids}")
+    print(f"Found {len(pids)} patients: {pids}")
 
-    # 2. Collect pre/post data for each PID
+    # 2. Collect pre/post data and metadata for each PID
     pre_data_all = {}
     post_data_all = {}
+    gmfcs_all = {}
     for pid in pids:
         try:
-            pre_data_all[pid] = rm_mgr(f"@pid:{pid}/c3d/pre")
+            pre_data_all[pid] = rm_mgr(f"@pid:{pid}/gait/pre")
         except Exception as e:
             print(f"Warning: Could not load pre data for {pid}: {e}")
             pre_data_all[pid] = {}
         try:
-            post_data_all[pid] = rm_mgr(f"@pid:{pid}/c3d/post")
+            post_data_all[pid] = rm_mgr(f"@pid:{pid}/gait/post")
         except Exception as e:
             print(f"Warning: Could not load post data for {pid}: {e}")
             post_data_all[pid] = {}
+        try:
+            gmfcs_all[pid] = rm_mgr(f"@pid:{pid}/gmfcs")
+        except Exception as e:
+            print(f"Warning: Could not load gmfcs for {pid}: {e}")
+            gmfcs_all[pid] = None
 
-    # 3. Setup colors for each PID
+    # 3. Filter by GMFCS if specified
+    if GMFCS is not None:
+        pids = [pid for pid in pids if gmfcs_all.get(pid) == GMFCS]
+        print(f"Filtered to {len(pids)} patients with GMFCS={GMFCS}: {pids}")
+
+    # 4. Setup colors for each PID
+    n_pids = len(pids)
     cmap = plt.colormaps[COLORMAP]
-    colors = {pid: cmap(i / n_pids) for i, pid in enumerate(pids)}
+    colors = {pid: cmap(i / max(n_pids, 1)) for i, pid in enumerate(pids)}
 
     # 4. Create subplots
     n_metrics = len(METRICS)
@@ -141,9 +154,10 @@ def main():
     for idx in range(n_metrics, len(axs)):
         axs[idx].set_visible(False)
 
-    # Add legend (only PIDs, in separate legend box)
+    # Add legend (PIDs with GMFCS, in separate legend box)
     handles = [plt.Line2D([0], [0], marker='o', color='w',
-                          markerfacecolor=colors[pid], markersize=8, label=pid)
+                          markerfacecolor=colors[pid], markersize=8,
+                          label=f"{pid} ({gmfcs_all[pid]})" if gmfcs_all[pid] else pid)
                for pid in pids]
     # Add mean legend entries
     handles.append(plt.Line2D([0], [0], color='blue', linestyle='--', linewidth=2, label='Mean Pre'))

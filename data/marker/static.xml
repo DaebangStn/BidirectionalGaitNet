@@ -29,7 +29,7 @@
   <marker name="RANK_med_tib"   bn="TibiaR"    offset="  1.048270   1.078239  -0.233355"/>
   <marker name="RANK_med_tal"   bn="TalusR"    offset="  1.584656   1.578315  -0.235669"/>
   <marker name="RHEE"           bn="TalusR"    offset="  0.072582   0.373494  -1.069620"/>
-  <marker name="R.TO"           bn="TalusR"    offset=" -0.089947   0.373494   0.927388"/>
+  <marker name="R.TO"           bn="TalusR"    offset=" -0.089947   0.373494   1.360509"/>
   <marker name="LTHI"           bn="FemurL"    offset="  0.298049  -0.187003   1.384829"/>
   <marker name="LKNE_fem"       bn="FemurL"    offset="  0.642614  -1.036220  -0.037050"/>
   <marker name="LKNE_tib"       bn="TibiaL"    offset="  0.782607   1.039574   0.040049"/>
@@ -41,7 +41,7 @@
   <marker name="LANK_med_tib"   bn="TibiaL"    offset=" -1.028242  -1.078072   0.233290"/>
   <marker name="LANK_med_tal"   bn="TalusL"    offset=" -1.558201   1.578315  -0.235669"/>
   <marker name="LHEE"           bn="TalusL"    offset=" -0.072582   0.373494  -1.069620"/>
-  <marker name="L.TO"           bn="TalusL"    offset="  0.089947   0.373494   0.927388"/>
+  <marker name="L.TO"           bn="TalusL"    offset="  0.089947   0.373494   1.360509"/>
   <marker name="R_Hip"          bn="FemurR"    offset="  0.019315  -1.029484  -0.172296"/>
   <marker name="L_Hip"          bn="FemurL"    offset=" -0.019315   1.029484   0.172296"/>
 </Markers>
