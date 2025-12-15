@@ -1,0 +1,209 @@
+#ifndef MOTION_EDITOR_APP_H
+#define MOTION_EDITOR_APP_H
+
+#include "dart/gui/Trackball.hpp"
+#include "RenderCharacter.h"
+#include "GLfunctions.h"
+#include "ShapeRenderer.h"
+#include "Motion.h"
+#include "HDF.h"
+#include "rm/rm.hpp"
+#include "motion/PlaybackController.h"
+#include <glad/glad.h>
+#include <GL/glu.h>
+#include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
+#include <memory>
+#include <string>
+#include <vector>
+#include <set>
+
+/**
+ * @brief Skeleton render mode
+ */
+enum class MotionEditorRenderMode { Primitive, Wireframe };
+
+/**
+ * @brief Playback navigation mode
+ */
+enum MotionEditorNavigationMode
+{
+    ME_SYNC = 0,           // Automatic playback (synced with viewer time)
+    ME_MANUAL_FRAME        // Manual frame selection via slider
+};
+
+/**
+ * @brief Viewer state for motion playback
+ */
+struct MotionEditorViewerState
+{
+    Eigen::Vector3d displayOffset = Eigen::Vector3d::Zero();
+    Eigen::VectorXd currentPose;
+    Eigen::Vector3d cycleAccumulation = Eigen::Vector3d::Zero();
+    Eigen::Vector3d cycleDistance = Eigen::Vector3d::Zero();
+    int lastFrameIdx = 0;
+    int maxFrameIndex = 0;
+    bool render = true;
+    MotionEditorNavigationMode navigationMode = ME_SYNC;
+    int manualFrameIndex = 0;
+};
+
+/**
+ * @brief Motion Editor Application
+ *
+ * Features:
+ * - Load H5 motion files via PID browser or direct path
+ * - Auto-detect skeleton from PID folder
+ * - Visualize skeleton with motion playback
+ * - Trim motion by setting start/end frames
+ * - Export trimmed motion to new H5 file
+ */
+class MotionEditorApp
+{
+public:
+    MotionEditorApp(const std::string& configPath = "");
+    ~MotionEditorApp();
+
+    void startLoop();
+
+private:
+    // === Window & GL ===
+    GLFWwindow* mWindow;
+    int mWidth = 1280, mHeight = 720;
+    int mWindowXPos = 0, mWindowYPos = 0;
+
+    // === Camera ===
+    Eigen::Vector3d mEye{0, 0, 2.5};
+    Eigen::Vector3d mUp{0, 1, 0};
+    Eigen::Vector3d mTrans{0, -0.8, 0};
+    double mZoom = 1.0;
+    double mPersp = 45.0;
+    dart::gui::Trackball mTrackball;
+    int mFocus = 0;  // 0=fixed, 1=follow skeleton
+
+    // === Input State ===
+    bool mMouseDown = false;
+    bool mRotate = false;
+    bool mTranslate = false;
+    double mMouseX = 0, mMouseY = 0;
+
+    // === Resource Manager ===
+    std::unique_ptr<rm::ResourceManager> mResourceManager;
+    std::string mConfigPath;
+
+    // === PID Browser State ===
+    std::vector<std::string> mPIDList;
+    std::vector<std::string> mPIDNames;
+    std::vector<std::string> mPIDGMFCS;
+    int mSelectedPID = -1;
+    char mPIDFilter[128] = {0};
+    bool mPreOp = true;
+
+    // === H5 File Browser ===
+    std::vector<std::string> mH5Files;
+    int mSelectedH5 = -1;
+    char mH5Filter[64] = {0};
+
+    // === Motion Data ===
+    Motion* mMotion = nullptr;
+    std::unique_ptr<RenderCharacter> mCharacter;
+    MotionEditorViewerState mMotionState;
+    std::string mMotionSourcePath;
+
+    // === Playback Timing ===
+    double mViewerTime = 0.0;
+    double mViewerPhase = 0.0;
+    float mPlaybackSpeed = 1.0f;
+    bool mIsPlaying = false;
+    double mCycleDuration = 1.0;
+    double mLastRealTime = 0.0;
+
+    // === Skeleton ===
+    std::string mAutoDetectedSkeletonPath;
+    bool mUseAutoSkeleton = true;
+    char mManualSkeletonPath[512] = {0};
+    std::string mCurrentSkeletonPath;
+
+    // === Trim State ===
+    int mTrimStart = 0;
+    int mTrimEnd = 0;
+
+    // === Export ===
+    char mExportFilename[256] = {0};
+    bool mAutoSuffix = true;
+    std::string mLastExportMessage;
+    std::string mLastExportURI;  // PID-style URI of last exported file
+    double mLastExportMessageTime = 0.0;
+
+    // === Rendering ===
+    ShapeRenderer mShapeRenderer;
+    MotionEditorRenderMode mRenderMode = MotionEditorRenderMode::Wireframe;
+    float mControlPanelWidth = 350.0f;
+    float mRightPanelWidth = 300.0f;
+
+    // === Configuration ===
+    std::set<std::string> mDefaultOpenPanels;
+
+    // === Initialization ===
+    void initGL();
+    void initImGui();
+    void initLighting();
+    void setCamera();
+    void updateCamera();
+    void loadRenderConfig();
+
+    // === Rendering ===
+    void drawFrame();
+    void drawSkeleton();
+    void drawGround();
+
+    // === UI Panels ===
+    void drawLeftPanel();
+    void drawRightPanel();
+    void drawPIDBrowserTab();
+    void drawDirectPathTab();
+    void drawSkeletonSection();
+    void drawPlaybackSection();
+    void drawMotionInfoSection();
+    void drawTrimSection();
+    void drawExportSection();
+
+    // === Helper for collapsing header ===
+    bool collapsingHeaderWithControls(const std::string& title);
+    bool isPanelDefaultOpen(const std::string& panelName) const;
+
+    // === PID Scanner Methods ===
+    void scanPIDList();
+    void scanH5Files();
+    void loadH5Motion(const std::string& path);
+    void autoDetectSkeleton();
+    void loadSkeleton(const std::string& path);
+
+    // === Playback ===
+    void updateViewerTime(double dt);
+    void evaluateMotionPose();
+    Eigen::Vector3d computeMotionCycleDistance();
+
+    // === Export ===
+    void exportTrimmedMotion();
+
+    // === Static Callbacks ===
+    static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
+    static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+    static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+    static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+    static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+
+    // === Input Handlers ===
+    void resize(int width, int height);
+    void mousePress(int button, int action, int mods);
+    void mouseMove(double x, double y);
+    void mouseScroll(double xoff, double yoff);
+    void keyPress(int key, int scancode, int action, int mods);
+    void alignCameraToPlane(int plane);
+    void reset();
+};
+
+#endif // MOTION_EDITOR_APP_H

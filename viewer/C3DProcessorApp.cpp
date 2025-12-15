@@ -399,8 +399,8 @@ void C3DProcessorApp::loadRenderConfig()
             // Render mode
             if (c3d["mode"]) {
                 std::string mode = c3d["mode"].as<std::string>();
-                if (mode == "primitive") mRenderMode = RenderMode::Primitive;
-                else if (mode == "mesh") mRenderMode = RenderMode::Mesh;
+                if (mode == "mesh") mRenderMode = RenderMode::Mesh;
+                else if (mode == "primitive") mRenderMode = RenderMode::Primitive;
                 else if (mode == "wireframe") mRenderMode = RenderMode::Wireframe;
             }
 
@@ -1066,7 +1066,7 @@ void C3DProcessorApp::drawPlaybackSection()
             int maxFrame = std::max(0, mMotion->getNumFrames() - 1);
             int currentFrame = mMotionState.navigationMode == C3D_MANUAL_FRAME ? mMotionState.manualFrameIndex : mMotionState.lastFrameIdx;
 
-            ImGui::SetNextItemWidth(150);
+            ImGui::SetNextItemWidth(-100);  // Fill width, reserve space for +/- buttons
             if (ImGui::SliderInt("Frame", &currentFrame, 0, maxFrame)) {
                 mMotionState.navigationMode = C3D_MANUAL_FRAME;
                 mMotionState.manualFrameIndex = currentFrame;
@@ -2920,7 +2920,7 @@ void C3DProcessorApp::alignCameraToPlane(int plane)
             quat = Eigen::Quaterniond::Identity();
             break;
         case 2: // YZ plane - view from +X
-            quat = Eigen::AngleAxisd(-M_PI / 2.0, Eigen::Vector3d::UnitY());
+            quat = Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitY());
             break;
         case 3: // ZX plane - view from +Y (top-down)
             quat = Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitX());

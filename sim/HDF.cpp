@@ -311,3 +311,92 @@ bool HDF::applyParametersToEnvironment(Environment* env) const
     env->setParamState(new_params, false, true);
     return true;
 }
+
+void HDF::exportToFile(
+    const std::string& outputPath,
+    int startFrame,
+    int endFrame,
+    const std::map<std::string, std::string>& metadata) const
+{
+    // Handle trim range
+    int totalFrames = mNumFrames;
+    if (endFrame < 0 || endFrame >= totalFrames) endFrame = totalFrames - 1;
+    startFrame = std::max(0, startFrame);
+    int numFrames = endFrame - startFrame + 1;
+
+    if (numFrames <= 0) {
+        LOG_ERROR("[HDF] Invalid trim range: startFrame=" << startFrame << ", endFrame=" << endFrame);
+        return;
+    }
+
+    try {
+        H5::H5File file(outputPath, H5F_ACC_TRUNC);
+
+        // Write /motions (trimmed range)
+        hsize_t dims_motions[2] = {static_cast<hsize_t>(numFrames), static_cast<hsize_t>(mDofPerFrame)};
+        H5::DataSpace space_motions(2, dims_motions);
+        H5::DataSet ds_motions = file.createDataSet("/motions", H5::PredType::NATIVE_FLOAT, space_motions);
+
+        std::vector<float> motionBuffer(numFrames * mDofPerFrame);
+        for (int f = 0; f < numFrames; ++f) {
+            for (int d = 0; d < mDofPerFrame; ++d) {
+                motionBuffer[f * mDofPerFrame + d] = static_cast<float>(mMotionData(startFrame + f, d));
+            }
+        }
+        ds_motions.write(motionBuffer.data(), H5::PredType::NATIVE_FLOAT);
+
+        // Write /phase (renormalized 0-1)
+        hsize_t dims_1d[1] = {static_cast<hsize_t>(numFrames)};
+        H5::DataSpace space_1d(1, dims_1d);
+        H5::DataSet ds_phase = file.createDataSet("/phase", H5::PredType::NATIVE_FLOAT, space_1d);
+
+        std::vector<float> phaseBuffer(numFrames);
+        for (int f = 0; f < numFrames; ++f) {
+            phaseBuffer[f] = static_cast<float>(f) / static_cast<float>(std::max(1, numFrames - 1));
+        }
+        ds_phase.write(phaseBuffer.data(), H5::PredType::NATIVE_FLOAT);
+
+        // Write /time (reset to 0)
+        H5::DataSet ds_time = file.createDataSet("/time", H5::PredType::NATIVE_FLOAT, space_1d);
+        std::vector<float> timeBuffer(numFrames);
+        for (int f = 0; f < numFrames; ++f) {
+            timeBuffer[f] = static_cast<float>(f * mFrameTime);
+        }
+        ds_time.write(timeBuffer.data(), H5::PredType::NATIVE_FLOAT);
+
+        // Write attributes
+        H5::Group root = file.openGroup("/");
+        H5::DataSpace scalarSpace(H5S_SCALAR);
+
+        int frameRate = static_cast<int>(1.0 / mFrameTime);
+
+        // Write integer attributes
+        auto writeIntAttr = [&](const char* name, int value) {
+            H5::Attribute attr = root.createAttribute(name, H5::PredType::NATIVE_INT, scalarSpace);
+            attr.write(H5::PredType::NATIVE_INT, &value);
+        };
+
+        // Write string attributes
+        auto writeStrAttr = [&](const char* name, const std::string& value) {
+            H5::StrType strType(H5::PredType::C_S1, value.size() + 1);
+            H5::Attribute attr = root.createAttribute(name, strType, scalarSpace);
+            attr.write(strType, value.c_str());
+        };
+
+        writeIntAttr("frame_rate", frameRate);
+        writeIntAttr("num_frames", numFrames);
+        writeIntAttr("dof_per_frame", mDofPerFrame);
+
+        // Write custom metadata
+        for (const auto& [key, value] : metadata) {
+            writeStrAttr(key.c_str(), value);
+        }
+
+        file.close();
+        LOG_VERBOSE("[HDF] Exported " << numFrames << " frames to " << outputPath);
+
+    } catch (const H5::Exception& e) {
+        LOG_ERROR("[HDF] HDF5 error exporting to " << outputPath << ": " << e.getDetailMsg());
+        throw;
+    }
+}

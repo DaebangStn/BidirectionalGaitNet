@@ -122,6 +122,28 @@ if(USE_CERES)
     target_link_libraries(c3d_processor ceres)
 endif()
 
+# Motion Editor - Standalone H5 motion editing/trimming application
+add_executable(motion_editor
+    "motion_editor_main.cpp"
+    "MotionEditorApp.h"
+    "MotionEditorApp.cpp"
+    "RenderCharacter.h"
+    "RenderCharacter.cpp"
+    "ShapeRenderer.h"
+    "ShapeRenderer.cpp"
+    "GLfunctions.h"
+    "GLfunctions.cpp"
+)
+target_link_libraries(motion_editor
+    tinyxml2::tinyxml2
+    GL GLU glut glad glfw imgui
+    sim
+    dart-gui
+    ${HDF5_CXX_LIBRARIES}
+    Boost::program_options
+    rm
+)
+
 # Test for marker save cyclic consistency
 add_executable(test_marker_save
     "test_marker_save.cpp"
