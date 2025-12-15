@@ -388,6 +388,16 @@ public:
     // Legacy accessors for compatibility
     double getMetabolicWeight() { return mRewardConfig.metabolic_weight; }
     void setMetabolicWeight(double weight) { mRewardConfig.metabolic_weight = weight; }
+
+    // Imitation reward coefficient accessors (deepmimic/scadiver)
+    double getEEWeight() const { return mRewardConfig.ee_weight; }
+    void setEEWeight(double w) { mRewardConfig.ee_weight = (w < 0.0 ? 0.0 : w); }
+    double getPosWeight() const { return mRewardConfig.pos_weight; }
+    void setPosWeight(double w) { mRewardConfig.pos_weight = (w < 0.0 ? 0.0 : w); }
+    double getVelWeight() const { return mRewardConfig.vel_weight; }
+    void setVelWeight(double w) { mRewardConfig.vel_weight = (w < 0.0 ? 0.0 : w); }
+    double getCOMWeight() const { return mRewardConfig.com_weight; }
+    void setCOMWeight(double w) { mRewardConfig.com_weight = (w < 0.0 ? 0.0 : w); }
     double getScaleMetabolic() { return mRewardConfig.metabolic_scale; }
     void setScaleMetabolic(double scale) { mRewardConfig.metabolic_scale = scale; }
     double getAvgVelWindowMult() const { return mRewardConfig.avg_vel_window_mult; }

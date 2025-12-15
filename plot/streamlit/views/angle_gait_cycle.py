@@ -161,9 +161,9 @@ def render(data: dict, cfg: dict) -> None:
     min_cycle = min(sorted_cycle_indices)
     max_cycle = max(sorted_cycle_indices)
 
-    # Create figure with N subplots (one per metric)
+    # Create figure with N subplots in a single row
     n_plots = len(available_keys)
-    fig, axes = plt.subplots(n_plots, 1, figsize=(10, 2.5 * n_plots), sharex=True)
+    fig, axes = plt.subplots(1, n_plots, figsize=(5 * n_plots, 4), sharey=False)
     if n_plots == 1:
         axes = [axes]
 
@@ -237,7 +237,8 @@ def render(data: dict, cfg: dict) -> None:
 
         title_suffix = "Pre-computed Average"
 
-    axes[-1].set_xlabel('Gait Cycle (%)')
+    for ax in axes:
+        ax.set_xlabel('Gait Cycle (%)')
 
     # Title
     title = f"{category} - {data['dir_name']} ({title_suffix})"

@@ -130,6 +130,8 @@ class Args:
     """if True, save full training state (optimizer, iteration) for resume"""
     resume_from: Optional[str] = None
     """path to checkpoint directory to resume training from"""
+    no_clear_cache: bool = False
+    """if toggled, skip clearing rm_cache at startup (for prefetched data)"""
 
     # --- Preset classmethods matching shell scripts ---
 
@@ -295,11 +297,18 @@ class Agent(nn.Module):
 if __name__ == "__main__":
     args = parse_args_with_presets(Args, PRESET_FNS)
 
-    # Clear rm_cache at startup
-    rm_cache_path = Path(__file__).parent.parent / ".tmp" / "rm_cache"
-    if rm_cache_path.exists():
-        shutil.rmtree(rm_cache_path)
-        print(f"Cleared cache: {rm_cache_path}")
+    # Clear rm_cache at startup (unless using prefetch workflow)
+    if not args.no_clear_cache:
+        rm_cache_path = Path(__file__).parent.parent / ".tmp" / "rm_cache"
+        lock_path = Path(__file__).parent.parent / ".tmp" / "rm_cache.lock"
+
+        # Check lock before clearing (another job may be using cache)
+        if lock_path.exists():
+            print(f"WARNING: Cache is locked by another job. Skipping cache clear.")
+            print(f"To force clear: rm {lock_path}")
+        elif rm_cache_path.exists():
+            shutil.rmtree(rm_cache_path)
+            print(f"Cleared cache: {rm_cache_path}")
 
     # Override args from YAML config if 'args' section exists
     with open(args.env_file, 'r') as f:
@@ -471,6 +480,13 @@ if __name__ == "__main__":
 
     # Reset all environments to initial state before first rollout
     envs.reset()
+
+    # Release cache lock (if prefetch workflow was used)
+    if args.no_clear_cache:
+        lock_path = Path(__file__).parent.parent / ".tmp" / "rm_cache.lock"
+        if lock_path.exists():
+            lock_path.unlink()
+            print(f"Released cache lock: {lock_path}")
 
     # Always create fresh run_name (new TensorBoard directory)
     env_name = Path(args.env_file).stem

@@ -3341,8 +3341,65 @@ void GLFWApp::drawSimControlPanel()
             ImGui::TreePop();
         }
 
+        // Imitation Reward Coefficients (deepmimic/scadiver)
+        if (ImGui::TreeNodeEx("Imitation Reward##imitation", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Indent();
+
+            // End-effector weight
+            float eeWeight = static_cast<float>(mRenderEnv->getEEWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("EE Weight", &eeWeight, 0.0f, 0.0f, "%.1f"))
+            {
+                mRenderEnv->setEEWeight(static_cast<double>(eeWeight));
+            }
+
+            // Position weight
+            float posWeight = static_cast<float>(mRenderEnv->getPosWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Pos Weight", &posWeight, 0.0f, 0.0f, "%.1f"))
+            {
+                mRenderEnv->setPosWeight(static_cast<double>(posWeight));
+            }
+
+            // Velocity weight
+            float velWeight = static_cast<float>(mRenderEnv->getVelWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Vel Weight", &velWeight, 0.0f, 0.0f, "%.1f"))
+            {
+                mRenderEnv->setVelWeight(static_cast<double>(velWeight));
+            }
+
+            // COM weight
+            float comWeight = static_cast<float>(mRenderEnv->getCOMWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("COM Weight", &comWeight, 0.0f, 0.0f, "%.1f"))
+            {
+                mRenderEnv->setCOMWeight(static_cast<double>(comWeight));
+            }
+
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("Exponential penalty coefficients for imitation:");
+                ImGui::Text("  r = exp(-weight * error^2 / dim)");
+                ImGui::Separator();
+                ImGui::Text("Higher values = stricter penalty");
+                ImGui::Text("EE: End-effector position (default: 40)");
+                ImGui::Text("Pos: Joint positions (default: 20)");
+                ImGui::Text("Vel: Joint velocities (default: 10)");
+                ImGui::Text("COM: Center of mass (default: 10)");
+                ImGui::EndTooltip();
+            }
+
+            ImGui::Unindent();
+            ImGui::TreePop();
+        }
+
         // Knee Pain Penalty Category
-        if (ImGui::TreeNodeEx("Knee Pain Penalty##kneepain", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::TreeNodeEx("Knee Pain Penalty##kneepain"))
         {
             ImGui::Indent();
 
@@ -3378,7 +3435,7 @@ void GLFWApp::drawSimControlPanel()
         }
 
         // Locomotion Terms Category
-        if (ImGui::TreeNodeEx("Locomotion Terms##locomotion", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::TreeNodeEx("Locomotion Terms##locomotion"))
         {
             ImGui::Indent();
 

@@ -1277,6 +1277,7 @@ double Environment::calcReward()
 
         Eigen::VectorXd pos_diff = skel->getPositionDifferences(mRefPose, pos);
         Eigen::VectorXd vel_diff = skel->getVelocityDifferences(mTargetVelocities, vel);
+        Eigen::VectorXd com_vel_diff = vel_diff.segment(3, 3);
 
         auto ees = mCharacter->getEndEffectors();
         Eigen::VectorXd ee_diff(ees.size() * 3);
@@ -1296,21 +1297,23 @@ double Environment::calcReward()
         com_diff += skel->getCOM();
         skel->setPositions(pos);
 
-        double r_p, r_v, r_ee, r_com, r_metabolic;
+        double r_p, r_v, r_ee, r_com, r_com_vel, r_metabolic;
         r_ee = exp(-mRewardConfig.ee_weight * ee_diff.squaredNorm() / ee_diff.rows());
         r_p = exp(-mRewardConfig.pos_weight * pos_diff.squaredNorm() / pos_diff.rows());
         r_v = exp(-mRewardConfig.vel_weight * vel_diff.squaredNorm() / vel_diff.rows());
         r_com = exp(-mRewardConfig.com_weight * com_diff.squaredNorm() / com_diff.rows());
+        r_com_vel = exp(-mRewardConfig.com_weight * com_vel_diff.squaredNorm() / com_vel_diff.rows());
         r_metabolic = getEnergyReward();
 
-        if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic;
-        else if (mRewardType == scadiver) r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee) * (0.1 + 0.9 * r_metabolic);
+        if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic + w_com * r_com_vel;
+        else if (mRewardType == scadiver) r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee) * (0.1 + 0.9 * r_metabolic) * (0.1 + 0.9 * r_com_vel);
 
         // Log individual rewards to mInfoMap (for TensorBoard)
         mInfoMap["r_ee"] = r_ee;
         mInfoMap["r_p"] = r_p;
         mInfoMap["r_v"] = r_v;
         mInfoMap["r_com"] = r_com;
+        mInfoMap["r_com_vel"] = r_com_vel;
         mInfoMap["r_metabolic"] = r_metabolic;
     }
     else if (mRewardType == gaitnet)

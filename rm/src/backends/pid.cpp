@@ -18,10 +18,16 @@ static const std::unordered_set<std::string> METADATA_FIELDS = {
 PidBackend::PidBackend(std::filesystem::path root)
     : root_(std::move(root)) {
     // Normalize and verify root exists
-    if (!std::filesystem::exists(root_)) {
-        throw RMError(ErrorCode::ConfigError, root_.string(), "Pid backend root does not exist");
+    try {
+        if (!std::filesystem::exists(root_)) {
+            throw RMError(ErrorCode::ConfigError, root_.string(), "Pid backend root does not exist");
+        }
+        root_ = std::filesystem::canonical(root_);
+    } catch (const std::filesystem::filesystem_error& e) {
+        // Handle network mount errors, permission issues, etc.
+        throw RMError(ErrorCode::ConfigError, root_.string(),
+            std::string("Cannot access pid backend root: ") + e.what());
     }
-    root_ = std::filesystem::canonical(root_);
 }
 
 std::string PidBackend::name() const {
