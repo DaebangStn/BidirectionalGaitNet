@@ -78,13 +78,18 @@ skeleton_fitting:
     # SVD-based optimizer targets (requires 3+ markers)
     # Plain string = scale: true (default), object format for scale: false
     target_svd:
-      - Pelvis
-      - FemurR
-      - TibiaR
+      - name: Pelvis
+        scale: true
+      - name: FemurR
+        scale: false
+      - name: TibiaR
+        scale: false
       - name: TalusR
         scale: false
-      - FemurL
-      - TibiaL
+      - name: FemurL
+        scale: false
+      - name: TibiaL
+        scale: false
       - name: TalusL
         scale: false
       - Torso

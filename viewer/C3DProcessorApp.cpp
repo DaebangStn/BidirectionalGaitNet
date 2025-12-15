@@ -1235,14 +1235,22 @@ void C3DProcessorApp::drawMarkerFittingSection()
 void C3DProcessorApp::drawSkeletonScaleSection()
 {
     if (collapsingHeaderWithControls("Skeleton Scale")) {
-        // Use mFreeCharacter as the primary source for scale info
-        RenderCharacter* character = mFreeCharacter.get();
-        if (!character) {
+        // Character selection radio buttons
+        ImGui::RadioButton("Free", &mScaleCharacterSelection, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Motion", &mScaleCharacterSelection, 1);
+        ImGui::Separator();
+
+        // Select character based on radio button
+        RenderCharacter* character = nullptr;
+        if (mScaleCharacterSelection == 0 && mFreeCharacter) {
+            character = mFreeCharacter.get();
+        } else if (mScaleCharacterSelection == 1 && mMotionCharacter) {
             character = mMotionCharacter.get();
         }
 
         if (!character) {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No character loaded");
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Selected character not loaded");
             return;
         }
 

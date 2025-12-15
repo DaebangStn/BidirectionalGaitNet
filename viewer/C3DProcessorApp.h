@@ -173,6 +173,9 @@ private:
     bool mRenderMotionCharMarkers = true;
     Eigen::Vector3d mMotionCharacterOffset = Eigen::Vector3d(0.8, 0.0, 0.0);
 
+    // Skeleton scale section character selection (0=Free, 1=Motion)
+    int mScaleCharacterSelection = 0;
+
     // Per-marker visibility (empty = all visible)
     std::set<int> mHiddenC3DMarkers;
     std::set<int> mHiddenSkelMarkers;

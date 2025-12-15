@@ -520,12 +520,10 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         return;
     }
 
-    // Reset all bone parameters to default
-    for (auto& info : mSkelInfos) {
-        std::get<1>(info) = ModifyInfo();
+    // Sync mSkelInfos from mFreeCharacter (preserves loaded calibration)
+    if (mFreeCharacter) {
+        mSkelInfos = mFreeCharacter->getSkelInfos();
     }
-    if (mFreeCharacter) mFreeCharacter->applySkeletonBodyNode(mSkelInfos, mFreeCharacter->getSkeleton());
-    if (mMotionCharacter) mMotionCharacter->applySkeletonBodyNode(mSkelInfos, mMotionCharacter->getSkeleton());
 
     LOG_VERBOSE("[C3D_Reader] Starting multi-stage skeleton fitting...");
 
@@ -1050,7 +1048,13 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
                   << " (" << out.iterations << " iters)" << std::endl;
     }
 
-    out.scale = S;
+    int idx = bn->getIndexInSkeleton();
+    auto& modInfo = std::get<1>(mFreeCharacter->getSkelInfos()[idx]);
+    double bulkScale = modInfo.value[3];
+    out.scale = Eigen::Vector3d(
+        modInfo.value[0] * bulkScale * S(0),
+        modInfo.value[1] * bulkScale * S(1),
+        modInfo.value[2] * bulkScale * S(2));
     out.finalRMS = rmsHistory.empty() ? 0.0 : rmsHistory.back();
     out.valid = true;
 
@@ -3421,11 +3425,8 @@ StaticCalibrationResult C3D_Reader::calibrateStatic(C3D* c3dData, const std::str
     pos.setZero();
     mFreeCharacter->getSkeleton()->setPositions(pos);
 
-    // Reset bone parameters to default
-    for (auto& info : mSkelInfos) {
-        std::get<1>(info) = ModifyInfo();
-    }
-    mFreeCharacter->applySkeletonBodyNode(mSkelInfos, mFreeCharacter->getSkeleton());
+    // Sync mSkelInfos from mFreeCharacter (preserves loaded calibration)
+    mSkelInfos = mFreeCharacter->getSkelInfos();
 
     // Clear previous fitting results
     mBoneR_frames.clear();
