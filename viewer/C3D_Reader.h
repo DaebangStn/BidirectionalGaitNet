@@ -201,6 +201,9 @@ struct SkeletonFittingConfig {
     };
     PlantarCorrectionConfig plantarCorrection;
 
+    // Knee position refinement (least-squares adjustment of FemurL/R childOffset)
+    bool fitKneePosition = true;
+
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
         for (const auto& ref : markerMappings) {

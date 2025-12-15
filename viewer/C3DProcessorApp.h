@@ -94,6 +94,7 @@ private:
     Eigen::Vector3d mEye;
     Eigen::Vector3d mUp;
     Eigen::Vector3d mTrans;
+    Eigen::Vector3d mRelTrans = Eigen::Vector3d::Zero();  // User drag offset relative to focus target
     double mZoom;
     double mPersp;
     dart::gui::Trackball mTrackball;

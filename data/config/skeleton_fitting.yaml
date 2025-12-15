@@ -69,7 +69,7 @@ skeleton_fitting:
     - {name: 'ROFF', data_label: 'R.Offset'}
 
   optimization:
-    max_iterations: 100
+    max_iterations: 10
     convergence_threshold: 1.0e-6
     plot_convergence: false
     lambda_rot: 10.0           # Rotation regularization weight for Ceres optimizer
@@ -130,9 +130,9 @@ skeleton_fitting:
   # Inverse Kinematics refinement parameters (DLS + Line Search)
   inverse_kinematics:
     enabled: true               # Enable/disable IK refinement
-    max_iterations: 5          # Maximum IK iterations per frame
-    tolerance: 5.0e-3           # Convergence tolerance (meters)
-    lambda: 0.05                # DLS damping factor (Levenberg-Marquardt)
+    max_iterations: 15          # Maximum IK iterations per frame
+    tolerance: 1.0e-3           # Convergence tolerance (meters)
+    lambda: 0.1                # DLS damping factor (Levenberg-Marquardt)
     alpha_init: 1.0             # Initial line search step size
     beta: 0.5                   # Line search backtrack factor
     max_line_search: 8          # Maximum line search iterations
@@ -172,5 +172,7 @@ skeleton_fitting:
   plantar_correction:
     enabled: true
     velocity_threshold: 0.002  # m/frame threshold for lock detection (5mm)
-    min_lock_frames: 15         # minimum consecutive frames to count as lock phase
+    min_lock_frames: 10         # minimum consecutive frames to count as lock phase
     blend_frames: 6            # frames for smooth transition at phase boundaries
+
+  fit_knee_position: true

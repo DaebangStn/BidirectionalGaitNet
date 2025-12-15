@@ -322,6 +322,12 @@ void C3D_Reader::loadSkeletonFittingConfig() {
                      << ", blendFrames=" << mFittingConfig.plantarCorrection.blendFrames);
         }
 
+        // Knee position refinement
+        if (sf["fit_knee_position"]) {
+            mFittingConfig.fitKneePosition = sf["fit_knee_position"].as<bool>(true);
+            LOG_VERBOSE("[Config] Fit knee position: " << (mFittingConfig.fitKneePosition ? "enabled" : "disabled"));
+        }
+
         // New format: marker_mappings (flat list)
         if (sf["marker_mappings"]) {
             for (const auto& m : sf["marker_mappings"]) {
@@ -2503,78 +2509,76 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
     //
     // Chain: ParentJoint (FemurL/R) → ParentBN (FemurL/R) → KneeJoint (TibiaL/R) → ChildBN (TibiaL/R)
     // We adjust ParentJoint's childOffset to move ParentBN such that the child body node aligns
-    auto freeSkel = mFreeCharacter->getSkeleton();
-    std::vector<std::string> kneeJoints = {"TibiaL", "TibiaR"};
+    if (mFittingConfig.fitKneePosition) {
+        auto freeSkel = mFreeCharacter->getSkeleton();
+        std::vector<std::string> kneeJoints = {"TibiaL", "TibiaR"};
 
-    for (const auto& jointName : kneeJoints) {
-        auto* joint = skel->getJoint(jointName);
-        if (!joint || joint->getType() != "RevoluteJoint") continue;
+        for (const auto& jointName : kneeJoints) {
+            auto* joint = skel->getJoint(jointName);
+            if (!joint || joint->getType() != "RevoluteJoint") continue;
 
-        auto* childBn = joint->getChildBodyNode();
-        if (!childBn) continue;
+            auto* childBn = joint->getChildBodyNode();
+            if (!childBn) continue;
 
-        auto* parentBn = childBn->getParentBodyNode();
-        if (!parentBn) continue;
+            auto* parentBn = childBn->getParentBodyNode();
+            if (!parentBn) continue;
 
-        // Get the PARENT joint (the joint that connects to parentBn)
-        auto* parentJoint = parentBn->getParentJoint();
-        if (!parentJoint) continue;
+            // Get the PARENT joint (the joint that connects to parentBn)
+            auto* parentJoint = parentBn->getParentJoint();
+            if (!parentJoint) continue;
 
-        // Get corresponding structures in freeChar
-        auto* freeJoint = freeSkel->getJoint(jointName);
-        if (!freeJoint) continue;
-        auto* freeChildBn = freeJoint->getChildBodyNode();
-        if (!freeChildBn) continue;
+            // Get corresponding structures in freeChar
+            auto* freeJoint = freeSkel->getJoint(jointName);
+            if (!freeJoint) continue;
+            auto* freeChildBn = freeJoint->getChildBodyNode();
+            if (!freeChildBn) continue;
 
-        // Build least-squares system: R(t) * Δt = d(t)
-        // where d(t) = childBn_pos_free(t) - childBn_pos_motion(t)
-        // and Δt adjusts parentJoint's childOffset (in parentBn's local frame)
-        Eigen::MatrixXd A(3 * numFrames, 3);
-        Eigen::VectorXd b_vec(3 * numFrames);
+            // Build least-squares system: R(t) * Δt = d(t)
+            // where d(t) = childBn_pos_free(t) - childBn_pos_motion(t)
+            // and Δt adjusts parentJoint's childOffset (in parentBn's local frame)
+            Eigen::MatrixXd A(3 * numFrames, 3);
+            Eigen::VectorXd b_vec(3 * numFrames);
 
-        for (int t = 0; t < numFrames; ++t) {
-            // Apply poses to both skeletons (use cached free poses)
-            skel->setPositions(result.motionPoses[t]);
-            freeSkel->setPositions(mFreePoses[t]);
+            for (int t = 0; t < numFrames; ++t) {
+                // Apply poses to both skeletons (use cached free poses)
+                skel->setPositions(result.motionPoses[t]);
+                freeSkel->setPositions(mFreePoses[t]);
 
-            // Get child body node world position (origin of TibiaL/R body node)
-            Eigen::Vector3d childBnPosMotion = childBn->getWorldTransform().translation();
-            Eigen::Vector3d childBnPosFree = freeChildBn->getWorldTransform().translation();
+                // Get child body node world position (origin of TibiaL/R body node)
+                Eigen::Vector3d childBnPosMotion = childBn->getWorldTransform().translation();
+                Eigen::Vector3d childBnPosFree = freeChildBn->getWorldTransform().translation();
 
-            // The adjustment Δt is in parentBn's local frame
-            // Moving parentBn by Δt moves childBn by R_parentBn * Δt in world
-            Eigen::Matrix3d R = parentBn->getWorldTransform().linear();
+                // The adjustment Δt is in parentBn's local frame
+                // Moving parentBn by Δt moves childBn by R_parentBn * Δt in world
+                Eigen::Matrix3d R = parentBn->getWorldTransform().linear();
 
-            A.block<3, 3>(3 * t, 0) = R;
-            b_vec.segment<3>(3 * t) = childBnPosFree - childBnPosMotion;
+                A.block<3, 3>(3 * t, 0) = R;
+                b_vec.segment<3>(3 * t) = childBnPosFree - childBnPosMotion;
+            }
+
+            // Solve: Δt = (A^T A)^{-1} A^T b
+            Eigen::Vector3d delta = (A.transpose() * A).ldlt().solve(A.transpose() * b_vec);
+
+            // Compute RMS before and after
+            Eigen::VectorXd residual = A * delta - b_vec;
+            double rmsBefore = std::sqrt(b_vec.squaredNorm() / numFrames);
+            double rmsAfter = std::sqrt(residual.squaredNorm() / numFrames);
+
+            // Update parentJoint's childOffset (the offset from parentJoint to parentBn)
+            std::string parentJointName = parentJoint->getName();
+            auto parentIt = result.jointOffsets.find(parentJointName);
+            if (parentIt != result.jointOffsets.end()) {
+                parentIt->second.childOffset.translation() -= delta;
+                LOG_VERBOSE("[KneeRefine] " << jointName << " -> adjust " << parentJointName
+                         << ".childOffset: Δt=(" << delta.transpose()
+                         << "), RMS: " << std::fixed << std::setprecision(4) << rmsBefore << " -> " << rmsAfter);
+            } else {
+                LOG_WARN("[KneeRefine] " << jointName << ": parent joint " << parentJointName << " not in offsets map");
+            }
         }
 
-        // Solve: Δt = (A^T A)^{-1} A^T b
-        Eigen::Vector3d delta = (A.transpose() * A).ldlt().solve(A.transpose() * b_vec);
-
-        // Compute RMS before and after
-        Eigen::VectorXd residual = A * delta - b_vec;
-        double rmsBefore = std::sqrt(b_vec.squaredNorm() / numFrames);
-        double rmsAfter = std::sqrt(residual.squaredNorm() / numFrames);
-
-        // Update parentJoint's childOffset (the offset from parentJoint to parentBn)
-        std::string parentJointName = parentJoint->getName();
-        auto parentIt = result.jointOffsets.find(parentJointName);
-        if (parentIt != result.jointOffsets.end()) {
-            parentIt->second.childOffset.translation() -= delta;
-            LOG_VERBOSE("[KneeRefine] " << jointName << " -> adjust " << parentJointName
-                     << ".childOffset: Δt=(" << delta.transpose()
-                     << "), RMS: " << std::fixed << std::setprecision(4) << rmsBefore << " -> " << rmsAfter);
-        } else {
-            LOG_WARN("[KneeRefine] " << jointName << ": parent joint " << parentJointName << " not in offsets map");
-        }
+        applyJointOffsetsToSkeleton(skel, result.jointOffsets);
     }
-
-    // Step 6 & 7: IK refinement (called separately via UI or automatically)
-    // refineArmIK();  // Disabled by default - can be called via button
-    // refineLegIK();  // Disabled by default - can be called via button
-
-    applyJointOffsetsToSkeleton(skel, result.jointOffsets);
 
     result.valid = true;
     LOG_VERBOSE("[MotionConvert] Conversion complete: " << result.jointOffsets.size()

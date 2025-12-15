@@ -345,7 +345,10 @@ void C3DProcessorApp::setCamera()
     mTrackball.applyGLRotation();
 
     glScalef(mZoom, mZoom, mZoom);
-    glTranslatef(mTrans[0], mTrans[1], mTrans[2]);
+
+    // Apply combined translation: automatic focus tracking + user manual offset
+    Eigen::Vector3d totalTrans = mTrans + mRelTrans;
+    glTranslatef(totalTrans[0], totalTrans[1], totalTrans[2]);
 }
 
 void C3DProcessorApp::loadRenderConfig()
@@ -1094,13 +1097,14 @@ void C3DProcessorApp::drawPlaybackSection()
 void C3DProcessorApp::drawMarkerFittingSection()
 {
     if (collapsingHeaderWithControls("Marker Fitting")) {
-        // Static Calibration UI
+        // Static Calibration UI (enabled only when medial markers detected)
         ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Static Calibration");
         if (mHasMedialMarkers) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "[Medial Markers Detected]");
         }
         ImGui::SameLine();
+        ImGui::BeginDisabled(!mHasMedialMarkers);
         if (ImGui::Button("Calibrate##Static")) {
             if (mC3DReader && mMotion) {
                 C3D* c3dData = dynamic_cast<C3D*>(mMotion);
@@ -1143,6 +1147,7 @@ void C3DProcessorApp::drawMarkerFittingSection()
                 }
             }
         }
+        ImGui::EndDisabled();
 
         // Show static calibration results
         if (mStaticCalibResult.success) {
@@ -1165,9 +1170,10 @@ void C3DProcessorApp::drawMarkerFittingSection()
 
         ImGui::Separator();
 
-        // Dynamic Calibration UI
+        // Dynamic Calibration UI (enabled only when medial markers NOT detected)
         ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.7f, 1.0f), "Dynamic Calibration");
         ImGui::SameLine();
+        ImGui::BeginDisabled(mHasMedialMarkers);
         if (ImGui::Button("Calibrate and Track##Dynamic")) {
             if (mC3DReader && mMotion) {
                 C3D* c3dData = dynamic_cast<C3D*>(mMotion);
@@ -1184,6 +1190,7 @@ void C3DProcessorApp::drawMarkerFittingSection()
                 }
             }
         }
+        ImGui::EndDisabled();
 
         // Export HDF - same line as calibrate button
         ImGui::SameLine();
@@ -2811,7 +2818,12 @@ void C3DProcessorApp::mouseMove(double x, double y)
         double scale = 0.005 / mZoom;  // Scale with zoom level
         Eigen::Matrix3d rot = mTrackball.getRotationMatrix();
         Eigen::Vector3d delta = rot.transpose() * Eigen::Vector3d(dx * scale, -dy * scale, 0.0);
-        mTrans += delta;
+        if (mFocus == 1) {
+            // When following character, update relative offset
+            mRelTrans += delta;
+        } else {
+            mTrans += delta;
+        }
     }
 }
 
@@ -2934,6 +2946,7 @@ void C3DProcessorApp::reset()
     // Reset camera position
     mZoom = 1.0;
     mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
+    mRelTrans.setZero();
     mTrackball = dart::gui::Trackball();
 
     // Reset skeleton to zero pose
