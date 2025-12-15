@@ -92,6 +92,12 @@ struct RewardConfig
     double drag_x_threshold = 0.0;
     double phase_weight = 1.0;
 
+    // DeepMimic/ScaDiver imitation reward coefficients
+    double ee_weight = 40.0;   // End-effector coefficient
+    double pos_weight = 20.0;  // Position coefficient
+    double vel_weight = 10.0;  // Velocity coefficient
+    double com_weight = 10.0;  // Center of mass coefficient
+
     // Reward clipping for initial simulation steps
     int clip_step = 0;
     double clip_value = 0.0;

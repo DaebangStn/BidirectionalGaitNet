@@ -1,0 +1,125 @@
+digraph mRefPose_DataFlow {
+    // Graph settings
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+
+    // Title
+    labelloc="t";
+    label="mRefPose Update Flow in Environment.cpp\n(Imitation Learning Reference Pose)";
+
+    // Subgraph: Data Sources
+    subgraph cluster_sources {
+        label="Data Sources";
+        style=rounded;
+        color=blue;
+
+        skeleton [label="Skeleton\ngetPositions()", shape=cylinder, style=filled, fillcolor=lightblue];
+        motion [label="Motion\n(BVH/NPZ/HDF/C3D)", shape=cylinder, style=filled, fillcolor=lightgreen];
+        getTargetPose [label="Motion::getTargetPose(phase)", shape=box, style=filled, fillcolor=palegreen];
+
+        motion -> getTargetPose [label="interpolate\nat phase"];
+    }
+
+    // Subgraph: Initialization
+    subgraph cluster_init {
+        label="Initialization (Called Once)";
+        style=rounded;
+        color=orange;
+
+        parseXml [label="parseEnvConfigXml\n(line 127)", shape=box, style=filled, fillcolor=lightyellow];
+        parseYaml [label="parseEnvConfigYaml\n(line 551)", shape=box, style=filled, fillcolor=lightyellow];
+    }
+
+    // Subgraph: Runtime Update
+    subgraph cluster_runtime {
+        label="Runtime Update (Called Every Step)";
+        style=rounded;
+        color=green;
+
+        updateTarget [label="updateTargetPosAndVel\n(line 1218)", shape=box, style=filled, fillcolor=lightgreen];
+    }
+
+    // Central: mRefPose
+    mRefPose [label="mRefPose\n(Eigen::VectorXd)", shape=ellipse, style=filled, fillcolor=gold, penwidth=3];
+
+    // Subgraph: Callers of updateTargetPosAndVel
+    subgraph cluster_callers {
+        label="Callers of updateTargetPosAndVel";
+        style=rounded;
+        color=purple;
+
+        setAction [label="setAction\n(line 1183)", shape=box, style=filled, fillcolor=plum];
+        reset1 [label="reset\n(line 1921, isInit=true)", shape=box, style=filled, fillcolor=plum];
+        reset2 [label="reset\n(line 1932, isInit=false)", shape=box, style=filled, fillcolor=plum];
+    }
+
+    // Subgraph: Usage
+    subgraph cluster_usage {
+        label="mRefPose Usage (Imitation Learning)";
+        style=rounded;
+        color=red;
+
+        pdTarget [label="PD Target Calculation\naddPositions(mRefPose, action)\n(line 1192)", shape=box, style=filled, fillcolor=mistyrose];
+        velCalc [label="Target Velocity Calculation\n(nextPose - mRefPose) / dTime\n(line 1220)", shape=box, style=filled, fillcolor=mistyrose];
+        posDiff [label="Position Difference (Reward)\ngetPositionDifferences(mRefPose, pos)\n(line 1265)", shape=box, style=filled, fillcolor=mistyrose];
+        skelSet [label="Skeleton Position Set\nsetPositions(mRefPose)\n(lines 1277, 1929)", shape=box, style=filled, fillcolor=mistyrose];
+        transform [label="Root Transform\nFreeJoint::convert(mRefPose.head(6))\n(line 1940)", shape=box, style=filled, fillcolor=mistyrose];
+        pdInit [label="PD Target Init\nsetPDTarget(mRefPose)\n(line 1956)", shape=box, style=filled, fillcolor=mistyrose];
+    }
+
+    // Edges: Initialization
+    skeleton -> parseXml [label="initial pose"];
+    skeleton -> parseYaml [label="initial pose"];
+    parseXml -> mRefPose [label="set", color=orange, penwidth=2];
+    parseYaml -> mRefPose [label="set", color=orange, penwidth=2];
+
+    // Edges: Runtime Update
+    getTargetPose -> updateTarget [label="pose at\nofsPhase"];
+    updateTarget -> mRefPose [label="set", color=green, penwidth=2];
+
+    // Edges: Callers
+    setAction -> updateTarget [label="call", style=dashed];
+    reset1 -> updateTarget [label="call (isInit=true)", style=dashed];
+    reset2 -> updateTarget [label="call (isInit=false)", style=dashed];
+
+    // Edges: Usage
+    mRefPose -> pdTarget [label="read", color=red];
+    mRefPose -> velCalc [label="read", color=red];
+    mRefPose -> posDiff [label="read", color=red];
+    mRefPose -> skelSet [label="read", color=red];
+    mRefPose -> transform [label="read", color=red];
+    mRefPose -> pdInit [label="read", color=red];
+
+    // Subgraph: Outputs
+    subgraph cluster_output {
+        label="Outputs";
+        style=rounded;
+        color=gray;
+
+        reward [label="Reward\n(calcReward)", shape=diamond, style=filled, fillcolor=lightgray];
+        control [label="Control Signal\n(PD Controller)", shape=diamond, style=filled, fillcolor=lightgray];
+        targetVel [label="mTargetVelocities", shape=ellipse, style=filled, fillcolor=lightyellow];
+    }
+
+    // Final connections
+    posDiff -> reward;
+    pdTarget -> control;
+    pdInit -> control;
+    velCalc -> targetVel;
+
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style=rounded;
+        color=black;
+
+        leg1 [label="Initialization Path", shape=plaintext];
+        leg2 [label="Runtime Update Path", shape=plaintext];
+        leg3 [label="Data Read Path", shape=plaintext];
+
+        leg1 -> leg2 [style=invis];
+        leg2 -> leg3 [style=invis];
+    }
+}

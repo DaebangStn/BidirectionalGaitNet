@@ -295,6 +295,12 @@ class Agent(nn.Module):
 if __name__ == "__main__":
     args = parse_args_with_presets(Args, PRESET_FNS)
 
+    # Clear rm_cache at startup
+    rm_cache_path = Path(__file__).parent.parent / ".tmp" / "rm_cache"
+    if rm_cache_path.exists():
+        shutil.rmtree(rm_cache_path)
+        print(f"Cleared cache: {rm_cache_path}")
+
     # Override args from YAML config if 'args' section exists
     with open(args.env_file, 'r') as f:
         env_config = yaml.safe_load(f)

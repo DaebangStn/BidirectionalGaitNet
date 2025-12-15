@@ -722,6 +722,19 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mRewardConfig.clip_value = std::abs(clip["value"].as<double>(mRewardConfig.clip_value));
     }
 
+    // === DeepMimic/ScaDiver imitation coefficients ===
+    if (env["reward"]) {
+        auto reward = env["reward"];
+        if (reward["ee_weight"])
+            mRewardConfig.ee_weight = reward["ee_weight"].as<double>(40.0);
+        if (reward["pos_weight"])
+            mRewardConfig.pos_weight = reward["pos_weight"].as<double>(20.0);
+        if (reward["vel_weight"])
+            mRewardConfig.vel_weight = reward["vel_weight"].as<double>(10.0);
+        if (reward["com_weight"])
+            mRewardConfig.com_weight = reward["com_weight"].as<double>(10.0);
+    }
+
     // === Locomotion rewards ===
     if (env["reward"] && env["reward"]["locomotion"]) {
         auto loco = env["reward"]["locomotion"];
@@ -1284,16 +1297,21 @@ double Environment::calcReward()
         skel->setPositions(pos);
 
         double r_p, r_v, r_ee, r_com, r_metabolic;
-        r_ee = exp(-40 * ee_diff.squaredNorm() / ee_diff.rows());
-        r_p = exp(-20 * pos_diff.squaredNorm() / pos_diff.rows());
-        r_v = exp(-10 * vel_diff.squaredNorm() / vel_diff.rows());
-        r_com = exp(-10 * com_diff.squaredNorm() / com_diff.rows());
-        r_metabolic = 0.0;
-
+        r_ee = exp(-mRewardConfig.ee_weight * ee_diff.squaredNorm() / ee_diff.rows());
+        r_p = exp(-mRewardConfig.pos_weight * pos_diff.squaredNorm() / pos_diff.rows());
+        r_v = exp(-mRewardConfig.vel_weight * vel_diff.squaredNorm() / vel_diff.rows());
+        r_com = exp(-mRewardConfig.com_weight * com_diff.squaredNorm() / com_diff.rows());
         r_metabolic = getEnergyReward();
 
         if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic;
         else if (mRewardType == scadiver) r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee) * (0.1 + 0.9 * r_metabolic);
+
+        // Log individual rewards to mInfoMap (for TensorBoard)
+        mInfoMap["r_ee"] = r_ee;
+        mInfoMap["r_p"] = r_p;
+        mInfoMap["r_v"] = r_v;
+        mInfoMap["r_com"] = r_com;
+        mInfoMap["r_metabolic"] = r_metabolic;
     }
     else if (mRewardType == gaitnet)
     {
@@ -1371,13 +1389,7 @@ double Environment::calcReward()
     if (mCharacter->getActuatorType() == mus) r = 1.0;
 
     if (mRewardConfig.clip_step > 0 && mSimulationStep < mRewardConfig.clip_step) {
-        double clip_bound = mRewardConfig.clip_value;
-        if (clip_bound == 0.0) {
-            r = 0.0;
-        } else {
-            if (r > clip_bound) r = clip_bound;
-            else if (r < -clip_bound) r = -clip_bound;
-        }
+        r = std::min(r, mRewardConfig.clip_value);
     }
 
     // Always store total reward

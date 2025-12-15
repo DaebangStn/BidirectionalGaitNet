@@ -1,0 +1,13 @@
+#!/bin/bash
+# Remove rm_cache directory
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+CACHE_DIR="$PROJECT_ROOT/.tmp/rm_cache"
+
+if [ -d "$CACHE_DIR" ]; then
+    rm -rf "$CACHE_DIR"
+    echo "Cleared cache: $CACHE_DIR"
+else
+    echo "Cache not found: $CACHE_DIR"
+fi
