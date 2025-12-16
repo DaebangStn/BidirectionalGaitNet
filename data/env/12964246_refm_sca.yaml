@@ -13,6 +13,7 @@ environment:
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
+    use_mirror: false
     file: "@pid:12964246/h5/pre/Trimmed_walk02-Dynamic_trimmed.h5"
 
   # Muscle System

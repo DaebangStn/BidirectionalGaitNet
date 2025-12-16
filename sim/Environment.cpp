@@ -29,7 +29,7 @@ namespace {
 
 Environment::Environment()
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
-    mEnforceSymmetry(false), mLimitY(0.6)
+    mUseMirror(true), mLimitY(0.6)
 {
     mWorld = std::make_shared<dart::simulation::World>();
     mIsResidual = true;
@@ -262,9 +262,6 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mMotion = new_hdf;
     }
 
-
-    // Advanced Option (hardcoded)
-    mEnforceSymmetry = true;
 
     if (isTwoLevelController())
     {
@@ -675,12 +672,9 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             new_npz->setRefMotion(mCharacter, mWorld);
             mMotion = new_npz;
         }
+
+        mUseMirror = motion["use_mirror"].as<bool>(true);
     }
-
-    // === Advanced: height calibration already handled above ===
-
-    // === Advanced: enforce symmetry === (hardcoded)
-    mEnforceSymmetry = true;
 
     // === Two-level controller ===
     if (isTwoLevelController()) {
@@ -1406,19 +1400,15 @@ double Environment::calcReward()
 
 std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV)
 {
-    if (minV.rows() != maxV.rows())
-        exit(-1);
+    if (minV.rows() != maxV.rows()) exit(-1);
 
     Eigen::VectorXd curParamState = getParamState();
     Eigen::VectorXd projState = Eigen::VectorXd::Zero(mNumParamState);
 
-    for (int i = 0; i < projState.rows(); i++)
-        projState[i] = dart::math::clip(curParamState[i], minV[i], maxV[i]);
+    for (int i = 0; i < projState.rows(); i++) projState[i] = dart::math::clip(curParamState[i], minV[i], maxV[i]);
 
     std::vector<int> projectedParamIdx;
-    for (int i = 0; i < minV.rows(); i++)
-        if (abs(minV[i] - maxV[i]) > 1E-3)
-            projectedParamIdx.push_back(i);
+    for (int i = 0; i < minV.rows(); i++) if (abs(minV[i] - maxV[i]) > 1E-3) projectedParamIdx.push_back(i);
 
     Eigen::VectorXd p, v;
     auto skel = mCharacter->getSkeleton();
@@ -1531,8 +1521,7 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
 
     Eigen::VectorXd joint_state = Eigen::VectorXd::Zero(0);
 
-    if (mUseJointState)
-        joint_state = getJointState(isMirror());
+    if (mUseJointState) joint_state = getJointState(isMirror());
 
     // Parameter State
     Eigen::VectorXd param_state = (mUseNormalizedParamState ? getNormalizedParamState(minV, maxV, isMirror()) : getParamState(isMirror()));

@@ -170,7 +170,7 @@ public:
     int getSimulationStep() const { return mSimulationStep; }
     std::string getMetadata() { return mMetadata; }
 
-    bool isMirror() { return mGaitPhase->getAdaptivePhase() > 0.5; }
+    bool isMirror() { return mUseMirror && mGaitPhase->getAdaptivePhase() > 0.5; }
 
     bool isFall();
     dart::simulation::WorldPtr getWorld() { return mWorld; }
@@ -517,7 +517,7 @@ private:
     bool mIncludeMetabolicReward;
 
     int mSimulationCount, mSimulationStep;
-    bool mEnforceSymmetry;
+    bool mUseMirror;
 
     // Muscle Learning Tuple
     bool mTupleFilled;
