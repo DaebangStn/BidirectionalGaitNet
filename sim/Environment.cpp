@@ -544,7 +544,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
         bool meshLbs = muscle["mesh_lbs_weight"].as<bool>(false);
         bool useVelForce = muscle["use_velocity_force"].as<bool>(false);
-        mUseJointState = muscle["use_joint_state"].as<bool>(false);
 
         std::string musclePath = muscle["file"].as<std::string>();
         std::string resolved = rm::resolve(musclePath);
@@ -1398,35 +1397,15 @@ double Environment::calcReward()
     return r;
 }
 
-std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV)
+std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::buildPVState(int num_body_nodes)
 {
-    if (minV.rows() != maxV.rows()) exit(-1);
-
-    Eigen::VectorXd curParamState = getParamState();
-    Eigen::VectorXd projState = Eigen::VectorXd::Zero(mNumParamState);
-
-    for (int i = 0; i < projState.rows(); i++) projState[i] = dart::math::clip(curParamState[i], minV[i], maxV[i]);
-
-    std::vector<int> projectedParamIdx;
-    for (int i = 0; i < minV.rows(); i++) if (abs(minV[i] - maxV[i]) > 1E-3) projectedParamIdx.push_back(i);
-
     Eigen::VectorXd p, v;
-    auto skel = mCharacter->getSkeleton();
-    Eigen::Vector3d com = skel->getCOM();
-
-
-    if (mRewardType == gaitnet)
-    {
-        com[0] = 0;
-        com[2] = 0;
-    }
-    int num_body_nodes = skel->getNumBodyNodes();
-
     p.resize(num_body_nodes * 3 + num_body_nodes * 6);
     v.resize((num_body_nodes + 1) * 3 + num_body_nodes * 3);
-
     p.setZero();
     v.setZero();
+
+    auto skel = mCharacter->getSkeleton();
 
     if (!isMirror())
     {
@@ -1494,18 +1473,29 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
         v.segment<3>(num_body_nodes * 3)[0] *= -1;
     }
 
+    return {p, v};
+}
+
+Eigen::VectorXd Environment::getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV)
+{
+
+    auto skel = mCharacter->getSkeleton();
+    Eigen::Vector3d com = skel->getCOM();
+    if (mRewardType == gaitnet)
+    {
+        com[0] = 0;
+        com[2] = 0;
+    }
+    int num_body_nodes = skel->getNumBodyNodes();
+    auto [p, v] = buildPVState(num_body_nodes);
+
     // Motion information (phase)
 
     Eigen::VectorXd phase = Eigen::VectorXd::Zero(1 + (mPhaseDisplacementScale > 0.0 ? 1 : 0));
     phase[0] = mGaitPhase->getAdaptivePhase();
-   
+    if (mPhaseDisplacementScale > 0.0) phase[1] = mGaitPhase->getAdaptivePhase();
 
-    if (mPhaseDisplacementScale > 0.0)
-        phase[1] = mGaitPhase->getAdaptivePhase();
-
-    if (isMirror())
-        for (int i = 0; i < phase.rows(); i++)
-            phase[i] = (phase[i] + 0.5) - (int)(phase[i] + 0.5);
+    if (isMirror()) for (int i = 0; i < phase.rows(); i++) phase[i] = (phase[i] + 0.5) - (int)(phase[i] + 0.5);
 
     // Gait Information (Step)
     Eigen::VectorXd step_state = Eigen::VectorXd::Zero(0);
@@ -1516,49 +1506,33 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
         step_state[0] = getNextTargetFootStep()[2] - mCharacter->getSkeleton()->getCOM()[2];
     }
 
-    // Muscle State
+    Eigen::VectorXd curParamState = getParamState();
+    Eigen::VectorXd projState = Eigen::VectorXd::Zero(mNumParamState);
+    std::vector<int> projectedParamIdx;
+
+    for (int i = 0; i < minV.rows(); i++) if (abs(minV[i] - maxV[i]) > 1E-3) projectedParamIdx.push_back(i);
+    for (int i = 0; i < projState.rows(); i++) projState[i] = dart::math::clip(curParamState[i], minV[i], maxV[i]);
     setParamState(projState, true);
 
-    Eigen::VectorXd joint_state = Eigen::VectorXd::Zero(0);
-
-    if (mUseJointState) joint_state = getJointState(isMirror());
+    mJointState = getJointState(isMirror());
 
     // Parameter State
     Eigen::VectorXd param_state = (mUseNormalizedParamState ? getNormalizedParamState(minV, maxV, isMirror()) : getParamState(isMirror()));
     Eigen::VectorXd proj_param_state = Eigen::VectorXd::Zero(projectedParamIdx.size());
-    for (int i = 0; i < projectedParamIdx.size(); i++)
-        proj_param_state[i] = param_state[projectedParamIdx[i]];
+    for (int i = 0; i < projectedParamIdx.size(); i++) proj_param_state[i] = param_state[projectedParamIdx[i]];
 
     setParamState(curParamState, true);
 
     // Integration of all states
-
     Eigen::VectorXd state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows() + step_state.rows() + joint_state.rows() + proj_param_state.rows());
-    state << com, p, v, phase, step_state, 0.008 * joint_state, proj_param_state;
-
-    // ============================
-    // Integration with Foot Step
-    // Eigen::VectorXd state;
-    // if (mRewardType == deepmimic)
-    // {
-    //     state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows());
-    //     state << com, p, v, phase;
-    // }
-    // else if (mRewardType == gaitnet)
-    // {
-    //     Eigen::VectorXd d = Eigen::VectorXd::Zero(1);
-    //     d[0] = mNextTargetFoot[2] - mCharacter->getSkeleton()->getCOM()[2];
-    //     state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows() + 1);
-    //     state << com, p, v, phase, d;
-    // }
-    return std::make_pair(state, joint_state);
+    state << com, p, v, phase, step_state, mJointState, proj_param_state;
+    
+    return state;
 }
 
 Eigen::VectorXd Environment::getState()
 {
-    std::pair<Eigen::VectorXd, Eigen::VectorXd> res = getProjState(mParamMin, mParamMax);
-    mState = res.first;
-    mJointState = res.second;
+    mState = getProjState(mParamMin, mParamMax);
     return mState;
 }
 
@@ -2128,7 +2102,7 @@ Eigen::VectorXd Environment::getJointState(bool isMirror)
         }
     }
     joint_state << 0.5 * min_tau, 0.5 * max_tau, 1.0 * mt.JtP;
-    return joint_state;
+    return joint_state * 0.008;
 }
 
 void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)

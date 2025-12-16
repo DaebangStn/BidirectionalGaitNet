@@ -158,7 +158,8 @@ public:
 
 
     Eigen::VectorXd getState();
-    std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
+    Eigen::VectorXd getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
+    std::pair<Eigen::VectorXd, Eigen::VectorXd> buildPVState(int num_body_nodes);
 
     Eigen::VectorXd getJointState(bool isMirror);
 
@@ -317,7 +318,6 @@ public:
     
     // Time and cycle getters for rollout
     double getSimTime() { return mGaitPhase->getSimTime(); }
-    double getGaitCycleTime() const { return mGaitPhase->getAdaptiveTime(); }
     int getSimulationCount() const { return mSimulationCount; }
 
     // For Parameterization
