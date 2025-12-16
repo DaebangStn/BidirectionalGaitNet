@@ -29,7 +29,7 @@ namespace {
 
 Environment::Environment()
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
-    mUseMirror(true), mLimitY(0.6)
+    mUseMirror(true), mLocalState(false), mLimitY(0.6)
 {
     mWorld = std::make_shared<dart::simulation::World>();
     mIsResidual = true;
@@ -673,6 +673,7 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         }
 
         mUseMirror = motion["use_mirror"].as<bool>(true);
+        mLocalState = motion["local_state"].as<bool>(false);
     }
 
     // === Two-level controller ===
@@ -1399,6 +1400,10 @@ double Environment::calcReward()
 
 std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::buildPVState()
 {
+    if (mLocalState) {
+        return buildLocalPVState();
+    }
+
     auto skel = mCharacter->getSkeleton();
     int num_body_nodes = skel->getNumBodyNodes();
     Eigen::VectorXd p, v;
@@ -1472,6 +1477,56 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::buildPVState()
         v.segment<3>(num_body_nodes * 3) = skel->getCOMLinearVelocity();
         v.segment<3>(num_body_nodes * 3)[0] *= -1;
     }
+
+    return {p, v};
+}
+
+std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::buildLocalPVState()
+{
+    auto skel = mCharacter->getSkeleton();
+    int num_body_nodes = skel->getNumBodyNodes();
+    Eigen::VectorXd p, v;
+    p.resize(num_body_nodes * 3 + num_body_nodes * 6);
+    v.resize((num_body_nodes + 1) * 3 + num_body_nodes * 3);
+    p.setZero();
+    v.setZero();
+
+    // Get character's facing direction (yaw only rotation)
+    Eigen::Matrix3d root_rot = skel->getBodyNode(0)->getTransform().linear();
+    Eigen::Vector3d forward = root_rot.col(2);  // Z-axis is forward
+    forward[1] = 0;  // Project onto ground plane
+    forward.normalize();
+
+    // Build yaw-only rotation matrix (rotate to align with world Z)
+    double yaw = atan2(forward[0], forward[2]);
+    Eigen::Matrix3d local_rot;
+    local_rot = Eigen::AngleAxisd(-yaw, Eigen::Vector3d::UnitY());
+
+    Eigen::Vector3d com = skel->getCOM();
+
+    for (int i = 0; i < num_body_nodes; i++)
+    {
+        // Position relative to COM, rotated to local frame
+        Eigen::Vector3d pos = skel->getBodyNode(i)->getCOM() - com;
+        p.segment<3>(i * 3) = local_rot * pos;
+
+        // Orientation in local frame
+        Eigen::Matrix3d body_rot = skel->getBodyNode(i)->getTransform().linear();
+        Eigen::Matrix3d local_body_rot = local_rot * body_rot;
+        p.segment<6>(num_body_nodes * 3 + 6 * i) << local_body_rot(0, 0), local_body_rot(0, 1), local_body_rot(0, 2),
+            local_body_rot(1, 0), local_body_rot(1, 1), local_body_rot(1, 2);
+
+        // Linear velocity relative to COM velocity, rotated to local frame
+        Eigen::Vector3d lin_vel = skel->getBodyNode(i)->getCOMLinearVelocity() - skel->getCOMLinearVelocity();
+        v.segment<3>(i * 3) = local_rot * lin_vel;
+
+        // Angular velocity rotated to local frame
+        Eigen::Vector3d ang_vel = skel->getBodyNode(i)->getAngularVelocity();
+        v.segment<3>((num_body_nodes + 1) * 3 + i * 3) = 0.1 * (local_rot * ang_vel);
+    }
+
+    // COM velocity in local frame
+    v.segment<3>(num_body_nodes * 3) = local_rot * skel->getCOMLinearVelocity();
 
     return {p, v};
 }

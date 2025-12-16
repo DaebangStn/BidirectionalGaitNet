@@ -160,6 +160,7 @@ public:
     Eigen::VectorXd getState();
     std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
     std::pair<Eigen::VectorXd, Eigen::VectorXd> buildPVState();
+    std::pair<Eigen::VectorXd, Eigen::VectorXd> buildLocalPVState();
 
     Eigen::VectorXd getJointState(bool isMirror);
 
@@ -518,6 +519,7 @@ private:
 
     int mSimulationCount, mSimulationStep;
     bool mUseMirror;
+    bool mLocalState;
 
     // Muscle Learning Tuple
     bool mTupleFilled;
