@@ -126,6 +126,7 @@ struct DrawFlags
 {
     bool character = true;
     bool pdTarget = false;
+    bool refMotion = false;
     bool jointSphere = false;
     bool footStep = false;
     bool eoe = false;

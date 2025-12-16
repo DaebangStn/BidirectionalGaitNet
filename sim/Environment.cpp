@@ -53,13 +53,7 @@ Environment::Environment()
     // Simulation Setting
     mSimulationStep = 0;
 
-    mSoftPhaseClipping = false;
-    mHardPhaseClipping = false;
-    mPhaseCount = 0;
-    mWorldPhaseCount = 0;
     mKneeLoadingMaxCycle = 0.0;
-    mSimTime = 0.0;
-    mGaitCycleTime = 0.0;
     mDragStartX = 0.0;
 
     mMusclePoseOptimization = false;
@@ -189,10 +183,6 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
 
     // Inference Per Sim (hardcoded)
     mInferencePerSim = 1;
-
-    // Phase Clipping (hardcoded)
-    mSoftPhaseClipping = false;
-    mHardPhaseClipping = true;
 
     if (doc.FirstChildElement("musclePoseOptimization") != NULL)
     {
@@ -644,12 +634,8 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     mInferencePerSim = 1;
 
     // === Advanced === (hardcoded)
-    {
-        mSoftPhaseClipping = false;
-        mHardPhaseClipping = true;
-        mCharacter->setTorqueClipping(false);
-        mCharacter->setIncludeJtPinSPD(false);
-    }
+    mCharacter->setTorqueClipping(false);
+    mCharacter->setIncludeJtPinSPD(false);
 
     // === Reward Type ===
     if (env["reward"] && env["reward"]["type"]) {
@@ -1224,11 +1210,32 @@ void Environment::setAction(Eigen::VectorXd _action)
 void Environment::updateTargetPosAndVel(bool currentStep)
 {
     double dTime = 1.0 / mControlHz;
-    double dPhase = dTime / (mMotion->getMaxTime() / mCadence);
-    double adaptPhase = (currentStep ? 0.0 : dPhase) + mGaitPhase->getAdaptivePhase();
-    
-    mRefPose = mMotion->getTargetPose(adaptPhase);
-    const auto nextPose = mMotion->getTargetPose(adaptPhase + dPhase);
+    Eigen::VectorXd nextPose;
+    if (mRewardType == gaitnet) {
+        double dPhase = dTime / (mMotion->getMaxTime() / mCadence);
+        double adaptPhase = (currentStep ? 0.0 : dPhase) + mGaitPhase->getAdaptivePhase();
+        
+        mRefPose = mMotion->getTargetPose(adaptPhase);
+        nextPose = mMotion->getTargetPose(adaptPhase + dPhase);
+    } else if (mRewardType == deepmimic || mRewardType == scadiver) {
+        double dPhase = dTime / mMotion->getMaxTime();
+        double adaptPhase = (currentStep ? 0.0 : dPhase) + mGaitPhase->getAdaptivePhase();
+        double nextAdaptPhase = adaptPhase + dPhase;
+        double adaptiveTime = (currentStep ? 0.0 : dTime) + mGaitPhase->getAdaptiveTime();
+
+        int adaptCycleCount = mGaitPhase->getAdaptiveCycleCount(adaptiveTime);
+        int nextAdaptCycleCount = mGaitPhase->getAdaptiveCycleCount(adaptiveTime + dTime);
+
+        mRefPose = mMotion->getTargetPose(adaptPhase);
+        nextPose = mMotion->getTargetPose(nextAdaptPhase);
+
+        if (nextAdaptCycleCount > 0) {
+            mRefPose[3] += mMotion->getCycleDistance()[0] * adaptCycleCount;
+            mRefPose[5] += mMotion->getCycleDistance()[2] * adaptCycleCount;
+            nextPose[3] += mMotion->getCycleDistance()[0] * nextAdaptCycleCount;
+            nextPose[5] += mMotion->getCycleDistance()[2] * nextAdaptCycleCount;
+        }
+    }
     mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mRefPose) / dTime;
 }
 
@@ -1676,39 +1683,15 @@ void Environment::calcActivation()
 void Environment::postMuscleStep()
 {
     mSimulationCount++;
-    mSimTime += 1.0 / mSimulationHz;
-    mGaitCycleTime += 1.0 / mSimulationHz;
-
-    // Update gait phase tracking (also updates local time using phase displacement set in setAction)
     mGaitPhase->step();
 
-    // Check for gait cycle completion (muscle-step level check)
     if (mGaitPhase->isGaitCycleComplete()) {
-        mWorldPhaseCount++;
-        mGaitCycleTime = mGaitPhase->getAdaptiveTime();
-
-        // Store the maximum knee loading from the completed gait cycle
         mKneeLoadingMaxCycle = mCharacter->getKneeLoadingMax();
-
-        // Reset the character's knee loading max for the new cycle
         mCharacter->resetKneeLoadingMax();
-
-        // Note: Flag will persist for PD-level check, don't clear here
     }
 
-    // Hard phase clipping (always enabled)
-    int currentGlobalCount = mSimTime / (mMotion->getMaxTime() / mCadence);
-    int currentLocalCount = mGaitPhase->getAdaptiveTime() / (mMotion->getMaxTime() / mCadence);
-
-    if (currentGlobalCount > currentLocalCount) mGaitPhase->setAdaptiveTime(mSimTime);
-    else if (currentGlobalCount < currentLocalCount) mGaitPhase->setAdaptiveTime(currentLocalCount * (mMotion->getMaxTime() / mCadence));
-
-    // Discriminator processing after character step (when upperBodyTorque is computed)
     if (mDiscConfig.enabled) {
-        // Get full disc_obs (activations + optional upper body torque)
         Eigen::VectorXf disc_obs = getDiscObs();
-
-        // Accumulate discriminator reward every substep
         if (mDiscriminatorNN) {
             mDiscRewardAccum += mDiscriminatorNN->compute_reward(disc_obs);
         }
@@ -1897,8 +1880,6 @@ void Environment::reset(double phase)
     mDiscObsFilled = false;
     mMeanActivation = 0.0;
     mSimulationStep = 0;
-    mPhaseCount = 0;
-    mWorldPhaseCount = 0;
     mSimulationCount = 0;
     mKneeLoadingMaxCycle = 0.0;
 
@@ -1922,8 +1903,7 @@ void Environment::reset(double phase)
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
     mWorld->getConstraintSolver()->clearLastCollisionResult();
 
-    mSimTime = time;
-    mGaitCycleTime = time;
+    mGaitPhase->reset(time);
     mWorld->setTime(time);
 
     // Reset Skeletons
@@ -1934,7 +1914,6 @@ void Environment::reset(double phase)
     mCharacter->getSkeleton()->clearInternalForces();
     mCharacter->getSkeleton()->clearExternalForces();
 
-    mGaitPhase->setAdaptiveTime(time);
     mGaitPhase->setPhaseAction(0.0);
 
     // Initial Pose Setting
@@ -1984,9 +1963,6 @@ void Environment::reset(double phase)
     mDesiredTorqueLogs.clear();
 
     mDragStartX = mCharacter->getSkeleton()->getCOM()[0];
-
-    // Reset GaitPhase (already initialized in parseEnvConfig)
-    mGaitPhase->reset();
 
     mCharacter->getSkeleton()->clearInternalForces();
     mCharacter->getSkeleton()->clearExternalForces();

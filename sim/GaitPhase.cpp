@@ -23,7 +23,10 @@ GaitPhase::GaitPhase(Character* character,
       mRefStride(refStride),
       mCadence(1.0),
       mStride(1.0),
+
+      mSimTime(0.0),
       mAdaptiveTime(0.0),
+
       mControlHz(controlHz),
       mSimulationHz(simulationHz),
       mPhaseAction(0.0),
@@ -72,7 +75,7 @@ GaitPhase::GaitPhase(Character* character,
     mPrevCycleCOM = Eigen::Vector3d::Zero();
 }
 
-void GaitPhase::reset()
+void GaitPhase::reset(double time)
 {
     // Reset counters and flags
     mCycleCount = 0;
@@ -82,7 +85,8 @@ void GaitPhase::reset()
     mStepCompletePD = false;
 
     // Reset timing
-    mAdaptiveTime = 0.0;
+    mSimTime = time;
+    mAdaptiveTime = time;
     mSwingTimeR = 0.0;
     mSwingTimeL = 0.0;
     mStanceTimeR = 0.0;
@@ -174,8 +178,17 @@ void GaitPhase::reset()
 
 void GaitPhase::step()
 {
-    // Update local time
+    // Update time
+    mSimTime += 1.0 / mSimulationHz;
     mAdaptiveTime += (1.0 + mPhaseAction) / mSimulationHz;
+
+    // Hard phase clipping (always enabled)
+    double cycleTime = mMotionCycleTime / mCadence;
+    int currentGlobalCount = mSimTime / cycleTime;
+    int currentLocalCount = mAdaptiveTime / cycleTime;
+
+    if (currentGlobalCount > currentLocalCount) mAdaptiveTime = mSimTime;
+    else if (currentGlobalCount < currentLocalCount) mAdaptiveTime = currentLocalCount * cycleTime;
 
     mIsGaitCycleComplete = false;  // Reset flag
     mIsStepComplete = false;       // Reset flag
@@ -512,7 +525,7 @@ void GaitPhase::updateFromContact()
                 mCycleDist = (mCurCycleCOM - mPrevCycleCOM).norm();
                 mPrevCycleCOM = mCurCycleCOM;
 
-                mCurCycleTime = mAdaptiveTime;
+                mCurCycleTime = mSimTime;
                 mCycleTime = mCurCycleTime - mPrevCycleTime;
                 mPrevCycleTime = mCurCycleTime;
 
@@ -567,6 +580,7 @@ void GaitPhase::updateFromPhase()
         mIsLeftLegStance = false;
         mCurrentFoot = skel->getBodyNode("TalusR")->getCOM();
         mState = RIGHT_STANCE;
+        mCycleCount++;
     } else {
         // Left leg stance phase
         if (!mIsLeftLegStance) {

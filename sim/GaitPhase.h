@@ -31,7 +31,7 @@ public:
     enum GaitState {
         RIGHT_STANCE,    // Right foot in stance, left in swing
         LEFT_TAKEOFF,    // Right in stance, left about to contact
-        LEFT_STANCE,     // Left foot in stance, right in swing
+        LEFT_STANCE,     // Left foot in stance, right ingetAdaptivePhase swing
         RIGHT_TAKEOFF    // Left in stance, right about to contact
     };
 
@@ -70,7 +70,7 @@ public:
     /**
      * Reset gait state
      */
-    void reset();
+    void reset(double time);
 
     // ========== State Accessors ==========
 
@@ -195,11 +195,6 @@ public:
     void setCadence(double cadence) { mCadence = cadence; }
 
     /**
-     * Set motion cycle time (updated when Motion changes)
-     */
-    void setMotionCycleTime(double cycleTime) { mMotionCycleTime = cycleTime; }
-
-    /**
      * Get motion cycle time
      */
     double getMotionCycleTime() const { return mMotionCycleTime; }
@@ -207,20 +202,23 @@ public:
     // ========== Time Management ==========
 
     /**
-     * Set local time
-     */
-    void setAdaptiveTime(double time) { mAdaptiveTime = time; }
-
-    /**
      * Get current local time
      */
     double getAdaptiveTime() const { return mAdaptiveTime; }
+
+    /**
+     * Get global simulation time (linear, no phase adjustment)
+     */
+    double getSimTime() const { return mSimTime; }
 
     double getAdaptivePhase() const { 
         double phase = mAdaptiveTime / (mMotionCycleTime / mCadence);
         phase = phase - floor(phase);  // Normalize to [0, 1)
         return phase;
     }
+
+    int getAdaptiveCycleCount() const { return floor(mAdaptiveTime / (mMotionCycleTime / mCadence)); }
+    int getAdaptiveCycleCount(double adaptiveTime) const { return floor(adaptiveTime / (mMotionCycleTime / mCadence)); }
 
     /**
      * Set phase action (updated each control step)
@@ -291,7 +289,8 @@ private:
 
     // ========== Time Management ==========
 
-    double mAdaptiveTime;           // Local simulation time
+    double mSimTime;                // Global simulation time (linear, no phase adjustment)
+    double mAdaptiveTime;           // Local simulation time (adjusted by phase action)
     double mControlHz;           // Control frequency
     double mSimulationHz;        // Simulation frequency
     double mPhaseAction;   // Phase displacement (passed to step())

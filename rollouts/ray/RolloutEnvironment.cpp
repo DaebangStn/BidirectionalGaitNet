@@ -77,7 +77,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     // Basic fields (always recorded)
     data["step"] = mEnv.getSimulationCount();
     data["time"] = mEnv.getGaitCycleTime();
-    data["cycle"] = mEnv.getGaitCycleCount();
+    data["cycle"] = mEnv.getGaitPhase()->getAdaptiveCycleCount();
 
     auto skel = mEnv.getCharacter()->getSkeleton();
 
@@ -201,11 +201,11 @@ double RolloutEnvironment::GetWorldTime() {
 }
 
 int RolloutEnvironment::getGaitCycleCount() {
-    return mEnv.getGaitCycleCount();
+    return mEnv.getGaitPhase()->getAdaptiveCycleCount();
 }
 
 int RolloutEnvironment::GetCycleCount() {
-    return mEnv.getGaitCycleCount();
+    return mEnv.getGaitPhase()->getAdaptiveCycleCount();
 }
 
 Eigen::VectorXd RolloutEnvironment::InterpolatePose(const Eigen::VectorXd& pose1,

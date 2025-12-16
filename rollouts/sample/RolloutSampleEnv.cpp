@@ -109,7 +109,7 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
     // Basic fields (always recorded)
     data["step"] = mEnv.getSimulationCount();
     data["time"] = mEnv.getGaitCycleTime();
-    data["cycle"] = mEnv.getGaitCycleCount();
+    data["cycle"] = mEnv.getGaitPhase()->getAdaptiveCycleCount();
 
     auto skel = mEnv.getCharacter()->getSkeleton();
 
@@ -354,7 +354,7 @@ py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
         mEnv.postStep();
 
         // Check cycle completion
-        current_cycle = mEnv.getGaitCycleCount();
+        current_cycle = mEnv.getGaitPhase()->getAdaptiveCycleCount();
 
         // Record cycle-level attributes when cycle changes
         if (current_cycle != last_cycle && last_cycle >= 0) {

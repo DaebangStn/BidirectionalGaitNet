@@ -316,8 +316,8 @@ public:
     double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mMotion->getMaxTime() / mCadence); }
     
     // Time and cycle getters for rollout
-    double getSimTime() { return mSimTime; }
-    double getGaitCycleTime() const { return mGaitCycleTime; }
+    double getSimTime() { return mGaitPhase->getSimTime(); }
+    double getGaitCycleTime() const { return mGaitPhase->getAdaptiveTime(); }
     int getSimulationCount() const { return mSimulationCount; }
 
     // For Parameterization
@@ -465,7 +465,6 @@ public:
     // Gait cycle completion detection
     bool isGaitCycleComplete();
     void clearGaitCycleComplete();  // Clear the PD-level completion flag
-    int getGaitCycleCount() const { return mWorldPhaseCount; }
 
     // Step completion detection
     bool isStepComplete();
@@ -563,11 +562,6 @@ private:
     int mNumParamState;
 
     RewardConfig mRewardConfig;
-
-    // Simulation Setting
-    bool mSoftPhaseClipping, mHardPhaseClipping;
-    int mPhaseCount, mWorldPhaseCount;
-    double mSimTime, mGaitCycleTime;
 
     // Pose Optimization
     bool mMusclePoseOptimization;

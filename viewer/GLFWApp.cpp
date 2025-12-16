@@ -3725,6 +3725,7 @@ void GLFWApp::drawSimControlPanel()
         }
 
         ImGui::Checkbox("Draw PD Target Motion", &mDrawFlags.pdTarget);
+        ImGui::Checkbox("Draw Ref Motion", &mDrawFlags.refMotion);
         ImGui::Checkbox("Draw Joint Sphere", &mDrawFlags.jointSphere);
         ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
         ImGui::Checkbox("Draw Foot Step", &mDrawFlags.footStep);
@@ -4200,9 +4201,15 @@ void GLFWApp::drawTimingPane()
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(labelColor, "Time");
+            ImGui::TextColored(labelColor, "Sim Time");
             ImGui::TableSetColumnIndex(1);
             ImGui::TextColored(valueColor, "%.3f s", mRenderEnv->getWorld()->getTime());
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(labelColor, "Cycle Count");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(valueColor, "%d", mRenderEnv->getGaitPhase()->getAdaptiveCycleCount());
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
@@ -4212,7 +4219,7 @@ void GLFWApp::drawTimingPane()
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(labelColor, "Local Phase");
+            ImGui::TextColored(labelColor, "Adaptive Phase");
             ImGui::TableSetColumnIndex(1);
             ImGui::TextColored(accentColor, "%.3f", mRenderEnv->getGaitPhase()->getAdaptivePhase());
 
@@ -4500,6 +4507,13 @@ void GLFWApp::drawSimFrame()
             pos.head(6) = character->getSkeleton()->getPositions().head(6);
             pos[5] += 1.0;
             drawSkeleton(pos, Eigen::Vector4d(1.0, 0.35, 0.35, 1.0));
+        }
+        if (!mRenderConditions && mDrawFlags.refMotion)
+        {
+            const auto& character = mRenderEnv->getCharacter();
+            Eigen::VectorXd pos = mRenderEnv->getRefPose();
+            pos[5] -= 1.0;
+            drawSkeleton(pos, Eigen::Vector4d(0.35, 0.35, 1.0, 1.0));
         }
         if (mDrawFlags.eoe)
         {
