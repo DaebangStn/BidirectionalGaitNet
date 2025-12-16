@@ -158,8 +158,8 @@ public:
 
 
     Eigen::VectorXd getState();
-    Eigen::VectorXd getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
-    std::pair<Eigen::VectorXd, Eigen::VectorXd> buildPVState(int num_body_nodes);
+    std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
+    std::pair<Eigen::VectorXd, Eigen::VectorXd> buildPVState();
 
     Eigen::VectorXd getJointState(bool isMirror);
 

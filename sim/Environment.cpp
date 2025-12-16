@@ -1397,15 +1397,15 @@ double Environment::calcReward()
     return r;
 }
 
-std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::buildPVState(int num_body_nodes)
+std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::buildPVState()
 {
+    auto skel = mCharacter->getSkeleton();
+    int num_body_nodes = skel->getNumBodyNodes();
     Eigen::VectorXd p, v;
     p.resize(num_body_nodes * 3 + num_body_nodes * 6);
     v.resize((num_body_nodes + 1) * 3 + num_body_nodes * 3);
     p.setZero();
     v.setZero();
-
-    auto skel = mCharacter->getSkeleton();
 
     if (!isMirror())
     {
@@ -1476,63 +1476,79 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::buildPVState(int num_bo
     return {p, v};
 }
 
-Eigen::VectorXd Environment::getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV)
+std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV)
 {
-
-    auto skel = mCharacter->getSkeleton();
-    Eigen::Vector3d com = skel->getCOM();
-    if (mRewardType == gaitnet)
-    {
+    Eigen::VectorXd state, joint_state;
+    if (mRewardType == gaitnet) {
+        auto skel = mCharacter->getSkeleton();
+        Eigen::Vector3d com = skel->getCOM();
         com[0] = 0;
         com[2] = 0;
-    }
-    int num_body_nodes = skel->getNumBodyNodes();
-    auto [p, v] = buildPVState(num_body_nodes);
-
-    // Motion information (phase)
-
-    Eigen::VectorXd phase = Eigen::VectorXd::Zero(1 + (mPhaseDisplacementScale > 0.0 ? 1 : 0));
-    phase[0] = mGaitPhase->getAdaptivePhase();
-    if (mPhaseDisplacementScale > 0.0) phase[1] = mGaitPhase->getAdaptivePhase();
-
-    if (isMirror()) for (int i = 0; i < phase.rows(); i++) phase[i] = (phase[i] + 0.5) - (int)(phase[i] + 0.5);
-
-    // Gait Information (Step)
-    Eigen::VectorXd step_state = Eigen::VectorXd::Zero(0);
-
-    if (mRewardType == gaitnet)
-    {
+    
+        auto [p, v] = buildPVState();
+    
+        Eigen::VectorXd phase = Eigen::VectorXd::Zero(1 + (mPhaseDisplacementScale > 0.0 ? 1 : 0));
+        phase[0] = mGaitPhase->getAdaptivePhase();
+        if (mPhaseDisplacementScale > 0.0) phase[1] = mGaitPhase->getAdaptivePhase();
+        if (isMirror()) for (int i = 0; i < phase.rows(); i++) phase[i] = (phase[i] + 0.5) - (int)(phase[i] + 0.5);
+    
+        Eigen::VectorXd step_state = Eigen::VectorXd::Zero(0);
         step_state.resize(1);
         step_state[0] = getNextTargetFootStep()[2] - mCharacter->getSkeleton()->getCOM()[2];
-    }
-
-    Eigen::VectorXd curParamState = getParamState();
-    Eigen::VectorXd projState = Eigen::VectorXd::Zero(mNumParamState);
-    std::vector<int> projectedParamIdx;
-
-    for (int i = 0; i < minV.rows(); i++) if (abs(minV[i] - maxV[i]) > 1E-3) projectedParamIdx.push_back(i);
-    for (int i = 0; i < projState.rows(); i++) projState[i] = dart::math::clip(curParamState[i], minV[i], maxV[i]);
-    setParamState(projState, true);
-
-    mJointState = getJointState(isMirror());
-
-    // Parameter State
-    Eigen::VectorXd param_state = (mUseNormalizedParamState ? getNormalizedParamState(minV, maxV, isMirror()) : getParamState(isMirror()));
-    Eigen::VectorXd proj_param_state = Eigen::VectorXd::Zero(projectedParamIdx.size());
-    for (int i = 0; i < projectedParamIdx.size(); i++) proj_param_state[i] = param_state[projectedParamIdx[i]];
-
-    setParamState(curParamState, true);
-
-    // Integration of all states
-    Eigen::VectorXd state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows() + step_state.rows() + joint_state.rows() + proj_param_state.rows());
-    state << com, p, v, phase, step_state, mJointState, proj_param_state;
     
-    return state;
+        Eigen::VectorXd curParamState = getParamState();
+        Eigen::VectorXd projState = Eigen::VectorXd::Zero(mNumParamState);
+        std::vector<int> projectedParamIdx;
+    
+        for (int i = 0; i < minV.rows(); i++) if (abs(minV[i] - maxV[i]) > 1E-3) projectedParamIdx.push_back(i);
+        for (int i = 0; i < projState.rows(); i++) projState[i] = dart::math::clip(curParamState[i], minV[i], maxV[i]);
+        setParamState(projState, true);
+    
+        joint_state = getJointState(isMirror());
+    
+        // Parameter State
+        Eigen::VectorXd param_state = (mUseNormalizedParamState ? getNormalizedParamState(minV, maxV, isMirror()) : getParamState(isMirror()));
+        Eigen::VectorXd proj_param_state = Eigen::VectorXd::Zero(projectedParamIdx.size());
+        for (int i = 0; i < projectedParamIdx.size(); i++) proj_param_state[i] = param_state[projectedParamIdx[i]];
+    
+        setParamState(curParamState, true);
+    
+        // Integration of all states
+        state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows() + step_state.rows() + joint_state.rows() + proj_param_state.rows());
+        state << com, p, v, phase, step_state, joint_state, proj_param_state;
+    } else {
+        auto skel = mCharacter->getSkeleton();
+        auto [p, v] = buildPVState();
+        const Eigen::VectorXd cur_p = skel->getPositions();
+        const Eigen::VectorXd cur_v = skel->getVelocities();
+        skel->setPositions(mRefPose);
+        skel->setVelocities(mTargetVelocities);
+        auto [p_ref, v_ref] = buildPVState();
+        skel->setPositions(cur_p);
+        skel->setVelocities(cur_v);
+
+        Eigen::Isometry3d cur_root = FreeJoint::convertToTransform(cur_p.head(6));
+        Eigen::Isometry3d ref_root = FreeJoint::convertToTransform(mRefPose.head(6));
+        Eigen::Isometry3d rel_tx = ref_root.inverse() * cur_root;
+
+        // Relative position (3D) + orientation 6D (first two columns of rotation matrix)
+        Eigen::VectorXd rel_root = Eigen::VectorXd::Zero(9);
+        rel_root.head<3>() = rel_tx.translation();
+        rel_root.segment<3>(3) << rel_tx.linear()(0, 0), rel_tx.linear()(1, 0), rel_tx.linear()(2, 0);
+        rel_root.segment<3>(6) << rel_tx.linear()(0, 1), rel_tx.linear()(1, 1), rel_tx.linear()(2, 1);
+
+        state = Eigen::VectorXd::Zero(p.rows() + v.rows() + p_ref.rows() + v_ref.rows() + rel_root.rows());
+        state << p, v, p_ref, v_ref, rel_root;
+    }
+    
+    return {state, joint_state};
 }
 
 Eigen::VectorXd Environment::getState()
 {
-    mState = getProjState(mParamMin, mParamMax);
+    auto [state, joint_state] = getProjState(mParamMin, mParamMax);
+    mState = state;
+    mJointState = joint_state;
     return mState;
 }
 
