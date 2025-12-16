@@ -137,7 +137,7 @@ public:
 
     virtual void preStep();
     virtual void step();
-    void reset(double phase = -1.0);  // phase: 0.0-1.0 for specific phase, -1.0 for randomized
+    void reset(double phase = -1.0);
     double getReward() { return mReward; }
     const std::map<std::string, double>& getInfoMap() const { return mInfoMap; }
 
@@ -151,12 +151,11 @@ public:
     }
     // void setRefMotion(BVH *_bvh, Character *_character);
 
-    void updateTargetPosAndVel(bool isInit = false);
+    void updateTargetPosAndVel(bool currentStep = false);
 
     Eigen::VectorXd getRefPose() { return mRefPose; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }
 
-    double getLocalPhase(bool mod_one = false) { return (mGaitPhase->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) - (mod_one ? (int)(mGaitPhase->getLocalTime() / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))) : 0.0); }
 
     Eigen::VectorXd getState();
     std::pair<Eigen::VectorXd, Eigen::VectorXd> getProjState(const Eigen::VectorXd minV, const Eigen::VectorXd maxV);
@@ -171,7 +170,7 @@ public:
     int getSimulationStep() const { return mSimulationStep; }
     std::string getMetadata() { return mMetadata; }
 
-    bool isMirror() { return getNormalizedPhase() > 0.5; }
+    bool isMirror() { return mGaitPhase->getAdaptivePhase() > 0.5; }
 
     bool isFall();
     dart::simulation::WorldPtr getWorld() { return mWorld; }
@@ -314,12 +313,11 @@ public:
     double getPhaseReward();
     Eigen::Vector3d getAvgVelocity();
     int getAvgVelocityHorizonSteps() const;
-    double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))); }
-    double getNormalizedPhase() { return mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
-    double getWorldPhase() { return mWorldTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))) - (int)(mWorldTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))); }
+    double getTargetCOMVelocity() { return (mRefStride * mStride * mCharacter->getGlobalRatio()) / (mMotion->getMaxTime() / mCadence); }
     
     // Time and cycle getters for rollout
-    double getWorldTime() const { return mWorldTime; }
+    double getSimTime() { return mSimTime; }
+    double getGaitCycleTime() const { return mGaitCycleTime; }
     int getSimulationCount() const { return mSimulationCount; }
 
     // For Parameterization
@@ -463,7 +461,6 @@ public:
         return norm_p;
     }
     int getNumKnownParam() {return mNumKnownParam;}
-    double getGlobalTime() { return mGlobalTime; }
 
     // Gait cycle completion detection
     bool isGaitCycleComplete();
@@ -557,9 +554,6 @@ private:
 
     double mLimitY; // For EOE
 
-    // Offset for Stance phase at current bvh;
-    double mStanceOffset;
-
     bool mLoadedMuscleNN, mUseJointState;
 
     // Parameter
@@ -573,7 +567,7 @@ private:
     // Simulation Setting
     bool mSoftPhaseClipping, mHardPhaseClipping;
     int mPhaseCount, mWorldPhaseCount;
-    double mGlobalTime, mWorldTime;
+    double mSimTime, mGaitCycleTime;
 
     // Pose Optimization
     bool mMusclePoseOptimization;

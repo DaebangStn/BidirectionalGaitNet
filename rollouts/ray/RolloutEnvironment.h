@@ -48,7 +48,6 @@ public:
     int GetSimulationHz();
     int GetControlHz();
     double GetWorldTime();
-    double GetNormalizedPhase();
 
     // Motion interpolation
     Eigen::VectorXd InterpolatePose(const Eigen::VectorXd& pose1,

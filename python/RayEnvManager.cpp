@@ -194,8 +194,6 @@ PYBIND11_MODULE(pysim, m)
          
         // For Rollout (Forward GaitNet)
         .def("getNormalizedParamState", &RayEnvManager::getNormalizedParamState)
-        .def("getNormalizedPhase", &RayEnvManager::getNormalizedPhase)
-        .def("getWorldPhase", &RayEnvManager::getWorldPhase)
 
         .def("getPositions", &RayEnvManager::getPositions)
 

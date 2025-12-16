@@ -37,7 +37,6 @@ Environment::Environment()
     mActionScale = 0.04;
     mIncludeMetabolicReward = true;
     mRewardType = deepmimic;
-    mStanceOffset = 0.07;
 
     // GaitNet
     mRefStride = 1.34;
@@ -59,8 +58,8 @@ Environment::Environment()
     mPhaseCount = 0;
     mWorldPhaseCount = 0;
     mKneeLoadingMaxCycle = 0.0;
-    mGlobalTime = 0.0;
-    mWorldTime = 0.0;
+    mSimTime = 0.0;
+    mGaitCycleTime = 0.0;
     mDragStartX = 0.0;
 
     mMusclePoseOptimization = false;
@@ -1185,7 +1184,7 @@ void Environment::setAction(Eigen::VectorXd _action)
         mAction = _action;
         mAction.head(mNumActuatorAction) *= mActionScale;
     }
-    
+     
     if (mPhaseDisplacementScale > 0.0) phaseAction += (mWeights.size() > 0 ? mWeights.back() : 1.0) * mPhaseDisplacementScale * mAction[mNumActuatorAction];
     else phaseAction = 0.0;
 
@@ -1222,14 +1221,14 @@ void Environment::setAction(Eigen::VectorXd _action)
     mSimulationStep++;
 }
 
-void Environment::updateTargetPosAndVel(bool isInit)
+void Environment::updateTargetPosAndVel(bool currentStep)
 {
     double dTime = 1.0 / mControlHz;
-    double dPhase = dTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    double ofsPhase = (isInit ? 0.0 : dPhase) + getLocalPhase();
+    double dPhase = dTime / (mMotion->getMaxTime() / mCadence);
+    double adaptPhase = (currentStep ? 0.0 : dPhase) + mGaitPhase->getAdaptivePhase();
     
-    mRefPose = mMotion->getTargetPose(ofsPhase);
-    const auto nextPose = mMotion->getTargetPose(ofsPhase + dPhase);
+    mRefPose = mMotion->getTargetPose(adaptPhase);
+    const auto nextPose = mMotion->getTargetPose(adaptPhase + dPhase);
     mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mRefPose) / dTime;
 }
 
@@ -1277,7 +1276,6 @@ double Environment::calcReward()
 
         Eigen::VectorXd pos_diff = skel->getPositionDifferences(mRefPose, pos);
         Eigen::VectorXd vel_diff = skel->getVelocityDifferences(mTargetVelocities, vel);
-        Eigen::VectorXd com_vel_diff = vel_diff.segment(3, 3);
 
         auto ees = mCharacter->getEndEffectors();
         Eigen::VectorXd ee_diff(ees.size() * 3);
@@ -1302,7 +1300,6 @@ double Environment::calcReward()
         r_p = exp(-mRewardConfig.pos_weight * pos_diff.squaredNorm() / pos_diff.rows());
         r_v = exp(-mRewardConfig.vel_weight * vel_diff.squaredNorm() / vel_diff.rows());
         r_com = exp(-mRewardConfig.com_weight * com_diff.squaredNorm() / com_diff.rows());
-        r_com_vel = exp(-mRewardConfig.com_weight * com_vel_diff.squaredNorm() / com_vel_diff.rows());
         r_metabolic = getEnergyReward();
 
         if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic + w_com * r_com_vel;
@@ -1313,7 +1310,6 @@ double Environment::calcReward()
         mInfoMap["r_p"] = r_p;
         mInfoMap["r_v"] = r_v;
         mInfoMap["r_com"] = r_com;
-        mInfoMap["r_com_vel"] = r_com_vel;
         mInfoMap["r_metabolic"] = r_metabolic;
     }
     else if (mRewardType == gaitnet)
@@ -1504,11 +1500,11 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
     // Motion information (phase)
 
     Eigen::VectorXd phase = Eigen::VectorXd::Zero(1 + (mPhaseDisplacementScale > 0.0 ? 1 : 0));
-    phase[0] = getNormalizedPhase();
+    phase[0] = mGaitPhase->getAdaptivePhase();
    
 
     if (mPhaseDisplacementScale > 0.0)
-        phase[1] = getLocalPhase(true);
+        phase[1] = mGaitPhase->getAdaptivePhase();
 
     if (isMirror())
         for (int i = 0; i < phase.rows(); i++)
@@ -1680,8 +1676,8 @@ void Environment::calcActivation()
 void Environment::postMuscleStep()
 {
     mSimulationCount++;
-    mGlobalTime += 1.0 / mSimulationHz;
-    mWorldTime += 1.0 / mSimulationHz;
+    mSimTime += 1.0 / mSimulationHz;
+    mGaitCycleTime += 1.0 / mSimulationHz;
 
     // Update gait phase tracking (also updates local time using phase displacement set in setAction)
     mGaitPhase->step();
@@ -1689,7 +1685,7 @@ void Environment::postMuscleStep()
     // Check for gait cycle completion (muscle-step level check)
     if (mGaitPhase->isGaitCycleComplete()) {
         mWorldPhaseCount++;
-        mWorldTime = mGaitPhase->getLocalTime();
+        mGaitCycleTime = mGaitPhase->getAdaptiveTime();
 
         // Store the maximum knee loading from the completed gait cycle
         mKneeLoadingMaxCycle = mCharacter->getKneeLoadingMax();
@@ -1701,11 +1697,11 @@ void Environment::postMuscleStep()
     }
 
     // Hard phase clipping (always enabled)
-    int currentGlobalCount = mGlobalTime / (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
-    int currentLocalCount = mGaitPhase->getLocalTime() / ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()))));
+    int currentGlobalCount = mSimTime / (mMotion->getMaxTime() / mCadence);
+    int currentLocalCount = mGaitPhase->getAdaptiveTime() / (mMotion->getMaxTime() / mCadence);
 
-    if (currentGlobalCount > currentLocalCount) mGaitPhase->setLocalTime(mGlobalTime);
-    else if (currentGlobalCount < currentLocalCount) mGaitPhase->setLocalTime(currentLocalCount * ((mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())))));
+    if (currentGlobalCount > currentLocalCount) mGaitPhase->setAdaptiveTime(mSimTime);
+    else if (currentGlobalCount < currentLocalCount) mGaitPhase->setAdaptiveTime(currentLocalCount * (mMotion->getMaxTime() / mCadence));
 
     // Discriminator processing after character step (when upperBodyTorque is computed)
     if (mDiscConfig.enabled) {
@@ -1815,7 +1811,7 @@ void Environment::poseOptimization(int iter)
         skel->setPositions(skel->getPositions() + dp);
     }
 
-    double phase = getLocalPhase(true);
+    double phase = mGaitPhase->getAdaptivePhase();
     // Note: mIsLeftLegStance removed - use GaitPhase instead if needed
     // For pose optimization, we just need to set the phase state
     bool isLeftLegStance = !((0.33 < phase) && (phase <= 0.83));
@@ -1910,23 +1906,24 @@ void Environment::reset(double phase)
     double time = 0.0;
     if (phase >= 0.0 && phase <= 1.0) {
         // Use specified phase (0.0 to 1.0)
-        time = phase * (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+        time = phase * mMotion->getMaxTime() / mCadence;
     }
-    else if (mRewardType == deepmimic) {
+    else if (mRewardType == deepmimic || mRewardType == scadiver) {
         time = thread_safe_uniform(1E-2, mMotion->getMaxTime() - 1E-2);
     }
     else if (mRewardType == gaitnet)
     {
-        time = (thread_safe_uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + mStanceOffset + thread_safe_uniform(-0.05, 0.05);
-        time *= (mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio())));
+        time = (thread_safe_uniform(0.0, 1.0) > 0.5 ? 0.5 : 0.0) + thread_safe_uniform(-0.1, 0.1);
+        time *= mMotion->getMaxTime() / mCadence;
+        time = abs(time);
     }    
     
     // Collision Detector Reset
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
     mWorld->getConstraintSolver()->clearLastCollisionResult();
 
-    mGlobalTime = time;
-    mWorldTime = time;
+    mSimTime = time;
+    mGaitCycleTime = time;
     mWorld->setTime(time);
 
     // Reset Skeletons
@@ -1937,7 +1934,7 @@ void Environment::reset(double phase)
     mCharacter->getSkeleton()->clearInternalForces();
     mCharacter->getSkeleton()->clearExternalForces();
 
-    mGaitPhase->setLocalTime(time);
+    mGaitPhase->setAdaptiveTime(time);
     mGaitPhase->setPhaseAction(0.0);
 
     // Initial Pose Setting
@@ -2112,7 +2109,7 @@ double Environment::getStepReward()
 
 int Environment::getAvgVelocityHorizonSteps() const
 {
-    double stride_duration = mMotion->getMaxTime() / (mCadence / sqrt(mCharacter->getGlobalRatio()));
+    double stride_duration = mMotion->getMaxTime() / mCadence;
     double window_seconds = stride_duration * mRewardConfig.avg_vel_window_mult;
     double min_window = 1.0 / static_cast<double>(mSimulationHz);
     window_seconds = std::max(window_seconds, min_window);

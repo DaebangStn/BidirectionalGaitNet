@@ -493,6 +493,7 @@ private:
     double mSimStepDurationAvg;      // Moving average of simulation step duration
     double mRealDeltaTimeAvg;        // Moving average of real frame delta time
     bool mIsPlaybackTooFast;         // Warning: playback faster than simulation can handle
+    bool mProgressForward = false;   // Whether character progresses forward with cycle distance
     bool mShowTimingPane;            // Toggle for timing information pane
     bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
     bool mShowTitlePanel;            // Toggle for title panel (Ctrl+T)

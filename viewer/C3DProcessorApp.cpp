@@ -1084,6 +1084,8 @@ void C3DProcessorApp::drawPlaybackSection()
                 mMotionState.navigationMode = syncMode ? C3D_SYNC : C3D_MANUAL_FRAME;
             }
 
+            ImGui::SameLine();
+
             // Progress forward toggle
             ImGui::Checkbox("Progress Forward", &mProgressForward);
         }

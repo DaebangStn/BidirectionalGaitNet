@@ -76,8 +76,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
 
     // Basic fields (always recorded)
     data["step"] = mEnv.getSimulationCount();
-    data["time"] = mEnv.getWorldTime();
-    data["phase"] = mEnv.getNormalizedPhase();
+    data["time"] = mEnv.getGaitCycleTime();
     data["cycle"] = mEnv.getGaitCycleCount();
 
     auto skel = mEnv.getCharacter()->getSkeleton();
@@ -198,11 +197,7 @@ int RolloutEnvironment::GetControlHz() {
 }
 
 double RolloutEnvironment::GetWorldTime() {
-    return mEnv.getWorldTime();
-}
-
-double RolloutEnvironment::GetNormalizedPhase() {
-    return mEnv.getNormalizedPhase();
+    return mEnv.getGaitCycleTime();
 }
 
 int RolloutEnvironment::getGaitCycleCount() {

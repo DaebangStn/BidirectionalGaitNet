@@ -55,7 +55,7 @@ public:
     std::vector<double> getTimestamps() const override;
     int getTotalTimesteps() const override { return mMotionData.rows(); }
     int getTimestepsPerCycle() const override { return mMotionData.rows(); }
-
+    Eigen::Vector3d getCycleDistance() const override { return mCycleDistance; }
     // ==================== HDF-Specific Methods ====================
 
     /**
@@ -108,6 +108,9 @@ private:
     Eigen::Isometry3d mRootTransform;
     double mHeightOffset = 0.0;
     double mXOffset = 0.0;
+
+    // Cycle distance for forward progression (computed in loadFromFile)
+    Eigen::Vector3d mCycleDistance = Eigen::Vector3d::Zero();
 
     // ==================== Private Helper Methods ====================
 

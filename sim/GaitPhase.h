@@ -209,12 +209,18 @@ public:
     /**
      * Set local time
      */
-    void setLocalTime(double time) { mLocalTime = time; }
+    void setAdaptiveTime(double time) { mAdaptiveTime = time; }
 
     /**
      * Get current local time
      */
-    double getLocalTime() const { return mLocalTime; }
+    double getAdaptiveTime() const { return mAdaptiveTime; }
+
+    double getAdaptivePhase() const { 
+        double phase = mAdaptiveTime / (mMotionCycleTime / mCadence);
+        phase = phase - floor(phase);  // Normalize to [0, 1)
+        return phase;
+    }
 
     /**
      * Set phase action (updated each control step)
@@ -285,7 +291,7 @@ private:
 
     // ========== Time Management ==========
 
-    double mLocalTime;           // Local simulation time
+    double mAdaptiveTime;           // Local simulation time
     double mControlHz;           // Control frequency
     double mSimulationHz;        // Simulation frequency
     double mPhaseAction;   // Phase displacement (passed to step())

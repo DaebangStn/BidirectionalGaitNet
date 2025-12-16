@@ -112,6 +112,12 @@ public:
     virtual Eigen::VectorXd getRawMotionData() const { return Eigen::VectorXd(); }
 
     /**
+     * @brief Get cycle distance for forward progression
+     * @return Cycle distance vector (root translation per cycle)
+     */
+    virtual Eigen::Vector3d getCycleDistance() const { return Eigen::Vector3d::Zero(); }
+
+    /**
      * @brief Get number of values per frame (DOF count)
      * @return Values per frame (e.g., 56 for HDF/BVH, 101 for NPZ)
      */

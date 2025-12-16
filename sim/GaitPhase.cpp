@@ -23,7 +23,7 @@ GaitPhase::GaitPhase(Character* character,
       mRefStride(refStride),
       mCadence(1.0),
       mStride(1.0),
-      mLocalTime(0.0),
+      mAdaptiveTime(0.0),
       mControlHz(controlHz),
       mSimulationHz(simulationHz),
       mPhaseAction(0.0),
@@ -82,7 +82,7 @@ void GaitPhase::reset()
     mStepCompletePD = false;
 
     // Reset timing
-    mLocalTime = 0.0;
+    mAdaptiveTime = 0.0;
     mSwingTimeR = 0.0;
     mSwingTimeL = 0.0;
     mStanceTimeR = 0.0;
@@ -110,11 +110,6 @@ void GaitPhase::reset()
     LOG_VERBOSE("=== Left Foot Lowest Point ===");
     Eigen::Vector3d footLPos = getLowestPointFromBodyNodes({"TalusL", "FootPinkyL", "FootThumbL"});
 
-    // Calculate initial phase and target stride
-    double localTime = mLocalTime;
-    double phase = localTime / mMotionCycleTime;
-    phase = phase - floor(phase);  // Normalize to [0, 1)
-    double targetStride = mStride * mRefStride * mCharacter->getGlobalRatio();
 
     // Initialize contact state (will be updated in first step())
     mCachedContact = Eigen::Vector2i::Zero();
@@ -135,7 +130,7 @@ void GaitPhase::reset()
     if (bothContact) {
         // Both feet in contact - double support phase
         // Use phase to determine which leg is transitioning
-        if (phase < 0.4) {
+        if (getAdaptivePhase() < 0.4) {
             mState = RIGHT_STANCE;
             mIsLeftLegStance = false;
             mCurrentFoot = footRPos;
@@ -167,6 +162,8 @@ void GaitPhase::reset()
     // Initialize foot targets
     mCurrentTargetFoot = mCurrentStanceFoot;
     mNextTargetFoot = mCurrentStanceFoot;
+
+    double targetStride = mStride * mRefStride * mCharacter->getGlobalRatio();
     mNextTargetFoot[2] += targetStride / 2.0;
     mNextTargetFoot[0] *= -1.0;
 
@@ -178,7 +175,7 @@ void GaitPhase::reset()
 void GaitPhase::step()
 {
     // Update local time
-    mLocalTime += (1.0 + mPhaseAction) / mSimulationHz;
+    mAdaptiveTime += (1.0 + mPhaseAction) / mSimulationHz;
 
     mIsGaitCycleComplete = false;  // Reset flag
     mIsStepComplete = false;       // Reset flag
@@ -515,7 +512,7 @@ void GaitPhase::updateFromContact()
                 mCycleDist = (mCurCycleCOM - mPrevCycleCOM).norm();
                 mPrevCycleCOM = mCurCycleCOM;
 
-                mCurCycleTime = mLocalTime;
+                mCurCycleTime = mAdaptiveTime;
                 mCycleTime = mCurCycleTime - mPrevCycleTime;
                 mPrevCycleTime = mCurCycleTime;
 
@@ -552,15 +549,8 @@ void GaitPhase::updateFromContact()
 
 void GaitPhase::updateFromPhase()
 {
-    // Calculate phase from local time and stored motion duration
-    double localTime = mLocalTime;
-    double cycleDuration = mMotionCycleTime;
-    double phase = localTime / cycleDuration;
-    phase = phase - floor(phase);  // Normalize to [0, 1)
-
-    // Calculate target stride using stored parameters
+    double phase = getAdaptivePhase();
     double targetStride = mStride * mRefStride * mCharacter->getGlobalRatio();
-
     auto skel = mCharacter->getSkeleton();
 
     // Phase-based stance detection (using 0.33-0.83 range for right stance)

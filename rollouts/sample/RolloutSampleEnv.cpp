@@ -108,8 +108,7 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
 
     // Basic fields (always recorded)
     data["step"] = mEnv.getSimulationCount();
-    data["time"] = mEnv.getWorldTime();
-    data["phase"] = mEnv.getNormalizedPhase();
+    data["time"] = mEnv.getGaitCycleTime();
     data["cycle"] = mEnv.getGaitCycleCount();
 
     auto skel = mEnv.getCharacter()->getSkeleton();

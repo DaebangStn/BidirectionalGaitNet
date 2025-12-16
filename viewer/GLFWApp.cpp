@@ -1566,6 +1566,9 @@ void GLFWApp::drawKinematicsControlPanel()
         if (motionStatePtr) {
             PlaybackUtils::drawPlaybackNavigationUI("Motion Frame Nav", *motionStatePtr, motionStatePtr->maxFrameIndex);
 
+            // Progress forward toggle
+            ImGui::Checkbox("Progress Forward", &mProgressForward);
+
             // Show additional motion-specific info
             if (motionStatePtr->navigationMode == PLAYBACK_MANUAL_FRAME) {
                 // Show frame time for HDF/C3D motions with timestamps in manual mode
@@ -4211,7 +4214,7 @@ void GLFWApp::drawTimingPane()
             ImGui::TableSetColumnIndex(0);
             ImGui::TextColored(labelColor, "Local Phase");
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextColored(accentColor, "%.3f", mRenderEnv->getLocalPhase(true));
+            ImGui::TextColored(accentColor, "%.3f", mRenderEnv->getGaitPhase()->getAdaptivePhase());
 
             ImGui::EndTable();
         }
@@ -4703,7 +4706,7 @@ void GLFWApp::reset()
         mFGNRootOffset = mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getPositions().tail(3);
         mUseWeights = mRenderEnv->getUseWeights();
         mViewerTime = mRenderEnv->getWorld()->getTime();
-        mViewerPhase = mRenderEnv->getGaitPhase()->getLocalTime() / (mRenderEnv->getMotion()->getMaxTime() / mRenderEnv->getCadence());
+        mViewerPhase = mRenderEnv->getGaitPhase()->getAdaptiveTime() / (mRenderEnv->getMotion()->getMaxTime() / mRenderEnv->getCadence());
     }
     updateViewerTime(0);
     alignMotionToSimulation();
@@ -4910,7 +4913,7 @@ void GLFWApp::updateMotionCycleAccumulation(Motion* current_motion,
     if (state.navigationMode != PLAYBACK_SYNC) return;
 
     // Standard cycle accumulation for HDF/C3D (frame-based)
-    if (current_frame_idx < state.lastFrameIdx) {
+    if (current_frame_idx < state.lastFrameIdx && mProgressForward) {
         state.cycleAccumulation += state.cycleDistance;
     }
     state.lastFrameIdx = current_frame_idx;
@@ -6255,11 +6258,11 @@ void GLFWApp::addSimulationMotion()
 
         current_trajectory.push_back(mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()));
 
-        if (prev_phi > mRenderEnv->getNormalizedPhase())
+        if (prev_phi > mRenderEnv->getGaitPhase()->getAdaptivePhase())
             phi_offset += 1;
-        prev_phi = mRenderEnv->getNormalizedPhase();
+        prev_phi = mRenderEnv->getGaitPhase()->getAdaptivePhase();
 
-        current_phi.push_back(mRenderEnv->getNormalizedPhase() + phi_offset);
+        current_phi.push_back(mRenderEnv->getGaitPhase()->getAdaptivePhase() + phi_offset);
     }
 
     int phi_idx = 0;

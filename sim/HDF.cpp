@@ -153,6 +153,16 @@ void HDF::loadFromFile(const std::string& filepath)
 
         file.close();
 
+        // Compute cycle distance for forward progression
+        if (mNumFrames > 1) {
+            Eigen::VectorXd firstFrame = mMotionData.row(0);
+            Eigen::VectorXd lastFrame = mMotionData.row(mNumFrames - 1);
+            double correction = static_cast<double>(mNumFrames) / (mNumFrames - 1);
+            mCycleDistance[0] = (lastFrame[3] - firstFrame[3]) * correction;  // X
+            mCycleDistance[1] = 0.0;  // Y does not accumulate
+            mCycleDistance[2] = (lastFrame[5] - firstFrame[5]) * correction;  // Z
+        }
+
         LOG_VERBOSE("[HDF] Loaded " << filepath
                      << " with " << mNumFrames << " frames (" << mDofPerFrame << " DOF/frame, "
                      << mFrameTime << " s/frame)");

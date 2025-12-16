@@ -206,7 +206,7 @@ void RenderEnvironment::RecordGraphData() {
     }
 
     // Log local phase
-    if (mGraphData->key_exists("local_phase")) mGraphData->push("local_phase", getLocalPhase(true));
+    if (mGraphData->key_exists("local_phase")) mGraphData->push("local_phase", getGaitPhase()->getAdaptivePhase());
 
     // Log COM position
     Eigen::Vector3d com = skel->getCOM();
@@ -218,7 +218,7 @@ void RenderEnvironment::RecordGraphData() {
 
     if (mVelocityMethod == 0) {
         // Method 0: Least Squares Regression
-        double globalTime = getGlobalTime();
+        double globalTime = getSimTime();
         mVelocityX_Estimator.update(globalTime, com[0]);
         mVelocityZ_Estimator.update(globalTime, com[2]);
         vel_x = mVelocityX_Estimator.getSlope();
