@@ -42,7 +42,7 @@ environment:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
     clip:
       step: 50
-      value: 0.1
+      value: 0.2
 
     # Metabolic configuration
     metabolic:

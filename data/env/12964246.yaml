@@ -9,6 +9,7 @@ environment:
     kp: 200
     kv: 40
     damping: 0.1
+    self_collide: true
 
   # Motion Reference
   motion:

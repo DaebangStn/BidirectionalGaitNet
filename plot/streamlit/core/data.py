@@ -197,13 +197,17 @@ def load_sampled_hdf5(dir_name: str) -> dict:
                 cycle_idx = int(cycle_key.split('_')[1])
                 cycle_grp = param_grp[cycle_key]
 
-                cycle_data = {'angle': {}, 'phase': None, 'muscle': {}}
+                cycle_data = {'angle': {}, 'sway': {}, 'phase': None, 'muscle': {}}
 
-                # Load angles
+                # Load all angles
                 if 'angle' in cycle_grp:
-                    for joint in ['HipR', 'KneeR', 'AnkleR']:
-                        if joint in cycle_grp['angle']:
-                            cycle_data['angle'][joint] = cycle_grp['angle'][joint][:]
+                    for key in cycle_grp['angle'].keys():
+                        cycle_data['angle'][key] = cycle_grp['angle'][key][:]
+
+                # Load all sway metrics
+                if 'sway' in cycle_grp:
+                    for key in cycle_grp['sway'].keys():
+                        cycle_data['sway'][key] = cycle_grp['sway'][key][:]
 
                 # Load phase
                 if 'phase' in cycle_grp:
@@ -219,16 +223,22 @@ def load_sampled_hdf5(dir_name: str) -> dict:
 
             # Check for pre-averaged data at param level
             if 'angle' in param_grp:
-                averaged = {'angle': {}, 'phase': None}
-                for joint in ['HipR', 'KneeR', 'AnkleR']:
-                    if joint in param_grp['angle']:
-                        averaged['angle'][joint] = param_grp['angle'][joint][:]
+                averaged = {'angle': {}, 'sway': {}, 'phase': None}
+
+                # Load all averaged angles
+                for key in param_grp['angle'].keys():
+                    averaged['angle'][key] = param_grp['angle'][key][:]
+
+                # Load all averaged sway metrics
+                if 'sway' in param_grp:
+                    for key in param_grp['sway'].keys():
+                        averaged['sway'][key] = param_grp['sway'][key][:]
 
                 if 'phase' in param_grp:
                     averaged['phase'] = param_grp['phase'][:]
 
-                # Only set averaged if we have at least one angle
-                if averaged['angle']:
+                # Only set averaged if we have data
+                if averaged['angle'] or averaged['sway']:
                     data['averaged'] = averaged
 
             return data

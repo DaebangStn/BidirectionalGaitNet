@@ -236,7 +236,7 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
 
                 if (mRecordConfig.kinematics.sway.fpa) {
                     data["sway/FPA_R"] = fpaR;
-                    data["sway/FPA_L"] = fpaL;
+                    data["sway/FPA_L"] = -fpaL;
                 }
 
                 if (mRecordConfig.kinematics.sway.anteversion) {

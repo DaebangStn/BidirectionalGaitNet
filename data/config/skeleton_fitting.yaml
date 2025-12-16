@@ -130,7 +130,7 @@ skeleton_fitting:
   # Inverse Kinematics refinement parameters (DLS + Line Search)
   inverse_kinematics:
     enabled: true               # Enable/disable IK refinement
-    max_iterations: 15          # Maximum IK iterations per frame
+    max_iterations: 5          # Maximum IK iterations per frame
     tolerance: 1.0e-3           # Convergence tolerance (meters)
     lambda: 0.1                # DLS damping factor (Levenberg-Marquardt)
     alpha_init: 1.0             # Initial line search step size

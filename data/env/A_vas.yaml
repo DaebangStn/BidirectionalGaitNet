@@ -3,22 +3,20 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
-    # file: "@data/skeleton/base_v2.xml"
+    file: "@data/skeleton/base.xml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
     damping: 0.1
-    self_collide: true
 
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    file: "@pid:12964246/h5/pre/Trimmed_walk02-Dynamic_trimmed.h5"
+    file: "@data/motion/walk.h5"
 
   # Muscle System
   muscle:
-    file: "@data/muscle/test_exported.yaml"
+    file: "@data/muscle/base_vas.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
@@ -90,6 +88,7 @@ environment:
     enabled: false  # Set to true to enable discriminator
     normalize: false  # Optional: normalize disc_obs before forward pass
     reward_scale: 1.0  # Scale factor for discriminator reward
+    multiplicative: false  # if true, multiplies with main reward term; if false, additive
 
   # Parameterization for training
   parameters:

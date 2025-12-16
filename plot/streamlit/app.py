@@ -20,7 +20,7 @@ def format_pid_option(pid_info: dict) -> str:
     if name:
         parts.append(name)
     if gmfcs:
-        parts.append(gmfcs)  # Just the level (e.g., "II")
+        parts.append(gmfcs)
 
     if len(parts) == 1:
         return pid
@@ -53,6 +53,8 @@ def main():
     )
 
     data = None
+    compare_mode = False
+    panel_data_list = []
 
     if source_type == "Patient (PID)":
         # PID selection
@@ -99,16 +101,56 @@ def main():
             st.info("No sampled rollout data available in sampled/")
             return
 
+        # Default directory selector (used for single mode or as first panel)
         selected_dir = st.sidebar.selectbox(
             "Rollout Directory",
             sampled_dirs,
             index=0
         )
 
-        # Load sampled data
-        data = load_sampled_hdf5(selected_dir)
-        if data is None:
-            st.error(f"Failed to load sampled data: {selected_dir}")
+        # Comparison mode toggle
+        compare_mode = st.sidebar.checkbox("Comparison Mode")
+
+        if compare_mode:
+            # Grid configuration with select sliders
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                num_rows = st.select_slider("Rows", options=[1, 2, 3, 4], value=1)
+            with col2:
+                num_cols = st.select_slider("Cols", options=[1, 2, 3, 4], value=2)
+
+            num_panels = int(num_rows * num_cols)
+
+            # Panel selectors
+            st.sidebar.markdown("**Panel Selection**")
+            panel_dirs = []
+            for i in range(num_panels):
+                # Default to selected_dir for first panel, then cycle through
+                default_idx = min(i, len(sampled_dirs) - 1)
+                panel_dir = st.sidebar.selectbox(
+                    f"Panel {i + 1}",
+                    sampled_dirs,
+                    index=default_idx,
+                    key=f"panel_dir_{i}"
+                )
+                panel_dirs.append(panel_dir)
+
+            # Load data for all panels
+            for panel_dir in panel_dirs:
+                pdata = load_sampled_hdf5(panel_dir)
+                if pdata is not None:
+                    panel_data_list.append(pdata)
+                else:
+                    panel_data_list.append(None)
+
+            # Use first panel's data as reference for controls
+            data = panel_data_list[0] if panel_data_list else None
+
+        else:
+            # Single mode - load selected directory
+            data = load_sampled_hdf5(selected_dir)
+            if data is None:
+                st.error(f"Failed to load sampled data: {selected_dir}")
 
     # View selector - filter by source type
     st.sidebar.header("Visualization")
@@ -129,11 +171,52 @@ def main():
         index=0
     )
 
+    view_cfg = view_options[selected_label]
+    view_module = load_view(view_cfg["module"])
+
     # Render selected view
     if data is not None:
-        view_cfg = view_options[selected_label]
-        view_module = load_view(view_cfg["module"])
-        view_module.render(data, view_cfg)
+        if compare_mode and panel_data_list:
+            # Check if view supports comparison mode
+            if hasattr(view_module, 'render_controls') and hasattr(view_module, 'render_plot'):
+                # Render header
+                st.header(f"{selected_label} - Comparison")
+
+                # Render shared controls at top of main page (pass all panel data for auto-range)
+                controls = view_module.render_controls(data, view_cfg, all_data=panel_data_list)
+
+                if controls is not None:
+                    # Show control summary once at top (if enabled and view supports it)
+                    if controls.get('show_info', True) and hasattr(view_module, 'get_summary'):
+                        summary = view_module.get_summary(controls)
+                        if summary:
+                            st.caption(summary)
+
+                    # Render plots in grid
+                    for row_idx in range(int(num_rows)):
+                        cols = st.columns(int(num_cols))
+                        for col_idx, col in enumerate(cols):
+                            panel_idx = row_idx * int(num_cols) + col_idx
+                            if panel_idx < len(panel_data_list):
+                                pdata = panel_data_list[panel_idx]
+                                if pdata is not None:
+                                    with col:
+                                        view_module.render_plot(
+                                            pdata,
+                                            view_cfg,
+                                            controls,
+                                            title_prefix=pdata.get('dir_name', f'Panel {panel_idx + 1}')
+                                        )
+                                else:
+                                    with col:
+                                        st.warning(f"Panel {panel_idx + 1}: Failed to load data")
+            else:
+                st.warning(f"View '{selected_label}' does not support comparison mode")
+                st.info("Falling back to single view mode")
+                view_module.render(data, view_cfg)
+        else:
+            # Single view mode
+            view_module.render(data, view_cfg)
     else:
         st.info("Select a data source to view")
 
