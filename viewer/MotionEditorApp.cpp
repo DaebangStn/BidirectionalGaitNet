@@ -418,6 +418,8 @@ void MotionEditorApp::drawRightPanel()
     ImGui::Separator();
     drawTrimSection();
     ImGui::Separator();
+    drawStrideEstimationSection();
+    ImGui::Separator();
     drawExportSection();
 
     ImGui::End();
@@ -743,7 +745,7 @@ void MotionEditorApp::drawExportSection()
 
         // Export button
         if (ImGui::Button("Export Edited Motion", ImVec2(-1, 30))) {
-            exportTrimmedMotion();
+            exportMotion();
         }
 
         // Export status message
@@ -957,6 +959,82 @@ void MotionEditorApp::drawFootContactSection()
 
             ImGui::EndTable();
         }
+    }
+}
+
+void MotionEditorApp::drawStrideEstimationSection()
+{
+    if (!collapsingHeaderWithControls("Stride Estimation")) return;
+
+    if (!mMotion || !mCharacter) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Load motion and skeleton first");
+        return;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+
+    // BodyNode selection (default: TalusR)
+    const char* bodyNodes[] = {"TalusR", "TalusL", "Pelvis"};
+    ImGui::Text("BodyNode:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120);
+    ImGui::Combo("##StrideBodyNode", &mStrideBodyNodeIdx, bodyNodes, IM_ARRAYSIZE(bodyNodes));
+
+    // Divider input
+    ImGui::Text("Divider:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    ImGui::InputInt("##StrideDivider", &mStrideDivider);
+    if (mStrideDivider < 1) mStrideDivider = 1;
+
+    // Calculation mode radio
+    ImGui::Text("Mode:");
+    ImGui::SameLine();
+    ImGui::RadioButton("Z only", &mStrideCalcMode, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("XZ magnitude", &mStrideCalcMode, 1);
+
+    // Calculate button
+    if (ImGui::Button("Calculate Stride")) {
+        std::string bnName = bodyNodes[mStrideBodyNodeIdx];
+        auto bn = skel->getBodyNode(bnName);
+        if (!bn) {
+            LOG_ERROR("BodyNode not found: " << bnName);
+        } else {
+            int numFrames = mMotion->getNumFrames();
+
+            // Save skeleton state
+            Eigen::VectorXd savedPositions = skel->getPositions();
+
+            // Get first frame position
+            skel->setPositions(mMotion->getPose(0));
+            Eigen::Vector3d startPos = bn->getTransform().translation();
+
+            // Get last frame position
+            skel->setPositions(mMotion->getPose(numFrames - 1));
+            Eigen::Vector3d endPos = bn->getTransform().translation();
+
+            // Restore skeleton state
+            skel->setPositions(savedPositions);
+
+            // Compute stride based on mode
+            if (mStrideCalcMode == 0) {
+                // Z only (forward)
+                mComputedStride = std::abs(endPos[2] - startPos[2]) / mStrideDivider;
+            } else {
+                // XZ magnitude
+                double dx = endPos[0] - startPos[0];
+                double dz = endPos[2] - startPos[2];
+                mComputedStride = std::sqrt(dx*dx + dz*dz) / mStrideDivider;
+            }
+        }
+    }
+
+    // Display result
+    if (mComputedStride > 0.0) {
+        ImGui::Text("Stride: %.4f m", mComputedStride);
+    } else {
+        ImGui::TextDisabled("Stride: not computed");
     }
 }
 
@@ -1283,7 +1361,7 @@ Eigen::Vector3d MotionEditorApp::computeMotionCycleDistance()
 // Export
 // =============================================================================
 
-void MotionEditorApp::exportTrimmedMotion()
+void MotionEditorApp::exportMotion()
 {
     if (!mMotion) {
         mLastExportMessage = "Error: No motion loaded";
@@ -1308,11 +1386,16 @@ void MotionEditorApp::exportTrimmedMotion()
 
     // Build metadata
     std::map<std::string, std::string> metadata = {
-        {"source_type", "motion_editor_trim"},
+        {"source_type", "motion_editor"},
         {"source_file", fs::path(mMotionSourcePath).filename().string()},
         {"trim_start", std::to_string(mTrimStart)},
         {"trim_end", std::to_string(mTrimEnd)}
     };
+
+    // Only add stride if computed (> 0)
+    if (mComputedStride > 0.0) {
+        metadata["stride"] = std::to_string(mComputedStride);
+    }
 
     try {
         hdf->exportToFile(outputPath.string(), metadata);

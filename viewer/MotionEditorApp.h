@@ -170,6 +170,12 @@ private:
     float mContactVelocityThreshold = 0.01f;  // m/frame
     int mContactMinLockFrames = 5;
 
+    // === Stride Estimation ===
+    int mStrideBodyNodeIdx = 0;          // 0=TalusR, 1=TalusL, 2=Pelvis
+    int mStrideDivider = 1;              // Divider for stride calculation
+    int mStrideCalcMode = 0;             // 0=Z only, 1=XZ magnitude
+    double mComputedStride = -1.0;       // Computed stride value (-1 = not computed)
+
     // === Initialization ===
     void setCamera();
     void updateCamera();
@@ -192,6 +198,7 @@ private:
     void drawRotationSection();
     void drawHeightSection();
     void drawFootContactSection();
+    void drawStrideEstimationSection();
 
     // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);
@@ -210,7 +217,7 @@ private:
     Eigen::Vector3d computeMotionCycleDistance();
 
     // === Export ===
-    void exportTrimmedMotion();
+    void exportMotion();
 
     // === Trim ===
     void applyTrim();

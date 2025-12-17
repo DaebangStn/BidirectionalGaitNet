@@ -14,6 +14,7 @@ environment:
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
+    use_mirror: false
     file: "@data/motion/walk_50dof.h5"
 
   # Muscle System

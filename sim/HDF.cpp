@@ -151,6 +151,22 @@ void HDF::loadFromFile(const std::string& filepath)
             mParameterValues.clear();
         }
 
+        // Try to read stride attribute (optional)
+        try {
+            H5::Group root = file.openGroup("/");
+            if (root.attrExists("stride")) {
+                H5::Attribute strideAttr = root.openAttribute("stride");
+                H5::StrType strType = strideAttr.getStrType();
+                std::string strideStr;
+                strideStr.resize(strType.getSize());
+                strideAttr.read(strType, &strideStr[0]);
+                mStrideAttribute = std::stod(strideStr);
+                LOG_VERBOSE("[HDF] Loaded stride attribute: " << mStrideAttribute);
+            }
+        } catch (...) {
+            // Stride attribute not present, keep default
+        }
+
         file.close();
 
         // Compute cycle distance for forward progression
@@ -490,4 +506,8 @@ void HDF::exportToFile(
         LOG_ERROR("[HDF] HDF5 error exporting to " << outputPath << ": " << e.getDetailMsg());
         throw;
     }
+}
+
+double HDF::getStrideAttribute(double defaultValue) const {
+    return (mStrideAttribute >= 0.0) ? mStrideAttribute : defaultValue;
 }

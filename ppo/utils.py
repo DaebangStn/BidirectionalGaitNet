@@ -131,6 +131,26 @@ def parse_args_with_presets(
     Returns:
         Configured dataclass instance
     """
+    import sys
+
+    # Check for common mistake: arguments before preset name
+    preset_names = [name for name in preset_fns.keys() if name is not None]
+    argv = sys.argv[1:]
+    preset_idx = -1
+    for i, arg in enumerate(argv):
+        if arg in preset_names:
+            preset_idx = i
+            break
+
+    if preset_idx > 0:
+        # Found preset but there are args before it
+        args_before_preset = [a for a in argv[:preset_idx] if a.startswith('--')]
+        if args_before_preset:
+            print(f"ERROR: Arguments {args_before_preset} placed BEFORE preset '{argv[preset_idx]}'.")
+            print(f"       Arguments before preset name are ignored!")
+            print(f"       Correct usage: python script.py {argv[preset_idx]} {' '.join(args_before_preset)}")
+            sys.exit(1)
+
     parser = build_preset_parser(dataclass_type, preset_fns, description)
     cli_args = parser.parse_args()
 

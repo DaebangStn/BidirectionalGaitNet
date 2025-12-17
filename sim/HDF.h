@@ -104,6 +104,13 @@ public:
         const std::string& outputPath,
         const std::map<std::string, std::string>& metadata = {}) const;
 
+    /**
+     * @brief Get stride attribute from HDF5 file
+     * @param defaultValue Value to return if attribute not found
+     * @return Stride value or defaultValue
+     */
+    double getStrideAttribute(double defaultValue = -1.0) const;
+
 private:
     std::string mFilename;
 
@@ -126,6 +133,9 @@ private:
 
     // Cycle distance for forward progression (computed in loadFromFile)
     Eigen::Vector3d mCycleDistance = Eigen::Vector3d::Zero();
+
+    // Stride from file attribute (-1 = not set)
+    double mStrideAttribute = -1.0;
 
     // ==================== Private Helper Methods ====================
 

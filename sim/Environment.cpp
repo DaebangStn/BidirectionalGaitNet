@@ -674,6 +674,25 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
         mUseMirror = motion["use_mirror"].as<bool>(true);
         mLocalState = motion["local_state"].as<bool>(false);
+
+        // Get stride from motion if configured
+        bool getStrideFromMotion = motion["get_stride_from_motion"].as<bool>(false);
+        if (getStrideFromMotion && mMotion) {
+            // Only HDF supports stride attribute
+            HDF* hdf = dynamic_cast<HDF*>(mMotion);
+            if (hdf) {
+                double stride = hdf->getStrideAttribute(-1.0);
+                if (stride > 0.0) {
+                    mRefStride = stride;
+                } else {
+                    LOG_ERROR("[Environment] get_stride_from_motion=true but stride attribute not found in HDF file");
+                    exit(-1);
+                }
+            } else {
+                LOG_ERROR("[Environment] get_stride_from_motion=true but motion is not HDF format");
+                exit(-1);
+            }
+        }
     }
 
     // === Two-level controller ===
