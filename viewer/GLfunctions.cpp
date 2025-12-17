@@ -1,9 +1,16 @@
 #include "GLfunctions.h"
 #include <assimp/cimport.h>
 #include <iostream>
+#include <filesystem>
 #include <GL/gl.h>
 #include <GL/glu.h>
 #include "GL/glut.h"
+#include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
+#include <implot.h>
+#include "Log.h"
 #include "dart/dynamics/Skeleton.hpp"
 #include "dart/dynamics/Joint.hpp"
 #include "dart/dynamics/BallJoint.hpp"
@@ -1033,4 +1040,155 @@ void GUI::Draw2DCircle(const Eigen::Vector3d &origin, const Eigen::Vector3d &nor
         glVertex3d(p[0], p[1], p[2]);
     }
     glEnd();
+}
+
+void GUI::DrawOriginAxisGizmo(const Eigen::Vector3d& center, float length, float colorTint)
+{
+    glDisable(GL_LIGHTING);
+    glLineWidth(3.0f);
+
+    // X axis - Red (with tint)
+    glColor3f(1.0f, colorTint * 0.3f, colorTint * 0.3f);
+    glBegin(GL_LINES);
+    glVertex3d(center.x(), center.y(), center.z());
+    glVertex3d(center.x() + length, center.y(), center.z());
+    glEnd();
+
+    // Y axis - Green (with tint)
+    glColor3f(colorTint * 0.3f, 1.0f, colorTint * 0.3f);
+    glBegin(GL_LINES);
+    glVertex3d(center.x(), center.y(), center.z());
+    glVertex3d(center.x(), center.y() + length, center.z());
+    glEnd();
+
+    // Z axis - Blue (with tint)
+    glColor3f(colorTint * 0.3f, colorTint * 0.3f, 1.0f);
+    glBegin(GL_LINES);
+    glVertex3d(center.x(), center.y(), center.z());
+    glVertex3d(center.x(), center.y(), center.z() + length);
+    glEnd();
+
+    glLineWidth(1.0f);
+    glEnable(GL_LIGHTING);
+}
+
+void GUI::DrawGroundGrid(GroundMode mode, int gridSize, float cellSize)
+{
+    glDisable(GL_LIGHTING);
+
+    float extent = gridSize * cellSize;
+
+    if (mode == GroundMode::Wireframe) {
+        glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
+        glBegin(GL_LINES);
+        for (int i = -gridSize; i <= gridSize; i++) {
+            glVertex3f(i * cellSize, 0.0f, -extent);
+            glVertex3f(i * cellSize, 0.0f, extent);
+            glVertex3f(-extent, 0.0f, i * cellSize);
+            glVertex3f(extent, 0.0f, i * cellSize);
+        }
+        glEnd();
+    } else {
+        // Solid mode - checkerboard pattern
+        for (int x = -gridSize; x < gridSize; x++) {
+            for (int z = -gridSize; z < gridSize; z++) {
+                if ((x + z) % 2 == 0) {
+                    glColor4f(0.35f, 0.35f, 0.35f, 1.0f);
+                } else {
+                    glColor4f(0.25f, 0.25f, 0.25f, 1.0f);
+                }
+                glBegin(GL_QUADS);
+                glNormal3f(0.0f, 1.0f, 0.0f);
+                glVertex3f(x * cellSize, 0.0f, z * cellSize);
+                glVertex3f((x + 1) * cellSize, 0.0f, z * cellSize);
+                glVertex3f((x + 1) * cellSize, 0.0f, (z + 1) * cellSize);
+                glVertex3f(x * cellSize, 0.0f, (z + 1) * cellSize);
+                glEnd();
+            }
+        }
+    }
+
+    glEnable(GL_LIGHTING);
+}
+
+void GUI::InitGL()
+{
+    glClearColor(0.15f, 0.15f, 0.15f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+void GUI::InitLighting()
+{
+    static float ambient[] = {0.2f, 0.2f, 0.2f, 1.0f};
+    static float diffuse[] = {0.6f, 0.6f, 0.6f, 1.0f};
+    static float front_mat_shininess[] = {60.0f};
+    static float front_mat_specular[] = {0.2f, 0.2f, 0.2f, 1.0f};
+    static float front_mat_diffuse[] = {0.5f, 0.28f, 0.38f, 1.0f};
+    static float lmodel_ambient[] = {0.2f, 0.2f, 0.2f, 1.0f};
+    static float lmodel_twoside[] = {GL_FALSE};
+    GLfloat position[] = {1.0f, 0.0f, 0.0f, 0.0f};
+    GLfloat position1[] = {-1.0f, 0.0f, 0.0f, 0.0f};
+    GLfloat position2[] = {0.0f, 3.0f, 0.0f, 0.0f};
+
+    glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST);
+    glShadeModel(GL_SMOOTH);
+    glPolygonMode(GL_FRONT, GL_FILL);
+
+    glEnable(GL_LIGHT0);
+    glLightfv(GL_LIGHT0, GL_AMBIENT, ambient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, diffuse);
+    glLightfv(GL_LIGHT0, GL_POSITION, position);
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, lmodel_ambient);
+    glLightModelfv(GL_LIGHT_MODEL_TWO_SIDE, lmodel_twoside);
+
+    glEnable(GL_LIGHT1);
+    glLightfv(GL_LIGHT1, GL_DIFFUSE, diffuse);
+    glLightfv(GL_LIGHT1, GL_POSITION, position1);
+
+    glEnable(GL_LIGHT2);
+    glLightfv(GL_LIGHT2, GL_DIFFUSE, diffuse);
+    glLightfv(GL_LIGHT2, GL_POSITION, position2);
+
+    glEnable(GL_LIGHTING);
+
+    glEnable(GL_COLOR_MATERIAL);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, front_mat_shininess);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, front_mat_specular);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, front_mat_diffuse);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_NORMALIZE);
+}
+
+void GUI::InitImGui(GLFWwindow* window, bool useImPlot)
+{
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    if (useImPlot) {
+        ImPlot::CreateContext();
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // Load font with Korean glyph support
+    ImFontConfig fontConfig;
+    fontConfig.MergeMode = false;
+
+    const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+    if (std::filesystem::exists(fontPath)) {
+        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
+            io.Fonts->GetGlyphRangesKorean());
+        LOG_INFO("[GUI] Loaded Korean font: " << fontPath);
+    } else {
+        io.Fonts->AddFontDefault();
+        LOG_WARN("[GUI] Korean font not found, using default");
+    }
+
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 150");
 }

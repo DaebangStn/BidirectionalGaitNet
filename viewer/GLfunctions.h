@@ -5,6 +5,11 @@
 #include <Eigen/Geometry>
 #include <assimp/cimport.h>
 #include <assimp/scene.h>
+
+enum class GroundMode { Wireframe, Solid };
+
+struct GLFWwindow;
+
 namespace GUI
 {
 	void DrawSphere(double r, bool isFill = true);
@@ -43,6 +48,12 @@ namespace GUI
 
 	void Draw2DCircle(const Eigen::Vector3d &origin, const Eigen::Vector3d &normal, const Eigen::Vector3d &up, double R, int segment = 30);
 
+	void DrawOriginAxisGizmo(const Eigen::Vector3d& center, float length = 0.05f, float colorTint = 0.0f);
+	void DrawGroundGrid(GroundMode mode = GroundMode::Wireframe, int gridSize = 10, float cellSize = 0.5f);
+
+	void InitGL();
+	void InitLighting();
+	void InitImGui(GLFWwindow* window, bool useImPlot = false);
 
 };
 

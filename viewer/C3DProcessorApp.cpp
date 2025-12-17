@@ -124,7 +124,7 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     glfwSetKeyCallback(mWindow, keyCallback);
 
     // Initialize ImGui
-    initImGui();
+    GUI::InitImGui(mWindow, true);
 
     // Load skeleton and create character
     // SKEL_FREE_JOINTS: All joints are FreeJoint (6 DOF) for debugging bone poses independently
@@ -240,59 +240,6 @@ void C3DProcessorApp::startLoop()
 // =============================================================================
 // Initialization
 // =============================================================================
-
-void C3DProcessorApp::initGL()
-{
-    glClearColor(0.15f, 0.15f, 0.15f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-}
-
-void C3DProcessorApp::initImGui()
-{
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImPlot::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-    // Load font with Korean glyph support
-    ImFontConfig fontConfig;
-    fontConfig.MergeMode = false;
-
-    // Try to load Noto Sans CJK for Korean support
-    const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-    if (std::filesystem::exists(fontPath)) {
-        // Load with full Korean range
-        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
-            io.Fonts->GetGlyphRangesKorean());
-        LOG_INFO("[C3DProcessor] Loaded Korean font: " << fontPath);
-    } else {
-        // Fallback to default font
-        io.Fonts->AddFontDefault();
-        LOG_WARN("[C3DProcessor] Korean font not found, using default");
-    }
-
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 150");
-}
-
-void C3DProcessorApp::initLighting()
-{
-    glEnable(GL_LIGHTING);
-    glEnable(GL_LIGHT0);
-
-    GLfloat light_position[] = {1.0f, 2.0f, 1.5f, 0.0f};
-    GLfloat light_ambient[] = {0.3f, 0.3f, 0.3f, 1.0f};
-    GLfloat light_diffuse[] = {0.7f, 0.7f, 0.7f, 1.0f};
-
-    glLightfv(GL_LIGHT0, GL_POSITION, light_position);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, light_ambient);
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
-}
 
 void C3DProcessorApp::updateCamera()
 {
@@ -438,12 +385,12 @@ bool C3DProcessorApp::isPanelDefaultOpen(const std::string& panelName) const
 
 void C3DProcessorApp::drawFrame()
 {
-    initGL();
-    initLighting();
+    GUI::InitGL();
+    GUI::InitLighting();
 
     updateCamera();
     setCamera();
-    drawGround();
+    GUI::DrawGroundGrid(mGroundMode);
 
     // Draw debug axes
     if (mRenderWorldAxis) drawAxis(Eigen::Isometry3d::Identity(), mAxisLength, "World");
@@ -456,27 +403,9 @@ void C3DProcessorApp::drawFrame()
 
     drawSkeleton();
     drawMarkers();
-    drawOriginAxisGizmo();
+    if (mCameraMoving) GUI::DrawOriginAxisGizmo(-mTrans);
     drawSelectedJointGizmo();
     drawSelectedBoneGizmo();
-}
-
-void C3DProcessorApp::drawGround()
-{
-    glDisable(GL_LIGHTING);
-    glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
-
-    // Draw grid
-    glBegin(GL_LINES);
-    for (int i = -10; i <= 10; i++) {
-        glVertex3f(i * 0.5f, 0.0f, -5.0f);
-        glVertex3f(i * 0.5f, 0.0f, 5.0f);
-        glVertex3f(-5.0f, 0.0f, i * 0.5f);
-        glVertex3f(5.0f, 0.0f, i * 0.5f);
-    }
-    glEnd();
-
-    glEnable(GL_LIGHTING);
 }
 
 void C3DProcessorApp::drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label)
@@ -509,43 +438,6 @@ void C3DProcessorApp::drawAxis(const Eigen::Isometry3d& transform, float length,
     glBegin(GL_LINES);
     glVertex3d(origin.x(), origin.y(), origin.z());
     glVertex3d(zEnd.x(), zEnd.y(), zEnd.z());
-    glEnd();
-
-    glLineWidth(1.0f);
-    glEnable(GL_LIGHTING);
-}
-
-void C3DProcessorApp::drawOriginAxisGizmo()
-{
-    if (!mCameraMoving) return;
-
-    // Draw axis at the rotation/zoom center (which is -mTrans in world space)
-    Eigen::Vector3d center = -mTrans;
-
-    glDisable(GL_LIGHTING);
-    glLineWidth(3.0f);
-
-    float len = 0.05f;
-
-    // X axis - Red
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glBegin(GL_LINES);
-    glVertex3d(center.x(), center.y(), center.z());
-    glVertex3d(center.x() + len, center.y(), center.z());
-    glEnd();
-
-    // Y axis - Green
-    glColor3f(0.0f, 1.0f, 0.0f);
-    glBegin(GL_LINES);
-    glVertex3d(center.x(), center.y(), center.z());
-    glVertex3d(center.x(), center.y() + len, center.z());
-    glEnd();
-
-    // Z axis - Blue
-    glColor3f(0.0f, 0.0f, 1.0f);
-    glBegin(GL_LINES);
-    glVertex3d(center.x(), center.y(), center.z());
-    glVertex3d(center.x(), center.y(), center.z() + len);
     glEnd();
 
     glLineWidth(1.0f);
@@ -587,35 +479,10 @@ void C3DProcessorApp::drawSelectedJointGizmo()
 
         if (numDofs >= 3) {
             // FreeJoint or BallJoint: draw XYZ axis gizmo
-            float len = 0.1f;
-            Eigen::Matrix3d rot = jointWorld.linear();
-
-            glLineWidth(3.0f);
-
-            // X axis - Red (with tint)
-            Eigen::Vector3d xEnd = origin + rot.col(0) * len;
-            glColor3f(1.0f, colorTint * 0.3f, colorTint * 0.3f);
-            glBegin(GL_LINES);
-            glVertex3d(origin.x(), origin.y(), origin.z());
-            glVertex3d(xEnd.x(), xEnd.y(), xEnd.z());
-            glEnd();
-
-            // Y axis - Green (with tint)
-            Eigen::Vector3d yEnd = origin + rot.col(1) * len;
-            glColor3f(colorTint * 0.3f, 1.0f, colorTint * 0.3f);
-            glBegin(GL_LINES);
-            glVertex3d(origin.x(), origin.y(), origin.z());
-            glVertex3d(yEnd.x(), yEnd.y(), yEnd.z());
-            glEnd();
-
-            // Z axis - Blue (with tint)
-            Eigen::Vector3d zEnd = origin + rot.col(2) * len;
-            glColor3f(colorTint * 0.3f, colorTint * 0.3f, 1.0f);
-            glBegin(GL_LINES);
-            glVertex3d(origin.x(), origin.y(), origin.z());
-            glVertex3d(zEnd.x(), zEnd.y(), zEnd.z());
-            glEnd();
-
+            glPushMatrix();
+            glMultMatrixd(jointWorld.data());
+            GUI::DrawOriginAxisGizmo(Eigen::Vector3d::Zero(), 0.1f, colorTint);
+            glPopMatrix();
         } else if (numDofs == 1) {
             // RevoluteJoint: draw rotation axis
             auto* revoluteJoint = dynamic_cast<dart::dynamics::RevoluteJoint*>(joint);
@@ -678,39 +545,11 @@ void C3DProcessorApp::drawSelectedBoneGizmo()
         // Apply offset
         bodyWorld.translation() += offset;
 
-        Eigen::Vector3d origin = bodyWorld.translation();
-        Eigen::Matrix3d rot = bodyWorld.linear();
-
         // Draw XYZ axis gizmo at body node position
-        float len = 0.12f;
-
-        glLineWidth(3.0f);
-
-        // X axis - Red (with tint)
-        Eigen::Vector3d xEnd = origin + rot.col(0) * len;
-        glColor3f(1.0f, colorTint * 0.3f, colorTint * 0.3f);
-        glBegin(GL_LINES);
-        glVertex3d(origin.x(), origin.y(), origin.z());
-        glVertex3d(xEnd.x(), xEnd.y(), xEnd.z());
-        glEnd();
-
-        // Y axis - Green (with tint)
-        Eigen::Vector3d yEnd = origin + rot.col(1) * len;
-        glColor3f(colorTint * 0.3f, 1.0f, colorTint * 0.3f);
-        glBegin(GL_LINES);
-        glVertex3d(origin.x(), origin.y(), origin.z());
-        glVertex3d(yEnd.x(), yEnd.y(), yEnd.z());
-        glEnd();
-
-        // Z axis - Blue (with tint)
-        Eigen::Vector3d zEnd = origin + rot.col(2) * len;
-        glColor3f(colorTint * 0.3f, colorTint * 0.3f, 1.0f);
-        glBegin(GL_LINES);
-        glVertex3d(origin.x(), origin.y(), origin.z());
-        glVertex3d(zEnd.x(), zEnd.y(), zEnd.z());
-        glEnd();
-
-        glLineWidth(1.0f);
+        glPushMatrix();
+        glMultMatrixd(bodyWorld.data());
+        GUI::DrawOriginAxisGizmo(Eigen::Vector3d::Zero(), 0.12f, colorTint);
+        glPopMatrix();
     };
 
     // Draw for FreeChar
@@ -2907,6 +2746,10 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                     mRenderMotionCharMarkers = newState;
                 }
                 break;
+            case GLFW_KEY_G:
+                mGroundMode = (mGroundMode == GroundMode::Wireframe)
+                    ? GroundMode::Solid : GroundMode::Wireframe;
+                break;
             case GLFW_KEY_ESCAPE:
                 glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
                 break;
@@ -3108,15 +2951,24 @@ void C3DProcessorApp::drawClinicalDataSection()
             ImGui::Text("Static Calibration:");
             ImGui::SameLine();
             if (mHasPersonalizedCalibration) {
-                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Available");
-                ImGui::SameLine();
-                if (ImGui::Button("Load calibration")) {
-                    std::string pid = mPIDList[mSelectedPID];
-                    std::string prePost = mPreOp ? "pre" : "post";
-                    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
-                    std::string inputDir = mResourceManager->resolveDir(pattern);
-                    if (loadPersonalizedCalibration(inputDir)) {
-                        LOG_INFO("[C3DProcessor] Loaded personalized calibration for " << pid << " (" << prePost << ")");
+                if (mPersonalizedCalibrationLoaded) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "Loaded");
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled();
+                    ImGui::Button("Load calibration");
+                    ImGui::EndDisabled();
+                } else {
+                    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Available");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load calibration")) {
+                        std::string pid = mPIDList[mSelectedPID];
+                        std::string prePost = mPreOp ? "pre" : "post";
+                        std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+                        std::string inputDir = mResourceManager->resolveDir(pattern);
+                        if (loadPersonalizedCalibration(inputDir)) {
+                            mPersonalizedCalibrationLoaded = true;
+                            LOG_INFO("[C3DProcessor] Loaded personalized calibration for " << pid << " (" << prePost << ")");
+                        }
                     }
                 }
             } else {
@@ -3163,6 +3015,7 @@ void C3DProcessorApp::drawClinicalDataSection()
                 }
                 mMarkerConfigPath = mInitialMarkerPath;
                 mPersonalizedScalePath.clear();
+                mPersonalizedCalibrationLoaded = false;
                 LOG_INFO("[C3DProcessor] Reset calibration to initial state");
             }
 

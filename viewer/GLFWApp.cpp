@@ -358,31 +358,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     };
     glfwSetScrollCallback(mWindow, scrollCallback);
 
-    ImGui::CreateContext();
-    ImPlot::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-    // Load font with Korean glyph support
-    ImFontConfig fontConfig;
-    fontConfig.MergeMode = false;
-
-    // Try to load Noto Sans CJK for Korean support
-    const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-    if (std::filesystem::exists(fontPath)) {
-        // Load with full Korean range
-        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
-            io.Fonts->GetGlyphRangesKorean());
-        LOG_INFO("[GLFWApp] Loaded Korean font: " << fontPath);
-    } else {
-        // Fallback to default font
-        io.Fonts->AddFontDefault();
-        LOG_WARN("[GLFWApp] Korean font not found, using default");
-    }
-
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 150");
+    GUI::InitImGui(mWindow, true);
 
     mns = py::module::import("__main__").attr("__dict__");
     py::module::import("sys").attr("path").attr("insert")(1, "python");

@@ -87,6 +87,7 @@ private:
     bool mMouseDown = false;
     bool mRotate = false;
     bool mTranslate = false;
+    bool mCameraMoving = false;
     double mMouseX = 0, mMouseY = 0;
 
     // === Resource Manager ===
@@ -140,6 +141,7 @@ private:
     // === Rendering ===
     ShapeRenderer mShapeRenderer;
     MotionEditorRenderMode mRenderMode = MotionEditorRenderMode::Wireframe;
+    GroundMode mGroundMode = GroundMode::Wireframe;
     float mControlPanelWidth = 350.0f;
     float mRightPanelWidth = 300.0f;
 
@@ -147,9 +149,6 @@ private:
     std::set<std::string> mDefaultOpenPanels;
 
     // === Initialization ===
-    void initGL();
-    void initImGui();
-    void initLighting();
     void setCamera();
     void updateCamera();
     void loadRenderConfig();
@@ -157,7 +156,6 @@ private:
     // === Rendering ===
     void drawFrame();
     void drawSkeleton();
-    void drawGround();
 
     // === UI Panels ===
     void drawLeftPanel();

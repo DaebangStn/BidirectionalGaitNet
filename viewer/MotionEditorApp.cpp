@@ -59,7 +59,7 @@ MotionEditorApp::MotionEditorApp(const std::string& configPath)
     glfwSetKeyCallback(mWindow, keyCallback);
 
     // Initialize ImGui
-    initImGui();
+    GUI::InitImGui(mWindow, false);
 
     // Initialize Resource Manager for PID-based access
     try {
@@ -130,55 +130,6 @@ void MotionEditorApp::startLoop()
 // =============================================================================
 // Initialization
 // =============================================================================
-
-void MotionEditorApp::initGL()
-{
-    glClearColor(0.15f, 0.15f, 0.15f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-}
-
-void MotionEditorApp::initImGui()
-{
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-    // Load font with Korean glyph support
-    ImFontConfig fontConfig;
-    fontConfig.MergeMode = false;
-
-    const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
-    if (fs::exists(fontPath)) {
-        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
-            io.Fonts->GetGlyphRangesKorean());
-        LOG_INFO("[MotionEditor] Loaded Korean font: " << fontPath);
-    } else {
-        io.Fonts->AddFontDefault();
-        LOG_WARN("[MotionEditor] Korean font not found, using default");
-    }
-
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 150");
-}
-
-void MotionEditorApp::initLighting()
-{
-    glEnable(GL_LIGHTING);
-    glEnable(GL_LIGHT0);
-
-    GLfloat light_position[] = {1.0f, 2.0f, 1.5f, 0.0f};
-    GLfloat light_ambient[] = {0.3f, 0.3f, 0.3f, 1.0f};
-    GLfloat light_diffuse[] = {0.7f, 0.7f, 0.7f, 1.0f};
-
-    glLightfv(GL_LIGHT0, GL_POSITION, light_position);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, light_ambient);
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
-}
 
 void MotionEditorApp::updateCamera()
 {
@@ -262,15 +213,19 @@ bool MotionEditorApp::isPanelDefaultOpen(const std::string& panelName) const
 
 void MotionEditorApp::drawFrame()
 {
-    initGL();
-    initLighting();
+    GUI::InitGL();
+    GUI::InitLighting();
 
     updateCamera();
     setCamera();
-    drawGround();
+    GUI::DrawGroundGrid(mGroundMode);
 
-    if (mCharacter && mMotion) {
-        drawSkeleton();
+    if (mCharacter && mMotion) drawSkeleton();
+
+    // Draw origin axis gizmo when camera is moving
+    if (mCameraMoving) {
+        Eigen::Vector3d center = -mTrans;
+        GUI::DrawOriginAxisGizmo(center);
     }
 }
 
@@ -340,24 +295,6 @@ void MotionEditorApp::drawSkeleton()
 
         glPopMatrix();
     }
-}
-
-void MotionEditorApp::drawGround()
-{
-    glDisable(GL_LIGHTING);
-    glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
-
-    // Draw grid
-    glBegin(GL_LINES);
-    for (int i = -10; i <= 10; i++) {
-        glVertex3f(i * 0.5f, 0.0f, -5.0f);
-        glVertex3f(i * 0.5f, 0.0f, 5.0f);
-        glVertex3f(-5.0f, 0.0f, i * 0.5f);
-        glVertex3f(5.0f, 0.0f, i * 0.5f);
-    }
-    glEnd();
-
-    glEnable(GL_LIGHTING);
 }
 
 // =============================================================================
@@ -1099,6 +1036,7 @@ void MotionEditorApp::mousePress(int button, int action, int mods)
 
     if (action == GLFW_PRESS) {
         mMouseDown = true;
+        mCameraMoving = true;
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             mRotate = true;
             mTrackball.startBall(mMouseX, mHeight - mMouseY);
@@ -1109,6 +1047,7 @@ void MotionEditorApp::mousePress(int button, int action, int mods)
         mMouseDown = false;
         mRotate = false;
         mTranslate = false;
+        mCameraMoving = false;
     }
 }
 
@@ -1194,6 +1133,10 @@ void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
             case GLFW_KEY_O:
                 mRenderMode = static_cast<MotionEditorRenderMode>(
                     (static_cast<int>(mRenderMode) + 1) % 2);
+                break;
+            case GLFW_KEY_G:
+                mGroundMode = (mGroundMode == GroundMode::Wireframe)
+                    ? GroundMode::Solid : GroundMode::Wireframe;
                 break;
             case GLFW_KEY_ESCAPE:
                 glfwSetWindowShouldClose(mWindow, GLFW_TRUE);

@@ -162,6 +162,7 @@ private:
 
     // Skeleton render mode
     RenderMode mRenderMode = RenderMode::Wireframe;
+    GroundMode mGroundMode = GroundMode::Wireframe;
 
     // Rendering panel
     bool mShowRenderingPanel = false;
@@ -206,6 +207,7 @@ private:
     CalibrationMode mCalibrationMode = CalibrationMode::Dynamic;
     bool mHasMedialMarkers = false;  // Detected from current C3D file
     bool mHasPersonalizedCalibration = false;  // For current PID/prePost
+    bool mPersonalizedCalibrationLoaded = false;  // Calibration has been loaded
     StaticCalibrationResult mStaticCalibResult;
     DynamicCalibrationResult mDynamicCalibResult;
     std::string mStaticConfigPath = "@data/config/static_fitting.yaml";
@@ -250,9 +252,6 @@ private:
     int mControlPanelWidth;
 
     // Initialization
-    void initGL();
-    void initImGui();
-    void initLighting();
     void setCamera();
     void updateCamera();
     void loadRenderConfig();
@@ -261,9 +260,7 @@ private:
     void drawFrame();
     void drawSkeleton();
     void drawMarkers();
-    void drawGround();
     void drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label);
-    void drawOriginAxisGizmo();
     void drawSelectedJointGizmo();
     void drawSelectedBoneGizmo();
 
