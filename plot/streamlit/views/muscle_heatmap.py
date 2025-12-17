@@ -84,13 +84,25 @@ def render_controls(data_sample: dict, cfg: dict, all_data: list = None) -> dict
 
     # Muscle index range filter
     total_muscles = len(muscle_names)
-    idx_from, idx_to = st.slider(
-        "Muscle Index Range",
-        min_value=0,
-        max_value=total_muscles - 1,
-        value=(0, total_muscles - 1),
-        step=1
-    )
+
+    st.caption(f"Muscle Index Range (0-{total_muscles - 1})")
+    idx_col1, idx_col2, idx_col3 = st.columns([1, 3, 1])
+    with idx_col1:
+        st.number_input("From", min_value=0, max_value=total_muscles - 1,
+                        value=0, step=1, key="muscle_idx_from")
+    with idx_col2:
+        st.slider(
+            "Range", min_value=0, max_value=total_muscles - 1,
+            value=(0, total_muscles - 1), step=1,
+            key="muscle_idx_slider", label_visibility="collapsed"
+        )
+    with idx_col3:
+        st.number_input("To", min_value=0, max_value=total_muscles - 1,
+                        value=total_muscles - 1, step=1, key="muscle_idx_to")
+
+    # Read final values - prefer number inputs
+    idx_from = st.session_state.get("muscle_idx_from", 0)
+    idx_to = st.session_state.get("muscle_idx_to", total_muscles - 1)
 
     # Cycle index (only for Single Cycle mode)
     cycle_idx = None
@@ -193,7 +205,7 @@ def get_summary(controls: dict) -> str:
     return " | ".join(parts)
 
 
-def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "") -> None:
+def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "", plot_width: float = 1.0) -> None:
     """Render plot using provided control values.
 
     Args:
@@ -201,6 +213,7 @@ def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "") -
         cfg: View configuration
         controls: Control values from render_controls()
         title_prefix: Optional prefix for plot title
+        plot_width: Width of plot as fraction of container (0.3, 0.5, 1.0)
     """
     if controls is None:
         st.warning("No valid controls")
@@ -224,93 +237,99 @@ def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "") -
     vmax = controls['vmax']
     show_info = controls.get('show_info', True)
 
-    # Show directory label at top of panel (single line, no wrap)
-    if show_info:
-        dir_name = title_prefix if title_prefix else data.get('dir_name', '')
-        if dir_name:
-            st.markdown(
-                f'<code style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:0.8em">{dir_name}</code>',
-                unsafe_allow_html=True
-            )
+    # Create container with specified width
+    if plot_width < 1.0:
+        plot_container, _ = st.columns([plot_width, 1 - plot_width])
+    else:
+        plot_container = st.container()
 
-    # --- Get data ---
-    sorted_cycle_indices = sorted(cycles.keys())
+    with plot_container:
+        # Show directory label at top of panel (single line, no wrap)
+        if show_info:
+            dir_name = title_prefix if title_prefix else data.get('dir_name', '')
+            if dir_name:
+                st.markdown(
+                    f'<code style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:0.8em">{dir_name}</code>',
+                    unsafe_allow_html=True
+                )
 
-    if mode == "Single Cycle":
-        cycle_data = cycles[cycle_idx]
-        if metric not in cycle_data['muscle']:
-            st.error(f"Metric '{metric}' not found in cycle {cycle_idx}")
-            return
+        # --- Get data ---
+        sorted_cycle_indices = sorted(cycles.keys())
 
-        raw_data = cycle_data['muscle'][metric]
-        interp_data = interpolate_to_gait_cycle(raw_data)
-        heatmap_data = interp_data[:, display_indices].T
-        title_suffix = f"Cycle {cycle_idx}"
+        if mode == "Single Cycle":
+            cycle_data = cycles[cycle_idx]
+            if metric not in cycle_data['muscle']:
+                st.error(f"Metric '{metric}' not found in cycle {cycle_idx}")
+                return
 
-    else:  # Aggregate
-        all_cycles = []
-        for cidx in sorted_cycle_indices:
-            if metric in cycles[cidx]['muscle']:
-                raw = cycles[cidx]['muscle'][metric]
-                interp = interpolate_to_gait_cycle(raw)
-                all_cycles.append(interp[:, display_indices])
+            raw_data = cycle_data['muscle'][metric]
+            interp_data = interpolate_to_gait_cycle(raw_data)
+            heatmap_data = interp_data[:, display_indices].T
 
-        if not all_cycles:
-            st.error("No valid cycles for aggregation")
-            return
+        else:  # Aggregate
+            all_cycles = []
+            for cidx in sorted_cycle_indices:
+                if metric in cycles[cidx]['muscle']:
+                    raw = cycles[cidx]['muscle'][metric]
+                    interp = interpolate_to_gait_cycle(raw)
+                    all_cycles.append(interp[:, display_indices])
 
-        stacked = np.stack(all_cycles, axis=0)
-        mean_data = np.mean(stacked, axis=0)
-        heatmap_data = mean_data.T
-        title_suffix = f"Aggregate ({len(all_cycles)} cycles)"
+            if not all_cycles:
+                st.error("No valid cycles for aggregation")
+                return
 
-    # --- Plot ---
-    fig, ax = plt.subplots(figsize=(14, max(6, len(display_indices) * 0.15)))
+            stacked = np.stack(all_cycles, axis=0)
+            mean_data = np.mean(stacked, axis=0)
+            heatmap_data = mean_data.T
 
-    im = ax.imshow(
-        heatmap_data,
-        aspect='auto',
-        cmap='viridis',
-        vmin=vmin,
-        vmax=vmax,
-        interpolation='nearest',
-        extent=[0, 100, len(display_indices) - 0.5, -0.5]
-    )
+        # --- Plot ---
+        fig_width = 14 * plot_width
+        fig, ax = plt.subplots(figsize=(fig_width, max(6, len(display_indices) * 0.15)))
 
-    ax.set_xlabel('Gait Cycle (%)')
-    ax.set_xlim(0, 100)
-    ax.set_ylabel('Muscle')
-    ax.set_yticks(range(len(display_names)))
-    ax.set_yticklabels(display_names, fontsize=7)
+        im = ax.imshow(
+            heatmap_data,
+            aspect='auto',
+            cmap='viridis',
+            vmin=vmin,
+            vmax=vmax,
+            interpolation='nearest',
+            extent=[0, 100, len(display_indices) - 0.5, -0.5]
+        )
 
-    # Add side indicator
-    for i, side in enumerate(display_sides):
-        color = '#1f77b4' if side == 'L' else '#ff7f0e'
-        rect = Rectangle((-0.02, i - 0.5), 0.015, 1, facecolor=color, edgecolor='none',
-                        clip_on=False, transform=ax.get_yaxis_transform())
-        ax.add_patch(rect)
+        ax.set_xlabel('Gait Cycle (%)')
+        ax.set_xlim(0, 100)
+        ax.set_ylabel('Muscle')
+        ax.set_yticks(range(len(display_names)))
+        ax.set_yticklabels(display_names, fontsize=7)
 
-    # Add legend for sides
-    if side_filter == "Both":
-        legend_elements = [
-            Patch(facecolor='#1f77b4', label='Left'),
-            Patch(facecolor='#ff7f0e', label='Right')
-        ]
-        ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.02, 1))
+        # Add side indicator
+        for i, side in enumerate(display_sides):
+            color = '#1f77b4' if side == 'L' else '#ff7f0e'
+            rect = Rectangle((-0.02, i - 0.5), 0.015, 1, facecolor=color, edgecolor='none',
+                            clip_on=False, transform=ax.get_yaxis_transform())
+            ax.add_patch(rect)
 
-    # Colorbar
-    metric_label = metric.replace('_', ' ').title()
-    fig.colorbar(im, ax=ax, label=metric_label, shrink=0.8)
+        # Add legend for sides
+        if side_filter == "Both":
+            legend_elements = [
+                Patch(facecolor='#1f77b4', label='Left'),
+                Patch(facecolor='#ff7f0e', label='Right')
+            ]
+            ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.02, 1))
 
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+        # Colorbar
+        metric_label = metric.replace('_', ' ').title()
+        fig.colorbar(im, ax=ax, label=metric_label, shrink=0.8)
 
-    # Display mean and std across all muscles
-    if show_info:
-        mean_val = np.nanmean(heatmap_data)
-        std_val = np.nanstd(heatmap_data)
-        st.caption(f"Mean: {mean_val:.4f} | Std: {std_val:.4f}")
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+        # Display mean and std across all muscles
+        if show_info:
+            mean_val = np.nanmean(heatmap_data)
+            std_val = np.nanstd(heatmap_data)
+            st.caption(f"Mean: {mean_val:.4f} | Std: {std_val:.4f}")
 
 
 def render(data: dict, cfg: dict) -> None:

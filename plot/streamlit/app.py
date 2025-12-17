@@ -174,6 +174,11 @@ def main():
     view_cfg = view_options[selected_label]
     view_module = load_view(view_cfg["module"])
 
+    # Plot width preset
+    width_options = {"30%": 0.3, "50%": 0.5, "100%": 1.0}
+    width_label = st.sidebar.radio("Plot Width", list(width_options.keys()), horizontal=True, index=2)
+    plot_width = width_options[width_label]
+
     # Render selected view
     if data is not None:
         if compare_mode and panel_data_list:
@@ -192,31 +197,44 @@ def main():
                         if summary:
                             st.caption(summary)
 
-                    # Render plots in grid
-                    for row_idx in range(int(num_rows)):
-                        cols = st.columns(int(num_cols))
-                        for col_idx, col in enumerate(cols):
-                            panel_idx = row_idx * int(num_cols) + col_idx
-                            if panel_idx < len(panel_data_list):
-                                pdata = panel_data_list[panel_idx]
-                                if pdata is not None:
-                                    with col:
-                                        view_module.render_plot(
-                                            pdata,
-                                            view_cfg,
-                                            controls,
-                                            title_prefix=pdata.get('dir_name', f'Panel {panel_idx + 1}')
-                                        )
-                                else:
-                                    with col:
-                                        st.warning(f"Panel {panel_idx + 1}: Failed to load data")
+                    # Create container with specified width for entire grid
+                    if plot_width < 1.0:
+                        grid_container, _ = st.columns([plot_width, 1 - plot_width])
+                    else:
+                        grid_container = st.container()
+
+                    with grid_container:
+                        # Render plots in grid
+                        for row_idx in range(int(num_rows)):
+                            cols = st.columns(int(num_cols))
+                            for col_idx, col in enumerate(cols):
+                                panel_idx = row_idx * int(num_cols) + col_idx
+                                if panel_idx < len(panel_data_list):
+                                    pdata = panel_data_list[panel_idx]
+                                    if pdata is not None:
+                                        with col:
+                                            view_module.render_plot(
+                                                pdata,
+                                                view_cfg,
+                                                controls,
+                                                title_prefix=pdata.get('dir_name', f'Panel {panel_idx + 1}'),
+                                                plot_width=1.0  # Fill column, grid container handles overall width
+                                            )
+                                    else:
+                                        with col:
+                                            st.warning(f"Panel {panel_idx + 1}: Failed to load data")
             else:
                 st.warning(f"View '{selected_label}' does not support comparison mode")
                 st.info("Falling back to single view mode")
                 view_module.render(data, view_cfg)
         else:
-            # Single view mode
-            view_module.render(data, view_cfg)
+            # Single view mode - wrap in width container
+            if plot_width < 1.0:
+                view_container, _ = st.columns([plot_width, 1 - plot_width])
+            else:
+                view_container = st.container()
+            with view_container:
+                view_module.render(data, view_cfg)
     else:
         st.info("Select a data source to view")
 

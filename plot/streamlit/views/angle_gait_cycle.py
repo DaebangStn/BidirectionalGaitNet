@@ -300,7 +300,7 @@ def get_summary(controls: dict) -> str:
     return " | ".join(parts)
 
 
-def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "") -> None:
+def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "", plot_width: float = 1.0) -> None:
     """Render plot using provided control values.
 
     Args:
@@ -308,6 +308,7 @@ def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "") -
         cfg: View configuration
         controls: Control values from render_controls()
         title_prefix: Optional prefix for plot title
+        plot_width: Width of plot as fraction of container (0.3, 0.5, 1.0)
     """
     if controls is None:
         st.warning("No valid controls")
@@ -330,114 +331,116 @@ def render_plot(data: dict, cfg: dict, controls: dict, title_prefix: str = "") -
         st.warning("No metrics selected")
         return
 
-    # Show directory label at top of panel (single line, no wrap)
-    if show_info:
-        dir_name = title_prefix if title_prefix else data.get('dir_name', '')
-        if dir_name:
-            st.markdown(
-                f'<code style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:0.8em">{dir_name}</code>',
-                unsafe_allow_html=True
-            )
-
     # Build plot info from selected metrics
     plot_info = []  # List of (key, prefix, label, color, unit)
     for idx, (key, prefix) in enumerate(selected_metrics):
         label, color, unit = get_metric_info(key, prefix, idx)
         plot_info.append((key, prefix, label, color, unit))
 
-    # Create figure
-    n_plots = len(plot_info)
-    fig, axes = plt.subplots(1, n_plots, figsize=(5 * n_plots, 4), sharey=False)
-    if n_plots == 1:
-        axes = [axes]
+    # Create container with specified width
+    if plot_width < 1.0:
+        plot_container, _ = st.columns([plot_width, 1 - plot_width])
+    else:
+        plot_container = st.container()
 
-    gait_pct = np.linspace(0, 100, NUM_RESAMPLE_FRAMES)
+    with plot_container:
+        # Show directory label at top of panel (single line, no wrap)
+        if show_info:
+            dir_name = title_prefix if title_prefix else data.get('dir_name', '')
+            if dir_name:
+                st.markdown(
+                    f'<code style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:0.8em">{dir_name}</code>',
+                    unsafe_allow_html=True
+                )
 
-    if mode == "Single Cycle":
-        cycle_data = cycles.get(cycle_idx)
-        if cycle_data is None:
-            st.error(f"Cycle {cycle_idx} not found")
-            plt.close(fig)
-            return
+        # Create figure
+        n_plots = len(plot_info)
+        fig_width = 5 * n_plots * plot_width
+        fig, axes = plt.subplots(1, n_plots, figsize=(max(4, fig_width), 4), sharey=False)
+        if n_plots == 1:
+            axes = [axes]
 
-        for ax, (key, prefix, label, color, unit) in zip(axes, plot_info):
-            if prefix not in cycle_data or key not in cycle_data[prefix]:
-                ax.text(0.5, 0.5, f"No {label} data", ha='center', va='center', transform=ax.transAxes)
-            else:
-                values = cycle_data[prefix][key]
-                interpolated = interpolate_cycle(values)
-                ax.plot(gait_pct, interpolated, color=color, linewidth=1.5)
+        gait_pct = np.linspace(0, 100, NUM_RESAMPLE_FRAMES)
 
-            ax.set_ylabel(f'{label} ({unit})')
-            ax.grid(True, alpha=0.3)
-            ax.set_xlim(0, 100)
-            if key in y_ranges:
-                ax.set_ylim(y_ranges[key])
+        if mode == "Single Cycle":
+            cycle_data = cycles.get(cycle_idx)
+            if cycle_data is None:
+                st.error(f"Cycle {cycle_idx} not found")
+                plt.close(fig)
+                return
 
-        title_suffix = f"Cycle {cycle_idx}"
-
-    elif mode == "Aggregate (Mean ± Std)":
-        # Compute aggregate for each metric separately (may have different prefixes)
-        for ax, (key, prefix, label, color, unit) in zip(axes, plot_info):
-            agg = compute_aggregate(cycles, prefix, [key])
-            if key not in agg['mean']:
-                ax.text(0.5, 0.5, f"No {label} data", ha='center', va='center', transform=ax.transAxes)
-            else:
-                mean = agg['mean'][key]
-                std = agg['std'][key]
-                ax.plot(gait_pct, mean, color=color, linewidth=1.5, label='Mean')
-                ax.fill_between(gait_pct, mean - std, mean + std, color=color, alpha=0.3, label='±1 Std')
-
-            ax.set_ylabel(f'{label} ({unit})')
-            ax.grid(True, alpha=0.3)
-            ax.set_xlim(0, 100)
-            if key in y_ranges:
-                ax.set_ylim(y_ranges[key])
-
-        title_suffix = f"Aggregate ({len(cycles)} cycles)"
-
-    else:  # Pre-computed Average
-        for ax, (key, prefix, label, color, unit) in zip(axes, plot_info):
-            if prefix not in averaged or key not in averaged[prefix]:
-                ax.text(0.5, 0.5, f"No {label} data", ha='center', va='center', transform=ax.transAxes)
-            else:
-                values = averaged[prefix][key]
-                if averaged.get('phase') is not None and len(averaged['phase']) == len(values):
-                    x = averaged['phase'] * 100
+            for ax, (key, prefix, label, color, unit) in zip(axes, plot_info):
+                if prefix not in cycle_data or key not in cycle_data[prefix]:
+                    ax.text(0.5, 0.5, f"No {label} data", ha='center', va='center', transform=ax.transAxes)
                 else:
-                    x = np.linspace(0, 100, len(values))
-                ax.plot(x, values, color=color, linewidth=1.5)
-
-            ax.set_ylabel(f'{label} ({unit})')
-            ax.grid(True, alpha=0.3)
-            ax.set_xlim(0, 100)
-            if key in y_ranges:
-                ax.set_ylim(y_ranges[key])
-
-        title_suffix = "Pre-computed Average"
-
-    for ax in axes:
-        ax.set_xlabel('Gait Cycle (%)')
-
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-
-    # Compute and display mean values across all gait cycles
-    if show_info:
-        mean_texts = []
-        for key, prefix, label, color, unit in plot_info:
-            all_values = []
-            for cycle_data in cycles.values():
-                if prefix in cycle_data and key in cycle_data[prefix]:
                     values = cycle_data[prefix][key]
-                    if len(values) > 0:
-                        all_values.extend(values)
-            if all_values:
-                mean_val = np.mean(all_values)
-                mean_texts.append(f"{label}: {mean_val:.2f} {unit}")
-        if mean_texts:
-            st.caption(" | ".join(mean_texts))
+                    interpolated = interpolate_cycle(values)
+                    ax.plot(gait_pct, interpolated, color=color, linewidth=1.5)
+
+                ax.set_ylabel(f'{label} ({unit})')
+                ax.grid(True, alpha=0.3)
+                ax.set_xlim(0, 100)
+                if key in y_ranges:
+                    ax.set_ylim(y_ranges[key])
+
+        elif mode == "Aggregate (Mean ± Std)":
+            # Compute aggregate for each metric separately (may have different prefixes)
+            for ax, (key, prefix, label, color, unit) in zip(axes, plot_info):
+                agg = compute_aggregate(cycles, prefix, [key])
+                if key not in agg['mean']:
+                    ax.text(0.5, 0.5, f"No {label} data", ha='center', va='center', transform=ax.transAxes)
+                else:
+                    mean = agg['mean'][key]
+                    std = agg['std'][key]
+                    ax.plot(gait_pct, mean, color=color, linewidth=1.5, label='Mean')
+                    ax.fill_between(gait_pct, mean - std, mean + std, color=color, alpha=0.3, label='±1 Std')
+
+                ax.set_ylabel(f'{label} ({unit})')
+                ax.grid(True, alpha=0.3)
+                ax.set_xlim(0, 100)
+                if key in y_ranges:
+                    ax.set_ylim(y_ranges[key])
+
+        else:  # Pre-computed Average
+            for ax, (key, prefix, label, color, unit) in zip(axes, plot_info):
+                if prefix not in averaged or key not in averaged[prefix]:
+                    ax.text(0.5, 0.5, f"No {label} data", ha='center', va='center', transform=ax.transAxes)
+                else:
+                    values = averaged[prefix][key]
+                    if averaged.get('phase') is not None and len(averaged['phase']) == len(values):
+                        x = averaged['phase'] * 100
+                    else:
+                        x = np.linspace(0, 100, len(values))
+                    ax.plot(x, values, color=color, linewidth=1.5)
+
+                ax.set_ylabel(f'{label} ({unit})')
+                ax.grid(True, alpha=0.3)
+                ax.set_xlim(0, 100)
+                if key in y_ranges:
+                    ax.set_ylim(y_ranges[key])
+
+        for ax in axes:
+            ax.set_xlabel('Gait Cycle (%)')
+
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+        # Compute and display mean values across all gait cycles
+        if show_info:
+            mean_texts = []
+            for key, prefix, label, color, unit in plot_info:
+                all_values = []
+                for cycle_data in cycles.values():
+                    if prefix in cycle_data and key in cycle_data[prefix]:
+                        values = cycle_data[prefix][key]
+                        if len(values) > 0:
+                            all_values.extend(values)
+                if all_values:
+                    mean_val = np.mean(all_values)
+                    mean_texts.append(f"{label}: {mean_val:.2f} {unit}")
+            if mean_texts:
+                st.caption(" | ".join(mean_texts))
 
 
 def render(data: dict, cfg: dict) -> None:
