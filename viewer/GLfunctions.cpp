@@ -614,8 +614,7 @@ void GUI::
     glVertex3f(p0[0], p0[1], p0[2]);
     glEnd();
 }
-void GUI::
-    DrawArrow3D(const Eigen::Vector3d &_pt, const Eigen::Vector3d &_dir,
+void GUI::DrawArrow3D(const Eigen::Vector3d &_pt, const Eigen::Vector3d &_dir,
                 const double _length, const double _thickness, const Eigen::Vector4d &color,
                 const double _arrowThickness)
 {
@@ -1182,7 +1181,7 @@ void GUI::InitImGui(GLFWwindow* window, bool useImPlot)
     if (std::filesystem::exists(fontPath)) {
         io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
             io.Fonts->GetGlyphRangesKorean());
-        LOG_INFO("[GUI] Loaded Korean font: " << fontPath);
+        LOG_VERBOSE("[GUI] Loaded Korean font: " << fontPath);
     } else {
         io.Fonts->AddFontDefault();
         LOG_WARN("[GUI] Korean font not found, using default");

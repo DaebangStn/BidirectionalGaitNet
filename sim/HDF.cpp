@@ -322,55 +322,136 @@ bool HDF::applyParametersToEnvironment(Environment* env) const
     return true;
 }
 
-void HDF::exportToFile(
-    const std::string& outputPath,
-    int startFrame,
-    int endFrame,
-    const std::map<std::string, std::string>& metadata) const
+void HDF::applyYRotation(double angleDegrees)
 {
-    // Handle trim range
-    int totalFrames = mNumFrames;
-    if (endFrame < 0 || endFrame >= totalFrames) endFrame = totalFrames - 1;
-    startFrame = std::max(0, startFrame);
-    int numFrames = endFrame - startFrame + 1;
+    using namespace dart::dynamics;
 
-    if (numFrames <= 0) {
-        LOG_ERROR("[HDF] Invalid trim range: startFrame=" << startFrame << ", endFrame=" << endFrame);
-        return;
+    if (std::abs(angleDegrees) < 0.001) {
+        return;  // No significant rotation
     }
 
+    // Create Y-axis rotation transform
+    double angleRad = angleDegrees * M_PI / 180.0;
+    Eigen::Isometry3d yRotation = Eigen::Isometry3d::Identity();
+    yRotation.rotate(Eigen::AngleAxisd(angleRad, Eigen::Vector3d::UnitY()));
+
+    // Apply rotation to each frame
+    for (int frame = 0; frame < mNumFrames; ++frame) {
+        Eigen::VectorXd pose = mMotionData.row(frame).transpose();
+
+        // Convert root pose to transform (first 6 DOF)
+        Eigen::Isometry3d rootTransform = FreeJoint::convertToTransform(pose.head<6>());
+
+        // Apply world rotation: new_transform = yRotation * rootTransform
+        Eigen::Isometry3d newTransform = yRotation * rootTransform;
+
+        // Convert back to pose vector
+        pose.head<6>() = FreeJoint::convertToPositions(newTransform);
+
+        // Store back
+        mMotionData.row(frame) = pose.transpose();
+    }
+
+    LOG_INFO("[HDF] Applied Y rotation of " << angleDegrees << " degrees to " << mNumFrames << " frames");
+}
+
+void HDF::applyHeightOffset(double offset)
+{
+    if (std::abs(offset) < 0.0001) {
+        return;  // No significant offset
+    }
+
+    // Apply height offset to Y translation (index 4) for each frame
+    for (int frame = 0; frame < mNumFrames; ++frame) {
+        mMotionData(frame, 4) += offset;
+    }
+
+    LOG_INFO("[HDF] Applied height offset of " << offset << " to " << mNumFrames << " frames");
+}
+
+void HDF::trim(int startFrame, int endFrame)
+{
+    // Validate range
+    if (endFrame < 0 || endFrame >= mNumFrames) endFrame = mNumFrames - 1;
+    startFrame = std::max(0, startFrame);
+    int newNumFrames = endFrame - startFrame + 1;
+
+    // Check if trimming is actually needed
+    if (newNumFrames <= 0 || (startFrame == 0 && endFrame == mNumFrames - 1)) {
+        return;  // No trimming needed
+    }
+
+    // Trim motion data
+    Eigen::MatrixXd newMotionData = mMotionData.block(startFrame, 0, newNumFrames, mDofPerFrame);
+    mMotionData = newMotionData;
+
+    // Trim and renormalize phase data (0-1 range)
+    Eigen::VectorXd newPhaseData(newNumFrames);
+    for (int i = 0; i < newNumFrames; ++i) {
+        newPhaseData[i] = static_cast<double>(i) / std::max(1, newNumFrames - 1);
+    }
+    mPhaseData = newPhaseData;
+
+    // Trim and reset time data (start from 0)
+    Eigen::VectorXd newTimeData(newNumFrames);
+    for (int i = 0; i < newNumFrames; ++i) {
+        newTimeData[i] = i * mFrameTime;
+    }
+    mTimeData = newTimeData;
+
+    // Update frame count
+    mNumFrames = newNumFrames;
+
+    // Recompute cycle distance
+    if (mNumFrames > 1) {
+        Eigen::VectorXd firstFrame = mMotionData.row(0);
+        Eigen::VectorXd lastFrame = mMotionData.row(mNumFrames - 1);
+        double correction = static_cast<double>(mNumFrames) / (mNumFrames - 1);
+        mCycleDistance[0] = (lastFrame[3] - firstFrame[3]) * correction;
+        mCycleDistance[1] = 0.0;
+        mCycleDistance[2] = (lastFrame[5] - firstFrame[5]) * correction;
+    }
+
+    LOG_INFO("[HDF] Trimmed to frames " << startFrame << "-" << endFrame
+             << " (" << mNumFrames << " frames)");
+}
+
+void HDF::exportToFile(
+    const std::string& outputPath,
+    const std::map<std::string, std::string>& metadata) const
+{
     try {
         H5::H5File file(outputPath, H5F_ACC_TRUNC);
 
-        // Write /motions (trimmed range)
-        hsize_t dims_motions[2] = {static_cast<hsize_t>(numFrames), static_cast<hsize_t>(mDofPerFrame)};
+        // Write /motions (current data)
+        hsize_t dims_motions[2] = {static_cast<hsize_t>(mNumFrames), static_cast<hsize_t>(mDofPerFrame)};
         H5::DataSpace space_motions(2, dims_motions);
         H5::DataSet ds_motions = file.createDataSet("/motions", H5::PredType::NATIVE_FLOAT, space_motions);
 
-        std::vector<float> motionBuffer(numFrames * mDofPerFrame);
-        for (int f = 0; f < numFrames; ++f) {
+        std::vector<float> motionBuffer(mNumFrames * mDofPerFrame);
+        for (int f = 0; f < mNumFrames; ++f) {
             for (int d = 0; d < mDofPerFrame; ++d) {
-                motionBuffer[f * mDofPerFrame + d] = static_cast<float>(mMotionData(startFrame + f, d));
+                motionBuffer[f * mDofPerFrame + d] = static_cast<float>(mMotionData(f, d));
             }
         }
         ds_motions.write(motionBuffer.data(), H5::PredType::NATIVE_FLOAT);
 
-        // Write /phase (renormalized 0-1)
-        hsize_t dims_1d[1] = {static_cast<hsize_t>(numFrames)};
+        // Write /phase
+        hsize_t dims_1d[1] = {static_cast<hsize_t>(mNumFrames)};
         H5::DataSpace space_1d(1, dims_1d);
         H5::DataSet ds_phase = file.createDataSet("/phase", H5::PredType::NATIVE_FLOAT, space_1d);
 
-        std::vector<float> phaseBuffer(numFrames);
-        for (int f = 0; f < numFrames; ++f) {
-            phaseBuffer[f] = static_cast<float>(f) / static_cast<float>(std::max(1, numFrames - 1));
+        std::vector<float> phaseBuffer(mNumFrames);
+        for (int f = 0; f < mNumFrames; ++f) {
+            phaseBuffer[f] = static_cast<float>(mPhaseData[f]);
         }
         ds_phase.write(phaseBuffer.data(), H5::PredType::NATIVE_FLOAT);
 
-        // Write /time (reset to 0)
+        // Write /time
         H5::DataSet ds_time = file.createDataSet("/time", H5::PredType::NATIVE_FLOAT, space_1d);
-        std::vector<float> timeBuffer(numFrames);
-        for (int f = 0; f < numFrames; ++f) {
-            timeBuffer[f] = static_cast<float>(f * mFrameTime);
+        std::vector<float> timeBuffer(mNumFrames);
+        for (int f = 0; f < mNumFrames; ++f) {
+            timeBuffer[f] = static_cast<float>(mTimeData[f]);
         }
         ds_time.write(timeBuffer.data(), H5::PredType::NATIVE_FLOAT);
 
@@ -394,7 +475,7 @@ void HDF::exportToFile(
         };
 
         writeIntAttr("frame_rate", frameRate);
-        writeIntAttr("num_frames", numFrames);
+        writeIntAttr("num_frames", mNumFrames);
         writeIntAttr("dof_per_frame", mDofPerFrame);
 
         // Write custom metadata
@@ -403,7 +484,7 @@ void HDF::exportToFile(
         }
 
         file.close();
-        LOG_VERBOSE("[HDF] Exported " << numFrames << " frames to " << outputPath);
+        LOG_VERBOSE("[HDF] Exported " << mNumFrames << " frames to " << outputPath);
 
     } catch (const H5::Exception& e) {
         LOG_ERROR("[HDF] HDF5 error exporting to " << outputPath << ": " << e.getDetailMsg());

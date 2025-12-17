@@ -197,6 +197,16 @@ void MotionEditorApp::loadRenderConfig()
                 mDefaultOpenPanels.insert(panel.as<std::string>());
             }
         }
+
+        if (config["motion_editor"]) {
+            if (config["motion_editor"]["foot_contact"]) {
+                auto fc = config["motion_editor"]["foot_contact"];
+                if (fc["velocity_threshold"])
+                    mContactVelocityThreshold = fc["velocity_threshold"].as<float>();
+                if (fc["min_lock_frames"])
+                    mContactMinLockFrames = fc["min_lock_frames"].as<int>();
+            }
+        }
     } catch (const std::exception& e) {
         LOG_WARN("[MotionEditor] Could not load render.yaml: " << e.what());
     }
@@ -220,7 +230,29 @@ void MotionEditorApp::drawFrame()
     setCamera();
     GUI::DrawGroundGrid(mGroundMode);
 
-    if (mCharacter && mMotion) drawSkeleton();
+    if (mCharacter && mMotion) {
+        // Draw original skeleton (blue)
+        drawSkeleton(false);
+
+        // Draw preview skeleton (orange) if transformations pending
+        bool hasRotationPreview = std::abs(mPendingRotationAngle) > 0.001f;
+        bool hasHeightPreview = mHeightOffsetComputed && std::abs(mComputedHeightOffset) > 0.001;
+
+        if (hasRotationPreview || hasHeightPreview) {
+            drawSkeleton(true);
+        }
+
+        // Draw rotation axis arrow at origin when rotating
+        if (hasRotationPreview) {
+            GUI::DrawArrow3D(
+                Eigen::Vector3d::Zero(),              // origin
+                Eigen::Vector3d(0, 1, 0),             // Y-axis direction
+                1.0,                                  // length
+                0.02,                                 // thickness
+                Eigen::Vector4d(0.2, 0.8, 0.2, 1.0)   // green color
+            );
+        }
+    }
 
     // Draw origin axis gizmo when camera is moving
     if (mCameraMoving) {
@@ -229,31 +261,67 @@ void MotionEditorApp::drawFrame()
     }
 }
 
-void MotionEditorApp::drawSkeleton()
+void MotionEditorApp::drawSkeleton(bool isPreview)
 {
     if (!mCharacter || !mMotion) return;
 
-    // Evaluate current pose
-    evaluateMotionPose();
-
-    // Draw skeleton
     auto skel = mCharacter->getSkeleton();
     if (!skel) return;
 
+    // Get current frame index
+    int frameIdx = mMotionState.manualFrameIndex;
+    frameIdx = std::clamp(frameIdx, 0, mMotion->getNumFrames() - 1);
+
+    // Get pose from motion
+    Eigen::VectorXd pose = mMotion->getPose(frameIdx);
+
+    // Set color based on preview mode
+    Eigen::Vector4d color;
+    if (isPreview) {
+        // Apply rotation transform
+        if (std::abs(mPendingRotationAngle) > 0.001f) {
+            pose = applyRotationToFrame(pose, mPendingRotationAngle);
+        }
+        // Apply height offset
+        if (mHeightOffsetComputed && std::abs(mComputedHeightOffset) > 0.001) {
+            pose[4] += mComputedHeightOffset;
+        }
+        // Semi-transparent orange for preview
+        color = Eigen::Vector4d(0.9, 0.5, 0.3, 0.6);
+    } else {
+        // Original blue
+        color = Eigen::Vector4d(0.3, 0.6, 0.9, 1.0);
+        // Store current pose for non-preview (used by evaluateMotionPose)
+        mMotionState.currentPose = pose;
+    }
+
+    // Apply pose to skeleton
+    if (pose.size() == skel->getNumDofs()) {
+        skel->setPositions(pose);
+    }
+
+    // Draw skeleton
     glEnable(GL_LIGHTING);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_COLOR_MATERIAL);
 
-    Eigen::Vector4d color(0.3, 0.6, 0.9, 1.0);
+    // Enable blending for semi-transparent preview
+    if (isPreview) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
 
     for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
         const dart::dynamics::BodyNode* bn = skel->getBodyNode(i);
         if (!bn) continue;
 
+        // Get per-bone color (may highlight Talus during contact)
+        Eigen::Vector4d boneColor = isPreview ? color : getRenderColor(bn, color);
+
         glPushMatrix();
         glMultMatrixd(bn->getTransform().data());
 
-        bn->eachShapeNodeWith<dart::dynamics::VisualAspect>([this, &color](const dart::dynamics::ShapeNode* sn) {
+        bn->eachShapeNodeWith<dart::dynamics::VisualAspect>([this, &boneColor](const dart::dynamics::ShapeNode* sn) {
             if (!sn) return true;
             const auto& va = sn->getVisualAspect();
             if (!va || va->isHidden()) return true;
@@ -269,7 +337,7 @@ void MotionEditorApp::drawSkeleton()
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
                 glLineWidth(2.0f);
             }
-            glColor4f(color[0], color[1], color[2], color[3]);
+            glColor4f(boneColor[0], boneColor[1], boneColor[2], boneColor[3]);
 
             if (shape->is<dart::dynamics::BoxShape>()) {
                 GUI::DrawCube(static_cast<const dart::dynamics::BoxShape*>(shape)->getSize());
@@ -294,6 +362,11 @@ void MotionEditorApp::drawSkeleton()
         });
 
         glPopMatrix();
+    }
+
+    // Disable blending after preview
+    if (isPreview) {
+        glDisable(GL_BLEND);
     }
 }
 
@@ -334,13 +407,19 @@ void MotionEditorApp::drawRightPanel()
 {
     ImGui::SetNextWindowSize(ImVec2(mRightPanelWidth, mHeight), ImGuiCond_FirstUseEver);
 
-    ImGui::Begin("Motion Editor", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Motion Editor", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     // Update position based on current window width (allows horizontal resize)
     ImVec2 windowSize = ImGui::GetWindowSize();
     ImGui::SetWindowPos(ImVec2(mWidth - windowSize.x, 0));
 
     drawMotionInfoSection();
+    ImGui::Separator();
+    drawRotationSection();
+    ImGui::Separator();
+    drawHeightSection();
+    ImGui::Separator();
+    drawFootContactSection();
     ImGui::Separator();
     drawTrimSection();
     ImGui::Separator();
@@ -623,6 +702,10 @@ void MotionEditorApp::drawTrimSection()
             mTrimStart = 0;
             mTrimEnd = totalFrames - 1;
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Trim")) {
+            applyTrim();
+        }
 
         // Trim info
         int trimmedFrames = mTrimEnd - mTrimStart + 1;
@@ -664,7 +747,7 @@ void MotionEditorApp::drawExportSection()
         }
 
         // Export button
-        if (ImGui::Button("Export to Same Folder", ImVec2(-1, 30))) {
+        if (ImGui::Button("Export Edited Motion", ImVec2(-1, 30))) {
             exportTrimmedMotion();
         }
 
@@ -692,6 +775,277 @@ bool MotionEditorApp::collapsingHeaderWithControls(const std::string& title)
         flags = 0;
     }
     return ImGui::CollapsingHeader(title.c_str(), flags);
+}
+
+void MotionEditorApp::drawRotationSection()
+{
+    if (collapsingHeaderWithControls("Rotation")) {
+        if (!mMotion) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+            return;
+        }
+
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##AngleSlider", &mPendingRotationAngle, -180.0f, 180.0f, "%.1f");
+
+        // Row: Reset, -90, +90, float input
+        if (ImGui::Button("Reset##Rotation")) {
+            mPendingRotationAngle = 0.0f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("-90")) {
+            mPendingRotationAngle = std::fmod(mPendingRotationAngle - 90.0f + 360.0f, 360.0f);
+            if (mPendingRotationAngle > 180.0f) mPendingRotationAngle -= 360.0f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("+90")) {
+            mPendingRotationAngle = std::fmod(mPendingRotationAngle + 90.0f + 360.0f, 360.0f);
+            if (mPendingRotationAngle > 180.0f) mPendingRotationAngle -= 360.0f;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputFloat("##AngleInput", &mPendingRotationAngle, 0.0f, 0.0f, "%.1f");
+
+        if (ImGui::Button("Apply Rotation", ImVec2(-1, 0))) {
+            applyRotation();
+        }
+
+        // Info text
+        if (std::abs(mPendingRotationAngle) > 0.001f) {
+            ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1.0f), "Preview shown (orange)");
+        }
+    }
+}
+
+void MotionEditorApp::drawHeightSection()
+{
+    if (collapsingHeaderWithControls("Height Adjustment")) {
+        if (!mMotion) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+            return;
+        }
+
+        if (!mCharacter) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Load a skeleton to calculate");
+        }
+
+        // Display computed offset
+        if (mHeightOffsetComputed) {
+            ImGui::Text("Computed offset: %.4f m", mComputedHeightOffset);
+            ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1.0f), "Preview shown (orange)");
+        } else {
+            ImGui::Text("Offset: not calculated");
+        }
+
+        // Calculate button
+        if (ImGui::Button("Calculate Ground Level", ImVec2(-1, 0))) {
+            if (mCharacter) {
+                computeGroundLevel();
+            }
+        }
+
+        // Apply button (only enabled if computed)
+        // Store state at start to avoid Begin/End mismatch when applyHeightOffset changes mHeightOffsetComputed
+        bool applyDisabled = !mHeightOffsetComputed;
+        if (applyDisabled) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Apply Height Adjustment", ImVec2(-1, 0))) {
+            applyHeightOffset();
+        }
+        if (applyDisabled) {
+            ImGui::EndDisabled();
+        }
+
+        // Reset button
+        if (mHeightOffsetComputed) {
+            if (ImGui::Button("Reset##Height")) {
+                mComputedHeightOffset = 0.0;
+                mHeightOffsetComputed = false;
+            }
+        }
+    }
+}
+
+void MotionEditorApp::drawFootContactSection()
+{
+    if (collapsingHeaderWithControls("Foot Contact")) {
+        if (!mMotion) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+            return;
+        }
+        if (!mCharacter) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Load a skeleton to detect");
+            return;
+        }
+
+        // Run button
+        if (ImGui::Button("Run Detector", ImVec2(-1, 0))) {
+            detectFootContacts();
+        }
+
+        // Parameters (hidden by default with TreeNodeEx)
+        if (ImGui::TreeNodeEx("Parameters", 0)) {
+            ImGui::Text("Velocity Threshold (m)");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputFloat("##VelThreshold", &mContactVelocityThreshold, 0.001f, 0.01f, "%.3f");
+            ImGui::Text("Min Lock Frames");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputInt("##MinLockFrames", &mContactMinLockFrames);
+            ImGui::TreePop();
+        }
+
+        // Results - count left and right separately
+        int leftCount = 0, rightCount = 0;
+        for (const auto& phase : mDetectedPhases) {
+            if (phase.isLeft) leftCount++;
+            else rightCount++;
+        }
+
+        // Two columns using table: Left | Right
+        if (ImGui::BeginTable("##FootContactTable", 2, ImGuiTableFlags_None)) {
+            ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthStretch);
+
+            // Header row
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Left (%d)", leftCount);
+            ImGui::TableNextColumn();
+            ImGui::Text("Right (%d)", rightCount);
+
+            // Listbox row
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (ImGui::BeginListBox("##LeftContact", ImVec2(-1, 100))) {
+                for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
+                    const auto& phase = mDetectedPhases[i];
+                    if (!phase.isLeft) continue;
+
+                    char label[64];
+                    snprintf(label, sizeof(label), "%d-%d (%d)##L%d",
+                             phase.startFrame, phase.endFrame,
+                             phase.endFrame - phase.startFrame + 1, i);
+
+                    bool isSelected = (i == mSelectedPhase);
+                    if (ImGui::Selectable(label, isSelected)) {
+                        mSelectedPhase = i;
+                        mMotionState.manualFrameIndex = phase.startFrame;
+                        mMotionState.navigationMode = ME_MANUAL_FRAME;
+                        mIsPlaying = false;
+                    }
+                }
+                ImGui::EndListBox();
+            }
+
+            ImGui::TableNextColumn();
+            if (ImGui::BeginListBox("##RightContact", ImVec2(-1, 100))) {
+                for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
+                    const auto& phase = mDetectedPhases[i];
+                    if (phase.isLeft) continue;
+
+                    char label[64];
+                    snprintf(label, sizeof(label), "%d-%d (%d)##R%d",
+                             phase.startFrame, phase.endFrame,
+                             phase.endFrame - phase.startFrame + 1, i);
+
+                    bool isSelected = (i == mSelectedPhase);
+                    if (ImGui::Selectable(label, isSelected)) {
+                        mSelectedPhase = i;
+                        mMotionState.manualFrameIndex = phase.startFrame;
+                        mMotionState.navigationMode = ME_MANUAL_FRAME;
+                        mIsPlaying = false;
+                    }
+                }
+                ImGui::EndListBox();
+            }
+
+            ImGui::EndTable();
+        }
+    }
+}
+
+void MotionEditorApp::detectFootContacts()
+{
+    if (!mMotion || !mCharacter) return;
+
+    mDetectedPhases.clear();
+    mSelectedPhase = -1;
+
+    auto skel = mCharacter->getSkeleton();
+    auto talusL = skel->getBodyNode("TalusL");
+    auto talusR = skel->getBodyNode("TalusR");
+    if (!talusL || !talusR) return;
+
+    int numFrames = mMotion->getNumFrames();
+    if (numFrames < 2) return;
+
+    // Save skeleton state
+    Eigen::VectorXd savedPositions = skel->getPositions();
+
+    // Compute positions for all frames
+    std::vector<Eigen::Vector3d> positionsL(numFrames), positionsR(numFrames);
+    for (int f = 0; f < numFrames; ++f) {
+        Eigen::VectorXd pose = mMotion->getPose(f);
+        if (pose.size() == skel->getNumDofs()) {
+            skel->setPositions(pose);
+            positionsL[f] = talusL->getTransform().translation();
+            positionsR[f] = talusR->getTransform().translation();
+        }
+    }
+    skel->setPositions(savedPositions);
+
+    // Detection lambda
+    auto detectPhasesForFoot = [&](const std::vector<Eigen::Vector3d>& positions, bool isLeft) {
+        int lockStart = -1;
+        for (int f = 1; f < numFrames; ++f) {
+            double velocity = (positions[f] - positions[f - 1]).norm();
+            if (velocity < mContactVelocityThreshold) {
+                if (lockStart < 0) lockStart = f;
+            } else {
+                if (lockStart >= 0 && (f - lockStart) >= mContactMinLockFrames) {
+                    mDetectedPhases.push_back({lockStart, f - 1, isLeft});
+                }
+                lockStart = -1;
+            }
+        }
+        if (lockStart >= 0 && (numFrames - lockStart) >= mContactMinLockFrames) {
+            mDetectedPhases.push_back({lockStart, numFrames - 1, isLeft});
+        }
+    };
+
+    detectPhasesForFoot(positionsL, true);
+    detectPhasesForFoot(positionsR, false);
+
+    // Sort by start frame
+    std::sort(mDetectedPhases.begin(), mDetectedPhases.end(),
+        [](const FootContactPhase& a, const FootContactPhase& b) {
+            return a.startFrame < b.startFrame;
+        });
+}
+
+Eigen::Vector4d MotionEditorApp::getRenderColor(
+    const dart::dynamics::BodyNode* bn,
+    const Eigen::Vector4d& defaultColor) const
+{
+    if (mDetectedPhases.empty() || !bn) {
+        return defaultColor;
+    }
+
+    int frameIdx = mMotionState.manualFrameIndex;
+    std::string name = bn->getName();
+
+    // Check if this body node should be highlighted
+    for (const auto& phase : mDetectedPhases) {
+        if (frameIdx >= phase.startFrame && frameIdx <= phase.endFrame) {
+            if ((phase.isLeft && name == "TalusL") ||
+                (!phase.isLeft && name == "TalusR")) {
+                return Eigen::Vector4d(0.2, 0.9, 0.3, 1.0);  // Green for contact
+            }
+        }
+    }
+
+    return defaultColor;
 }
 
 // =============================================================================
@@ -966,7 +1320,7 @@ void MotionEditorApp::exportTrimmedMotion()
     };
 
     try {
-        hdf->exportToFile(outputPath.string(), mTrimStart, mTrimEnd, metadata);
+        hdf->exportToFile(outputPath.string(), metadata);
         mLastExportMessage = "Success: Exported to " + outputPath.filename().string();
         mLastExportMessageTime = glfwGetTime();
 
@@ -987,6 +1341,193 @@ void MotionEditorApp::exportTrimmedMotion()
         mLastExportMessageTime = glfwGetTime();
         LOG_ERROR("[MotionEditor] Export failed: " << e.what());
     }
+}
+
+// =============================================================================
+// Trim
+// =============================================================================
+
+void MotionEditorApp::applyTrim()
+{
+    if (!mMotion) return;
+
+    HDF* hdf = dynamic_cast<HDF*>(mMotion);
+    if (!hdf) {
+        LOG_WARN("[MotionEditor] Cannot trim: motion is not HDF format");
+        return;
+    }
+
+    hdf->trim(mTrimStart, mTrimEnd);
+
+    // Reset trim bounds to new range
+    mTrimStart = 0;
+    mTrimEnd = hdf->getNumFrames() - 1;
+
+    // Reset playback state
+    mMotionState.manualFrameIndex = 0;
+    mMotionState.maxFrameIndex = mTrimEnd;
+
+    // Clear detected foot contacts (no longer valid)
+    mDetectedPhases.clear();
+    mSelectedPhase = -1;
+}
+
+// =============================================================================
+// Processing
+// =============================================================================
+
+Eigen::VectorXd MotionEditorApp::applyRotationToFrame(const Eigen::VectorXd& pose, float angleDegrees)
+{
+    using namespace dart::dynamics;
+    Eigen::VectorXd result = pose;
+
+    // Create Y-axis rotation transform
+    double angleRad = angleDegrees * M_PI / 180.0;
+    Eigen::Isometry3d yRotation = Eigen::Isometry3d::Identity();
+    yRotation.rotate(Eigen::AngleAxisd(angleRad, Eigen::Vector3d::UnitY()));
+
+    // Convert root pose to transform (first 6 DOF)
+    Eigen::Isometry3d rootTransform = FreeJoint::convertToTransform(pose.head<6>());
+
+    // Apply world rotation: new_transform = yRotation * rootTransform
+    Eigen::Isometry3d newTransform = yRotation * rootTransform;
+
+    // Convert back to pose vector
+    result.head<6>() = FreeJoint::convertToPositions(newTransform);
+
+    return result;
+}
+
+Eigen::Vector3d MotionEditorApp::getBodyNodeSize(dart::dynamics::BodyNode* bn)
+{
+    using namespace dart::dynamics;
+
+    if (!bn || bn->getNumShapeNodes() == 0) {
+        return Eigen::Vector3d(0.1, 0.1, 0.1);  // Default fallback
+    }
+
+    auto shape = bn->getShapeNode(0)->getShape();
+
+    if (auto box = std::dynamic_pointer_cast<BoxShape>(shape)) {
+        return box->getSize();
+    } else if (auto sphere = std::dynamic_pointer_cast<SphereShape>(shape)) {
+        double r = sphere->getRadius();
+        return Eigen::Vector3d(r * 2, r * 2, r * 2);
+    } else if (auto capsule = std::dynamic_pointer_cast<CapsuleShape>(shape)) {
+        double r = capsule->getRadius();
+        double h = capsule->getHeight();
+        return Eigen::Vector3d(r * 2, h + r * 2, r * 2);  // Total height includes caps
+    } else if (auto cylinder = std::dynamic_pointer_cast<CylinderShape>(shape)) {
+        double r = cylinder->getRadius();
+        double h = cylinder->getHeight();
+        return Eigen::Vector3d(r * 2, h, r * 2);
+    }
+
+    return Eigen::Vector3d(0.1, 0.1, 0.1);  // Fallback
+}
+
+void MotionEditorApp::computeGroundLevel()
+{
+    if (!mMotion || !mCharacter) {
+        LOG_WARN("[MotionEditor] Cannot compute ground level: no motion or skeleton");
+        return;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    if (!skel) return;
+
+    // Save current skeleton positions
+    Eigen::VectorXd savedPositions = skel->getPositions();
+
+    int numFrames = mMotion->getNumFrames();
+    double totalMinY = 0.0;
+
+    // Iterate through all frames
+    for (int frame = 0; frame < numFrames; ++frame) {
+        Eigen::VectorXd pose = mMotion->getPose(frame);
+        if (pose.size() != skel->getNumDofs()) continue;
+
+        skel->setPositions(pose);
+
+        // Find minimum Y for this frame
+        double frameMinY = std::numeric_limits<double>::max();
+
+        for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
+            dart::dynamics::BodyNode* bn = skel->getBodyNode(i);
+            if (!bn) continue;
+
+            // Get body node world transform
+            Eigen::Isometry3d transform = bn->getTransform();
+            Eigen::Vector3d pos = transform.translation();
+
+            // Get shape size to compute bottom Y
+            Eigen::Vector3d size = getBodyNodeSize(bn);
+
+            // Compute lowest Y point (assuming Y is up, shape centered at origin)
+            // For most shapes, bottom is at pos[1] - size[1]/2
+            double bottomY = pos[1] - size[1] / 2.0;
+
+            if (bottomY < frameMinY) {
+                frameMinY = bottomY;
+            }
+        }
+
+        if (frameMinY < std::numeric_limits<double>::max()) {
+            totalMinY += frameMinY;
+        }
+    }
+
+    // Compute mean ground level
+    double meanGroundLevel = totalMinY / numFrames;
+
+    // Offset to bring to Y=0
+    mComputedHeightOffset = -meanGroundLevel;
+    mHeightOffsetComputed = true;
+
+    // Restore skeleton positions
+    skel->setPositions(savedPositions);
+
+    LOG_INFO("[MotionEditor] Computed ground level: " << meanGroundLevel
+             << ", offset: " << mComputedHeightOffset);
+}
+
+void MotionEditorApp::applyRotation()
+{
+    if (!mMotion || std::abs(mPendingRotationAngle) < 0.001f) {
+        return;
+    }
+
+    HDF* hdf = dynamic_cast<HDF*>(mMotion);
+    if (!hdf) {
+        LOG_WARN("[MotionEditor] Cannot apply rotation: motion is not HDF format");
+        return;
+    }
+
+    // Apply rotation via HDF method
+    hdf->applyYRotation(mPendingRotationAngle);
+
+    // Reset preview angle
+    mPendingRotationAngle = 0.0f;
+}
+
+void MotionEditorApp::applyHeightOffset()
+{
+    if (!mMotion || !mHeightOffsetComputed || std::abs(mComputedHeightOffset) < 0.001) {
+        return;
+    }
+
+    HDF* hdf = dynamic_cast<HDF*>(mMotion);
+    if (!hdf) {
+        LOG_WARN("[MotionEditor] Cannot apply height offset: motion is not HDF format");
+        return;
+    }
+
+    // Apply height offset via HDF method
+    hdf->applyHeightOffset(mComputedHeightOffset);
+
+    // Reset height state
+    mComputedHeightOffset = 0.0;
+    mHeightOffsetComputed = false;
 }
 
 // =============================================================================
@@ -1089,12 +1630,23 @@ void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
                 mIsPlaying = !mIsPlaying;
                 break;
             case GLFW_KEY_S:
-                // Step single frame forward
+                // Step frame(s) forward: Ctrl+S = 5 frames, S = 1 frame
                 if (mMotion) {
                     mIsPlaying = false;
+                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
                     mMotionState.manualFrameIndex = std::min(
-                        mMotionState.manualFrameIndex + 1,
+                        mMotionState.manualFrameIndex + step,
                         mMotion->getNumFrames() - 1);
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                }
+                break;
+            case GLFW_KEY_A:
+                // Step frame(s) backward: Ctrl+A = 5 frames, A = 1 frame
+                if (mMotion) {
+                    mIsPlaying = false;
+                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
+                    mMotionState.manualFrameIndex = std::max(
+                        mMotionState.manualFrameIndex - step, 0);
                     mMotionState.navigationMode = ME_MANUAL_FRAME;
                 }
                 break;

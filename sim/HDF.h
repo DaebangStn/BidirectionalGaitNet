@@ -71,22 +71,37 @@ public:
     Eigen::VectorXd getTimeData() const { return mTimeData; }
 
     /**
-     * @brief Export motion data to HDF5 file (with optional trimming)
+     * @brief Apply Y-axis rotation to all frames
+     * @param angleDegrees Rotation angle in degrees
+     */
+    void applyYRotation(double angleDegrees);
+
+    /**
+     * @brief Apply height offset to all frames
+     * @param offset Height offset to add to Y translation (index 4)
+     */
+    void applyHeightOffset(double offset);
+
+    /**
+     * @brief Trim motion data in-place
+     * @param startFrame Start frame (0-based)
+     * @param endFrame End frame (inclusive)
+     */
+    void trim(int startFrame, int endFrame);
+
+    /**
+     * @brief Export current motion data to HDF5 file
      * @param outputPath Output file path
-     * @param startFrame Start frame for trimming (default: 0)
-     * @param endFrame End frame for trimming (default: -1 = all frames)
      * @param metadata Optional metadata map for attributes
      *
      * Writes:
-     * - /motions: (trimFrames x DOF) float32
-     * - /phase: (trimFrames,) normalized 0-1
-     * - /time: (trimFrames,) reset to start from 0
+     * - /motions: (numFrames x DOF) float32
+     * - /phase: (numFrames,) normalized 0-1
+     * - /time: (numFrames,)
      * - Attributes: frame_rate, num_frames, dof_per_frame, + metadata
      */
     void exportToFile(
         const std::string& outputPath,
-        int startFrame = 0,
-        int endFrame = -1,
         const std::map<std::string, std::string>& metadata = {}) const;
 
 private:

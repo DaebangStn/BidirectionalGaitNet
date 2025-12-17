@@ -51,6 +51,15 @@ struct MotionEditorViewerState
 };
 
 /**
+ * @brief Foot contact phase data
+ */
+struct FootContactPhase {
+    int startFrame;
+    int endFrame;
+    bool isLeft;
+};
+
+/**
  * @brief Motion Editor Application
  *
  * Features:
@@ -148,6 +157,19 @@ private:
     // === Configuration ===
     std::set<std::string> mDefaultOpenPanels;
 
+    // === Rotation Processing ===
+    float mPendingRotationAngle = 0.0f;     // degrees (preview always shown when != 0)
+
+    // === Height Processing ===
+    double mComputedHeightOffset = 0.0;     // calculated offset
+    bool mHeightOffsetComputed = false;     // whether calculation done
+
+    // === Foot Contact Detection ===
+    std::vector<FootContactPhase> mDetectedPhases;
+    int mSelectedPhase = -1;
+    float mContactVelocityThreshold = 0.01f;  // m/frame
+    int mContactMinLockFrames = 5;
+
     // === Initialization ===
     void setCamera();
     void updateCamera();
@@ -155,7 +177,7 @@ private:
 
     // === Rendering ===
     void drawFrame();
-    void drawSkeleton();
+    void drawSkeleton(bool isPreview = false);
 
     // === UI Panels ===
     void drawLeftPanel();
@@ -167,6 +189,9 @@ private:
     void drawMotionInfoSection();
     void drawTrimSection();
     void drawExportSection();
+    void drawRotationSection();
+    void drawHeightSection();
+    void drawFootContactSection();
 
     // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);
@@ -186,6 +211,19 @@ private:
 
     // === Export ===
     void exportTrimmedMotion();
+
+    // === Trim ===
+    void applyTrim();
+
+    // === Processing ===
+    Eigen::VectorXd applyRotationToFrame(const Eigen::VectorXd& pose, float angleDegrees);
+    void applyRotation();
+    void computeGroundLevel();
+    void applyHeightOffset();
+    Eigen::Vector3d getBodyNodeSize(dart::dynamics::BodyNode* bn);
+    void detectFootContacts();
+    Eigen::Vector4d getRenderColor(const dart::dynamics::BodyNode* bn,
+                                    const Eigen::Vector4d& defaultColor) const;
 
     // === Static Callbacks ===
     static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
