@@ -85,24 +85,43 @@ def render_controls(data_sample: dict, cfg: dict, all_data: list = None) -> dict
     # Muscle index range filter
     total_muscles = len(muscle_names)
 
+    # Initialize session state for muscle index
+    if "muscle_idx_from" not in st.session_state:
+        st.session_state.muscle_idx_from = 0
+    if "muscle_idx_to" not in st.session_state:
+        st.session_state.muscle_idx_to = total_muscles - 1
+    if "muscle_idx_slider" not in st.session_state:
+        st.session_state.muscle_idx_slider = (0, total_muscles - 1)
+
+    def sync_muscle_from_slider():
+        slider_val = st.session_state.muscle_idx_slider
+        st.session_state.muscle_idx_from = slider_val[0]
+        st.session_state.muscle_idx_to = slider_val[1]
+
+    def sync_muscle_from_inputs():
+        st.session_state.muscle_idx_slider = (
+            st.session_state.muscle_idx_from,
+            st.session_state.muscle_idx_to
+        )
+
     st.caption(f"Muscle Index Range (0-{total_muscles - 1})")
     idx_col1, idx_col2, idx_col3 = st.columns([1, 3, 1])
     with idx_col1:
         st.number_input("From", min_value=0, max_value=total_muscles - 1,
-                        value=0, step=1, key="muscle_idx_from")
+                        step=1, key="muscle_idx_from", on_change=sync_muscle_from_inputs)
     with idx_col2:
         st.slider(
             "Range", min_value=0, max_value=total_muscles - 1,
-            value=(0, total_muscles - 1), step=1,
-            key="muscle_idx_slider", label_visibility="collapsed"
+            step=1, key="muscle_idx_slider", label_visibility="collapsed",
+            on_change=sync_muscle_from_slider
         )
     with idx_col3:
         st.number_input("To", min_value=0, max_value=total_muscles - 1,
-                        value=total_muscles - 1, step=1, key="muscle_idx_to")
+                        step=1, key="muscle_idx_to", on_change=sync_muscle_from_inputs)
 
-    # Read final values - prefer number inputs
-    idx_from = st.session_state.get("muscle_idx_from", 0)
-    idx_to = st.session_state.get("muscle_idx_to", total_muscles - 1)
+    # Read final values from session state
+    idx_from = st.session_state.muscle_idx_from
+    idx_to = st.session_state.muscle_idx_to
 
     # Cycle index (only for Single Cycle mode)
     cycle_idx = None
@@ -150,24 +169,48 @@ def render_controls(data_sample: dict, cfg: dict, all_data: list = None) -> dict
     else:
         data_max = 1.0
 
-    # Color range controls
+    # Color range controls - initialize session state
+    if "cbar_vmin" not in st.session_state:
+        st.session_state.cbar_vmin = 0.0
+    if "cbar_vmax" not in st.session_state:
+        st.session_state.cbar_vmax = data_max
+    if "cbar_slider" not in st.session_state:
+        st.session_state.cbar_slider = (0.0, data_max)
+
+    def sync_cbar_from_slider():
+        slider_val = st.session_state.cbar_slider
+        st.session_state.cbar_vmin = slider_val[0]
+        st.session_state.cbar_vmax = slider_val[1]
+
+    def sync_cbar_from_inputs():
+        st.session_state.cbar_slider = (
+            st.session_state.cbar_vmin,
+            st.session_state.cbar_vmax
+        )
+
     cbar_col1, cbar_col2, cbar_col3 = st.columns([1, 3, 1])
     with cbar_col1:
-        vmin = st.number_input("Min", min_value=0.0, max_value=data_max, value=0.0, step=0.01, format="%.3f")
+        st.number_input("Min", min_value=0.0, max_value=data_max,
+                        step=0.01, format="%.3f", key="cbar_vmin",
+                        on_change=sync_cbar_from_inputs)
     with cbar_col2:
-        vmin_slider, vmax_slider = st.slider(
+        st.slider(
             "Color Range",
             min_value=0.0,
             max_value=data_max,
-            value=(vmin, data_max),
             step=data_max / 100 if data_max > 0 else 0.01,
-            label_visibility="collapsed"
+            key="cbar_slider",
+            label_visibility="collapsed",
+            on_change=sync_cbar_from_slider
         )
-        if vmin_slider != vmin:
-            vmin = vmin_slider
-        vmax = vmax_slider
     with cbar_col3:
-        vmax = st.number_input("Max", min_value=0.0, max_value=data_max, value=vmax, step=0.01, format="%.3f")
+        st.number_input("Max", min_value=0.0, max_value=data_max,
+                        step=0.01, format="%.3f", key="cbar_vmax",
+                        on_change=sync_cbar_from_inputs)
+
+    # Read final values from session state
+    vmin = st.session_state.cbar_vmin
+    vmax = st.session_state.cbar_vmax
 
     # Display options
     show_info = st.checkbox("Show panel info", value=True)

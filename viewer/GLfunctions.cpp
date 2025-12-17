@@ -1043,25 +1043,26 @@ void GUI::Draw2DCircle(const Eigen::Vector3d &origin, const Eigen::Vector3d &nor
 
 void GUI::DrawOriginAxisGizmo(const Eigen::Vector3d& center, float length, float colorTint)
 {
+    float tintIntensity = 0.7f;
     glDisable(GL_LIGHTING);
     glLineWidth(3.0f);
 
     // X axis - Red (with tint)
-    glColor3f(1.0f, colorTint * 0.3f, colorTint * 0.3f);
+    glColor3f(1.0f, colorTint * tintIntensity, colorTint * tintIntensity);
     glBegin(GL_LINES);
     glVertex3d(center.x(), center.y(), center.z());
     glVertex3d(center.x() + length, center.y(), center.z());
     glEnd();
 
     // Y axis - Green (with tint)
-    glColor3f(colorTint * 0.3f, 1.0f, colorTint * 0.3f);
+    glColor3f(colorTint * tintIntensity, 1.0f, colorTint * tintIntensity);
     glBegin(GL_LINES);
     glVertex3d(center.x(), center.y(), center.z());
     glVertex3d(center.x(), center.y() + length, center.z());
     glEnd();
 
     // Z axis - Blue (with tint)
-    glColor3f(colorTint * 0.3f, colorTint * 0.3f, 1.0f);
+    glColor3f(colorTint * tintIntensity, colorTint * tintIntensity, 1.0f);
     glBegin(GL_LINES);
     glVertex3d(center.x(), center.y(), center.z());
     glVertex3d(center.x(), center.y(), center.z() + length);

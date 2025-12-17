@@ -942,7 +942,7 @@ void PhysicalExam::render() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    drawControlPanel();  // Left panel
+    drawLeftPanel();  // Left panel
     drawVisualizationPanel();  // Right panel
     
     if (mShowSurgeryPanel) drawSurgeryPanel();
@@ -1057,11 +1057,11 @@ void PhysicalExam::mainLoop() {
     }
 }
 
-void PhysicalExam::drawControlPanel() {
+void PhysicalExam::drawLeftPanel() {
     // Left panel - matches GLFWApp layout
-    ImGui::SetNextWindowSize(ImVec2(400, mHeight-10), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
-    ImGui::Begin("Physical Examination Controls");
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(400, mHeight), ImGuiCond_Once);
+    ImGui::Begin("Controls##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     drawPosePresetsSection();
     drawForceApplicationSection();
@@ -1077,9 +1077,9 @@ void PhysicalExam::drawControlPanel() {
 
 void PhysicalExam::drawVisualizationPanel() {
     // Right panel - matches GLFWApp layout
-    ImGui::SetNextWindowSize(ImVec2(400, mHeight-10), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 410, 10), ImGuiCond_Once);
-    ImGui::Begin("Visualization & Data");
+    ImGui::SetNextWindowSize(ImVec2(400, mHeight), ImGuiCond_Once);
+    ImGui::Begin("Visualization & Data", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     // Loaded Files Section
     if (ImGui::CollapsingHeader("Loaded Files", ImGuiTreeNodeFlags_DefaultOpen)) {

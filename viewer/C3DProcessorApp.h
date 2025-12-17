@@ -265,7 +265,7 @@ private:
     void drawSelectedBoneGizmo();
 
     // UI panels
-    void drawControlPanel();
+    void drawLeftPanel();
     void drawMotionListSection();
     void drawPlaybackSection();
     void drawMarkerFittingSection();

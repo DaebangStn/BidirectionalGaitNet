@@ -226,7 +226,7 @@ void C3DProcessorApp::startLoop()
         drawFrame();
 
         // ImGui panels
-        drawControlPanel();
+        drawLeftPanel();
         drawVisualizationPanel();
         drawRenderingPanel();
 
@@ -793,15 +793,11 @@ bool C3DProcessorApp::collapsingHeaderWithControls(const std::string& title)
     return ImGui::CollapsingHeader(title.c_str(), flags);
 }
 
-void C3DProcessorApp::drawControlPanel()
+void C3DProcessorApp::drawLeftPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("C3D Processor Control")) {
-        ImGui::End();
-        return; 
-    }
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    ImGui::Begin("Control##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     // Motion List Section
     drawMotionListSection();
@@ -1472,13 +1468,9 @@ void C3DProcessorApp::exportMotionToHDF5()
 
 void C3DProcessorApp::drawVisualizationPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(mWidth - 500, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Visualization")) {
-        ImGui::End();
-        return;
-    }
+    ImGui::SetNextWindowSize(ImVec2(500, mHeight), ImGuiCond_Once);
+    ImGui::Begin("Visualization", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     // File Paths
     if (ImGui::CollapsingHeader("File Paths", ImGuiTreeNodeFlags_DefaultOpen)) {

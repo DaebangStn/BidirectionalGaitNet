@@ -1,0 +1,12 @@
+# Knee Extension ROM Examination
+# Character in various positions with force applied to tibia for knee extension
+
+name: "knee_extension_exam"
+description: "Right knee extension ROM examination with multiple trials"
+
+character:
+  # skeleton: "@data/skeleton/base.xml"
+  skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
+  muscle: "@data/muscle/base.yaml"
+  use_muscle: true
+  actuator: "mass_lower"

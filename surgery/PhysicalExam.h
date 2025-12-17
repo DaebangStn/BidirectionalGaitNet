@@ -118,7 +118,7 @@ public:
     void resetSkeleton();  // Reset skeleton by reloading from XML
 
     // UI
-    void drawControlPanel();  // Left panel - force controls
+    void drawLeftPanel();  // Left panel - force controls
     void drawVisualizationPanel();  // Right panel - plots and data
     void drawSurgeryPanel();  // Surgery panel - toggleable with G key
 

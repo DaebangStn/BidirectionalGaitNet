@@ -378,9 +378,7 @@ void MotionEditorApp::drawLeftPanel()
 {
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_FirstUseEver);
-
-    ImGui::Begin("Data Loader", nullptr,
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Data Loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     // Tab bar for PID Browser / Direct Path
     if (ImGui::BeginTabBar("DataLoaderTabs")) {
@@ -406,12 +404,8 @@ void MotionEditorApp::drawLeftPanel()
 void MotionEditorApp::drawRightPanel()
 {
     ImGui::SetNextWindowSize(ImVec2(mRightPanelWidth, mHeight), ImGuiCond_FirstUseEver);
-
-    ImGui::Begin("Motion Editor", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-
-    // Update position based on current window width (allows horizontal resize)
-    ImVec2 windowSize = ImGui::GetWindowSize();
-    ImGui::SetWindowPos(ImVec2(mWidth - windowSize.x, 0));
+    ImGui::Begin("Data loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     drawMotionInfoSection();
     ImGui::Separator();
