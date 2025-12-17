@@ -3,19 +3,18 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@pid:12964246/gait/post/skeleton/dynamic.yaml"
+    file: "@pid:12964246/gait/pre/skeleton/dynamic2.yaml"
     # file: "@data/skeleton/base_v2.xml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
     damping: 0.1
+    self_collide: true
 
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    use_mirror: false
-    local_state: true
-    file: "@pid:12964246/gait/post/h5/Trimmed_walk01-Dynamic_trimmed.h5"
+    file: "@pid:12964246/gait/pre/h5/walk2_trimmed.h5"
 
   # Muscle System
   muscle:
@@ -35,23 +34,17 @@ environment:
   # Action and Control
   action:
     scale: 0.04
-    time_warping: -1  # -1 means disabled
+    time_warping: 0.001  # -1 means disabled
     gait_phase_mode: "contact"  # "contact" or "phase"
     contact_debounce_alpha: 0.4
     step_min_ratio: 0.1
 
   # Reward System
   reward:
-    type: "scadiver"  # deepmimic, gaitnet, scadiver
+    type: "gaitnet"  # deepmimic, gaitnet, scadiver
     clip:
       step: 50
       value: 0.1
-
-    # Imitation reward coefficients (deepmimic/scadiver)
-    ee_weight: 40.0
-    pos_weight: 20.0
-    vel_weight: 5.0
-    com_weight: 10.0
 
     # Metabolic configuration
     metabolic:
@@ -63,16 +56,51 @@ environment:
         coeff: 0.1
         separate: true
 
+    # Locomotion rewards (for gaitnet)
+    locomotion:
+      head_linear_acc_weight: 4.0
+      head_rot_weight: 4.0
+      step:
+        weight: 2.0
+        clip: 0.05  # Z-axis clipping value (forward progression tolerance)
+      avg_vel:
+        weight: 4.0
+        window_mult: 1.0
+        clip: 0.2  # clip velocity difference magnitude
+        consider_x: false
+      dragX:
+        use: true
+        weight: 1.0
+        threshold: 0.2
+      phase:
+        use: false
+        weight: 1.0
+
+    # Penalty/auxiliary rewards
+    knee_pain:
+      use: false
+      weight: 1.0
+      scale: 1.0
+      termination: false
+      use_max: false
+      max_weight: 0.1
+
+  # Discriminator for energy-efficient muscle activation (ADD-style)
+  discriminator:
+    enabled: false  # Set to true to enable discriminator
+    normalize: false  # Optional: normalize disc_obs before forward pass
+    reward_scale: 1.0  # Scale factor for discriminator reward
+
   # Parameterization for training
   parameters:
     gait:
       stride:
-        min: 0.75
-        max: 1.25
+        min: 0.9
+        max: 1.1
         default: 1.0
         sampling: "uniform"
       cadence:
-        min: 0.75
-        max: 1.25
+        min: 0.9
+        max: 1.1
         default: 1.0
         sampling: "uniform"

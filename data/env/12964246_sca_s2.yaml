@@ -3,8 +3,7 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@pid:12964246/gait/post/skeleton/dynamic.yaml"
-    # file: "@data/skeleton/base_v2.xml"
+    file: "@pid:12964246/gait/pre/skeleton/dynamic2.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
@@ -15,7 +14,7 @@ environment:
     type: "h5"  # h5, bvh, npz
     use_mirror: false
     local_state: true
-    file: "@pid:12964246/gait/post/h5/Trimmed_walk01-Dynamic_trimmed.h5"
+    file: "@pid:12964246/gait/pre/h5/walk2_trimmed.h5"
 
   # Muscle System
   muscle:

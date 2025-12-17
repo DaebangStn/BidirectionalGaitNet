@@ -175,4 +175,8 @@ skeleton_fitting:
     min_lock_frames: 10         # minimum consecutive frames to count as lock phase
     blend_frames: 6            # frames for smooth transition at phase boundaries
 
-  fit_knee_position: true
+  fit_knee_position: false
+  estimate_joint_offsets: 
+    enabled: false
+    lambda_parent: 1000.0
+    lambda_child: 1.0

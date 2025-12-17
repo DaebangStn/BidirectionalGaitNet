@@ -1460,6 +1460,8 @@ void C3DProcessorApp::exportMotionToHDF5()
 
         file.close();
         LOG_INFO("[C3DProcessor] Exported HDF5 motion to: " << outputPath);
+        std::string hdfURI = "@pid:" + pid + "/gait/" + prePost + "/h5/" + filename + ".h5";
+        LOG_INFO("[C3DProcessor] URI: " << hdfURI);
 
     } catch (const H5::Exception& e) {
         LOG_ERROR("[C3DProcessor] HDF5 export error: " << e.getDetailMsg());
@@ -2992,6 +2994,8 @@ void C3DProcessorApp::drawClinicalDataSection()
                 if (mMotionCharacter) {
                     mMotionCharacter->exportSkeletonYAML(skelPath);
                     LOG_INFO("[C3DProcessor] Exported skeleton to: " << skelPath);
+                    std::string skelURI = "@pid:" + pid + "/gait/" + prePost + "/skeleton/" + mExportCalibrationName + ".yaml";
+                    LOG_INFO("[C3DProcessor] URI: " << skelURI);
                 }
             }
 

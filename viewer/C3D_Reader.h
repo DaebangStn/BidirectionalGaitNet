@@ -204,6 +204,15 @@ struct SkeletonFittingConfig {
     // Knee position refinement (least-squares adjustment of FemurL/R childOffset)
     bool fitKneePosition = true;
 
+    // Joint offset estimation configuration (regularized ball-joint pivot estimation)
+    struct EstimateJointOffsetsConfig {
+        bool enabled = false;           // If false, use skeleton's existing offsets directly
+        double lambdaParent = 0.1;      // Regularization weight for parent offset
+        double lambdaChild = 0.1;       // Regularization weight for child offset
+        double deviationWarningThreshold = 0.2;  // Warn if deviation > 20% of prior
+    };
+    EstimateJointOffsetsConfig estimateJointOffsets;
+
     // Helper: get data index for a skeleton marker name (-1 if not found)
     int getDataIndexForMarker(const std::string& markerName) const {
         for (const auto& ref : markerMappings) {
@@ -455,7 +464,11 @@ class C3D_Reader
         // Helper functions for motion conversion
         std::map<std::string, std::vector<Eigen::Isometry3d>> computeRelativeTransforms();
         JointOffsetResult estimateJointOffsets(const std::string& jointName,
-            const std::vector<Eigen::Isometry3d>& relativeTransforms);
+            const std::vector<Eigen::Isometry3d>& relativeTransforms,
+            const Eigen::Vector3d& priorParentOffset = Eigen::Vector3d::Zero(),
+            const Eigen::Vector3d& priorChildOffset = Eigen::Vector3d::Zero(),
+            double lambdaParent = 0.1,
+            double lambdaChild = 0.1);
         Eigen::Vector3d selectRevoluteAxis(const Eigen::Vector3d& xmlAxis,
             const std::vector<Eigen::Matrix3d>& rotations);
         Eigen::VectorXd buildMotionFramePose(int frameIdx,

@@ -18,7 +18,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@data/muscle/test_exported.yaml"
+    file: "@data/muscle/base_vas.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true

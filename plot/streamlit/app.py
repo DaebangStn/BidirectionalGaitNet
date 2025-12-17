@@ -53,8 +53,9 @@ def main():
     )
 
     data = None
-    compare_mode = False
     panel_data_list = []
+    data_options = []  # List of selectable data items
+    selected_item = None  # Default selected item
 
     if source_type == "Patient (PID)":
         # PID selection
@@ -86,12 +87,8 @@ def main():
                 h5_files,
                 index=0
             )
-
-            # Load data
-            uri = f"@pid:{selected_pid}/gait/{pre_post}/h5/{selected_h5}"
-            data = load_hdf5_data(uri)
-            if data is None:
-                st.error(f"Failed to load: {uri}")
+            selected_item = selected_h5
+            data_options = h5_files
 
     else:  # Sampled Rollout
         # Sampled directory selection
@@ -107,50 +104,8 @@ def main():
             sampled_dirs,
             index=0
         )
-
-        # Comparison mode toggle
-        compare_mode = st.sidebar.checkbox("Comparison Mode")
-
-        if compare_mode:
-            # Grid configuration with select sliders
-            col1, col2 = st.sidebar.columns(2)
-            with col1:
-                num_rows = st.select_slider("Rows", options=[1, 2, 3, 4], value=1)
-            with col2:
-                num_cols = st.select_slider("Cols", options=[1, 2, 3, 4], value=2)
-
-            num_panels = int(num_rows * num_cols)
-
-            # Panel selectors
-            st.sidebar.markdown("**Panel Selection**")
-            panel_dirs = []
-            for i in range(num_panels):
-                # Default to selected_dir for first panel, then cycle through
-                default_idx = min(i, len(sampled_dirs) - 1)
-                panel_dir = st.sidebar.selectbox(
-                    f"Panel {i + 1}",
-                    sampled_dirs,
-                    index=default_idx,
-                    key=f"panel_dir_{i}"
-                )
-                panel_dirs.append(panel_dir)
-
-            # Load data for all panels
-            for panel_dir in panel_dirs:
-                pdata = load_sampled_hdf5(panel_dir)
-                if pdata is not None:
-                    panel_data_list.append(pdata)
-                else:
-                    panel_data_list.append(None)
-
-            # Use first panel's data as reference for controls
-            data = panel_data_list[0] if panel_data_list else None
-
-        else:
-            # Single mode - load selected directory
-            data = load_sampled_hdf5(selected_dir)
-            if data is None:
-                st.error(f"Failed to load sampled data: {selected_dir}")
+        selected_item = selected_dir
+        data_options = sampled_dirs
 
     # View selector - filter by source type
     st.sidebar.header("Visualization")
@@ -173,6 +128,66 @@ def main():
 
     view_cfg = view_options[selected_label]
     view_module = load_view(view_cfg["module"])
+
+    # Comparison mode toggle (under Visualization header)
+    compare_mode = st.sidebar.checkbox("Comparison Mode")
+
+    num_rows = 1
+    num_cols = 1
+    if compare_mode and data_options:
+        # Grid configuration with select sliders
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            num_rows = st.select_slider("Rows", options=[1, 2, 3, 4], value=1)
+        with col2:
+            num_cols = st.select_slider("Cols", options=[1, 2, 3, 4], value=2)
+
+        num_panels = int(num_rows * num_cols)
+
+        # Panel selectors
+        st.sidebar.markdown("**Panel Selection**")
+        panel_items = []
+        for i in range(num_panels):
+            default_idx = min(i, len(data_options) - 1)
+            panel_item = st.sidebar.selectbox(
+                f"Panel {i + 1}",
+                data_options,
+                index=default_idx,
+                key=f"panel_item_{i}"
+            )
+            panel_items.append(panel_item)
+
+        # Load data for all panels based on source type
+        for item in panel_items:
+            if source_type == "Patient (PID)":
+                uri = f"@pid:{selected_pid}/gait/{pre_post}/h5/{item}"
+                pdata = load_hdf5_data(uri)
+                if pdata is not None:
+                    pdata['panel_title'] = item  # Use h5 filename as title
+            else:
+                pdata = load_sampled_hdf5(item)
+                if pdata is not None:
+                    pdata['panel_title'] = pdata.get('dir_name', item)
+
+            if pdata is not None:
+                panel_data_list.append(pdata)
+            else:
+                panel_data_list.append(None)
+
+        # Use first panel's data as reference for controls
+        data = panel_data_list[0] if panel_data_list else None
+    else:
+        # Single mode - load selected item
+        if selected_item is not None:
+            if source_type == "Patient (PID)":
+                uri = f"@pid:{selected_pid}/gait/{pre_post}/h5/{selected_item}"
+                data = load_hdf5_data(uri)
+                if data is None:
+                    st.error(f"Failed to load: {uri}")
+            else:
+                data = load_sampled_hdf5(selected_item)
+                if data is None:
+                    st.error(f"Failed to load sampled data: {selected_item}")
 
     # Plot width preset
     width_options = {"30%": 0.3, "50%": 0.5, "100%": 1.0}
@@ -217,7 +232,7 @@ def main():
                                                 pdata,
                                                 view_cfg,
                                                 controls,
-                                                title_prefix=pdata.get('dir_name', f'Panel {panel_idx + 1}'),
+                                                title_prefix=pdata.get('panel_title', f'Panel {panel_idx + 1}'),
                                                 plot_width=1.0  # Fill column, grid container handles overall width
                                             )
                                     else:

@@ -328,6 +328,20 @@ void C3D_Reader::loadSkeletonFittingConfig() {
             LOG_VERBOSE("[Config] Fit knee position: " << (mFittingConfig.fitKneePosition ? "enabled" : "disabled"));
         }
 
+        // Joint offset estimation configuration
+        if (sf["estimate_joint_offsets"]) {
+            auto ejo = sf["estimate_joint_offsets"];
+            mFittingConfig.estimateJointOffsets.enabled = ejo["enabled"].as<bool>(false);
+            mFittingConfig.estimateJointOffsets.lambdaParent = ejo["lambda_parent"].as<double>(0.1);
+            mFittingConfig.estimateJointOffsets.lambdaChild = ejo["lambda_child"].as<double>(0.1);
+            if (ejo["deviation_warning_threshold"]) {
+                mFittingConfig.estimateJointOffsets.deviationWarningThreshold = ejo["deviation_warning_threshold"].as<double>(0.2);
+            }
+            LOG_VERBOSE("[Config] Estimate joint offsets: " << (mFittingConfig.estimateJointOffsets.enabled ? "enabled" : "disabled")
+                     << ", λ_p=" << mFittingConfig.estimateJointOffsets.lambdaParent
+                     << ", λ_i=" << mFittingConfig.estimateJointOffsets.lambdaChild);
+        }
+
         // New format: marker_mappings (flat list)
         if (sf["marker_mappings"]) {
             for (const auto& m : sf["marker_mappings"]) {
@@ -2179,7 +2193,11 @@ std::map<std::string, std::vector<Eigen::Isometry3d>> C3D_Reader::computeRelativ
 
 JointOffsetResult C3D_Reader::estimateJointOffsets(
     const std::string& jointName,
-    const std::vector<Eigen::Isometry3d>& relativeTransforms)
+    const std::vector<Eigen::Isometry3d>& relativeTransforms,
+    const Eigen::Vector3d& priorParentOffset,
+    const Eigen::Vector3d& priorChildOffset,
+    double lambdaParent,
+    double lambdaChild)
 {
     JointOffsetResult result;
 
@@ -2189,20 +2207,43 @@ JointOffsetResult C3D_Reader::estimateJointOffsets(
 
     int numFrames = relativeTransforms.size();
 
-    // Build linear system: A*x = b
-    // For each frame t: [I -R(t)] * [c_p; c_i] = t(t)
-    // A is (3*T x 6), b is (3*T x 1)
-    Eigen::MatrixXd A(3 * numFrames, 6);
-    Eigen::VectorXd b(3 * numFrames);
+    // Regularized Ball-Joint Pivot Estimation with Prior Offsets
+    //
+    // Objective: min_{c_p, c_i} Σ_t ||p_rel(t) - (c_p - R_rel(t)*c_i)||²
+    //                          + λ_p||c_p - c_p0||² + λ_i||c_i - c_i0||²
+    //
+    // Augmented linear system:
+    // [       A        ]     [     b     ]
+    // [ sqrt(λ_p)*[I 0]] x = [ sqrt(λ_p)*c_p0 ]
+    // [ sqrt(λ_i)*[0 I]]     [ sqrt(λ_i)*c_i0 ]
 
+    // Build augmented system: A_aug*x = b_aug
+    // Data rows: 3*T, Regularization rows: 6 (3 for parent, 3 for child)
+    int numRows = 3 * numFrames + 6;
+    Eigen::MatrixXd A_aug(numRows, 6);
+    Eigen::VectorXd b_aug(numRows);
+    A_aug.setZero();
+    b_aug.setZero();
+
+    // Data term: [I -R(t)] * [c_p; c_i] = p_rel(t)
     for (int t = 0; t < numFrames; ++t) {
-        A.block<3, 3>(3 * t, 0) = Eigen::Matrix3d::Identity();
-        A.block<3, 3>(3 * t, 3) = -relativeTransforms[t].linear();
-        b.segment<3>(3 * t) = relativeTransforms[t].translation();
+        A_aug.block<3, 3>(3 * t, 0) = Eigen::Matrix3d::Identity();
+        A_aug.block<3, 3>(3 * t, 3) = -relativeTransforms[t].linear();
+        b_aug.segment<3>(3 * t) = relativeTransforms[t].translation();
     }
 
+    // Regularization term for parent offset: sqrt(λ_p)*[I 0]*x = sqrt(λ_p)*c_p0
+    double sqrtLambdaP = std::sqrt(lambdaParent);
+    A_aug.block<3, 3>(3 * numFrames, 0) = sqrtLambdaP * Eigen::Matrix3d::Identity();
+    b_aug.segment<3>(3 * numFrames) = sqrtLambdaP * priorParentOffset;
+
+    // Regularization term for child offset: sqrt(λ_i)*[0 I]*x = sqrt(λ_i)*c_i0
+    double sqrtLambdaI = std::sqrt(lambdaChild);
+    A_aug.block<3, 3>(3 * numFrames + 3, 3) = sqrtLambdaI * Eigen::Matrix3d::Identity();
+    b_aug.segment<3>(3 * numFrames + 3) = sqrtLambdaI * priorChildOffset;
+
     // Solve via normal equations: x = (A^T A)^-1 A^T b
-    Eigen::VectorXd x = (A.transpose() * A).ldlt().solve(A.transpose() * b);
+    Eigen::VectorXd x = (A_aug.transpose() * A_aug).ldlt().solve(A_aug.transpose() * b_aug);
 
     // Extract translation offsets
     result.parentOffset.setIdentity();
@@ -2210,13 +2251,34 @@ JointOffsetResult C3D_Reader::estimateJointOffsets(
     result.parentOffset.translation() = x.head<3>();  // c_p
     result.childOffset.translation() = x.tail<3>();   // c_i
 
-    // Compute RMS residual
-    Eigen::VectorXd residual = A * x - b;
+    // Compute RMS residual (data term only, excluding regularization)
+    Eigen::MatrixXd A_data = A_aug.topRows(3 * numFrames);
+    Eigen::VectorXd b_data = b_aug.head(3 * numFrames);
+    Eigen::VectorXd residual = A_data * x - b_data;
     double rms = std::sqrt(residual.squaredNorm() / numFrames);
+
+    // Deviation monitoring: relative deviation from prior offsets
+    double priorParentNorm = priorParentOffset.norm();
+    double priorChildNorm = priorChildOffset.norm();
+    double deltaParent = (priorParentNorm > 1e-6) ?
+        (x.head<3>() - priorParentOffset).norm() / priorParentNorm : 0.0;
+    double deltaChild = (priorChildNorm > 1e-6) ?
+        (x.tail<3>() - priorChildOffset).norm() / priorChildNorm : 0.0;
+
+    // Warning if deviation exceeds threshold (default 20%)
+    double threshold = mFittingConfig.estimateJointOffsets.deviationWarningThreshold;
+    if (deltaParent > threshold || deltaChild > threshold) {
+        LOG_WARN("[JointOffset] " << jointName << ": Large deviation from prior! "
+                 << "δ_p=" << std::fixed << std::setprecision(1) << (deltaParent * 100) << "%, "
+                 << "δ_i=" << (deltaChild * 100) << "% (threshold=" << (threshold * 100) << "%)");
+    }
 
     result.valid = true;
     LOG_VERBOSE("[JointOffset] " << jointName << ": parentOff=(" << x.head<3>().transpose()
-             << "), childOff=(" << x.tail<3>().transpose() << "), RMS=" << std::fixed << std::setprecision(4) << rms);
+             << "), childOff=(" << x.tail<3>().transpose()
+             << "), RMS=" << std::fixed << std::setprecision(4) << rms
+             << ", δ_p=" << std::setprecision(1) << (deltaParent * 100) << "%"
+             << ", δ_i=" << (deltaChild * 100) << "%");
 
     return result;
 }
@@ -2478,19 +2540,39 @@ MotionConversionResult C3D_Reader::convertToMotionSkeleton()
             continue;
         }
 
-        // Estimate translation offsets via least squares
-        JointOffsetResult offset = estimateJointOffsets(jointName, relIt->second);
+        // Get prior offsets from skeleton definition
+        Eigen::Vector3d priorParentOffset = joint->getTransformFromParentBodyNode().translation();
+        Eigen::Vector3d priorChildOffset = joint->getTransformFromChildBodyNode().translation();
+
+        JointOffsetResult offset;
+
+        if (mFittingConfig.estimateJointOffsets.enabled) {
+            // Estimate translation offsets via regularized least squares
+            offset = estimateJointOffsets(
+                jointName,
+                relIt->second,
+                priorParentOffset,
+                priorChildOffset,
+                mFittingConfig.estimateJointOffsets.lambdaParent,
+                mFittingConfig.estimateJointOffsets.lambdaChild);
+        } else {
+            // Use skeleton's existing offsets directly
+            offset.parentOffset.translation() = priorParentOffset;
+            offset.childOffset.translation() = priorChildOffset;
+            offset.valid = true;
+            LOG_VERBOSE("[JointOffset] " << jointName << ": Using skeleton prior offsets (estimation disabled)");
+        }
 
         // Initialize rotation offsets from skeleton definition
         offset.parentOffset.linear() = joint->getTransformFromParentBodyNode().linear();
         offset.childOffset.linear() = joint->getTransformFromChildBodyNode().linear();
 
-        // For revolute joints, estimate axis using XML prior + PCA
+        // For revolute joints, use skeleton's existing translation offsets
         if (joint->getType() == "RevoluteJoint") {
-            offset.parentOffset.translation() = joint->getTransformFromParentBodyNode().translation();
-            offset.childOffset.translation() = joint->getTransformFromChildBodyNode().translation();
+            offset.parentOffset.translation() = priorParentOffset;
+            offset.childOffset.translation() = priorChildOffset;
         }
-        
+
         result.jointOffsets[jointName] = offset;
     }
 
