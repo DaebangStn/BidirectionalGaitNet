@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace rm {
 
@@ -49,8 +50,8 @@ void ResourceManager::load_config(const std::string& config_path) {
         std::filesystem::create_directories(cache_dir_);
     }
 
-    std::cout << "[rm] Config directory: " << config_dir_ << std::endl;
-    std::cout << "[rm] Cache directory: " << cache_dir_ << std::endl;
+    LOG_VERBOSE("[rm] Config directory: " << config_dir_);
+    LOG_VERBOSE("[rm] Cache directory: " << cache_dir_);
 
     // Load named backends
     if (config["backends"]) {
@@ -68,9 +69,9 @@ void ResourceManager::load_config(const std::string& config_path) {
 
                 try {
                     named_backends_[name] = std::make_unique<LocalBackend>(root_path);
-                    std::cout << "[rm] Backend '" << name << "': local " << root_path << std::endl;
+                    LOG_VERBOSE("[rm] Backend '" << name << "': local " << root_path);
                 } catch (const RMError& e) {
-                    std::cerr << "[rm] Warning: Failed to add backend '" << name << "': " << e.what() << std::endl;
+                    LOG_WARN("[rm] Failed to add backend '" << name << "': " << e.what());
                 }
 
             } else if (type == "pid") {
@@ -82,9 +83,9 @@ void ResourceManager::load_config(const std::string& config_path) {
 
                 try {
                     named_backends_[name] = std::make_unique<PidBackend>(root_path);
-                    std::cout << "[rm] Backend '" << name << "': pid " << root_path << std::endl;
+                    LOG_VERBOSE("[rm] Backend '" << name << "': pid " << root_path);
                 } catch (const RMError& e) {
-                    std::cerr << "[rm] Warning: Failed to add backend '" << name << "': " << e.what() << std::endl;
+                    LOG_WARN("[rm] Failed to add backend '" << name << "': " << e.what());
                 }
 
             } else if (type == "ftp") {
@@ -98,12 +99,12 @@ void ResourceManager::load_config(const std::string& config_path) {
                 ftp_config.pid_style = backend_config["pid_style"].as<bool>(false);
 
                 named_backends_[name] = std::make_unique<FTPBackend>(ftp_config);
-                std::cout << "[rm] Backend '" << name << "': ftp " << ftp_config.host
+                LOG_VERBOSE("[rm] Backend '" << name << "': ftp " << ftp_config.host
                           << " (" << ftp_config.ip << ":" << ftp_config.port << ")"
-                          << (ftp_config.pid_style ? " [pid_style]" : "") << std::endl;
+                          << (ftp_config.pid_style ? " [pid_style]" : ""));
 
             } else {
-                std::cerr << "[rm] Warning: Unknown backend type '" << type << "' for '" << name << "'" << std::endl;
+                LOG_WARN("[rm] Unknown backend type '" << type << "' for '" << name << "'");
             }
         }
     }
@@ -119,7 +120,7 @@ void ResourceManager::load_config(const std::string& config_path) {
                 for (const auto& backend_name : route_config["backends"]) {
                     std::string name = backend_name.as<std::string>();
                     if (named_backends_.find(name) == named_backends_.end()) {
-                        std::cerr << "[rm] Warning: Route '" << prefix << "' references unknown backend '" << name << "'" << std::endl;
+                        LOG_WARN("[rm] Route '" << prefix << "' references unknown backend '" << name << "'");
                     } else {
                         backend_names.push_back(name);
                     }
@@ -128,12 +129,14 @@ void ResourceManager::load_config(const std::string& config_path) {
 
             if (!backend_names.empty()) {
                 routes_[prefix] = std::move(backend_names);
-                std::cout << "[rm] Route '" << prefix << "' -> [";
+                std::ostringstream oss;
+                oss << "[rm] Route '" << prefix << "' -> [";
                 for (size_t i = 0; i < routes_[prefix].size(); ++i) {
-                    if (i > 0) std::cout << ", ";
-                    std::cout << routes_[prefix][i];
+                    if (i > 0) oss << ", ";
+                    oss << routes_[prefix][i];
                 }
-                std::cout << "]" << std::endl;
+                oss << "]";
+                LOG_VERBOSE(oss.str());
             }
         }
     }
@@ -141,13 +144,13 @@ void ResourceManager::load_config(const std::string& config_path) {
     // Create default backend for non-prefixed URIs (local relative to config dir)
     try {
         default_backend_ = std::make_unique<LocalBackend>(config_dir_);
-        std::cout << "[rm] Default backend: local " << config_dir_ << std::endl;
+        LOG_VERBOSE("[rm] Default backend: local " << config_dir_);
     } catch (const RMError& e) {
-        std::cerr << "[rm] Warning: Failed to create default backend: " << e.what() << std::endl;
+        LOG_WARN("[rm] Failed to create default backend: " << e.what());
     }
 
-    std::cout << "[rm] Initialized with " << named_backends_.size() << " backend(s) and "
-              << routes_.size() << " route(s)" << std::endl;
+    LOG_VERBOSE("[rm] Initialized with " << named_backends_.size() << " backend(s) and "
+              << routes_.size() << " route(s)");
 }
 
 std::vector<Backend*> ResourceManager::resolve_backends(const URI& uri) {
@@ -213,7 +216,7 @@ void ResourceManager::write_cache(const std::string& uri, const ResourceHandle& 
     // Write data to cache file
     std::ofstream out(cache_file, std::ios::binary);
     if (!out) {
-        std::cerr << "[rm] Warning: Failed to write cache file: " << cache_file << std::endl;
+        LOG_WARN("[rm] Failed to write cache file: " << cache_file);
         return;
     }
 
@@ -231,7 +234,7 @@ void ResourceManager::clear_cache() {
         }
     }
 
-    std::cout << "[rm] Cache cleared" << std::endl;
+    LOG_VERBOSE("[rm] Cache cleared");
 }
 
 bool ResourceManager::exists(const std::string& uri_str) {

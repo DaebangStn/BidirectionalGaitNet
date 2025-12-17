@@ -99,8 +99,8 @@ private:
     bool mCameraMoving = false;
     double mMouseX = 0, mMouseY = 0;
 
-    // === Resource Manager ===
-    std::unique_ptr<rm::ResourceManager> mResourceManager;
+    // === Resource Manager (singleton reference) ===
+    rm::ResourceManager* mResourceManager = nullptr;
     std::string mConfigPath;
 
     // === PID Browser State ===

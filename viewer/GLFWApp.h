@@ -341,8 +341,8 @@ private:
     void scanMotionFiles();                 // Scan directories for motion files
     void loadMotionFile(const std::string& path);  // Load motion on-demand
 
-    // Resource Manager for PID-based access
-    std::unique_ptr<rm::ResourceManager> mResourceManager;
+    // Resource Manager for PID-based access (singleton reference)
+    rm::ResourceManager* mResourceManager = nullptr;
 
     // Clinical Data (PID) browser state
     std::vector<std::string> mPIDList;

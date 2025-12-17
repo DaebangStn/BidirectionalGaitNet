@@ -1,6 +1,7 @@
 #include "C3DProcessorApp.h"
 #include "DARTHelper.h"
 #include "rm/rm.hpp"
+#include <rm/global.hpp>
 #include "Log.h"
 #include "PlotUtils.h"
 #include <cstring>
@@ -148,9 +149,9 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
         LOG_INFO("[C3DProcessor] Autoloaded first C3D file: " << mMotionList[0]);
     }
 
-    // Initialize Resource Manager for PID-based access
+    // Initialize Resource Manager for PID-based access (use singleton)
     try {
-        mResourceManager = std::make_unique<rm::ResourceManager>("data/rm_config.yaml");
+        mResourceManager = &rm::getManager();
         scanPIDList();
     } catch (const rm::RMError& e) {
         LOG_WARN("[C3DProcessor] Resource manager init failed: " << e.what());

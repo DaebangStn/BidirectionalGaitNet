@@ -1,6 +1,7 @@
 #include "MotionEditorApp.h"
 #include "DARTHelper.h"
 #include "Log.h"
+#include <rm/global.hpp>
 #include <cstring>
 #include <algorithm>
 #include <fstream>
@@ -61,9 +62,9 @@ MotionEditorApp::MotionEditorApp(const std::string& configPath)
     // Initialize ImGui
     GUI::InitImGui(mWindow, false);
 
-    // Initialize Resource Manager for PID-based access
+    // Initialize Resource Manager for PID-based access (use singleton)
     try {
-        mResourceManager = std::make_unique<rm::ResourceManager>(mConfigPath);
+        mResourceManager = &rm::getManager();
         scanPIDList();
     } catch (const rm::RMError& e) {
         LOG_WARN("[MotionEditor] Resource manager init failed: " << e.what());

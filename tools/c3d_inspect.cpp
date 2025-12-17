@@ -7,6 +7,7 @@
 #include <ncurses.h>
 #include <ezc3d/ezc3d_all.h>
 #include "rm/rm.hpp"
+#include <rm/global.hpp>
 
 // UI State
 enum Stage { PID_SELECT, PREPOST_SELECT, FILE_SELECT, INSPECT_VIEW };
@@ -445,7 +446,7 @@ void printUsage(const char* progName) {
 }
 
 int main(int argc, char* argv[]) {
-    rm::ResourceManager mgr("data/rm_config.yaml");
+    auto& mgr = rm::getManager();
 
     if (argc < 2) {
         // Interactive mode

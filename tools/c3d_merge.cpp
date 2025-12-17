@@ -5,6 +5,7 @@
 #include <string>
 #include <ezc3d/ezc3d_all.h>
 #include "rm/rm.hpp"
+#include <rm/global.hpp>
 
 namespace fs = std::filesystem;
 
@@ -106,7 +107,7 @@ void processDirectory(rm::ResourceManager& mgr, const std::string& pid, const st
 }
 
 int main(int argc, char* argv[]) {
-    rm::ResourceManager mgr("data/rm_config.yaml");
+    auto& mgr = rm::getManager();
 
     if (argc > 1 && std::string(argv[1]) == "--all") {
         auto pids = mgr.list("@pid:");

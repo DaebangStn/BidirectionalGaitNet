@@ -130,8 +130,8 @@ private:
     int mSelectedMotion = -1;
     std::string mDirectorySearchPath;
 
-    // Resource Manager for PID-based access
-    std::unique_ptr<rm::ResourceManager> mResourceManager;
+    // Resource Manager for PID-based access (singleton reference)
+    rm::ResourceManager* mResourceManager = nullptr;
 
     // PID browser state
     std::vector<std::string> mPIDList;          // List of available PIDs

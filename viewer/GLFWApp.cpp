@@ -1,6 +1,7 @@
 #include "GLFWApp.h"
 #include "PlaybackUtils.h"
 #include "rm/rm.hpp"
+#include <rm/global.hpp>
 #include "stb_image.h"
 #include "stb_image_write.h"
 #include <filesystem>
@@ -444,9 +445,9 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Scan motion files (HDF only - C3D moved to c3d_processor)
     scanMotionFiles();
 
-    // Initialize Resource Manager for PID-based access
+    // Initialize Resource Manager for PID-based access (use singleton)
     try {
-        mResourceManager = std::make_unique<rm::ResourceManager>("data/rm_config.yaml");
+        mResourceManager = &rm::getManager();
         scanPIDList();
     } catch (const rm::RMError& e) {
         LOG_WARN("[GLFWApp] Resource manager init failed: " << e.what());
