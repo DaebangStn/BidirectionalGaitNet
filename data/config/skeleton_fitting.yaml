@@ -171,7 +171,7 @@ skeleton_fitting:
   # Plantar correction during foot lock phases
   plantar_correction:
     enabled: true
-    velocity_threshold: 0.002  # m/frame threshold for lock detection (5mm)
+    velocity_threshold: 0.003  # m/frame threshold for lock detection (5mm)
     min_lock_frames: 10         # minimum consecutive frames to count as lock phase
     blend_frames: 6            # frames for smooth transition at phase boundaries
 

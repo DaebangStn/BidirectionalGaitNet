@@ -120,7 +120,7 @@ public:
 
     // UI
     void drawLeftPanel();  // Left panel - force controls
-    void drawVisualizationPanel();  // Right panel - plots and data
+    void drawRightPanel();  // Right panel - plots and data
     void drawSurgeryPanel();  // Surgery panel - toggleable with G key
 
     // Control Panel Sections

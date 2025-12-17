@@ -201,10 +201,12 @@ private:
 
     void drawSimFrame();
     void drawUIFrame();
-    void drawSimControlPanel();
-    void drawKinematicsControlPanel();
-    void drawVisualizationPanel();
-    void drawTimingPane();
+    void drawLeftPanel();
+    void drawSimControlPanelContent();
+    void drawKinematicsControlPanelContent();
+    void drawTimingPaneContent();
+    void drawRenderingContent();
+    void drawRightPanel();
     void drawTitlePanel();
     void drawResizablePlotPane();
     void drawCameraStatusSection();
@@ -495,7 +497,6 @@ private:
     double mRealDeltaTimeAvg;        // Moving average of real frame delta time
     bool mIsPlaybackTooFast;         // Warning: playback faster than simulation can handle
     bool mProgressForward = false;   // Whether character progresses forward with cycle distance
-    bool mShowTimingPane;            // Toggle for timing information pane
     bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
     bool mShowTitlePanel;            // Toggle for title panel (Ctrl+T)
 

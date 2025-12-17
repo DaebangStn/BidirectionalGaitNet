@@ -955,9 +955,8 @@ void PhysicalExam::render() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-
     drawLeftPanel();
-    drawVisualizationPanel();  // Right panel
+    drawRightPanel();
     
     if (mShowSurgeryPanel) drawSurgeryPanel();
     showScriptPreview();  // Show script preview popup if active
@@ -1089,7 +1088,7 @@ void PhysicalExam::drawLeftPanel() {
     ImGui::End();
 }
 
-void PhysicalExam::drawVisualizationPanel() {
+void PhysicalExam::drawRightPanel() {
     // Right panel - matches GLFWApp layout
     ImGui::SetNextWindowSize(ImVec2(400, mHeight), ImGuiCond_Once);
     ImGui::Begin("Visualization & Data", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);

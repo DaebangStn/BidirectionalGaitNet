@@ -164,9 +164,6 @@ private:
     RenderMode mRenderMode = RenderMode::Wireframe;
     GroundMode mGroundMode = GroundMode::Wireframe;
 
-    // Rendering panel
-    bool mShowRenderingPanel = false;
-
     // Free character rendering
     bool mRenderFreeCharacter = true;
 
@@ -271,8 +268,7 @@ private:
     void drawMarkerFittingSection();
     void drawSkeletonScaleSection();
     void drawSkeletonExportSection();
-    void drawVisualizationPanel();
-    void drawRenderingPanel();
+    void drawRightPanel();
     void drawViewTabContent();
     void drawMarkerDiffPlot();
     void drawMarkerCorrespondenceTable();

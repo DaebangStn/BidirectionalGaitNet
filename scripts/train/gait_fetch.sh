@@ -25,17 +25,11 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # 1. Wait for lock to be released (another job may be using cache)
-MAX_WAIT=300  # 5 minutes max wait
 WAITED=0
 while [ -f "$LOCK_FILE" ]; do
-    echo "Cache locked, waiting... (${WAITED}s / ${MAX_WAIT}s)"
+    echo "Cache locked, waiting... (${WAITED}s)"
     sleep 5
     WAITED=$((WAITED + 5))
-    if [ $WAITED -ge $MAX_WAIT ]; then
-        echo "ERROR: Lock timeout. Another job may be stuck."
-        echo "To force: rm $LOCK_FILE"
-        exit 1
-    fi
 done
 
 # 2. Clear cache

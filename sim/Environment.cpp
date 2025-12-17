@@ -1995,8 +1995,11 @@ void Environment::reset(double phase)
         mCharacter->getSkeleton()->getRootJoint()->setVelocities(vel);
     }
     
-    // Height / Pose Optimization (always strict)
     mCharacter->heightCalibration(mWorld);
+
+    // Set termination Y limit to 60% of initial character height
+    double initialHeight = mCharacter->getSkeleton()->getCOM()[1];
+    mLimitY = 0.6 * initialHeight;
 
     // Pose In ROM
     Eigen::VectorXd cur_pos = mCharacter->getSkeleton()->getPositions();

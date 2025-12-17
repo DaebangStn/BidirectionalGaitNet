@@ -228,8 +228,7 @@ void C3DProcessorApp::startLoop()
 
         // ImGui panels
         drawLeftPanel();
-        drawVisualizationPanel();
-        drawRenderingPanel();
+        drawRightPanel();
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -1060,14 +1059,7 @@ void C3DProcessorApp::drawMarkerFittingSection()
         }
 
         ImGui::Separator();
-        if (ImGui::Button("Clear Motion & Zero Pose")) {
-            clearMotionAndZeroPose();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset Skeleton")) {
-            if (mFreeCharacter) mFreeCharacter->resetSkeletonToDefault();
-            if (mMotionCharacter) mMotionCharacter->resetSkeletonToDefault();
-        }
+        if (ImGui::Button("Clear Motion & Zero Pose")) clearMotionAndZeroPose();
     }
 }
 
@@ -1463,7 +1455,7 @@ void C3DProcessorApp::exportMotionToHDF5()
     }
 }
 
-void C3DProcessorApp::drawVisualizationPanel()
+void C3DProcessorApp::drawRightPanel()
 {
     ImGui::SetNextWindowSize(ImVec2(500, mHeight), ImGuiCond_Once);
     ImGui::Begin("Visualization", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
@@ -1504,22 +1496,6 @@ void C3DProcessorApp::drawVisualizationPanel()
     drawJointAngleSection();
 
     drawJointOffsetSection();
-
-    ImGui::End();
-}
-
-void C3DProcessorApp::drawRenderingPanel()
-{
-    if (!mShowRenderingPanel) return;
-
-    ImGui::SetNextWindowSize(ImVec2(350, 500), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Rendering", &mShowRenderingPanel)) {
-        ImGui::End();
-        return;
-    }
-
-    drawViewTabContent();
 
     ImGui::End();
 }
@@ -2688,12 +2664,7 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                 }
                 break;
             case GLFW_KEY_R:
-                if (mods & GLFW_MOD_CONTROL) {
-                    // Ctrl+R: Toggle Rendering panel
-                    mShowRenderingPanel = !mShowRenderingPanel;
-                } else {
-                    reset();
-                }
+                reset();
                 break;
             case GLFW_KEY_1:
             case GLFW_KEY_KP_1:

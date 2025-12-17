@@ -72,7 +72,6 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mSimStepDurationAvg = -1.0;
     mRealDeltaTimeAvg = 0.0;
     mIsPlaybackTooFast = false;
-    mShowTimingPane = false;
     mShowResizablePlotPane = false;
     mShowTitlePanel = false;
     mResetPhase = -1.0;  // Default to randomized reset
@@ -1410,12 +1409,8 @@ void GLFWApp::drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &colo
     }
 }
 
-void GLFWApp::drawKinematicsControlPanel()
+void GLFWApp::drawKinematicsControlPanelContent()
 {
-    ImGui::SetNextWindowSize(ImVec2(400, (mHeight - 80)), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(ImVec2(mControlPanelWidth + 10, 10), ImGuiCond_Once);
-    ImGui::Begin("Kinematics Control");
-
     // // FGN
     // ImGui::Checkbox("Draw FGN Result\t", &mDrawFlags.fgnSkeleton);
     // if (ImGui::CollapsingHeader("FGN"))
@@ -1761,16 +1756,15 @@ void GLFWApp::drawKinematicsControlPanel()
     //             idx++;
     //         }
     //     }
-    ImGui::End();
     // if(mRenderEnv && mMotionCharacter)
         // mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
 }
 
-void GLFWApp::drawVisualizationPanel()
+void GLFWApp::drawRightPanel()
 {   
-    ImGui::SetNextWindowPos(ImVec2(mWidth - mPlotPanelWidth - 10, 10), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight - 80), ImGuiCond_Appearing);
-    ImGui::Begin("Visualization");
+    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight), ImGuiCond_Once);
+    ImGui::Begin("Visualization", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     // Plot X-axis range control (available without mRenderEnv)
     if (ImGui::Button("HS")) mXmin = getHeelStrikeTime();
@@ -3205,19 +3199,13 @@ void GLFWApp::alignCameraToPlane(int plane) {
     LOG_INFO("[Camera] Aligned to " << planeName << " plane");
 }
 
-void GLFWApp::drawSimControlPanel()
+void GLFWApp::drawSimControlPanelContent()
 {
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
     if (!mRenderEnv) {
-        ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, 60), ImGuiCond_Always);
-        ImGui::Begin("Sim Control##1", nullptr, ImGuiWindowFlags_NoCollapse);
         if (ImGui::Button("Load Environment")) initEnv(mCachedMetadata);
-        ImGui::End();
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight - 80), ImGuiCond_Appearing);
-    ImGui::Begin("Sim Control##2");
-    
+
     if (ImGui::Button("Unload Environment"))
     {
         delete mRenderEnv;
@@ -3225,7 +3213,6 @@ void GLFWApp::drawSimControlPanel()
     }
 
     if (!mRenderEnv) {
-        ImGui::End();
         return;
     }
 
@@ -3636,190 +3623,6 @@ void GLFWApp::drawSimControlPanel()
         }
     }
 
-    // Rendering
-    if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        if (ImGui::Button("Load Ref Motion..."))
-        {
-            IGFD::FileDialogConfig config;
-            config.path = "data/motion";
-            ImGuiFileDialog::Instance()->OpenDialog("ChooseRefMotionDlgKey", "Choose Reference Motion File",
-                ".*", config);
-        }
-        // File dialog display and handling
-        if (ImGuiFileDialog::Instance()->Display("ChooseRefMotionDlgKey"))
-        {
-            if (ImGuiFileDialog::Instance()->IsOk())
-            {
-                std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
-                std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
-                std::string fileName = ImGuiFileDialog::Instance()->GetCurrentFileName();
-
-                // Load the selected motion file
-                try {
-                    std::cout << "[RefMotion] Loading reference motion from: " << filePathName << std::endl;
-
-                    // Determine file type and create appropriate Motion object
-                    Motion* newMotion = nullptr;
-
-                    if (filePathName.find(".h5") != std::string::npos ||
-                             filePathName.find(".hdf5") != std::string::npos) {
-                        // Load HDF5 file (single-cycle extracted format)
-                        HDF* hdf = new HDF(filePathName);
-
-                        // Validate DOF match between skeleton and motion
-                        int skelDof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
-                        int motionDof = hdf->getValuesPerFrame();
-                        if (skelDof != motionDof) {
-                            LOG_WARN("[RefMotion] DOF mismatch: skeleton has " << skelDof << " DOFs, motion has " << motionDof << " DOFs. Skipping load.");
-                            delete hdf;
-                        } else {
-                            hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
-                            newMotion = hdf;
-                            LOG_INFO("[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames");
-                        }
-                    }
-                    else if (filePathName.find(".c3d") != std::string::npos) {
-                        // C3D processing moved to c3d_processor executable
-                        std::cerr << "[RefMotion] C3D files not supported. Use c3d_processor executable." << std::endl;
-                    }
-                    else {
-                        std::cerr << "[RefMotion] Unsupported file format: " << filePathName << std::endl;
-                        std::cerr << "[RefMotion] Supported formats: .h5, .hdf5 (HDF)" << std::endl;
-                    }
-
-                    // Update environment with new motion
-                    if (newMotion) {
-                        mRenderEnv->setMotion(newMotion);
-                        std::cout << "[RefMotion] Successfully updated reference motion" << std::endl;
-                    }
-
-                } catch (const std::exception& e) {
-                    std::cerr << "[RefMotion] Error loading motion file: " << e.what() << std::endl;
-                }
-            }
-            ImGuiFileDialog::Instance()->Close();
-        }
-
-        ImGui::Checkbox("Draw PD Target Motion", &mDrawFlags.pdTarget);
-        ImGui::Checkbox("Draw Ref Motion", &mDrawFlags.refMotion);
-        ImGui::Checkbox("Draw Joint Sphere", &mDrawFlags.jointSphere);
-        ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
-        ImGui::Checkbox("Draw Foot Step", &mDrawFlags.footStep);
-        ImGui::Checkbox("Draw EOE", &mDrawFlags.eoe);
-        ImGui::Checkbox("Draw Collision", &mDrawFlags.collision);
-
-        // Skeleton Render Mode
-        const char* renderModes[] = {"Solid", "Wireframe", "Mesh"};
-        int currentMode = static_cast<int>(mDrawFlags.skeletonRenderMode);
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::Combo("Render Mode", &currentMode, renderModes, IM_ARRAYSIZE(renderModes)))
-        {
-            mDrawFlags.skeletonRenderMode = static_cast<SkeletonRenderMode>(currentMode);
-        }
-
-        ImGui::Separator();
-        // Muscle Filtering and Selection
-        ImGui::Indent();
-        if (ImGui::CollapsingHeader("Muscle##Rendering"))
-        {
-            ImGui::SetNextItemWidth(125);
-            ImGui::SliderFloat("Resolution", &mMuscleResolution, 0.0, 10.0);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(50); 
-            ImGui::InputFloat("##MuscleResInput", &mMuscleResolution, 0.0f, 0.0f, "%.2f");
-            ImGui::SetNextItemWidth(125);
-            ImGui::SliderFloat("Transparency", &mMuscleTransparency, 0.1, 1.0);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(50);
-            ImGui::InputFloat("##MuscleTransInput", &mMuscleTransparency, 0.0f, 0.0f, "%.2f");
-
-            ImGui::Separator();
-
-            // Get all muscles
-            auto allMuscles = mRenderEnv->getCharacter()->getMuscles();
-
-            // Initialize selection states if needed
-            if (mMuscleSelectionStates.size() != allMuscles.size())
-            {
-                mMuscleSelectionStates.resize(allMuscles.size(), true);
-            }
-
-            // Count selected muscles
-            int selectedCount = 0;
-            for (bool selected : mMuscleSelectionStates)
-            {
-                if (selected) selectedCount++;
-            }
-
-            ImGui::Text("Selected: %d / %zu", selectedCount, allMuscles.size());
-
-            // Text filter
-            ImGui::InputText("Filter", mMuscleFilterText, IM_ARRAYSIZE(mMuscleFilterText));
-
-            // Filter muscles by name
-            std::vector<int> filteredIndices;
-            std::string filterStr(mMuscleFilterText);
-            std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
-
-            for (int i = 0; i < allMuscles.size(); i++)
-            {
-                std::string muscleName = allMuscles[i]->name;
-                std::transform(muscleName.begin(), muscleName.end(), muscleName.begin(), ::tolower);
-
-                if (filterStr.empty() || muscleName.find(filterStr) != std::string::npos)
-                {
-                    filteredIndices.push_back(i);
-                }
-            }
-
-            // Select All / Deselect All buttons for filtered muscles
-            if (ImGui::Button("Select"))
-            {
-                for (int idx : filteredIndices)
-                {
-                    mMuscleSelectionStates[idx] = true;
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Deselect"))
-            {
-                for (int idx : filteredIndices)
-                {
-                    mMuscleSelectionStates[idx] = false;
-                }
-            }
-
-            ImGui::Text("Filtered Muscles: %zu", filteredIndices.size());
-
-            // Display filtered muscles with checkboxes
-            ImGui::BeginChild("MuscleList", ImVec2(0, 300), true);
-            for (int idx : filteredIndices)
-            {
-                bool selected = mMuscleSelectionStates[idx];
-                if (ImGui::Checkbox(allMuscles[idx]->name.c_str(), &selected))
-                {
-                    mMuscleSelectionStates[idx] = selected;
-                }
-            }
-            ImGui::EndChild();
-        }
-
-        if (mRenderEnv->getUseMuscle()) mRenderEnv->getCharacter()->getMuscleTuple(false);
-
-        
-        // If no muscles are manually selected, show none (empty list)
-        // The rendering code will use mSelectedMuscles if it has content
-        
-        ImGui::RadioButton("PassiveForce", &mMuscleRenderTypeInt, 0);
-        ImGui::RadioButton("ContractileForce", &mMuscleRenderTypeInt, 1);
-        ImGui::RadioButton("ActivatonLevel", &mMuscleRenderTypeInt, 2);
-        ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
-        ImGui::RadioButton("Weakness", &mMuscleRenderTypeInt, 4);
-        mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
-        ImGui::Unindent();
-    }
-
     // Noise Injection Control Panel
     drawNoiseControlPanel();
 
@@ -3844,8 +3647,6 @@ void GLFWApp::drawSimControlPanel()
             ImGui::NewLine();
         }
     }
-
-    ImGui::End();
 }
 
 void GLFWApp::updateUnifiedKeys()
@@ -4094,15 +3895,226 @@ void GLFWApp::drawResizablePlotPane()
     ImGui::End();
 }
 
+void GLFWApp::drawRenderingContent()
+{
+    if (!mRenderEnv) {
+        ImGui::TextDisabled("No environment loaded");
+        return;
+    }
+
+    if (ImGui::Button("Load Ref Motion..."))
+    {
+        IGFD::FileDialogConfig config;
+        config.path = "data/motion";
+        ImGuiFileDialog::Instance()->OpenDialog("ChooseRefMotionDlgKey", "Choose Reference Motion File",
+            ".*", config);
+    }
+    // File dialog display and handling
+    if (ImGuiFileDialog::Instance()->Display("ChooseRefMotionDlgKey"))
+    {
+        if (ImGuiFileDialog::Instance()->IsOk())
+        {
+            std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
+            std::string filePath = ImGuiFileDialog::Instance()->GetCurrentPath();
+            std::string fileName = ImGuiFileDialog::Instance()->GetCurrentFileName();
+
+            // Load the selected motion file
+            try {
+                std::cout << "[RefMotion] Loading reference motion from: " << filePathName << std::endl;
+
+                // Determine file type and create appropriate Motion object
+                Motion* newMotion = nullptr;
+
+                if (filePathName.find(".h5") != std::string::npos ||
+                         filePathName.find(".hdf5") != std::string::npos) {
+                    // Load HDF5 file (single-cycle extracted format)
+                    HDF* hdf = new HDF(filePathName);
+
+                    // Validate DOF match between skeleton and motion
+                    int skelDof = mRenderEnv->getCharacter()->getSkeleton()->getNumDofs();
+                    int motionDof = hdf->getValuesPerFrame();
+                    if (skelDof != motionDof) {
+                        LOG_WARN("[RefMotion] DOF mismatch: skeleton has " << skelDof << " DOFs, motion has " << motionDof << " DOFs. Skipping load.");
+                        delete hdf;
+                    } else {
+                        hdf->setRefMotion(mRenderEnv->getCharacter(), mRenderEnv->getWorld());
+                        newMotion = hdf;
+                        LOG_INFO("[RefMotion] Loaded HDF file with " << hdf->getNumFrames() << " frames");
+                    }
+                }
+                else if (filePathName.find(".c3d") != std::string::npos) {
+                    // C3D processing moved to c3d_processor executable
+                    std::cerr << "[RefMotion] C3D files not supported. Use c3d_processor executable." << std::endl;
+                }
+                else {
+                    std::cerr << "[RefMotion] Unsupported file format: " << filePathName << std::endl;
+                    std::cerr << "[RefMotion] Supported formats: .h5, .hdf5 (HDF)" << std::endl;
+                }
+
+                // Update environment with new motion
+                if (newMotion) {
+                    mRenderEnv->setMotion(newMotion);
+                    std::cout << "[RefMotion] Successfully updated reference motion" << std::endl;
+                }
+
+            } catch (const std::exception& e) {
+                std::cerr << "[RefMotion] Error loading motion file: " << e.what() << std::endl;
+            }
+        }
+        ImGuiFileDialog::Instance()->Close();
+    }
+
+    ImGui::Checkbox("Draw PD Target Motion", &mDrawFlags.pdTarget);
+    ImGui::Checkbox("Draw Ref Motion", &mDrawFlags.refMotion);
+    ImGui::Checkbox("Draw Joint Sphere", &mDrawFlags.jointSphere);
+    ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
+    ImGui::Checkbox("Draw Foot Step", &mDrawFlags.footStep);
+    ImGui::Checkbox("Draw EOE", &mDrawFlags.eoe);
+    ImGui::Checkbox("Draw Collision", &mDrawFlags.collision);
+
+    // Skeleton Render Mode
+    const char* renderModes[] = {"Solid", "Wireframe", "Mesh"};
+    int currentMode = static_cast<int>(mDrawFlags.skeletonRenderMode);
+    ImGui::SetNextItemWidth(100);
+    if (ImGui::Combo("Render Mode", &currentMode, renderModes, IM_ARRAYSIZE(renderModes)))
+    {
+        mDrawFlags.skeletonRenderMode = static_cast<SkeletonRenderMode>(currentMode);
+    }
+
+    ImGui::Separator();
+    // Muscle Filtering and Selection
+    if (ImGui::CollapsingHeader("Muscle##Rendering"))
+    {
+        // Get all muscles
+        auto allMuscles = mRenderEnv->getCharacter()->getMuscles();
+
+        // Initialize selection states if needed
+        if (mMuscleSelectionStates.size() != allMuscles.size())
+        {
+            mMuscleSelectionStates.resize(allMuscles.size(), true);
+        }
+
+        // Count selected muscles
+        int selectedCount = 0;
+        for (bool selected : mMuscleSelectionStates)
+        {
+            if (selected) selectedCount++;
+        }
+
+        ImGui::Text("Selected: %d / %zu", selectedCount, allMuscles.size());
+
+        // Text filter
+        ImGui::InputText("Filter", mMuscleFilterText, IM_ARRAYSIZE(mMuscleFilterText));
+
+        // Filter muscles by name
+        std::vector<int> filteredIndices;
+        std::string filterStr(mMuscleFilterText);
+        std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
+
+        for (int i = 0; i < allMuscles.size(); i++)
+        {
+            std::string muscleName = allMuscles[i]->name;
+            std::transform(muscleName.begin(), muscleName.end(), muscleName.begin(), ::tolower);
+
+            if (filterStr.empty() || muscleName.find(filterStr) != std::string::npos)
+            {
+                filteredIndices.push_back(i);
+            }
+        }
+
+        // Select All / Deselect All buttons for filtered muscles
+        if (ImGui::Button("Select"))
+        {
+            for (int idx : filteredIndices)
+            {
+                mMuscleSelectionStates[idx] = true;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Deselect"))
+        {
+            for (int idx : filteredIndices)
+            {
+                mMuscleSelectionStates[idx] = false;
+            }
+        }
+
+        ImGui::Text("Filtered Muscles: %zu", filteredIndices.size());
+
+        // Display filtered muscles with checkboxes
+        ImGui::BeginChild("MuscleList", ImVec2(0, 300), true);
+        for (int idx : filteredIndices)
+        {
+            bool selected = mMuscleSelectionStates[idx];
+            if (ImGui::Checkbox(allMuscles[idx]->name.c_str(), &selected))
+            {
+                mMuscleSelectionStates[idx] = selected;
+            }
+        }
+        ImGui::EndChild();
+    }
+
+    if (mRenderEnv->getUseMuscle()) mRenderEnv->getCharacter()->getMuscleTuple(false);
+
+    // If no muscles are manually selected, show none (empty list)
+    // The rendering code will use mSelectedMuscles if it has content
+    ImGui::SetNextItemWidth(125);
+    ImGui::SliderFloat("Resolution", &mMuscleResolution, 0.0, 10.0);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputFloat("##MuscleResInput", &mMuscleResolution, 0.0f, 0.0f, "%.2f");
+    ImGui::SetNextItemWidth(125);
+    ImGui::SliderFloat("Transparency", &mMuscleTransparency, 0.1, 1.0);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputFloat("##MuscleTransInput", &mMuscleTransparency, 0.0f, 0.0f, "%.2f");
+
+    ImGui::Separator();
+
+    ImGui::RadioButton("PassiveForce", &mMuscleRenderTypeInt, 0);
+    ImGui::RadioButton("ContractileForce", &mMuscleRenderTypeInt, 1);
+    ImGui::RadioButton("ActivatonLevel", &mMuscleRenderTypeInt, 2);
+    ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
+    ImGui::RadioButton("Weakness", &mMuscleRenderTypeInt, 4);
+    mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
+}
+
+void GLFWApp::drawLeftPanel()
+{
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+    ImGui::Begin("Control##LeftPanel", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
+    if (ImGui::BeginTabBar("LeftPanelTabs")) {
+        if (ImGui::BeginTabItem("Sim")) {
+            drawSimControlPanelContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Kinematics")) {
+            drawKinematicsControlPanelContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Rendering")) {
+            drawRenderingContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Timing")) {
+            drawTimingPaneContent();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    ImGui::End();
+}
+
 void GLFWApp::drawUIFrame()
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    drawSimControlPanel();
-    drawVisualizationPanel();
-    drawKinematicsControlPanel();
-    drawTimingPane();
+    drawLeftPanel();
+    drawRightPanel();
     drawTitlePanel();
     drawResizablePlotPane();
 
@@ -4112,21 +4124,8 @@ void GLFWApp::drawUIFrame()
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-void GLFWApp::drawTimingPane()
+void GLFWApp::drawTimingPaneContent()
 {
-    if (!mShowTimingPane) return;
-
-    // Create a compact floating window
-    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
-    if (!ImGui::Begin("Timing Info (T to toggle)", &mShowTimingPane, window_flags))
-    {
-        ImGui::End();
-        return;
-    }
-
     // Use fixed-width font for better alignment
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
 
@@ -4293,7 +4292,6 @@ void GLFWApp::drawTimingPane()
     }
 
     ImGui::PopFont();
-    ImGui::End();
 }
 
 void GLFWApp::drawTitlePanel()
@@ -5068,10 +5066,7 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             mShowResizablePlotPane = !mShowResizablePlotPane;
             break;
         case GLFW_KEY_T:
-            if (mods == GLFW_MOD_CONTROL)
-                mShowTitlePanel = !mShowTitlePanel;
-            else
-                mShowTimingPane = !mShowTimingPane;
+            mShowTitlePanel = !mShowTitlePanel;
             break;
         // Camera Setting
         case GLFW_KEY_C:
@@ -6015,7 +6010,7 @@ void GLFWApp::scanPIDList()
                 mPIDGMFCS[i] = h.as_string();
             } catch (...) { mPIDGMFCS[i] = ""; }
         }
-        LOG_INFO("[GLFWApp] Found " << mPIDList.size() << " PIDs");
+        LOG_VERBOSE("[GLFWApp] Found " << mPIDList.size() << " PIDs");
     } catch (const rm::RMError& e) {
         LOG_WARN("[GLFWApp] Failed to list PIDs: " << e.what());
     }
