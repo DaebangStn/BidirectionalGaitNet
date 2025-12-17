@@ -58,7 +58,7 @@ def physical_exam():
     """
     Run the physical_exam binary with config path
     Usage: uv run physical_exam [config_path]
-    Example: uv run physical_exam data/config/physical_exam_example2.yaml
+    Default: @data/config/base.yaml
     """
     project_root = get_project_root()
     binary_path = project_root / "build/release/surgery/physical_exam"
@@ -68,18 +68,10 @@ def physical_exam():
         print("Please build the project first with: ninja -C build/release", file=sys.stderr)
         sys.exit(1)
 
-    # Get config path from arguments
-    if len(sys.argv) < 2:
-        print("Error: Config path required", file=sys.stderr)
-        print("Usage: uv run physical_exam <config_path>", file=sys.stderr)
-        print("Example: uv run physical_exam data/config/physical_exam_example2.yaml", file=sys.stderr)
-        sys.exit(1)
-
-    config_path = sys.argv[1]
-
     # Run the binary with micromamba environment (required for pybind11 dependencies)
+    # Pass through all arguments - binary handles defaults via boost::program_options
     micromamba = get_micromamba_path()
-    cmd = [micromamba, "run", "-n", "bidir", str(binary_path), config_path]
+    cmd = [micromamba, "run", "-n", "bidir", str(binary_path)] + sys.argv[1:]
     try:
         subprocess.run(cmd, cwd=project_root, check=True)
     except subprocess.CalledProcessError as e:

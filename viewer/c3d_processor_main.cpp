@@ -10,7 +10,7 @@ int main(int argc, char** argv)
     po::options_description desc("C3D Processor - Standalone C3D motion capture processing application\n\nOptions");
     desc.add_options()
         ("help,h", "Show this help message")
-        ("skeleton,s", po::value<std::string>()->default_value("@data/skeleton/base_v2.xml"),
+        ("skeleton,s", po::value<std::string>()->default_value("@data/skeleton/base.yaml"),
             "Skeleton XML path (supports @data/ URI scheme)")
         ("marker,m", po::value<std::string>()->default_value("@data/marker/static.xml"),
             "Marker configuration XML/YAML path (supports @data/ URI scheme)")
@@ -28,7 +28,7 @@ int main(int argc, char** argv)
                       << "  c3d_processor                    # Uses default skeleton, marker, and fitting config\n"
                       << "  c3d_processor -m data/marker/static.xml\n"
                       << "  c3d_processor -c @data/config/skeleton_fitting.yaml\n"
-                      << "  c3d_processor -s @data/skeleton/base_v2.xml\n"
+                      << "  c3d_processor -s @data/skeleton/base.yaml\n"
                       << "\nControls:\n"
                       << "  Space         Play/Pause\n"
                       << "  R             Reset to frame 0\n"

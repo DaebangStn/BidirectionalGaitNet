@@ -62,17 +62,3 @@ environment:
       torque:
         coeff: 0.1
         separate: true
-
-  # Parameterization for training
-  parameters:
-    gait:
-      stride:
-        min: 0.75
-        max: 1.25
-        default: 1.0
-        sampling: "uniform"
-      cadence:
-        min: 0.75
-        max: 1.25
-        default: 1.0
-        sampling: "uniform"

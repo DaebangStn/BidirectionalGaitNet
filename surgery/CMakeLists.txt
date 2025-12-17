@@ -79,4 +79,5 @@ target_link_libraries(physical_exam
     sim
     dart-gui
     yaml-cpp
+    Boost::program_options
 )

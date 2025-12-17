@@ -800,33 +800,27 @@ void C3DProcessorApp::drawLeftPanel()
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::Begin("Control##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
-    // Motion List Section
-    drawMotionListSection();
-
-    ImGui::Separator();
-
-    // Clinical Data (PID) Section
-    drawClinicalDataSection();
-
-    ImGui::Separator();
-
-    // Playback Section
-    drawPlaybackSection();
-
-    ImGui::Separator();
-
-    // Marker Fitting Section
-    drawMarkerFittingSection();
-
-    ImGui::Separator();
-
-    // Skeleton Scale Section
-    drawSkeletonScaleSection();
-
-    ImGui::Separator();
-
-    // Skeleton Export Section
-    drawSkeletonExportSection();
+    if (ImGui::BeginTabBar("ControlTabs")) {
+        if (ImGui::BeginTabItem("Data")) {
+            drawMotionListSection();
+            ImGui::Separator();
+            drawClinicalDataSection();
+            ImGui::Separator();
+            drawMarkerFittingSection();
+            ImGui::Separator();
+            drawSkeletonScaleSection();
+            ImGui::Separator();
+            drawSkeletonExportSection();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("View")) {
+            drawPlaybackSection();
+            ImGui::Separator();
+            drawViewTabContent();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
 
     ImGui::End();
 }
@@ -1525,6 +1519,13 @@ void C3DProcessorApp::drawRenderingPanel()
         return;
     }
 
+    drawViewTabContent();
+
+    ImGui::End();
+}
+
+void C3DProcessorApp::drawViewTabContent()
+{
     // Render Mode section
     ImGui::Text("Render Mode (O):");
     int mode = static_cast<int>(mRenderMode);
@@ -1697,8 +1698,6 @@ void C3DProcessorApp::drawRenderingPanel()
         }
         ImGui::EndChild();
     }
-
-    ImGui::End();
 }
 
 void C3DProcessorApp::drawMarkerDiffPlot()

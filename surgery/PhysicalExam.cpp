@@ -94,7 +94,20 @@ PhysicalExam::PhysicalExam(int width, int height)
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
-    mShowSweepLegend = true;  // Show legend by default
+
+    mDefaultOpenPanels = {
+        "Loaded Files",
+        "Save Skeleton Config",
+        "Save Muscle Config",
+        "Edit Selected Anchor",
+        "Pose Presets",
+        "Render",
+        "Joint Angle Sweep",
+        "State",
+        "Sweep Muscle Plots",
+        "Muscle Selection",
+        "Muscle Information"
+    };
 
     // Initialize path buffers with simple default names (no path, no extension)
     strncpy(mRecordingPathBuffer, "recorded_surgery", sizeof(mRecordingPathBuffer) - 1);
@@ -162,6 +175,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     mSweepConfig.num_steps = 50;
     mSweepRunning = false;
     mSweepCurrentStep = 0;
+    mSelectedPlotJointIndex = 0;  // Will be set to sweep joint when sweep starts
 
     // Load render config from YAML (geometry section only, skip glfwapp)
     loadRenderConfig();
@@ -942,7 +956,7 @@ void PhysicalExam::render() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    drawLeftPanel();  // Left panel
+    drawLeftPanel();
     drawVisualizationPanel();  // Right panel
     
     if (mShowSurgeryPanel) drawSurgeryPanel();
@@ -1082,7 +1096,7 @@ void PhysicalExam::drawVisualizationPanel() {
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     // Loaded Files Section
-    if (ImGui::CollapsingHeader("Loaded Files", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Loaded Files")) {
         ImGui::Indent();
 
         if (!mSkeletonPath.empty()) {
@@ -1169,7 +1183,7 @@ void PhysicalExam::drawSurgeryPanel() {
     // ========================================================================
     
     // Recording Section
-    if (ImGui::CollapsingHeader("Load & Record Surgery Script")) {
+    if (collapsingHeaderWithControls("Load & Record Surgery Script")) {
         ImGui::Indent();
 
         // Directory prefix display
@@ -1265,49 +1279,49 @@ void PhysicalExam::drawSurgeryPanel() {
     // ========================================================================
         
     // 2. Distribute Passive Force
-    if (ImGui::CollapsingHeader("Distribute Passive Force")) {
+    if (collapsingHeaderWithControls("Distribute Passive Force")) {
         drawDistributePassiveForceSection();
     }
     ImGui::Spacing();
     
     // 3. Relax Passive Force (CollapsingHeader)
-    if (ImGui::CollapsingHeader("Relax Passive Force")) {
+    if (collapsingHeaderWithControls("Relax Passive Force")) {
         drawRelaxPassiveForceSection();
     }
     ImGui::Spacing();
     
     // 5. Anchor Point Manipulation (CollapsingHeader)
-    if (ImGui::CollapsingHeader("Anchor Point Manipulation")) {
+    if (collapsingHeaderWithControls("Anchor Point Manipulation")) {
         drawAnchorManipulationSection();
     }
     ImGui::Spacing();
     
     // 5. Rotate Joint Offset
-    if (ImGui::CollapsingHeader("Rotate Joint Offset")) {
+    if (collapsingHeaderWithControls("Rotate Joint Offset")) {
         drawRotateJointOffsetSection();
     }
     ImGui::Spacing();
 
     // 6. Rotate Anchor Points
-    if (ImGui::CollapsingHeader("Rotate Anchor Points")) {
+    if (collapsingHeaderWithControls("Rotate Anchor Points")) {
         drawRotateAnchorPointsSection();
     }
     ImGui::Spacing();
 
     // 7. FDO Combined Surgery
-    if (ImGui::CollapsingHeader("FDO Combined Surgery")) {
+    if (collapsingHeaderWithControls("FDO Combined Surgery")) {
         drawFDOCombinedSection();
     }
 
     ImGui::Spacing();
     // 9. Save Skeleton Config (CollapsingHeader)
-    if (ImGui::CollapsingHeader("Save Skeleton Config", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Save Skeleton Config")) {
         drawSaveSkeletonConfigSection();
     }
     ImGui::Spacing();
 
     // 8. Save Muscle Config (CollapsingHeader)
-    if (ImGui::CollapsingHeader("Save Muscle Config", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Save Muscle Config")) {
         drawSaveMuscleConfigSection();
     }
     ImGui::Spacing();
@@ -2142,7 +2156,7 @@ void PhysicalExam::drawAnchorManipulationSection() {
     // ========================================================================
     // ANCHOR EDITING SECTION
     // ========================================================================
-    if (ImGui::CollapsingHeader("Edit Selected Anchor", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Edit Selected Anchor")) {
         ImGui::Indent();
         
         if (!mAnchorCandidateMuscle.empty() && mSelectedCandidateAnchorIndex >= 0) {
@@ -3121,6 +3135,12 @@ void PhysicalExam::drawSimFrame() {
     drawForceArrow();
     drawConfinementForces();
     drawPostureForces();
+
+    // Draw origin axis gizmo when camera is moving
+    if (mCameraMoving) {
+        Eigen::Vector3d center = -mTrans;
+        GUI::DrawOriginAxisGizmo(center);
+    }
 }
 
 void PhysicalExam::drawGround() {
@@ -3708,6 +3728,7 @@ void PhysicalExam::mouseMove(double xpos, double ypos) {
 void PhysicalExam::mousePress(int button, int action, int mods) {
     if (action == GLFW_PRESS) {
         mMouseDown = true;
+        mCameraMoving = true;
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             mRotate = true;
             mTrackball.startBall(mMouseX, mHeight - mMouseY);
@@ -3716,6 +3737,7 @@ void PhysicalExam::mousePress(int button, int action, int mods) {
         }
     } else if (action == GLFW_RELEASE) {
         mMouseDown = false;
+        mCameraMoving = false;
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             mRotate = false;
         } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
@@ -4402,7 +4424,7 @@ void PhysicalExam::drawGraphPanel() {
     }
 
     // Create a collapsing header for posture control graphs
-    if (ImGui::CollapsingHeader("Posture Control Forces")) {
+    if (collapsingHeaderWithControls("Posture Control Forces")) {
         for (const auto& target : mPostureTargets) {
             // Create sub-header for each target
             std::string header_name = target.bodyNodeName + " Forces";
@@ -4620,6 +4642,9 @@ void PhysicalExam::setupSweepMuscles() {
     auto joint = skel->getJoint(mSweepConfig.joint_index);
     auto muscles = mCharacter->getMuscles();
 
+    int root_dofs = skel->getRootJoint()->getNumDofs();
+    int total_dofs = skel->getNumDofs() - root_dofs;
+
     for (auto muscle : muscles) {
         auto related_joints = muscle->GetRelatedJoints();
         if (std::find(related_joints.begin(), related_joints.end(), joint)
@@ -4632,6 +4657,15 @@ void PhysicalExam::setupSweepMuscles() {
             mGraphData->register_key(muscleName + "_lm", 500);
             mGraphData->register_key(muscleName + "_lm_norm", 500);
 
+            // Register keys for per-muscle passive joint torques (for all DOFs this muscle affects)
+            for (size_t i = 0; i < muscle->related_dof_indices.size(); ++i) {
+                int global_dof = muscle->related_dof_indices[i];
+                int adjusted_dof = global_dof - root_dofs;
+                if (adjusted_dof >= 0 && adjusted_dof < total_dofs) {
+                    mGraphData->register_key(muscleName + "_jtp_" + std::to_string(adjusted_dof), 500);
+                }
+            }
+
             // Initialize visibility
             if (oldVisibility.find(muscleName) != oldVisibility.end()) {
                 // Preserve old state for previously tracked muscles
@@ -4642,6 +4676,9 @@ void PhysicalExam::setupSweepMuscles() {
             }
         }
     }
+
+    // Set default plot joint to sweep joint
+    mSelectedPlotJointIndex = mSweepConfig.joint_index;
 
     // Remove visibility entries for muscles no longer tracked
     std::map<std::string, bool> newVisibility;
@@ -4692,6 +4729,9 @@ void PhysicalExam::collectSweepData(double angle) {
     if (!mUseMuscle) return;  // Guard: no muscles loaded
 
     auto muscles = mCharacter->getMuscles();
+    auto skel = mCharacter->getSkeleton();
+    int root_dofs = skel->getRootJoint()->getNumDofs();
+
     for (auto muscle : muscles) {
         std::string name = muscle->GetName();
 
@@ -4706,6 +4746,18 @@ void PhysicalExam::collectSweepData(double angle) {
             mGraphData->push(name + "_fp", f_p);
             mGraphData->push(name + "_lm", l_m);
             mGraphData->push(name + "_lm_norm", l_m_norm);
+
+            // Per-muscle passive joint torques
+            Eigen::VectorXd JtP_reduced = muscle->GetRelatedJtp();
+            for (size_t i = 0; i < muscle->related_dof_indices.size(); ++i) {
+                int global_dof = muscle->related_dof_indices[i];
+                int adjusted_dof = global_dof - root_dofs;  // Skip root DOFs
+                if (adjusted_dof >= 0) {
+                    // Key format: {muscle_name}_jtp_{dof_index}
+                    std::string key = name + "_jtp_" + std::to_string(adjusted_dof);
+                    mGraphData->push(key, JtP_reduced[i]);
+                }
+            }
         }
     }
 }
@@ -4713,70 +4765,148 @@ void PhysicalExam::collectSweepData(double angle) {
 void PhysicalExam::renderMusclePlots() {
     if (mSweepAngles.empty()) return;
 
-    // Display options
-    ImGui::Checkbox("Show Legend", &mShowSweepLegend);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Toggle legend display in muscle plots");
-    }
+    static bool sShowSweepLegend = true;
+    static bool sShowPassivePlot = true;
+    static bool sShowLmNormPlot = true;
+    static bool sShowJtpPlot = true;
 
-    // Convert radian angles to degrees for x_data
+    ImGui::Checkbox("Show Legend", &sShowSweepLegend);
+    ImGui::SameLine();
+    ImGui::Checkbox("Passive", &sShowPassivePlot);
+    ImGui::SameLine();
+    ImGui::Checkbox("l_m_norm", &sShowLmNormPlot);
+    ImGui::SameLine();
+    ImGui::Checkbox("Jtp", &sShowJtpPlot);
+
     std::vector<double> x_data;
     x_data.reserve(mSweepAngles.size());
     for (double angle_rad : mSweepAngles) {
         x_data.push_back(angle_rad * 180.0 / M_PI);
     }
 
-    // Plot 1: Passive Forces vs Joint Angle
-    ImPlotFlags plot_flags = mShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
-    if (ImPlot::BeginPlot("Passive Forces vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-            mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
-        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
-        ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
-        
-        // Only plot visible muscles
-        for (const auto& muscle_name : mTrackedMuscles) {
-            // Check if muscle should be visible
-            auto vis_it = mMuscleVisibility.find(muscle_name);
-            if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                continue;  // Skip invisible muscles
-            }
+    ImPlotFlags plot_flags = sShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
 
-            auto fp_data = mGraphData->get(muscle_name + "_fp");
-            if (!fp_data.empty() && fp_data.size() == x_data.size()) {
-                ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
-                    fp_data.data(), fp_data.size());
+    if (sShowPassivePlot) {
+        if (ImPlot::BeginPlot("Passive Forces vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+                mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+            ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+            ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
+
+            for (const auto& muscle_name : mTrackedMuscles) {
+                auto vis_it = mMuscleVisibility.find(muscle_name);
+                if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                    continue;
+                }
+
+                auto fp_data = mGraphData->get(muscle_name + "_fp");
+                if (!fp_data.empty() && fp_data.size() == x_data.size()) {
+                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                        fp_data.data(), fp_data.size());
+                }
             }
+            ImPlot::EndPlot();
         }
-        ImPlot::EndPlot();
+        ImGui::Spacing();
     }
 
-    ImGui::Spacing();
+    if (sShowLmNormPlot) {
+        if (ImPlot::BeginPlot("Normalized Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+                mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+            ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+            ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
 
-    // Plot 2: lm_norm vs Joint Angle
-    if (ImPlot::BeginPlot("Normalized Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-        ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-            mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
-        ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
-        ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
+            for (const auto& muscle_name : mTrackedMuscles) {
+                auto vis_it = mMuscleVisibility.find(muscle_name);
+                if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                    continue;
+                }
 
-        // Only plot visible muscles
-        for (const auto& muscle_name : mTrackedMuscles) {
-            // Check if muscle should be visible
-            auto vis_it = mMuscleVisibility.find(muscle_name);
-            if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                continue;  // Skip invisible muscles
+                auto lm_norm_data = mGraphData->get(muscle_name + "_lm_norm");
+                if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
+                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                        lm_norm_data.data(), lm_norm_data.size());
+                }
             }
-
-            auto lm_norm_data = mGraphData->get(muscle_name + "_lm_norm");
-            if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
-                ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
-                    lm_norm_data.data(), lm_norm_data.size());
-            }
+            ImPlot::EndPlot();
         }
-        ImPlot::EndPlot();
+        ImGui::Spacing();
+    }
+
+    // Joint Torque Plot with joint selection
+    if (sShowJtpPlot && mCharacter) {
+        auto skel = mCharacter->getSkeleton();
+        int root_dofs = skel->getRootJoint()->getNumDofs();
+
+        // Joint selection listbox
+        ImGui::Text("Select Joint for Torque Plot:");
+        if (ImGui::BeginListBox("##JointSelect", ImVec2(-1, 100))) {
+            for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root
+                auto joint = skel->getJoint(i);
+                bool is_selected = (mSelectedPlotJointIndex == static_cast<int>(i));
+                if (ImGui::Selectable(joint->getName().c_str(), is_selected)) {
+                    mSelectedPlotJointIndex = static_cast<int>(i);
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        // Get selected joint info
+        auto selected_joint = skel->getJoint(mSelectedPlotJointIndex);
+        std::string joint_name = selected_joint->getName();
+        int joint_first_dof = selected_joint->getIndexInSkeleton(0) - root_dofs;
+
+        // Plot
+        std::string plot_title = "Passive Joint Torque: " + joint_name;
+        if (ImPlot::BeginPlot(plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+                mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+            ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+            ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
+
+            // Plot each muscle's contribution to this joint (magnitude across all DOFs)
+            for (const auto& muscle_name : mTrackedMuscles) {
+                auto vis_it = mMuscleVisibility.find(muscle_name);
+                if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
+
+                // Compute magnitude across all DOFs of the selected joint
+                int num_dofs = selected_joint->getNumDofs();
+                std::vector<double> magnitude_data;
+                bool has_data = false;
+
+                // Get data for first DOF to determine size
+                std::string first_key = muscle_name + "_jtp_" + std::to_string(joint_first_dof);
+                auto first_data = mGraphData->get(first_key);
+                if (!first_data.empty() && first_data.size() == x_data.size()) {
+                    has_data = true;
+                    magnitude_data.resize(first_data.size(), 0.0);
+
+                    // Sum squared values across all DOFs
+                    for (int d = 0; d < num_dofs; ++d) {
+                        int dof_idx = joint_first_dof + d;
+                        std::string key = muscle_name + "_jtp_" + std::to_string(dof_idx);
+                        auto jtp_data = mGraphData->get(key);
+                        if (!jtp_data.empty() && jtp_data.size() == x_data.size()) {
+                            for (size_t i = 0; i < jtp_data.size(); ++i) {
+                                magnitude_data[i] += jtp_data[i] * jtp_data[i];
+                            }
+                        }
+                    }
+
+                    // Take square root to get magnitude
+                    for (size_t i = 0; i < magnitude_data.size(); ++i) {
+                        magnitude_data[i] = std::sqrt(magnitude_data[i]);
+                    }
+                }
+
+                if (has_data) {
+                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                        magnitude_data.data(), magnitude_data.size());
+                }
+            }
+            ImPlot::EndPlot();
+        }
     }
 }
 
@@ -4795,7 +4925,7 @@ void PhysicalExam::clearSweepData() {
 // ============================================================================
 
 void PhysicalExam::drawPosePresetsSection() {
-    if (ImGui::CollapsingHeader("Pose Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Pose Presets")) {
         if (!mCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
@@ -4816,7 +4946,7 @@ void PhysicalExam::drawPosePresetsSection() {
 }
 
 void PhysicalExam::drawForceApplicationSection() {
-    if (ImGui::CollapsingHeader("Force Application")) {
+    if (collapsingHeaderWithControls("Force Application")) {
         if (!mCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
@@ -4892,7 +5022,7 @@ void PhysicalExam::drawForceApplicationSection() {
 }
 
 void PhysicalExam::drawPrintInfoSection() {
-    if (ImGui::CollapsingHeader("Print Info")) {
+    if (collapsingHeaderWithControls("Print Info")) {
         if (!mCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
@@ -4918,7 +5048,7 @@ void PhysicalExam::drawPrintInfoSection() {
 }
 
 void PhysicalExam::drawRecordingSection() {
-    if (ImGui::CollapsingHeader("Recording")) {
+    if (collapsingHeaderWithControls("Recording")) {
         ImGui::Text("Recorded Data Points: %zu", mRecordedData.size());
 
         if (ImGui::Button("Record Current State")) {
@@ -4953,7 +5083,7 @@ void PhysicalExam::drawRecordingSection() {
 }
 
 void PhysicalExam::drawRenderOptionsSection() {
-    if (ImGui::CollapsingHeader("Render", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Render")) {
         // Render Mode section
         ImGui::Text("Render Mode (O):");
         int mode = static_cast<int>(mRenderMode);
@@ -4986,7 +5116,7 @@ void PhysicalExam::drawRenderOptionsSection() {
 
         // Muscle Filtering and Selection
         ImGui::Indent();
-        if (ImGui::CollapsingHeader("Muscle##RenderOptions")) {
+        if (collapsingHeaderWithControls("Muscle##RenderOptions")) {
             if (!mCharacter) {
                 ImGui::TextDisabled("Load character first");
             } else {
@@ -5066,7 +5196,7 @@ void PhysicalExam::drawRenderOptionsSection() {
 }
 
 void PhysicalExam::drawJointControlSection() {
-    if (ImGui::CollapsingHeader("Joint Angle")) {
+    if (collapsingHeaderWithControls("Joint Angle")) {
         if (!mCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
@@ -5263,7 +5393,7 @@ void PhysicalExam::drawJointControlSection() {
 }
 
 void PhysicalExam::drawJointAngleSweepSection() {
-    if (ImGui::CollapsingHeader("Joint Angle Sweep", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Joint Angle Sweep")) {
         if (!mCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
@@ -5385,7 +5515,7 @@ void PhysicalExam::drawJointAngleSweepSection() {
 // ============================================================================
 
 void PhysicalExam::drawTrialManagementSection() {
-    if (ImGui::CollapsingHeader("Trial Management")) {
+    if (collapsingHeaderWithControls("Trial Management")) {
         if (mExamSettingLoaded) {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Exam: %s", mExamName.c_str());
             if (!mExamDescription.empty()) {
@@ -5455,7 +5585,7 @@ void PhysicalExam::drawTrialManagementSection() {
 }
 
 void PhysicalExam::drawCurrentStateSection() {
-    if (ImGui::CollapsingHeader("State", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("State")) {
         if (mCharacter) {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Character Loaded");
             ImGui::Text("Skeleton DOFs: %zu", mCharacter->getSkeleton()->getNumDofs());
@@ -5530,7 +5660,7 @@ void PhysicalExam::drawCurrentStateSection() {
 }
 
 void PhysicalExam::drawRecordedDataSection() {
-    if (ImGui::CollapsingHeader("Recorded Data")) {
+    if (collapsingHeaderWithControls("Recorded Data")) {
         ImGui::Text("Total data points: %zu", mRecordedData.size());
 
         if (!mRecordedData.empty()) {
@@ -5565,7 +5695,7 @@ void PhysicalExam::drawRecordedDataSection() {
 }
 
 void PhysicalExam::drawROMAnalysisSection() {
-    if (ImGui::CollapsingHeader("ROM Analysis")) {
+    if (collapsingHeaderWithControls("ROM Analysis")) {
         if (mRecordedData.size() >= 2) {
             ImGui::Text("Data Range:");
             double minForce = mRecordedData[0].force_magnitude;
@@ -5595,7 +5725,7 @@ void PhysicalExam::drawROMAnalysisSection() {
 }
 
 void PhysicalExam::drawCameraStatusSection() {
-    if (ImGui::CollapsingHeader("Camera Status")) {
+    if (collapsingHeaderWithControls("Camera Status")) {
         // Current preset description
         if (mCurrentCameraPreset >= 0 && mCurrentCameraPreset < 3 &&
             mCameraPresets[mCurrentCameraPreset].isSet) {
@@ -5630,14 +5760,14 @@ void PhysicalExam::drawCameraStatusSection() {
 }
 
 void PhysicalExam::drawSweepMusclePlotsSection() {
-    if (ImGui::CollapsingHeader("Sweep Muscle Plots", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Sweep Muscle Plots")) {
         if (mSweepAngles.empty()) {
             ImGui::TextDisabled("No sweep data available");
             ImGui::TextWrapped("Run a joint angle sweep from the control panel to generate plots");
         } else {
             ImGui::Indent();
             // Muscle Selection Sub-header
-            if (ImGui::CollapsingHeader("Muscle Selection", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (collapsingHeaderWithControls("Muscle Selection")) {
                 if (mTrackedMuscles.empty()) {
                     ImGui::TextDisabled("No muscles tracked");
                 } else {
@@ -5728,7 +5858,7 @@ void PhysicalExam::drawSweepMusclePlotsSection() {
 }
 
 void PhysicalExam::drawMuscleInfoSection() {
-    if (ImGui::CollapsingHeader("Muscle Information", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Muscle Information")) {
         if (!mCharacter) {
             ImGui::TextDisabled("No character loaded");
             return;
@@ -6011,4 +6141,16 @@ void PhysicalExam::showScriptPreview() {
         }
     }
     ImGui::End();
+}
+
+bool PhysicalExam::collapsingHeaderWithControls(const std::string& title)
+{
+    bool isDefaultOpen = isPanelDefaultOpen(title);
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen * isDefaultOpen;
+    return ImGui::CollapsingHeader(title.c_str(), flags);
+}
+
+bool PhysicalExam::isPanelDefaultOpen(const std::string& panelName) const
+{
+    return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
 }

@@ -8,6 +8,6 @@ character:
   # skeleton: "@data/skeleton/base.xml"
   skeleton: "@pid:12964246/gait/pre/skeleton/dynamic2.yaml"
   # skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
-  muscle: "@data/muscle/base.yaml"
+  muscle: "@data/muscle/base_vas.yaml"
   use_muscle: true
   actuator: "mass_lower"

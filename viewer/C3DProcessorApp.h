@@ -273,6 +273,7 @@ private:
     void drawSkeletonExportSection();
     void drawVisualizationPanel();
     void drawRenderingPanel();
+    void drawViewTabContent();
     void drawMarkerDiffPlot();
     void drawMarkerCorrespondenceTable();
     void drawBonePoseSection();

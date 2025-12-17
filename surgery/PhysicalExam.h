@@ -6,6 +6,7 @@
 #include <implot.h>
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include <optional>
 #include "dart/dart.hpp"
@@ -226,6 +227,7 @@ private:
     bool mMouseDown;
     bool mRotate;
     bool mTranslate;
+    bool mCameraMoving = false;  // True while camera is being manipulated
     double mMouseX, mMouseY;
     
     // Camera presets
@@ -275,7 +277,6 @@ private:
     std::vector<double> mSweepAngles;          // X-axis data (joint angles)
     std::map<std::string, bool> mMuscleVisibility;  // Track which muscles to plot
     char mMuscleFilterBuffer[256];              // Filter text buffer for muscle search
-    bool mShowSweepLegend;                     // Toggle legend display in sweep plots
 
     // Muscle Info Panel
     char mMuscleInfoFilterBuffer[256];          // Filter text for muscle info search
@@ -285,6 +286,9 @@ private:
     bool mSweepRunning;                        // Is sweep currently active?
     int mSweepCurrentStep;                     // Current step in sweep
     Eigen::VectorXd mSweepOriginalPos;         // Original joint position for restoration
+
+    // Joint torque plotting
+    int mSelectedPlotJointIndex;               // For joint selection in torque plot (default: sweep joint)
 
     // Examination state
     bool mRunning;
@@ -401,6 +405,11 @@ private:
     void setPoseSupine();
     void setPoseProne();
     void setPoseSupineKneeFlexed(double knee_angle);
+
+    // UI helpers
+    std::set<std::string> mDefaultOpenPanels;
+    bool collapsingHeaderWithControls(const std::string& title);
+    bool isPanelDefaultOpen(const std::string& panelName) const;
 };
 
 } // namespace PMuscle
