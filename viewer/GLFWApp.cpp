@@ -1794,8 +1794,7 @@ void GLFWApp::drawRightPanel()
     // Status
     if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::Text("Target Vel      : %.3f m/s", mRenderEnv->getTargetCOMVelocity());
-        ImGui::Text("Average Vel     : %.3f m/s", mRenderEnv->getAvgVelocity()[2]);
+        ImGui::Text("Target / Average Vel      : %.3f / %.3f m/s", mRenderEnv->getTargetCOMVelocity(), mRenderEnv->getAvgVelocity()[2]);
 
         // Character position
         Eigen::Vector3d char_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
@@ -3215,6 +3214,18 @@ void GLFWApp::drawSimControlPanelContent()
     if (!mRenderEnv) {
         return;
     }
+
+    // Body Mass Control
+    double currentMass = mRenderEnv->getCharacter()->getSkeleton()->getMass();
+    ImGui::Text("Current Mass: %.2f kg", currentMass);
+
+    static float targetMass = 0.0f;
+    if (targetMass == 0.0f) targetMass = static_cast<float>(currentMass);
+
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputFloat("Target Mass (kg)", &targetMass, 1.0f, 5.0f, "%.1f");
+    ImGui::SameLine();
+    if (ImGui::Button("Set Mass")) mRenderEnv->getCharacter()->setBodyMass(static_cast<double>(targetMass));
 
     // Reward Control with TreeNode categories
     if (ImGui::CollapsingHeader("Reward##control", ImGuiTreeNodeFlags_DefaultOpen))

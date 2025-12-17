@@ -10,6 +10,7 @@ environment:
     kv: 40
     damping: 0.1
     self_collide: true
+    weight_from: "@pid:30157774/gait/pre"
 
   # Motion Reference
   motion:

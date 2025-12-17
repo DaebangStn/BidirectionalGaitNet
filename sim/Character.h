@@ -180,6 +180,7 @@ public:
     // For Drawing
     void updateRefSkelParam(dart::dynamics::SkeletonPtr skel) { applySkeletonBodyNode(mSkelInfos, skel); }
     double getGlobalRatio() { return mGlobalRatio; }
+    void setBodyMass(double targetMass);
     void setTorqueClipping(bool _torqueClipping) { mTorqueClipping = _torqueClipping; }
     bool getTorqueClipping() { return mTorqueClipping; }
 

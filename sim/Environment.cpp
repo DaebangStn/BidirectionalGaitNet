@@ -550,6 +550,40 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mCharacter->setMuscles(resolved, useVelForce, meshLbs);
         mUseMuscle = true;
 
+        // === Weight from metadata ===
+        if (env["skeleton"]["weight_from"]) {
+            std::string weightUri = env["skeleton"]["weight_from"].as<std::string>();
+
+            // Parse URI to extract metadata section (e.g., "pre" from "@pid:xxx/gait/pre")
+            // Remove trailing slashes
+            while (!weightUri.empty() && weightUri.back() == '/') {
+                weightUri.pop_back();
+            }
+
+            // Find last path component (metadata section)
+            size_t lastSlash = weightUri.rfind('/');
+            if (lastSlash != std::string::npos) {
+                std::string section = weightUri.substr(lastSlash + 1);
+                std::string basePath = weightUri.substr(0, lastSlash);
+                std::string metadataUri = basePath + "/metadata.yaml";
+
+                try {
+                    std::string resolvedMetadata = rm::resolve(metadataUri);
+                    YAML::Node metadata = YAML::LoadFile(resolvedMetadata);
+
+                    if (metadata[section] && metadata[section]["weight"]) {
+                        double weight = metadata[section]["weight"].as<double>();
+                        mCharacter->setBodyMass(weight);
+                        LOG_VERBOSE("[Environment] Set body mass from " << weightUri << ": " << weight << " kg");
+                    } else {
+                        LOG_WARN("[Environment] weight_from: section '" << section << "' or 'weight' not found in metadata");
+                    }
+                } catch (const std::exception& e) {
+                    LOG_WARN("[Environment] Failed to load weight from " << weightUri << ": " << e.what());
+                }
+            }
+        }
+
         if (muscle["pose_optimization"]) {
             auto poseOpt = muscle["pose_optimization"];
             mMusclePoseOptimization = poseOpt["enabled"].as<bool>(false);

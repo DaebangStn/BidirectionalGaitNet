@@ -1727,8 +1727,39 @@ void Character::applySkeletonBodyNode(const std::vector<BoneInfo> &info, dart::d
     }
 }
 
-double
-Character::calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const std::vector<SimpleMotion *> &simpleMotions, const Eigen::EIGEN_VV_VEC3D &x0)
+void Character::setBodyMass(double targetMass)
+{
+    double currentMass = mSkeleton->getMass();
+    if (currentMass <= 1.0) {
+        LOG_WARN("[Character] setBodyMass: Current mass is less than 1.0, skipping body mass scaling. Going to target mass: " << targetMass);
+        return;
+    }
+
+    double ratio = targetMass / currentMass;
+
+    for (size_t i = 0; i < mSkeleton->getNumBodyNodes(); i++)
+    {
+        BodyNode* body = mSkeleton->getBodyNode(i);
+        double newMass = body->getMass() * ratio;
+
+        // Get shape for inertia computation
+        ShapePtr shape;
+        body->eachShapeNodeWith<DynamicsAspect>([&shape](dart::dynamics::ShapeNode* sn) {
+            shape = sn->getShape();
+            return false;
+        });
+
+        if (shape)
+        {
+            dart::dynamics::Inertia inertia;
+            inertia.setMass(newMass);
+            inertia.setMoment(shape->computeInertia(newMass));
+            body->setInertia(inertia);
+        }
+    }
+}
+
+double Character::calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const std::vector<SimpleMotion *> &simpleMotions, const Eigen::EIGEN_VV_VEC3D &x0)
 {
     double lambdaShape = 0.1;
     double lambdaLengthCurve = 1.0;

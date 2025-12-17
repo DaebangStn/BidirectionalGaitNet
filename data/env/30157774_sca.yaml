@@ -9,6 +9,7 @@ environment:
     kp: 200
     kv: 40
     damping: 0.1
+    weight_from: "@pid:30157774/gait/pre"
 
   # Motion Reference
   motion:
