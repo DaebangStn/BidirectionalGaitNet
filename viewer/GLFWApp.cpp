@@ -60,6 +60,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mYmaxResizablePlotPane = 1.0;
     mPlotTitle = false;
     mPlotHideLegend = false;
+    mProgressForward = true;
 
     // Initialize viewer time management with default cycle duration
     mViewerTime = 0.0;

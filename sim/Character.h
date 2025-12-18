@@ -288,6 +288,9 @@ private:
     // Muscle force scaling for body mass
     bool mScaleF0OnWeight = false;
 
+    // Target mass for preservation across skeleton parameter changes
+    double mTargetMass = -1.0;  // -1 means no target mass set
+
     static constexpr double kRefMass = 70.0;  // Reference mass for stable simulation
 };
 #endif

@@ -1546,6 +1546,11 @@ void Character::setSkelParam(std::vector<std::pair<std::string, double>> _skel_i
 
     if (doOptimization == true)
         applySkeletonLength(mSkelInfos, doOptimization);
+
+    // Re-apply target mass if it was set (skeleton modifications reset body masses)
+    if (mTargetMass > 0) {
+        setBodyMass(mTargetMass);
+    }
 }
 
 void Character::applySkeletonLength(const std::vector<BoneInfo> &info, bool doOptimization)
@@ -1735,8 +1740,12 @@ void Character::applySkeletonBodyNode(const std::vector<BoneInfo> &info, dart::d
 void Character::setBodyMass(double targetMass)
 {
     double currentMass = mSkeleton->getMass();
+
+    // Store target mass for re-application after skeleton parameter changes
+    mTargetMass = targetMass;
+
     if (currentMass <= 1.0) {
-        LOG_WARN("[Character] setBodyMass: Current mass is less than 1.0, skipping body mass scaling. Going to target mass: " << targetMass);
+        LOG_WARN("[Character] setBodyMass: Current mass is less than 1.0, skipping body mass scaling.");
         return;
     }
 
@@ -1745,22 +1754,21 @@ void Character::setBodyMass(double targetMass)
     for (size_t i = 0; i < mSkeleton->getNumBodyNodes(); i++)
     {
         BodyNode* body = mSkeleton->getBodyNode(i);
-        double newMass = body->getMass() * ratio;
+        double oldMass = body->getMass();
+        double newMass = oldMass * ratio;
 
-        // Get shape for inertia computation
-        ShapePtr shape;
-        body->eachShapeNodeWith<DynamicsAspect>([&shape](dart::dynamics::ShapeNode* sn) {
-            shape = sn->getShape();
-            return false;
-        });
+        // Get current inertia and scale it
+        dart::dynamics::Inertia inertia = body->getInertia();
+        inertia.setMass(newMass);
 
-        if (shape)
-        {
-            dart::dynamics::Inertia inertia;
-            inertia.setMass(newMass);
-            inertia.setMoment(shape->computeInertia(newMass));
-            body->setInertia(inertia);
+        // Scale moment of inertia proportionally (approximate)
+        if (oldMass > 0) {
+            Eigen::Matrix3d moment = inertia.getMoment();
+            moment *= (newMass / oldMass);
+            inertia.setMoment(moment);
         }
+
+        body->setInertia(inertia);
     }
 
     // Update cached torque mass ratio

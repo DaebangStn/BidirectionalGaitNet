@@ -5,7 +5,9 @@ environment:
   skeleton:
     file: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    damping: 0.04
+    damping: 0.1
+    kp_scale: 0.3
+    kv_scale: 0.3
     self_collide: true
     scale_tau_on_weight: true
     weight_from: 

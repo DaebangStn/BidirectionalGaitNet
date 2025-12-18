@@ -577,9 +577,9 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
         // === Weight from metadata or direct value ===
         // Supports:
-        //   weight_from: 70.5                    # direct numeric value
-        //   weight_from:                         # structured format
-        //     file: "@pid:xxx/metadata.yaml"
+        //   weight_from: 70.5                       # direct numeric value
+        //   weight_from:                            # structured format
+        //     file: "@pid:xxx/gait/metadata.yaml"
         //     prepost: "pre"
         if (env["skeleton"]["weight_from"]) {
             auto weightNode = env["skeleton"]["weight_from"];
@@ -2281,21 +2281,17 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
         for (auto name : mParamName)
         {
             // gait parameter
-            if (name.find("stride") != std::string::npos)
-                mStride = _param_state[idx];
-
-            if (name.find("cadence") != std::string::npos)
-                mCadence = _param_state[idx];
-
-            if (name.find("skeleton") != std::string::npos)
-                skel_info.push_back(std::make_pair((name.substr(9)), _param_state[idx]));
-
-            if (name.find("torsion") != std::string::npos)
-                skel_info.push_back(std::make_pair(name, _param_state[idx]));
+            if (name.find("stride") != std::string::npos) mStride = _param_state[idx];
+            if (name.find("cadence") != std::string::npos) mCadence = _param_state[idx];
+            if (name.find("skeleton") != std::string::npos) skel_info.push_back(std::make_pair((name.substr(9)), _param_state[idx]));
+            if (name.find("torsion") != std::string::npos) skel_info.push_back(std::make_pair(name, _param_state[idx]));
 
             idx++;
         }
-        mCharacter->setSkelParam(skel_info, doOptimization);
+        // Only call setSkelParam if there are skeleton parameters to apply
+        if (!skel_info.empty()) {
+            mCharacter->setSkelParam(skel_info, doOptimization);
+        }
 
         // Sync stride and cadence to GaitPhase (only if initialized)
         if (mGaitPhase) {
