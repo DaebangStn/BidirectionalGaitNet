@@ -1,0 +1,126 @@
+digraph StreamlitSampled {
+  rankdir=TB;
+  splines=ortho;
+  nodesep=0.6;
+  ranksep=0.7;
+  fontname="Helvetica";
+  label=<<font point-size="14"><b>Streamlit App: Sampled Data Source</b></font>>;
+  labelloc=t;
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fillcolor="white",
+    color="gray30",
+    fontname="Helvetica",
+    fontsize=10,
+    margin="0.12,0.08"
+  ];
+
+  edge [
+    color="gray30",
+    penwidth=1.2,
+    arrowsize=0.7,
+    fontname="Helvetica",
+    fontsize=8
+  ];
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: User Selection
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_selection {
+    style=filled;
+    fillcolor="#E3F2FD";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">User Selection</font>>;
+
+    source_type [label="Source Type\n\"Sampled Rollout\"", fillcolor="#BBDEFB"];
+    dir_select [label="Rollout Directory\nSelectbox"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Data Loading (core/data.py)
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_loading {
+    style=filled;
+    fillcolor="#F1F8E9";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">Data Loading (core/data.py)</font>>;
+
+    list_dirs [label="list_sampled_dirs()"];
+    load_sampled [label="load_sampled_hdf5()", fillcolor="#C8E6C9"];
+    file_path [label="sampled/{dir}/\nrollout_data.h5", shape=note, fillcolor="#FFF9C4"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Data Structure
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_data {
+    style=filled;
+    fillcolor="#FFF8E1";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">Data Structure (dict)</font>>;
+
+    data_dict [label=<
+      <table border="0" cellborder="0" cellspacing="2">
+        <tr><td align="left"><b>cycles[i].angle</b></td><td align="left">{hip_l, knee_l, ...}</td></tr>
+        <tr><td align="left"><b>cycles[i].sway</b></td><td align="left">{com_x, com_y, ...}</td></tr>
+        <tr><td align="left"><b>cycles[i].muscle</b></td><td align="left">{activation, force, ...}</td></tr>
+        <tr><td align="left"><b>cycles[i].phase</b></td><td align="left">(frames,)</td></tr>
+        <tr><td align="left"><b>muscle_names</b></td><td align="left">[L_xxx, R_xxx, ...]</td></tr>
+        <tr><td align="left"><b>averaged</b></td><td align="left">(optional precomputed)</td></tr>
+      </table>
+    >, shape=none, fillcolor="white"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: View Routing
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_routing {
+    style=filled;
+    fillcolor="#F3E5F5";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">View Routing (config/app.yaml)</font>>;
+
+    view_filter [label="Filter by\nsources: [\"sampled\"]"];
+    load_view [label="load_view()\n(registry.py)"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Available Views
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_views {
+    style=filled;
+    fillcolor="#ECEFF1";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">Sampled Views</font>>;
+
+    view_angle [label="Angle\nGait Cycle", fillcolor="#B2DFDB"];
+    view_muscle [label="Muscle\nHeatmap", fillcolor="#B2DFDB"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Edges: Main Flow
+  // ─────────────────────────────────────────────────────────────
+  source_type -> dir_select [penwidth=2.0, color="black"];
+
+  list_dirs -> dir_select [style=dashed, color="gray50", label="options"];
+
+  dir_select -> file_path [penwidth=2.0, color="black"];
+  file_path -> load_sampled [penwidth=2.0, color="black"];
+  load_sampled -> data_dict [penwidth=2.5, color="black", label="returns"];
+
+  data_dict -> view_filter [penwidth=2.0, color="black"];
+  view_filter -> load_view [penwidth=2.0, color="black"];
+  load_view -> view_angle [penwidth=2.0, color="black"];
+  load_view -> view_muscle [penwidth=2.0, color="black"];
+
+  // Rank alignment
+  {rank=same; dir_select; list_dirs;}
+  {rank=same; view_angle; view_muscle;}
+}

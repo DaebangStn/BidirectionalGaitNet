@@ -1,0 +1,156 @@
+digraph MuscleHeatmap {
+  rankdir=LR;
+  splines=ortho;
+  nodesep=0.5;
+  ranksep=0.8;
+  fontname="Helvetica";
+  label=<<font point-size="14"><b>View: Muscle Activity Heatmap</b></font>>;
+  labelloc=t;
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fillcolor="white",
+    color="gray30",
+    fontname="Helvetica",
+    fontsize=10,
+    margin="0.12,0.08"
+  ];
+
+  edge [
+    color="gray30",
+    penwidth=1.2,
+    arrowsize=0.7,
+    fontname="Helvetica",
+    fontsize=8
+  ];
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Controls (render_controls)
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_controls {
+    style=filled;
+    fillcolor="#E3F2FD";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">render_controls()</font>>;
+
+    ctrl_metric [label="metric\n[activation|force|\npassive|lm_norm]"];
+    ctrl_side [label="side_filter\n[Right|Both|Left]"];
+    ctrl_mode [label="mode\n[Aggregate|Single]"];
+    ctrl_muscle [label="muscle_range\n(from/to index)"];
+    ctrl_cycle [label="cycle_idx\n(slider)"];
+    ctrl_vrange [label="vmin/vmax\n(color range)"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Controls Dict
+  // ─────────────────────────────────────────────────────────────
+  controls_dict [label=<
+    <table border="0" cellborder="0" cellspacing="2">
+      <tr><td colspan="2"><b>controls dict</b></td></tr>
+      <tr><td align="left">metric:</td><td align="left">"activation"</td></tr>
+      <tr><td align="left">side_filter:</td><td align="left">"Both"</td></tr>
+      <tr><td align="left">mode:</td><td align="left">"Aggregate"</td></tr>
+      <tr><td align="left">muscle_from:</td><td align="left">0</td></tr>
+      <tr><td align="left">muscle_to:</td><td align="left">50</td></tr>
+      <tr><td align="left">vmin/vmax:</td><td align="left">0.0, 1.0</td></tr>
+    </table>
+  >, shape=record, fillcolor="#FFF9C4"];
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Data Input
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_data {
+    style=filled;
+    fillcolor="#F1F8E9";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">Data Input</font>>;
+
+    data_muscle [label="cycles[i].muscle\n[metric]"];
+    data_names [label="muscle_names\n[L_xxx, R_xxx]"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Processing
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_process {
+    style=filled;
+    fillcolor="#FFF8E1";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">Processing</font>>;
+
+    parse_side [label="Parse L_/R_\nprefix"];
+    filter_side [label="Filter by\nside_filter"];
+    interp [label="Interpolate\nto 500 frames"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Rendering Pipeline
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_render {
+    style=filled;
+    fillcolor="#F3E5F5";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">render_plot()</font>>;
+
+    branch [label="mode\nbranch", shape=diamond, fillcolor="#E1BEE7"];
+    aggregate [label="Aggregate\nmean"];
+    single [label="Single\nCycle"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Cluster: Output
+  // ─────────────────────────────────────────────────────────────
+  subgraph cluster_output {
+    style=filled;
+    fillcolor="#ECEFF1";
+    color="gray70";
+    penwidth=0.5;
+    label=<<font point-size="9">matplotlib Output</font>>;
+
+    output [label=<
+      <table border="0" cellborder="0" cellspacing="2">
+        <tr><td><b>Heatmap</b></td></tr>
+        <tr><td>X: gait phase %</td></tr>
+        <tr><td>Y: muscles</td></tr>
+        <tr><td>Left=blue bar</td></tr>
+        <tr><td>Right=orange bar</td></tr>
+      </table>
+    >, shape=record, fillcolor="#CFD8DC"];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Edges
+  // ─────────────────────────────────────────────────────────────
+  ctrl_metric -> controls_dict [penwidth=1.5];
+  ctrl_side -> controls_dict [penwidth=1.5];
+  ctrl_mode -> controls_dict [penwidth=1.5];
+  ctrl_muscle -> controls_dict [penwidth=1.5];
+  ctrl_cycle -> controls_dict [penwidth=1.5];
+  ctrl_vrange -> controls_dict [penwidth=1.5];
+
+  controls_dict -> branch [penwidth=2.0, color="black"];
+
+  data_names -> parse_side [penwidth=2.0, color="black"];
+  parse_side -> filter_side [penwidth=2.0, color="black"];
+  filter_side -> interp [penwidth=2.0, color="black"];
+  data_muscle -> interp [penwidth=2.0, color="black"];
+
+  interp -> branch [penwidth=2.0, color="black"];
+
+  branch -> aggregate [label="\"Aggregate\"", penwidth=1.5];
+  branch -> single [label="\"Single\"", penwidth=1.5];
+
+  aggregate -> output [penwidth=2.0, color="black"];
+  single -> output [penwidth=2.0, color="black"];
+
+  // Rank alignment
+  {rank=same; ctrl_metric; ctrl_side; ctrl_mode; ctrl_muscle; ctrl_cycle; ctrl_vrange;}
+  {rank=same; data_muscle; data_names;}
+  {rank=same; parse_side; filter_side; interp;}
+  {rank=same; aggregate; single;}
+}
