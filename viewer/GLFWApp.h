@@ -320,6 +320,7 @@ private:
     char mActivationFilterText[256];
     std::vector<std::string> mSelectedActivationKeys;
     bool mPlotActivationNoise;
+    int mMuscleMetricMode = 0;  // 0=activation, 1=passive force, 2=lm_norm
 
     // Muscle Rendering Option
     std::vector<Muscle *> mSelectedMuscles;

@@ -93,6 +93,8 @@ public:
     std::vector<dart::dynamics::BodyNode *> getEndEffectors() { return mEndEffectors; }
     const Eigen::VectorXd& getKpVector() const { return mKp; }
     const Eigen::VectorXd& getKvVector() const { return mKv; }
+    void scaleKpKv(double kp_scale, double kv_scale);
+    void setJointDamping(double damping);
 
     Eigen::VectorXd heightCalibration(dart::simulation::WorldPtr _world);
     std::vector<Eigen::Matrix3d> getBodyNodeTransform() { return mBodyNodeTransform; }
@@ -187,6 +189,16 @@ public:
     void setIncludeJtPinSPD(bool _includeJtPinSPD) { mIncludeJtPinSPD = _includeJtPinSPD; }
     bool getIncludeJtPinSPD() { return mIncludeJtPinSPD; }
 
+    // Upper body torque scaling based on body mass (stabilizes light bodies)
+    void setScaleTauOnWeight(bool enable) { mScaleTauOnWeight = enable; }
+    bool getScaleTauOnWeight() const { return mScaleTauOnWeight; }
+    void updateTorqueMassRatio();
+
+    // Muscle force scaling based on body mass (f0 scales with mass^(2/3))
+    void setScaleF0OnWeight(bool enable) { mScaleF0OnWeight = enable; }
+    bool getScaleF0OnWeight() const { return mScaleF0OnWeight; }
+    void updateMuscleForceRatio();
+
     Eigen::VectorXd posToSixDof(Eigen::VectorXd pos);
     Eigen::VectorXd sixDofToPos(Eigen::VectorXd raw_pos);
 
@@ -265,5 +277,14 @@ private:
     std::map<std::string, std::vector<SimpleMotion *>> muscleToSimpleMotions;
 
     bool mIncludeJtPinSPD;
+
+    // Upper body torque scaling for light bodies
+    bool mScaleTauOnWeight = false;
+    double mTorqueMassRatio = 1.0;
+
+    // Muscle force scaling for body mass
+    bool mScaleF0OnWeight = false;
+
+    static constexpr double kRefMass = 70.0;  // Reference mass for stable simulation
 };
 #endif

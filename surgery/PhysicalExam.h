@@ -267,6 +267,7 @@ private:
     // Joint angle sweep system
     struct JointSweepConfig {
         int joint_index;           // Which joint to sweep
+        int dof_index;             // Which DOF of the joint to sweep (0-based within joint)
         double angle_min;          // Min angle (radians)
         double angle_max;          // Max angle (radians)
         int num_steps;             // Number of sweep steps

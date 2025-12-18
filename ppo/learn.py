@@ -43,7 +43,7 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    checkpoint_interval: int = 5
+    checkpoint_interval: int = 1000
     """save checkpoint every K iterations"""
 
     # Algorithm specific arguments

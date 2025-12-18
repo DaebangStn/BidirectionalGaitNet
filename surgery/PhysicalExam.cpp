@@ -95,20 +95,6 @@ PhysicalExam::PhysicalExam(int width, int height)
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
 
-    mDefaultOpenPanels = {
-        "Loaded Files",
-        "Save Skeleton Config",
-        "Save Muscle Config",
-        "Edit Selected Anchor",
-        "Pose Presets",
-        "Render",
-        "Joint Angle Sweep",
-        "State",
-        "Sweep Muscle Plots",
-        "Muscle Selection",
-        "Muscle Information"
-    };
-
     // Initialize path buffers with simple default names (no path, no extension)
     strncpy(mRecordingPathBuffer, "recorded_surgery", sizeof(mRecordingPathBuffer) - 1);
     mRecordingPathBuffer[sizeof(mRecordingPathBuffer) - 1] = '\0';
@@ -170,6 +156,7 @@ PhysicalExam::PhysicalExam(int width, int height)
 
     // Initialize sweep configuration
     mSweepConfig.joint_index = 0;
+    mSweepConfig.dof_index = 0;
     mSweepConfig.angle_min = -1.57;  // -90 degrees
     mSweepConfig.angle_max = 1.57;   // +90 degrees
     mSweepConfig.num_steps = 50;
@@ -232,6 +219,14 @@ void PhysicalExam::loadRenderConfig() {
                   << " at (" << mWindowXPos << "," << mWindowYPos << ")"
                   << ", Control: " << mControlPanelWidth
                   << ", Plot: " << mPlotPanelWidth);
+
+        // Load default open panels
+        if (config["default_open_panels"]) {
+            mDefaultOpenPanels.clear();
+            for (const auto& panel : config["default_open_panels"]) {
+                mDefaultOpenPanels.insert(panel.as<std::string>());
+            }
+        }
 
     } catch (const std::exception& e) {
         LOG_ERROR("[Config] Warning: Could not load render.yaml: " << e.what());
@@ -980,9 +975,9 @@ void PhysicalExam::mainLoop() {
                     (mSweepConfig.angle_max - mSweepConfig.angle_min) *
                     mSweepCurrentStep / (double)mSweepConfig.num_steps;
 
-                // Set joint position
+                // Set joint position for selected DOF
                 Eigen::VectorXd pos = joint->getPositions();
-                pos[0] = angle;  // Assumes 1-DOF joint (can be extended for multi-DOF)
+                pos[mSweepConfig.dof_index] = angle;
                 joint->setPositions(pos);
 
                 // Update muscle state (recalculate muscle lengths and forces)
@@ -5400,37 +5395,53 @@ void PhysicalExam::drawJointAngleSweepSection() {
 
             // Joint selection
             ImGui::Text("Sweep Joint:");
-            ImGui::SetNextItemWidth(100);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
             int joint_idx = mSweepConfig.joint_index;
             if (ImGui::InputInt("##JointIdx", &joint_idx, 1, 1)) {
                 if (joint_idx >= 0 && joint_idx < static_cast<int>(skel->getNumJoints())) {
                     mSweepConfig.joint_index = joint_idx;
-                    
+                    mSweepConfig.dof_index = 0;  // Reset DOF index when joint changes
+
                     // Auto-update angle range from joint limits
                     auto joint = skel->getJoint(joint_idx);
                     if (joint->getNumDofs() > 0) {
                         Eigen::VectorXd pos_lower = skel->getPositionLowerLimits();
                         Eigen::VectorXd pos_upper = skel->getPositionUpperLimits();
-                        
-                        // Get DOF index for this joint
-                        int dof_idx = 0;
+
+                        int global_dof_idx = 0;
                         for (size_t j = 0; j < joint_idx; ++j) {
-                            dof_idx += skel->getJoint(j)->getNumDofs();
+                            global_dof_idx += skel->getJoint(j)->getNumDofs();
                         }
-                        
-                        mSweepConfig.angle_min = pos_lower[dof_idx];
-                        mSweepConfig.angle_max = pos_upper[dof_idx];
-                        
-                        LOG_INFO("Joint " << joint->getName() 
-                                  << " limits: [" << mSweepConfig.angle_min 
-                                  << ", " << mSweepConfig.angle_max << "] rad");
+                        global_dof_idx += mSweepConfig.dof_index;
+
+                        mSweepConfig.angle_min = pos_lower[global_dof_idx];
+                        mSweepConfig.angle_max = pos_upper[global_dof_idx];
                     }
                 }
             }
             ImGui::SameLine();
-            if (mSweepConfig.joint_index < static_cast<int>(skel->getNumJoints())) {
-                ImGui::Text("%s", skel->getJoint(mSweepConfig.joint_index)->getName().c_str());
+            auto current_joint = skel->getJoint(mSweepConfig.joint_index);
+            int num_dofs = current_joint->getNumDofs();
+            ImGui::Text("%s", current_joint->getName().c_str());
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::SliderInt("##SweepDof", &mSweepConfig.dof_index, 0, num_dofs - 1)) {
+                // Update limits when DOF changes
+                Eigen::VectorXd pos_lower = skel->getPositionLowerLimits();
+                Eigen::VectorXd pos_upper = skel->getPositionUpperLimits();
+
+                int global_dof_idx = 0;
+                for (size_t j = 0; j < mSweepConfig.joint_index; ++j) {
+                    global_dof_idx += skel->getJoint(j)->getNumDofs();
+                }
+                global_dof_idx += mSweepConfig.dof_index;
+
+                mSweepConfig.angle_min = pos_lower[global_dof_idx];
+                mSweepConfig.angle_max = pos_upper[global_dof_idx];
             }
+            ImGui::SameLine();
+            ImGui::Text("/%d", num_dofs);
 
             ImGui::Separator();
 
@@ -5458,19 +5469,16 @@ void PhysicalExam::drawJointAngleSweepSection() {
                 if (joint->getNumDofs() > 0) {
                     Eigen::VectorXd pos_lower = skel->getPositionLowerLimits();
                     Eigen::VectorXd pos_upper = skel->getPositionUpperLimits();
-                    
-                    // Get DOF index for this joint
-                    int dof_idx = 0;
+
+                    // Get global DOF index for this joint's selected DOF
+                    int global_dof_idx = 0;
                     for (size_t j = 0; j < mSweepConfig.joint_index; ++j) {
-                        dof_idx += skel->getJoint(j)->getNumDofs();
+                        global_dof_idx += skel->getJoint(j)->getNumDofs();
                     }
-                    
-                    mSweepConfig.angle_min = pos_lower[dof_idx];
-                    mSweepConfig.angle_max = pos_upper[dof_idx];
-                    
-                    LOG_INFO("Reset to joint " << joint->getName() 
-                              << " limits: [" << mSweepConfig.angle_min 
-                              << ", " << mSweepConfig.angle_max << "] rad");
+                    global_dof_idx += mSweepConfig.dof_index;
+
+                    mSweepConfig.angle_min = pos_lower[global_dof_idx];
+                    mSweepConfig.angle_max = pos_upper[global_dof_idx];
                 }
             }
             ImGui::SameLine();
@@ -5478,9 +5486,10 @@ void PhysicalExam::drawJointAngleSweepSection() {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Reset angle range to joint's position limits");
             }
-
+            
+            ImGui::SameLine();
             // Number of steps
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(50);
             ImGui::InputInt("Steps##SweepSteps", &mSweepConfig.num_steps, 5, 10);
             if (mSweepConfig.num_steps < 5) mSweepConfig.num_steps = 5;
             if (mSweepConfig.num_steps > 200) mSweepConfig.num_steps = 200;

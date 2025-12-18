@@ -534,6 +534,31 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         std::string actType = skel["actuator"].as<std::string>();
         mCharacter->setActuatorType(getActuatorType(actType));
 
+        // Apply kp/kv scale coefficients (multiply skeleton's per-joint values)
+        double kp_scale = skel["kp_scale"].as<double>(1.0);
+        double kv_scale = skel["kv_scale"].as<double>(1.0);
+        if (kp_scale != 1.0 || kv_scale != 1.0) {
+            mCharacter->scaleKpKv(kp_scale, kv_scale);
+        }
+
+        // Apply joint damping (overrides skeleton/default values)
+        if (skel["damping"]) {
+            double damping = skel["damping"].as<double>();
+            mCharacter->setJointDamping(damping);
+        }
+
+        // Enable upper body torque scaling based on body mass (stabilizes light bodies)
+        if (skel["scale_tau_on_weight"]) {
+            bool scaleTau = skel["scale_tau_on_weight"].as<bool>();
+            mCharacter->setScaleTauOnWeight(scaleTau);
+        }
+
+        // Enable muscle force (f0) scaling based on body mass (mass^(2/3) law)
+        if (skel["scale_f0_on_weight"]) {
+            bool scaleF0 = skel["scale_f0_on_weight"].as<bool>();
+            mCharacter->setScaleF0OnWeight(scaleF0);
+        }
+
         mRefPose = mCharacter->getSkeleton()->getPositions();
         mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
     }
@@ -550,39 +575,54 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mCharacter->setMuscles(resolved, useVelForce, meshLbs);
         mUseMuscle = true;
 
-        // === Weight from metadata ===
+        // === Weight from metadata or direct value ===
         if (env["skeleton"]["weight_from"]) {
-            std::string weightUri = env["skeleton"]["weight_from"].as<std::string>();
+            auto weightNode = env["skeleton"]["weight_from"];
 
-            // Parse URI to extract metadata section (e.g., "pre" from "@pid:xxx/gait/pre")
-            // Remove trailing slashes
-            while (!weightUri.empty() && weightUri.back() == '/') {
-                weightUri.pop_back();
-            }
-
-            // Find last path component (metadata section)
-            size_t lastSlash = weightUri.rfind('/');
-            if (lastSlash != std::string::npos) {
-                std::string section = weightUri.substr(lastSlash + 1);
-                std::string basePath = weightUri.substr(0, lastSlash);
-                std::string metadataUri = basePath + "/metadata.yaml";
-
+            // Check if it's a numeric value (direct weight override)
+            if (weightNode.IsScalar()) {
                 try {
-                    std::string resolvedMetadata = rm::resolve(metadataUri);
-                    YAML::Node metadata = YAML::LoadFile(resolvedMetadata);
+                    double weight = weightNode.as<double>();
+                    mCharacter->setBodyMass(weight);
+                    LOG_VERBOSE("[Environment] Set body mass from direct value: " << weight << " kg");
+                } catch (const YAML::BadConversion&) {
+                    // Not a number, treat as URI string
+                    std::string weightUri = weightNode.as<std::string>();
 
-                    if (metadata[section] && metadata[section]["weight"]) {
-                        double weight = metadata[section]["weight"].as<double>();
-                        mCharacter->setBodyMass(weight);
-                        LOG_VERBOSE("[Environment] Set body mass from " << weightUri << ": " << weight << " kg");
-                    } else {
-                        LOG_WARN("[Environment] weight_from: section '" << section << "' or 'weight' not found in metadata");
+                    // Parse URI to extract metadata section (e.g., "pre" from "@pid:xxx/gait/pre")
+                    // Remove trailing slashes
+                    while (!weightUri.empty() && weightUri.back() == '/') {
+                        weightUri.pop_back();
                     }
-                } catch (const std::exception& e) {
-                    LOG_WARN("[Environment] Failed to load weight from " << weightUri << ": " << e.what());
+
+                    // Find last path component (metadata section)
+                    size_t lastSlash = weightUri.rfind('/');
+                    if (lastSlash != std::string::npos) {
+                        std::string section = weightUri.substr(lastSlash + 1);
+                        std::string basePath = weightUri.substr(0, lastSlash);
+                        std::string metadataUri = basePath + "/metadata.yaml";
+
+                        try {
+                            std::string resolvedMetadata = rm::resolve(metadataUri);
+                            YAML::Node metadata = YAML::LoadFile(resolvedMetadata);
+
+                            if (metadata[section] && metadata[section]["weight"]) {
+                                double weight = metadata[section]["weight"].as<double>();
+                                mCharacter->setBodyMass(weight);
+                                LOG_VERBOSE("[Environment] Set body mass from " << weightUri << ": " << weight << " kg");
+                            } else {
+                                LOG_WARN("[Environment] weight_from: section '" << section << "' or 'weight' not found in metadata");
+                            }
+                        } catch (const std::exception& e) {
+                            LOG_WARN("[Environment] Failed to load weight from " << weightUri << ": " << e.what());
+                        }
+                    }
                 }
             }
         }
+
+        // Apply muscle force scaling after body mass is set
+        mCharacter->updateMuscleForceRatio();
 
         if (muscle["pose_optimization"]) {
             auto poseOpt = muscle["pose_optimization"];
@@ -1770,6 +1810,7 @@ void Environment::calcActivation()
 void Environment::postMuscleStep()
 {
     mSimulationCount++;
+
     mGaitPhase->step();
 
     if (mGaitPhase->isGaitCycleComplete()) {

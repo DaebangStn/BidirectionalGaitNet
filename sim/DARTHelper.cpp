@@ -366,7 +366,7 @@ dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 {
 	std::string resolvedPath = rm::resolve(path);
 	
-	// Hardcoded default damping
+	// Default damping (can be overridden by skeleton file or env YAML)
 	const double defaultDamping = 0.4;
 
 	// Extract flags
@@ -595,7 +595,7 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
 
 dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 {
-	// Hardcoded default damping
+	// Default damping (can be overridden by skeleton file or env YAML)
 	const double defaultDamping = 0.4;
 
 	// Extract flags

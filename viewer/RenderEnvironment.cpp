@@ -294,14 +294,20 @@ void RenderEnvironment::RecordGraphData() {
         }
     }
 
-    // Record muscle activations
+    // Record muscle metrics
     for (const auto& muscle : character->getMuscles()) {
         const auto& muscle_name = muscle->GetName();
-        if(muscle_name.find("R_") != std::string::npos) {
-            std::string key = "act_" + muscle_name;
-            if (mGraphData->key_exists(key)) {
-                mGraphData->push(key, muscle->GetActivation());
-            }
+        // Activation
+        if (mGraphData->key_exists("act_" + muscle_name)) {
+            mGraphData->push("act_" + muscle_name, muscle->GetActivation());
+        }
+        // Passive force
+        if (mGraphData->key_exists("fp_" + muscle_name)) {
+            mGraphData->push("fp_" + muscle_name, muscle->Getf_p());
+        }
+        // Normalized muscle length
+        if (mGraphData->key_exists("lm_" + muscle_name)) {
+            mGraphData->push("lm_" + muscle_name, muscle->GetLmNorm());
         }
     }
 

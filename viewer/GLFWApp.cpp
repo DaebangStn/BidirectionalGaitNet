@@ -80,7 +80,9 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mResizePlotPane = true;
     mSetResizablePlotPane = false;
     mPlotTitleResizablePlotPane = true;
-
+    mMuscleTransparency = 0.1;
+    mMuscleResolution = 1.0;
+    
     // Initialize single motion architecture
     mMotion = nullptr;
     mMotionProcessor = std::make_unique<MotionProcessor>();
@@ -1227,12 +1229,10 @@ void GLFWApp::initEnv(std::string metadata)
     // Register muscle activation keys for graphing
     for (const auto& muscle: mRenderEnv->getCharacter()->getMuscles()) {
         const auto& muscle_name = muscle->GetName();
-        if(muscle_name.find("R_") != std::string::npos) {
-            std::string key = "act_" + muscle_name;
-            mGraphData->register_key(key, 1000);
-            key = "noise_" + muscle_name;
-            mGraphData->register_key(key, 1000);
-        }
+        mGraphData->register_key("act_" + muscle_name, 1000);
+        mGraphData->register_key("noise_" + muscle_name, 1000);
+        mGraphData->register_key("fp_" + muscle_name, 1000);
+        mGraphData->register_key("lm_" + muscle_name, 1000);
     }
 
     // Set window title
@@ -2457,16 +2457,30 @@ void GLFWApp::drawRightPanel()
     // Muscle Activations
     if (collapsingHeaderWithControls("Muscle Activations"))
     {
+        // Mode selection radio buttons
+        ImGui::RadioButton("Activation", &mMuscleMetricMode, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Passive", &mMuscleMetricMode, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Lm Norm", &mMuscleMetricMode, 2);
+
+        // Determine prefix based on mode
+        std::string metricPrefix = (mMuscleMetricMode == 0) ? "act_" :
+                                   (mMuscleMetricMode == 1) ? "fp_" : "lm_";
+
         // Get all available keys from graph data
         static std::vector<std::string> all_activation_keys;
-        if (ImGui::IsWindowAppearing() || all_activation_keys.empty())
+        static int lastMode = -1;
+        if (ImGui::IsWindowAppearing() || all_activation_keys.empty() || lastMode != mMuscleMetricMode)
         {
             all_activation_keys.clear();
+            mSelectedActivationKeys.clear();  // Clear selection when mode changes
+            lastMode = mMuscleMetricMode;
             auto all_keys = mGraphData->get_keys();
             for (const auto& key : all_keys)
             {
-                // Filter for activation keys (start with "act_")
-                if (key.substr(0, 4) == "act_")
+                // Filter for keys with current mode prefix
+                if (key.substr(0, metricPrefix.size()) == metricPrefix)
                 {
                     all_activation_keys.push_back(key);
                 }
@@ -2481,8 +2495,10 @@ void GLFWApp::drawRightPanel()
             mSelectedActivationKeys.clear();
         }
 
-        // Checkbox to plot activation noise
-        ImGui::Checkbox("Plot NI", &mPlotActivationNoise);
+        // Checkbox to plot activation noise (only for activation mode)
+        if (mMuscleMetricMode == 0) {
+            ImGui::Checkbox("Plot NI", &mPlotActivationNoise);
+        }
 
         // Search input
         ImGui::Text("Search Muscle:");
@@ -2569,22 +2585,36 @@ void GLFWApp::drawRightPanel()
 
         ImGui::Separator();
 
-        // Plot selected muscle activations
+        // Plot selected muscle metrics
         if (!mSelectedActivationKeys.empty())
         {
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(0, -1.5, 0);
-            ImPlot::SetNextAxisLimits(3, 0.0, 1.0);  // Activation range 0-1
 
-            std::string title_activations = mPlotTitle ? mCheckpointName : "Muscle Activations";
+            // Set Y-axis limits based on mode
+            std::string yAxisLabel;
+            if (mMuscleMetricMode == 0) {
+                ImPlot::SetNextAxisLimits(3, 0.0, 1.0);  // Activation range 0-1
+                yAxisLabel = "Activation (0-1)";
+            } else if (mMuscleMetricMode == 1) {
+                ImPlot::SetNextAxisLimits(3, 0.0, 1.0, ImGuiCond_Once);  // Auto-fit for passive force
+                yAxisLabel = "Passive Force (norm)";
+            } else {
+                ImPlot::SetNextAxisLimits(3, 0.5, 1.5);  // Lm norm typically around 1.0
+                yAxisLabel = "Lm Norm";
+            }
+
+            std::string plotTitle = (mMuscleMetricMode == 0) ? "Muscle Activations" :
+                                    (mMuscleMetricMode == 1) ? "Passive Force" : "Muscle Length";
+            std::string title_activations = mPlotTitle ? mCheckpointName : plotTitle;
             if (ImPlot::BeginPlot((title_activations + "##MuscleActivations").c_str(), ImVec2(-1, getPlotHeight("Muscle Activations"))))
             {
-                ImPlot::SetupAxes("Time (s)", "Activation (0-1)");
+                ImPlot::SetupAxes("Time (s)", yAxisLabel.c_str());
 
-                // Merge activation keys and noise keys into single vector
+                // Merge keys with noise keys (only for activation mode)
                 std::vector<std::string> keysToPlot = mSelectedActivationKeys;
 
-                if (mPlotActivationNoise) {
+                if (mMuscleMetricMode == 0 && mPlotActivationNoise) {
                     auto all_keys = mGraphData->get_keys();
                     for (const auto& actKey : mSelectedActivationKeys) {
                         // Convert "act_" to "noise_" key
@@ -2598,7 +2628,7 @@ void GLFWApp::drawRightPanel()
                     }
                 }
 
-                // Plot all keys (activations + noise) in single call
+                // Plot all keys
                 plotGraphData(keysToPlot, ImAxis_Y1);
 
                 // Overlay phase bars
@@ -2894,9 +2924,6 @@ void GLFWApp::drawRightPanel()
             }
         }
     }
-
-    // Camera Status
-    drawCameraStatusSection();
 
     ImGui::End();
 }
@@ -3994,7 +4021,7 @@ void GLFWApp::drawRenderingContent()
 
     ImGui::Separator();
     // Muscle Filtering and Selection
-    if (ImGui::CollapsingHeader("Muscle##Rendering"))
+    if (ImGui::CollapsingHeader("Muscle##Rendering", ImGuiTreeNodeFlags_DefaultOpen))
     {
         // Get all muscles
         auto allMuscles = mRenderEnv->getCharacter()->getMuscles();
@@ -4088,6 +4115,8 @@ void GLFWApp::drawRenderingContent()
     ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
     ImGui::RadioButton("Weakness", &mMuscleRenderTypeInt, 4);
     mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
+
+    drawCameraStatusSection();
 }
 
 void GLFWApp::drawLeftPanel()
