@@ -4,20 +4,21 @@ environment:
   # Skeleton and Character
   skeleton:
     file: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
-    # file: "@data/skeleton/base_v2.xml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    kp: 200
-    kv: 40
-    damping: 0.1
-    weight_from: "@pid:30157774/gait/pre"
+    damping: 0.04
+    self_collide: true
+    scale_tau_on_weight: true
+    scale_f0_on_weight: true  # Scale muscle f0 by mass^(2/3)
+    weight_from: 
+      file: "@pid:30157774/gait/metadata.yaml"
+      prepost: "pre"
 
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    use_mirror: false
-    local_state: true
     file: "@pid:30157774/gait/pre/h5/Trimmed_walk01-Dynamic_trimmed.h5"
-
+    use_mirror: false
+    get_stride_from_motion: true
 
   # Muscle System
   muscle:

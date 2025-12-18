@@ -576,47 +576,39 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mUseMuscle = true;
 
         // === Weight from metadata or direct value ===
+        // Supports:
+        //   weight_from: 70.5                    # direct numeric value
+        //   weight_from:                         # structured format
+        //     file: "@pid:xxx/metadata.yaml"
+        //     prepost: "pre"
         if (env["skeleton"]["weight_from"]) {
             auto weightNode = env["skeleton"]["weight_from"];
 
-            // Check if it's a numeric value (direct weight override)
             if (weightNode.IsScalar()) {
+                // Direct numeric value
+                double weight = weightNode.as<double>();
+                mCharacter->setBodyMass(weight);
+                LOG_VERBOSE("[Environment] Set body mass from direct value: " << weight << " kg");
+            } else if (weightNode.IsMap() && weightNode["file"]) {
+                // Structured format: file + prepost
+                std::string metadataUri = weightNode["file"].as<std::string>();
+                std::string prepost = weightNode["prepost"].as<std::string>("pre");
+
                 try {
-                    double weight = weightNode.as<double>();
-                    mCharacter->setBodyMass(weight);
-                    LOG_VERBOSE("[Environment] Set body mass from direct value: " << weight << " kg");
-                } catch (const YAML::BadConversion&) {
-                    // Not a number, treat as URI string
-                    std::string weightUri = weightNode.as<std::string>();
+                    std::string resolvedMetadata = rm::resolve(metadataUri);
+                    YAML::Node metadata = YAML::LoadFile(resolvedMetadata);
 
-                    // Parse URI to extract metadata section (e.g., "pre" from "@pid:xxx/gait/pre")
-                    // Remove trailing slashes
-                    while (!weightUri.empty() && weightUri.back() == '/') {
-                        weightUri.pop_back();
+                    if (metadata[prepost] && metadata[prepost]["weight"]) {
+                        double weight = metadata[prepost]["weight"].as<double>();
+                        mCharacter->setBodyMass(weight);
+                        LOG_VERBOSE("[Environment] Set body mass from " << metadataUri
+                            << "[" << prepost << "]: " << weight << " kg");
+                    } else {
+                        LOG_WARN("[Environment] weight_from: '" << prepost
+                            << ".weight' not found in " << metadataUri);
                     }
-
-                    // Find last path component (metadata section)
-                    size_t lastSlash = weightUri.rfind('/');
-                    if (lastSlash != std::string::npos) {
-                        std::string section = weightUri.substr(lastSlash + 1);
-                        std::string basePath = weightUri.substr(0, lastSlash);
-                        std::string metadataUri = basePath + "/metadata.yaml";
-
-                        try {
-                            std::string resolvedMetadata = rm::resolve(metadataUri);
-                            YAML::Node metadata = YAML::LoadFile(resolvedMetadata);
-
-                            if (metadata[section] && metadata[section]["weight"]) {
-                                double weight = metadata[section]["weight"].as<double>();
-                                mCharacter->setBodyMass(weight);
-                                LOG_VERBOSE("[Environment] Set body mass from " << weightUri << ": " << weight << " kg");
-                            } else {
-                                LOG_WARN("[Environment] weight_from: section '" << section << "' or 'weight' not found in metadata");
-                            }
-                        } catch (const std::exception& e) {
-                            LOG_WARN("[Environment] Failed to load weight from " << weightUri << ": " << e.what());
-                        }
-                    }
+                } catch (const std::exception& e) {
+                    LOG_WARN("[Environment] Failed to load weight from " << metadataUri << ": " << e.what());
                 }
             }
         }
