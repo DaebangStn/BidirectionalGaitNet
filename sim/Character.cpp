@@ -1817,6 +1817,14 @@ void Character::updateMuscleForceRatio()
                << " (mass=" << currentMass << "kg, ref=" << kRefMass << "kg)");
 }
 
+void Character::setClipLmNorm(double clip)
+{
+    for (Muscle* muscle : mMuscles) {
+        muscle->setClipLmNorm(clip);
+    }
+    LOG_VERBOSE("[Character] Set lm_norm clip to " << clip << " for all muscles");
+}
+
 double Character::calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const std::vector<SimpleMotion *> &simpleMotions, const Eigen::EIGEN_VV_VEC3D &x0)
 {
     double lambdaShape = 0.1;

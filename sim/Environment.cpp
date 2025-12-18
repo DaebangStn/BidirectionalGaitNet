@@ -553,12 +553,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mCharacter->setScaleTauOnWeight(scaleTau);
         }
 
-        // Enable muscle force (f0) scaling based on body mass (mass^(2/3) law)
-        if (skel["scale_f0_on_weight"]) {
-            bool scaleF0 = skel["scale_f0_on_weight"].as<bool>();
-            mCharacter->setScaleF0OnWeight(scaleF0);
-        }
-
         mRefPose = mCharacter->getSkeleton()->getPositions();
         mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
     }
@@ -574,6 +568,12 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         std::string resolved = rm::resolve(musclePath);
         mCharacter->setMuscles(resolved, useVelForce, meshLbs);
         mUseMuscle = true;
+
+        // Clip lm_norm for passive force calculation
+        if (muscle["clip_lm_norm"]) {
+            double clip = muscle["clip_lm_norm"].as<double>();
+            mCharacter->setClipLmNorm(clip);
+        }
 
         // === Weight from metadata or direct value ===
         // Supports:
@@ -611,6 +611,12 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
                     LOG_WARN("[Environment] Failed to load weight from " << metadataUri << ": " << e.what());
                 }
             }
+        }
+
+        // Enable muscle force (f0) scaling based on body mass (mass^(2/3) law)
+        if (muscle["scale_f0_on_weight"]) {
+            bool scaleF0 = muscle["scale_f0_on_weight"].as<bool>();
+            mCharacter->setScaleF0OnWeight(scaleF0);
         }
 
         // Apply muscle force scaling after body mass is set

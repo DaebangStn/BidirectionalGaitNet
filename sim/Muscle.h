@@ -91,6 +91,9 @@ public:
 	double ratio_l() { return l_ratio; }
 	double GetTendonOffset() { return lt_rel_ofs; }
 
+	void setClipLmNorm(double clip) { mClipLmNorm = clip; }
+	double getClipLmNorm() const { return mClipLmNorm; }
+
 	bool mUseVelocityForce;
 	double F_L(double _l_m);
 	double F_V(double _l_m);
@@ -108,6 +111,7 @@ public:
 	double lmt_rel, lm_rel, lt_rel; // MTU, muscle, tendon length relative to reference MTU length
 	double lm_opt; // normalizer for FLV curve
 	double lm_norm; // input for the FLV curve
+	double mClipLmNorm = -1.0; // clip lm_norm for passive force (-1 = no clip)
 
 	double f_toe, e_toe, k_toe, k_lin, e_t0; // For g_t
 	double k_pe, e_mo;						 // For g_pl

@@ -274,9 +274,8 @@ double Muscle::Getf_A()
 }
 double Muscle::Getf_p()
 {
-    // if (lm_norm > 1.4) LOG_WARN("[Muscle] Getf_p: " + name + " - lm_norm=" + std::to_string(lm_norm) + " is too high");
-    // double f_p = F_psv(std::min(lm_norm, 1.4)) * cos(pen_angle);
-    double f_p = F_psv(lm_norm) * cos(pen_angle);
+    double lm_input = (mClipLmNorm > 0) ? std::min(lm_norm, mClipLmNorm) : lm_norm;
+    double f_p = F_psv(lm_input) * cos(pen_angle);
     return f0 * f_p;
 }
 Eigen::VectorXd Muscle::GetRelatedJtA()

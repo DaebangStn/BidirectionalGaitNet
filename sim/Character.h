@@ -199,6 +199,9 @@ public:
     bool getScaleF0OnWeight() const { return mScaleF0OnWeight; }
     void updateMuscleForceRatio();
 
+    // Clip lm_norm for passive force calculation
+    void setClipLmNorm(double clip);
+
     Eigen::VectorXd posToSixDof(Eigen::VectorXd pos);
     Eigen::VectorXd sixDofToPos(Eigen::VectorXd raw_pos);
 
