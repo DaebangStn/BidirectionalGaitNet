@@ -60,6 +60,22 @@ struct FootContactPhase {
 };
 
 /**
+ * @brief ROM violation data for a single DOF
+ */
+struct ROMViolation {
+    std::string jointName;      // Joint name
+    int dofIndex;               // DOF index in skeleton
+    int localDofIndex;          // DOF index within joint (for multi-DOF joints)
+    int numJointDofs;           // Total DOFs in this joint
+    int startFrame;             // First frame of violation
+    int maxDiffFrame;           // Frame with maximum violation
+    int endFrame;               // Last frame of violation
+    double maxAngle;            // Actual angle at max violation (rad)
+    double boundValue;          // The limit that was hit
+    bool isUpperBound;          // true = exceeded upper, false = below lower
+};
+
+/**
  * @brief Motion Editor Application
  *
  * Features:
@@ -176,6 +192,11 @@ private:
     int mStrideCalcMode = 0;             // 0=Z only, 1=XZ magnitude
     double mComputedStride = -1.0;       // Computed stride value (-1 = not computed)
 
+    // === ROM Violation Detection ===
+    std::vector<ROMViolation> mROMViolations;
+    int mSelectedViolation = -1;
+    bool mPreviewClampedPose = true;
+
     // === Initialization ===
     void setCamera();
     void updateCamera();
@@ -199,6 +220,10 @@ private:
     void drawHeightSection();
     void drawFootContactSection();
     void drawStrideEstimationSection();
+    void drawROMViolationSection();
+
+    // === Processing ===
+    void detectROMViolations();
 
     // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);

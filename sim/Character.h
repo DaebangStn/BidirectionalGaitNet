@@ -202,6 +202,18 @@ public:
     // Clip lm_norm for passive force calculation
     void setClipLmNorm(double clip);
 
+    // SPD torque clipping: tau <= min(M_diag * max_acc, max_torque)
+    void setMaxAcc(double maxAcc) { mMaxAcc = maxAcc; updateMaxTorque(); }
+    double getMaxAcc() const { return mMaxAcc; }
+    void setMaxTorqueLimit(double maxTorque) { mMaxTorqueLimit = maxTorque; updateMaxTorque(); }
+    double getMaxTorqueLimit() const { return mMaxTorqueLimit; }
+    void updateMaxTorque();
+
+    // Critical damping: Kv = 2 * sqrt(Kp * M_diag) for numerical stability
+    void setUseCriticalDamping(bool enable) { mUseCriticalDamping = enable; }
+    bool getUseCriticalDamping() const { return mUseCriticalDamping; }
+    void updateCriticalDamping();
+
     Eigen::VectorXd posToSixDof(Eigen::VectorXd pos);
     Eigen::VectorXd sixDofToPos(Eigen::VectorXd raw_pos);
 
@@ -290,6 +302,14 @@ private:
 
     // Target mass for preservation across skeleton parameter changes
     double mTargetMass = -1.0;  // -1 means no target mass set
+
+    // SPD torque clipping parameters
+    double mMaxAcc = -1.0;  // -1 means no clipping (mass-dependent)
+    double mMaxTorqueLimit = -1.0;  // -1 means no clipping (absolute limit)
+    Eigen::VectorXd mMaxTorque;  // Cached per-DOF: min(M_diag * mMaxAcc, mMaxTorqueLimit)
+
+    // Critical damping: Kv = 2 * sqrt(Kp * M_diag)
+    bool mUseCriticalDamping = false;
 
     static constexpr double kRefMass = 70.0;  // Reference mass for stable simulation
 };

@@ -158,10 +158,10 @@ class Args:
     @classmethod
     def debug(cls) -> "Args":
         return cls(
-            num_envs=4,
+            num_envs=1,
             num_steps=32,
-            muscle_batch_size=128,
-            num_minibatches=4,
+            muscle_batch_size=32,
+            num_minibatches=1,
         )
 
 

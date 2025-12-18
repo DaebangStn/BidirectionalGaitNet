@@ -270,12 +270,15 @@ double Muscle::GetForce()
 double Muscle::Getf_A()
 {
     double f_a = F_L(lm_norm) * (mUseVelocityForce ? F_V(v_m * 0.1 / lmt_ref * lm_opt) : 1.0) * cos(pen_angle);
+    // if (f_a > 3.0) LOG_WARN("[Muscle] " + name + " f_a: " + std::to_string(f_a) + " > 3.0");
     return f0 * f_a;
 }
 double Muscle::Getf_p()
 {
     double lm_input = (mClipLmNorm > 0) ? std::min(lm_norm, mClipLmNorm) : lm_norm;
+    // if (lm_norm > 1.4) LOG_WARN("[Muscle] " + name + " lm_norm: " + std::to_string(lm_norm) + " > 1.4");
     double f_p = F_psv(lm_input) * cos(pen_angle);
+    // if (f_p > 3.0) LOG_WARN("[Muscle] " + name + " f_p: " + std::to_string(f_p) + " > 3.0");
     return f0 * f_p;
 }
 Eigen::VectorXd Muscle::GetRelatedJtA()

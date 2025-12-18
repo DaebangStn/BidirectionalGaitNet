@@ -553,6 +553,24 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mCharacter->setScaleTauOnWeight(scaleTau);
         }
 
+        // Set max acceleration for SPD torque clipping (tau <= mass * max_acc)
+        if (skel["max_acc"]) {
+            double maxAcc = skel["max_acc"].as<double>();
+            mCharacter->setMaxAcc(maxAcc);
+        }
+
+        // Set absolute max torque limit for SPD clipping
+        if (skel["max_torque"]) {
+            double maxTorque = skel["max_torque"].as<double>();
+            mCharacter->setMaxTorqueLimit(maxTorque);
+        }
+
+        // Enable critical damping: Kv = 2 * sqrt(Kp * M_diag)
+        if (skel["use_critical_damping"]) {
+            bool useCriticalDamping = skel["use_critical_damping"].as<bool>();
+            mCharacter->setUseCriticalDamping(useCriticalDamping);
+        }
+
         mRefPose = mCharacter->getSkeleton()->getPositions();
         mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
     }
@@ -621,6 +639,9 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
         // Apply muscle force scaling after body mass is set
         mCharacter->updateMuscleForceRatio();
+
+        // Apply critical damping after body mass is set (Kv depends on mass matrix)
+        mCharacter->updateCriticalDamping();
 
         if (muscle["pose_optimization"]) {
             auto poseOpt = muscle["pose_optimization"];
@@ -1808,7 +1829,6 @@ void Environment::calcActivation()
 void Environment::postMuscleStep()
 {
     mSimulationCount++;
-
     mGaitPhase->step();
 
     if (mGaitPhase->isGaitCycleComplete()) {
@@ -1838,6 +1858,7 @@ void Environment::muscleStep()
 
     if (mNoiseInjector) mNoiseInjector->step(mCharacter);
     mCharacter->step();
+
     mWorld->step();
     postMuscleStep();
 }
@@ -2081,7 +2102,9 @@ void Environment::reset(double phase)
     cur_pos = cur_pos.cwiseMax(rom_min).cwiseMin(rom_max);
     mCharacter->getSkeleton()->setPositions(cur_pos);
 
+    // Use clamped pose as PD target to avoid mismatch
     mCharacter->setPDTarget(mRefPose);
+
     mCharacter->setTorque(mCharacter->getTorque().setZero());
     if (mUseMuscle) {
         mCharacter->setActivations(mCharacter->getActivations().setZero());

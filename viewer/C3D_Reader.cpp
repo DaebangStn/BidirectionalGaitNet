@@ -2854,6 +2854,30 @@ void C3D_Reader::refineArmIK()
             } else {
                 totalRmsAfter += finalError.squaredNorm();
             }
+
+            // Fix negative forearm angle by applying 180° twist to arm
+            double foreArmAngle = mMotionResult.motionPoses[t](foreArmJointIdx);
+            if (foreArmAngle < 0) {
+                // Compute arm axis in parent (torso) frame
+                skel->setPositions(mMotionResult.motionPoses[t]);
+                Eigen::Isometry3d T_torso_curr = torsoBn->getWorldTransform();
+                Eigen::Isometry3d T_arm_curr = armBn->getWorldTransform();
+                Eigen::Vector3d p_shoulder_curr = T_torso_curr * armJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Vector3d p_elbow_curr = T_arm_curr * foreArmJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Vector3d u_world = (p_elbow_curr - p_shoulder_curr).normalized();
+                Eigen::Vector3d u_local = T_torso_curr.linear().transpose() * u_world;
+
+                // Apply π twist to arm BallJoint
+                Eigen::Matrix3d R_arm_curr = dart::dynamics::BallJoint::convertToRotation(
+                    mMotionResult.motionPoses[t].segment<3>(armJointIdx));
+                Eigen::Matrix3d R_twist_pi = Eigen::AngleAxisd(M_PI, u_local).toRotationMatrix();
+                Eigen::Matrix3d R_arm_twisted = R_twist_pi * R_arm_curr;
+                mMotionResult.motionPoses[t].segment<3>(armJointIdx) =
+                    dart::dynamics::BallJoint::convertToPositions(R_arm_twisted);
+
+                // Negate forearm angle
+                mMotionResult.motionPoses[t](foreArmJointIdx) = -foreArmAngle;
+            }
         }
 
         double rmsBefore = std::sqrt(totalRmsBefore / numFrames);
@@ -3771,7 +3795,7 @@ DynamicCalibrationResult C3D_Reader::calibrateDynamic(C3D* c3dData)
     params.doCalibration = true;
     calibrateSkeleton(params);
 
-    // 6. Symmetry enforcement
+    // 6. Symmetry enforcement for scale
     enforceSymmetry();
 
     // 7. Extract bone scales from mSkelInfos

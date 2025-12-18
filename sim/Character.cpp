@@ -651,14 +651,21 @@ Eigen::VectorXd Character::getSPDForces(const Eigen::VectorXd &p_desired, const 
     Eigen::VectorXd dq = mSkeleton->getVelocities();
     double dt = mSkeleton->getTimeStep() * inference_per_sim;
 
-    Eigen::MatrixXd M_inv = (mSkeleton->getMassMatrix() + Eigen::MatrixXd(dt * mKv.asDiagonal())).inverse();
     Eigen::VectorXd qdqdt = q + dq * dt;
 
     Eigen::VectorXd p_diff = -mKp.cwiseProduct(mSkeleton->getPositionDifferences(qdqdt, p_desired));
     Eigen::VectorXd v_diff = -mKv.cwiseProduct(dq);
 
+    Eigen::MatrixXd M_inv = (mSkeleton->getMassMatrix() + Eigen::MatrixXd(dt * mKv.asDiagonal())).inverse();
     Eigen::VectorXd ddq = M_inv * (-mSkeleton->getCoriolisAndGravityForces() + p_diff + v_diff + mSkeleton->getConstraintForces() + ext);
     Eigen::VectorXd tau = p_diff + v_diff - dt * mKv.cwiseProduct(ddq);
+
+    // Apply per-DOF torque clipping
+    if (mMaxTorque.size() > 0) {
+        for (int i = 6; i < tau.size(); i++) {
+            tau[i] = std::clamp(tau[i], -mMaxTorque[i], mMaxTorque[i]);
+        }
+    }
 
     tau.head<6>().setZero();
 
@@ -1771,8 +1778,10 @@ void Character::setBodyMass(double targetMass)
         body->setInertia(inertia);
     }
 
-    // Update cached torque mass ratio
+    // Update cached torque mass ratio and critical damping
     updateTorqueMassRatio();
+    updateCriticalDamping();  // Kv depends on mass matrix
+    updateMaxTorque();
 }
 
 void Character::scaleKpKv(double kp_scale, double kv_scale)
@@ -1807,6 +1816,48 @@ void Character::updateTorqueMassRatio()
     mTorqueMassRatio = std::min(1.0, currentMass / kRefMass);
     LOG_VERBOSE("[Character] Updated torque mass ratio: " << mTorqueMassRatio
                << " (mass=" << currentMass << "kg, ref=" << kRefMass << "kg)");
+}
+
+void Character::updateMaxTorque()
+{
+    // Compute per-DOF max torque: min(M_diag * max_acc, max_torque_limit)
+    if (mMaxAcc > 0 || mMaxTorqueLimit > 0) {
+        int n = mSkeleton->getNumDofs();
+        mMaxTorque = Eigen::VectorXd::Constant(n, std::numeric_limits<double>::max());
+
+        if (mMaxAcc > 0) {
+            Eigen::VectorXd M_diag = mSkeleton->getMassMatrix().diagonal();
+            mMaxTorque = M_diag * mMaxAcc;
+        }
+
+        if (mMaxTorqueLimit > 0) {
+            mMaxTorque = mMaxTorque.cwiseMax(mMaxTorqueLimit);
+        }
+
+        LOG_VERBOSE("[Character] Updated max torque (per-DOF): min=" << mMaxTorque.tail(n-6).minCoeff()
+                   << " max=" << mMaxTorque.tail(n-6).maxCoeff()
+                   << " (maxAcc=" << mMaxAcc << ", maxTorqueLimit=" << mMaxTorqueLimit << ")");
+    }
+}
+
+void Character::updateCriticalDamping()
+{
+    if (!mUseCriticalDamping) return;
+
+    Eigen::VectorXd M_diag = mSkeleton->getMassMatrix().diagonal();
+    int n = mSkeleton->getNumDofs();
+
+    // Kv = 2 * sqrt(Kp * M_diag) for critical damping
+    // But enforce minimum Kv to prevent underdamping in light distal body parts
+    const double minKv = 1.0;  // Minimum damping coefficient
+
+    for (int i = 6; i < n; i++) {  // Skip root DOFs
+        double m = std::max(M_diag[i], 1e-6);  // Prevent sqrt of negative/zero
+        double criticalKv = 2.0 * std::sqrt(mKp[i] * m);
+        mKv[i] = std::max(criticalKv, minKv);
+    }
+
+    updateMaxTorque();
 }
 
 void Character::updateMuscleForceRatio()

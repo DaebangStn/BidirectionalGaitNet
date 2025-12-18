@@ -5,12 +5,12 @@ environment:
   skeleton:
     file: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    damping: 0.1
     kp_scale: 0.3
-    kv_scale: 0.3
+    damping: 0.1
     self_collide: true
+    use_critical_damping: true
     scale_tau_on_weight: true
-    weight_from: 
+    weight_from:
       file: "@pid:30157774/gait/metadata.yaml"
       prepost: "pre"
 
@@ -25,7 +25,6 @@ environment:
   muscle:
     file: "@data/muscle/base_vas.yaml"
     scale_f0_on_weight: true  # Scale muscle f0 by mass^(2/3)
-    clip_lm_norm: 1.4
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true

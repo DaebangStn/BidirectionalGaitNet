@@ -1024,7 +1024,6 @@ void C3DProcessorApp::drawMarkerFittingSection()
         ImGui::EndDisabled();
 
         // Export HDF - same line as calibrate button
-        ImGui::SameLine();
 
         bool canExportHDF = mDynamicCalibResult.success
                          && !mDynamicCalibResult.motionPoses.empty()

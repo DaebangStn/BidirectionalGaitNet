@@ -238,8 +238,9 @@ void MotionEditorApp::drawFrame()
         // Draw preview skeleton (orange) if transformations pending
         bool hasRotationPreview = std::abs(mPendingRotationAngle) > 0.001f;
         bool hasHeightPreview = mHeightOffsetComputed && std::abs(mComputedHeightOffset) > 0.001;
+        bool hasROMPreview = mPreviewClampedPose && !mROMViolations.empty();
 
-        if (hasRotationPreview || hasHeightPreview) {
+        if (hasRotationPreview || hasHeightPreview || hasROMPreview) {
             drawSkeleton(true);
         }
 
@@ -286,6 +287,12 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
         // Apply height offset
         if (mHeightOffsetComputed && std::abs(mComputedHeightOffset) > 0.001) {
             pose[4] += mComputedHeightOffset;
+        }
+        // Apply ROM clamping if enabled
+        if (mPreviewClampedPose && !mROMViolations.empty()) {
+            Eigen::VectorXd rom_min = skel->getPositionLowerLimits();
+            Eigen::VectorXd rom_max = skel->getPositionUpperLimits();
+            pose = pose.cwiseMax(rom_min).cwiseMin(rom_max);
         }
         // Semi-transparent orange for preview
         color = Eigen::Vector4d(0.9, 0.5, 0.3, 0.6);
@@ -413,6 +420,8 @@ void MotionEditorApp::drawRightPanel()
     drawRotationSection();
     ImGui::Separator();
     drawHeightSection();
+    ImGui::Separator();
+    drawROMViolationSection();
     ImGui::Separator();
     drawFootContactSection();
     ImGui::Separator();
@@ -1122,6 +1131,148 @@ Eigen::Vector4d MotionEditorApp::getRenderColor(
 }
 
 // =============================================================================
+// ROM Violation Detection
+// =============================================================================
+
+void MotionEditorApp::detectROMViolations()
+{
+    mROMViolations.clear();
+    mSelectedViolation = -1;
+
+    if (!mMotion || !mCharacter) return;
+
+    auto skel = mCharacter->getSkeleton();
+    Eigen::VectorXd rom_min = skel->getPositionLowerLimits();
+    Eigen::VectorXd rom_max = skel->getPositionUpperLimits();
+    int numFrames = mMotion->getNumFrames();
+    int numDofs = skel->getNumDofs();
+
+    // Skip first 6 DOFs (root FreeJoint)
+    for (int dofIdx = 6; dofIdx < numDofs; ++dofIdx) {
+        int violationStart = -1;
+        int maxDiffFrame = -1;
+        double maxDiff = 0.0;
+        double maxAngle = 0.0;
+        double boundHit = 0.0;
+        bool isUpper = false;
+
+        for (int f = 0; f < numFrames; ++f) {
+            Eigen::VectorXd pose = mMotion->getPose(f);
+            double val = pose[dofIdx];
+            double diffLower = rom_min[dofIdx] - val;  // positive if below min
+            double diffUpper = val - rom_max[dofIdx];  // positive if above max
+
+            bool inViolation = (diffLower > 0 || diffUpper > 0);
+
+            if (inViolation) {
+                if (violationStart < 0) violationStart = f;
+
+                double diff = std::max(diffLower, diffUpper);
+                if (diff > maxDiff) {
+                    maxDiff = diff;
+                    maxDiffFrame = f;
+                    maxAngle = val;
+                    isUpper = (diffUpper > diffLower);
+                    boundHit = isUpper ? rom_max[dofIdx] : rom_min[dofIdx];
+                }
+            } else if (violationStart >= 0) {
+                // End of violation range
+                auto dof = skel->getDof(dofIdx);
+                auto joint = dof->getJoint();
+                std::string jointName = joint->getName();
+                int localDofIdx = dof->getIndexInJoint();
+                int numJointDofs = joint->getNumDofs();
+                mROMViolations.push_back({
+                    jointName, dofIdx, localDofIdx, numJointDofs,
+                    violationStart, maxDiffFrame, f - 1,
+                    maxAngle, boundHit, isUpper
+                });
+                violationStart = -1;
+                maxDiff = 0.0;
+            }
+        }
+
+        // Handle violation at end of motion
+        if (violationStart >= 0) {
+            auto dof = skel->getDof(dofIdx);
+            auto joint = dof->getJoint();
+            std::string jointName = joint->getName();
+            int localDofIdx = dof->getIndexInJoint();
+            int numJointDofs = joint->getNumDofs();
+            mROMViolations.push_back({
+                jointName, dofIdx, localDofIdx, numJointDofs,
+                violationStart, maxDiffFrame, numFrames - 1,
+                maxAngle, boundHit, isUpper
+            });
+        }
+    }
+
+    // Sort by start frame
+    std::sort(mROMViolations.begin(), mROMViolations.end(),
+        [](const ROMViolation& a, const ROMViolation& b) {
+            return a.startFrame < b.startFrame;
+        });
+
+    LOG_INFO("[MotionEditor] Detected " << mROMViolations.size() << " ROM violations");
+}
+
+void MotionEditorApp::drawROMViolationSection()
+{
+    if (!collapsingHeaderWithControls("ROM Violations")) return;
+
+    if (!mMotion || !mCharacter) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Load motion and skeleton first");
+        return;
+    }
+
+    // Detect button
+    if (ImGui::Button("Detect Violations", ImVec2(-1, 0))) {
+        detectROMViolations();
+    }
+
+    // Preview checkbox
+    ImGui::Checkbox("Preview Clamped Pose", &mPreviewClampedPose);
+
+    // Violation count
+    ImGui::Text("Violations: %zu", mROMViolations.size());
+
+    // No violations message
+    if (mROMViolations.empty()) {
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "No ROM violations detected");
+        return;
+    }
+
+    // Violation listbox
+    if (ImGui::BeginListBox("##ROMViolations", ImVec2(-1, 150))) {
+        for (int i = 0; i < static_cast<int>(mROMViolations.size()); ++i) {
+            const auto& v = mROMViolations[i];
+
+            char label[128];
+            const char* op = v.isUpperBound ? ">" : "<";
+            double angleDeg = v.maxAngle * 180.0 / M_PI;
+            double boundDeg = v.boundValue * 180.0 / M_PI;
+            // Show local DOF index for multi-DOF joints (e.g., "HipR[2]")
+            std::string jointDisplay = v.jointName;
+            if (v.numJointDofs > 1) {
+                jointDisplay += "[" + std::to_string(v.localDofIndex) + "]";
+            }
+            snprintf(label, sizeof(label), "%s (%d-%d-%d): %.1f° %s %.1f°##V%d",
+                     jointDisplay.c_str(), v.startFrame, v.maxDiffFrame, v.endFrame,
+                     angleDeg, op, boundDeg, i);
+
+            bool isSelected = (i == mSelectedViolation);
+            if (ImGui::Selectable(label, isSelected)) {
+                mSelectedViolation = i;
+                mMotionState.manualFrameIndex = v.startFrame;
+                mMotionState.navigationMode = ME_MANUAL_FRAME;
+                mIsPlaying = false;
+            }
+        }
+        ImGui::EndListBox();
+    }
+}
+
+// =============================================================================
 // PID Scanner Methods
 // =============================================================================
 
@@ -1224,6 +1375,10 @@ void MotionEditorApp::loadH5Motion(const std::string& path)
 
         // Clear export filename
         mExportFilename[0] = '\0';
+
+        // Reset ROM violations
+        mROMViolations.clear();
+        mSelectedViolation = -1;
 
         // Load skeleton if we have one auto-detected or manually set
         std::string skelPath = mUseAutoSkeleton ? mAutoDetectedSkeletonPath : std::string(mManualSkeletonPath);
