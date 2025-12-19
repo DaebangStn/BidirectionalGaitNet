@@ -7,8 +7,7 @@ description: "Right knee extension ROM examination with multiple trials"
 character:
   # skeleton: "@data/skeleton/base.xml"
   # skeleton: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
-  skeleton: "@pid:12964246/gait/pre/skeleton/dynamic2.yaml"
-  # skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
+  skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
   muscle: "@data/muscle/base_vas.yaml"
   use_muscle: true
   actuator: "mass_lower"

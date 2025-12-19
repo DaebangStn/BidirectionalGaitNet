@@ -837,11 +837,10 @@ void C3DProcessorApp::drawMotionListSection()
         // File list
         if (ImGui::BeginListBox("##C3DList", ImVec2(-1, 200))) {
             for (int i = 0; i < static_cast<int>(mMotionList.size()); ++i) {
-                fs::path p(mMotionList[i]);
-                std::string filename = p.filename().string();
+                const std::string& displayName = mMotionDisplayNames[i];
 
                 bool isSelected = (i == mSelectedMotion && mMotionSource == MotionSource::FileList);
-                if (ImGui::Selectable(filename.c_str(), isSelected)) {
+                if (ImGui::Selectable(displayName.c_str(), isSelected)) {
                     if (i != mSelectedMotion || mMotionSource != MotionSource::FileList) {
                         mSelectedMotion = i;
                         mMotionSource = MotionSource::FileList;
@@ -2250,6 +2249,7 @@ void C3DProcessorApp::drawJointOffsetSection()
 void C3DProcessorApp::scanC3DFiles()
 {
     mMotionList.clear();
+    mMotionDisplayNames.clear();
 
     if (!mResourceManager) {
         LOG_WARN("[C3DProcessor] Resource manager not initialized");
@@ -2259,11 +2259,16 @@ void C3DProcessorApp::scanC3DFiles()
     // Search paths using RM endpoints
     std::vector<std::string> searchPatterns = {"@data/c3d", "@data/motion"};
 
+    // Temporary storage: pairs of (full_path, display_name)
+    std::vector<std::pair<std::string, std::string>> fileEntries;
+
     for (const auto& pattern : searchPatterns) {
         try {
             // Resolve directory path
             std::string dirPath = mResourceManager->resolveDir(pattern);
             if (dirPath.empty() || !fs::exists(dirPath)) continue;
+
+            fs::path basePath(dirPath);
 
             // Recursively scan for .c3d files
             for (const auto& entry : fs::recursive_directory_iterator(dirPath)) {
@@ -2271,7 +2276,10 @@ void C3DProcessorApp::scanC3DFiles()
                     std::string ext = entry.path().extension().string();
                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
                     if (ext == ".c3d") {
-                        mMotionList.push_back(entry.path().string());
+                        std::string fullPath = entry.path().string();
+                        // Compute relative path for display
+                        std::string displayName = fs::relative(entry.path(), basePath).string();
+                        fileEntries.emplace_back(fullPath, displayName);
                     }
                 }
             }
@@ -2282,8 +2290,15 @@ void C3DProcessorApp::scanC3DFiles()
         }
     }
 
-    // Sort by filename
-    std::sort(mMotionList.begin(), mMotionList.end());
+    // Sort by display name
+    std::sort(fileEntries.begin(), fileEntries.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // Populate parallel vectors
+    for (const auto& entry : fileEntries) {
+        mMotionList.push_back(entry.first);
+        mMotionDisplayNames.push_back(entry.second);
+    }
 
     LOG_INFO("[C3DProcessor] Found " << mMotionList.size() << " C3D files");
 }

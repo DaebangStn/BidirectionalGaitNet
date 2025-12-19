@@ -126,7 +126,8 @@ private:
     MotionSource mMotionSource = MotionSource::None;
 
     // Motion file list (C3D files only)
-    std::vector<std::string> mMotionList;
+    std::vector<std::string> mMotionList;        // Full paths for loading
+    std::vector<std::string> mMotionDisplayNames; // Relative paths for display
     int mSelectedMotion = -1;
     std::string mDirectorySearchPath;
 

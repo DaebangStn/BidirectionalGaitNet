@@ -155,7 +155,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     mGraphData = new CBufferData<double>();
 
     // Initialize sweep configuration
-    mSweepConfig.joint_index = 0;
+    mSweepConfig.joint_index = 1;
     mSweepConfig.dof_index = 0;
     mSweepConfig.angle_min = -1.57;  // -90 degrees
     mSweepConfig.angle_max = 1.57;   // +90 degrees
@@ -4833,8 +4833,11 @@ void PhysicalExam::renderMusclePlots() {
         auto skel = mCharacter->getSkeleton();
         int root_dofs = skel->getRootJoint()->getNumDofs();
 
+        static bool mShowTotalTorque = true;
         // Joint selection listbox
         ImGui::Text("Select Joint for Torque Plot:");
+        ImGui::SameLine();
+        ImGui::Checkbox("Total", &mShowTotalTorque);
         if (ImGui::BeginListBox("##JointSelect", ImVec2(-1, 100))) {
             for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root
                 auto joint = skel->getJoint(i);
@@ -4859,44 +4862,78 @@ void PhysicalExam::renderMusclePlots() {
             ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
             ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
 
-            // Plot each muscle's contribution to this joint (magnitude across all DOFs)
-            for (const auto& muscle_name : mTrackedMuscles) {
-                auto vis_it = mMuscleVisibility.find(muscle_name);
-                if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
+            int num_dofs = selected_joint->getNumDofs();
 
-                // Compute magnitude across all DOFs of the selected joint
-                int num_dofs = selected_joint->getNumDofs();
-                std::vector<double> magnitude_data;
+            if (mShowTotalTorque) {
+                // Sum all muscles' passive torques for this joint
+                std::vector<double> total_passive_torque;
                 bool has_data = false;
 
-                // Get data for first DOF to determine size
-                std::string first_key = muscle_name + "_jtp_" + std::to_string(joint_first_dof);
-                auto first_data = mGraphData->get(first_key);
-                if (!first_data.empty() && first_data.size() == x_data.size()) {
-                    has_data = true;
-                    magnitude_data.resize(first_data.size(), 0.0);
-
-                    // Sum squared values across all DOFs
-                    for (int d = 0; d < num_dofs; ++d) {
-                        int dof_idx = joint_first_dof + d;
-                        std::string key = muscle_name + "_jtp_" + std::to_string(dof_idx);
-                        auto jtp_data = mGraphData->get(key);
-                        if (!jtp_data.empty() && jtp_data.size() == x_data.size()) {
-                            for (size_t i = 0; i < jtp_data.size(); ++i) {
-                                magnitude_data[i] += jtp_data[i] * jtp_data[i];
-                            }
-                        }
-                    }
-
-                    // Take square root to get magnitude
-                    for (size_t i = 0; i < magnitude_data.size(); ++i) {
-                        magnitude_data[i] = std::sqrt(magnitude_data[i]);
+                // Initialize from first valid key to get size
+                for (const auto& muscle_name : mTrackedMuscles) {
+                    std::string first_key = muscle_name + "_jtp_" + std::to_string(joint_first_dof);
+                    auto first_data = mGraphData->get(first_key);
+                    if (!first_data.empty() && first_data.size() == x_data.size()) {
+                        total_passive_torque.resize(first_data.size(), 0.0);
+                        has_data = true;
+                        break;
                     }
                 }
 
                 if (has_data) {
-                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
-                        magnitude_data.data(), magnitude_data.size());
+                    // Sum contributions from all muscles (sign preserved)
+                    for (const auto& muscle_name : mTrackedMuscles) {
+                        for (int d = 0; d < num_dofs; ++d) {
+                            int dof_idx = joint_first_dof + d;
+                            std::string key = muscle_name + "_jtp_" + std::to_string(dof_idx);
+                            auto jtp_data = mGraphData->get(key);
+                            if (!jtp_data.empty() && jtp_data.size() == x_data.size()) {
+                                for (size_t i = 0; i < jtp_data.size(); ++i) {
+                                    total_passive_torque[i] += jtp_data[i];
+                                }
+                            }
+                        }
+                    }
+                    ImPlot::PlotLine("Total", x_data.data(),
+                        total_passive_torque.data(), total_passive_torque.size());
+                }
+            } else {
+                // Plot each muscle's contribution to this joint (magnitude across all DOFs)
+                for (const auto& muscle_name : mTrackedMuscles) {
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
+
+                    std::vector<double> magnitude_data;
+                    bool has_data = false;
+
+                    std::string first_key = muscle_name + "_jtp_" + std::to_string(joint_first_dof);
+                    auto first_data = mGraphData->get(first_key);
+                    if (!first_data.empty() && first_data.size() == x_data.size()) {
+                        has_data = true;
+                        magnitude_data.resize(first_data.size(), 0.0);
+
+                        // Sum squared values across all DOFs
+                        for (int d = 0; d < num_dofs; ++d) {
+                            int dof_idx = joint_first_dof + d;
+                            std::string key = muscle_name + "_jtp_" + std::to_string(dof_idx);
+                            auto jtp_data = mGraphData->get(key);
+                            if (!jtp_data.empty() && jtp_data.size() == x_data.size()) {
+                                for (size_t i = 0; i < jtp_data.size(); ++i) {
+                                    magnitude_data[i] += jtp_data[i] * jtp_data[i];
+                                }
+                            }
+                        }
+
+                        // Take square root to get magnitude
+                        for (size_t i = 0; i < magnitude_data.size(); ++i) {
+                            magnitude_data[i] = std::sqrt(magnitude_data[i]);
+                        }
+                    }
+
+                    if (has_data) {
+                        ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                            magnitude_data.data(), magnitude_data.size());
+                    }
                 }
             }
             ImPlot::EndPlot();
