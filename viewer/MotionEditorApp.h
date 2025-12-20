@@ -151,6 +151,10 @@ private:
     bool mUseAutoSkeleton = true;
     char mManualSkeletonPath[512] = {0};
     std::string mCurrentSkeletonPath;
+    std::vector<std::string> mSkeletonFiles;      // List of skeleton files in directory
+    std::vector<std::string> mSkeletonFileNames;  // Display names (filename only)
+    int mSelectedSkeletonFile = -1;               // Selected skeleton index
+    std::string mSkeletonDirectory;               // Current skeleton directory
 
     // === Trim State ===
     int mTrimStart = 0;
@@ -232,6 +236,7 @@ private:
     // === PID Scanner Methods ===
     void scanPIDList();
     void scanH5Files();
+    void scanSkeletonDirectory();
     void loadH5Motion(const std::string& path);
     void autoDetectSkeleton();
     void loadSkeleton(const std::string& path);

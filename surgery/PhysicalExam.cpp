@@ -12,6 +12,8 @@
 #include <vector>
 #include <algorithm>
 #include <filesystem>
+#include <chrono>
+#include <ctime>
 #include <imgui.h>
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -605,9 +607,12 @@ double PhysicalExam::computePassiveForce() {
 }
 
 void PhysicalExam::loadExamSetting(const std::string& config_path) {
+    // Store original config path for output naming
+    mExamConfigPath = config_path;
+
     // Resolve URI if needed
     std::string resolved_config_path = rm::resolve(config_path);
-    
+
     LOG_INFO("Loading exam setting from: " << resolved_config_path);
     
     // Parse YAML configuration
@@ -671,38 +676,42 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
                 trial.mode = TrialMode::FORCE_SWEEP;
             }
 
-            // Parse pose
+            // Parse pose (values in degrees, converted to radians)
             YAML::Node pose_node = trial_node["pose"];
             for (YAML::const_iterator it = pose_node.begin(); it != pose_node.end(); ++it) {
                 std::string joint_name = it->first.as<std::string>();
+                bool is_root = (joint_name == "Pelvis");
 
                 if (it->second.IsSequence()) {
                     std::vector<double> values = it->second.as<std::vector<double>>();
                     Eigen::VectorXd angles(values.size());
                     for (size_t i = 0; i < values.size(); ++i) {
-                        angles[i] = values[i];
+                        // For root joint: first 3 are rotations (convert), last 3 are translations (keep)
+                        // For other joints: all are rotations (convert)
+                        if (is_root && i >= 3) {
+                            angles[i] = values[i];  // Translation - keep as meters
+                        } else {
+                            angles[i] = values[i] * M_PI / 180.0;  // Rotation - degrees to radians
+                        }
                     }
                     trial.pose[joint_name] = angles;
                 } else {
                     Eigen::VectorXd angles(1);
-                    angles[0] = it->second.as<double>();
+                    angles[0] = it->second.as<double>() * M_PI / 180.0;  // Degrees to radians
                     trial.pose[joint_name] = angles;
                 }
             }
 
             // Parse mode-specific configuration
             if (trial.mode == TrialMode::ANGLE_SWEEP) {
-                // Parse angle sweep configuration
+                // Parse angle sweep configuration (angles in degrees, converted to radians)
                 YAML::Node angle_cfg = trial_node["angle_sweep"];
                 trial.angle_sweep.joint_name = angle_cfg["joint"].as<std::string>();
                 trial.angle_sweep.dof_index = angle_cfg["dof_index"] ?
                     angle_cfg["dof_index"].as<int>() : 0;
-                trial.angle_sweep.angle_min = angle_cfg["angle_min"].as<double>();
-                trial.angle_sweep.angle_max = angle_cfg["angle_max"].as<double>();
+                trial.angle_sweep.angle_min = angle_cfg["angle_min"].as<double>() * M_PI / 180.0;
+                trial.angle_sweep.angle_max = angle_cfg["angle_max"].as<double>() * M_PI / 180.0;
                 trial.angle_sweep.num_steps = angle_cfg["num_steps"].as<int>();
-
-                // Parse recording configuration (only output_file needed for angle sweep)
-                trial.output_file = trial_node["recording"]["output_file"].as<std::string>();
 
                 LOG_INFO("  Loaded angle sweep trial: " << trial.name
                           << " (joint: " << trial.angle_sweep.joint_name << ")");
@@ -719,9 +728,10 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
                 trial.force_steps = force_cfg["magnitude_steps"].as<int>();
                 trial.settle_time = force_cfg["settle_time"].as<double>();
 
-                // Parse recording configuration
-                trial.record_joints = trial_node["recording"]["joints"].as<std::vector<std::string>>();
-                trial.output_file = trial_node["recording"]["output_file"].as<std::string>();
+                // Parse which joints to record (for data collection)
+                if (trial_node["recording"] && trial_node["recording"]["joints"]) {
+                    trial.record_joints = trial_node["recording"]["joints"].as<std::vector<std::string>>();
+                }
 
                 LOG_INFO("  Loaded force sweep trial: " << trial.name);
             }
@@ -739,6 +749,9 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
         LOG_INFO("Exam setting loaded (no trials defined - interactive mode)");
     } else {
         LOG_INFO("Exam setting loaded with " << mTrials.size() << " trial(s)");
+
+        // Initialize HDF5 file for exam results
+        initExamHDF5();
     }
 }
 
@@ -768,8 +781,7 @@ void PhysicalExam::startNextTrial() {
     runCurrentTrial();
     
     mTrialRunning = false;
-    LOG_INFO("Trial completed. Results saved to: " 
-              << mTrials[mCurrentTrialIndex].output_file);
+    LOG_INFO("Trial completed. Results saved to: " << mExamOutputPath);
 }
 
 void PhysicalExam::runCurrentTrial() {
@@ -819,8 +831,8 @@ void PhysicalExam::runCurrentTrial() {
         mRecordedData.push_back(data);
     }
 
-    // Save results
-    saveToCSV(trial.output_file);
+    // Append to exam HDF5
+    appendTrialToHDF5(trial);
 }
 
 void PhysicalExam::runExamination(const std::string& config_path) {
@@ -1047,11 +1059,10 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
         collectAngleSweepTrialData(angle);
     }
 
-    // 6. Save results
-    saveAngleSweepToCSV(trial.output_file);
+    // 6. Append to exam HDF5
+    appendTrialToHDF5(trial);
 
-    LOG_INFO("Angle sweep trial completed (" << trial.angle_sweep.num_steps + 1
-              << " steps). Results saved to: " << trial.output_file);
+    LOG_INFO("Angle sweep trial completed (" << trial.angle_sweep.num_steps + 1 << " steps)");
 }
 
 void PhysicalExam::saveAngleSweepToCSV(const std::string& path) {
@@ -1095,6 +1106,321 @@ void PhysicalExam::saveAngleSweepToCSV(const std::string& path) {
     }
 
     file.close();
+}
+
+// ============================================================================
+// HDF5 EXAM EXPORT FUNCTIONS
+// ============================================================================
+
+void PhysicalExam::setOutputDir(const std::string& output_dir) {
+    mOutputDir = output_dir;
+}
+
+std::string PhysicalExam::extractPidFromPath(const std::string& path) const {
+    // Extract patient ID from PID backend URI (e.g., "@pid:12964246/gait/pre/..." → "12964246")
+    const std::string prefix = "@pid:";
+    if (path.find(prefix) != 0) {
+        return "";  // Not a PID path
+    }
+
+    // Extract PID (everything between "@pid:" and next "/")
+    size_t start = prefix.size();
+    size_t end = path.find('/', start);
+    if (end == std::string::npos) {
+        return path.substr(start);  // No slash found, rest is PID
+    }
+    return path.substr(start, end - start);
+}
+
+void PhysicalExam::initExamHDF5() {
+    // Generate output path from exam config path
+    // e.g., "data/config/angle_sweep_test.yaml" → "{output_dir}/angle_sweep_test.h5"
+    std::filesystem::path configPath(mExamConfigPath);
+    std::string baseName = configPath.stem().string();
+
+    // Check if skeleton/muscle path uses PID backend
+    std::string pid = extractPidFromPath(mSkeletonPath);
+    if (pid.empty()) {
+        pid = extractPidFromPath(mMusclePath);
+    }
+
+    // Use mOutputDir (default "./results" if not set)
+    std::string outputDir = mOutputDir.empty() ? "./results" : mOutputDir;
+
+    // Ensure output directory exists
+    std::filesystem::create_directories(outputDir);
+
+    // Build output filename with optional PID suffix
+    if (!pid.empty()) {
+        mExamOutputPath = outputDir + "/" + baseName + "_" + pid + ".h5";
+    } else {
+        mExamOutputPath = outputDir + "/" + baseName + ".h5";
+    }
+
+    // Create HDF5 file with exam metadata
+    H5::H5File file(mExamOutputPath, H5F_ACC_TRUNC);
+
+    // Write root-level attributes
+    H5::DataSpace scalar(H5S_SCALAR);
+
+    // Variable-length string type
+    H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+
+    // exam_name
+    H5::Attribute nameAttr = file.createAttribute("exam_name", strType, scalar);
+    nameAttr.write(strType, mExamName);
+
+    // exam_description
+    H5::Attribute descAttr = file.createAttribute("exam_description", strType, scalar);
+    descAttr.write(strType, mExamDescription);
+
+    // skeleton_path, muscle_path
+    H5::Attribute skelAttr = file.createAttribute("skeleton_path", strType, scalar);
+    skelAttr.write(strType, mSkeletonPath);
+
+    H5::Attribute muscleAttr = file.createAttribute("muscle_path", strType, scalar);
+    muscleAttr.write(strType, mMusclePath);
+
+    // timestamp (ISO 8601)
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::string timestamp = std::ctime(&t);
+    if (!timestamp.empty() && timestamp.back() == '\n') {
+        timestamp.pop_back();  // Remove newline
+    }
+    H5::Attribute timeAttr = file.createAttribute("timestamp", strType, scalar);
+    timeAttr.write(strType, timestamp);
+
+    // num_trials
+    int numTrials = static_cast<int>(mTrials.size());
+    H5::Attribute numAttr = file.createAttribute("num_trials", H5::PredType::NATIVE_INT, scalar);
+    numAttr.write(H5::PredType::NATIVE_INT, &numTrials);
+
+    file.close();
+    LOG_INFO("Created exam HDF5: " << mExamOutputPath);
+}
+
+void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& trial) {
+    size_t N = mAngleSweepData.size();
+    size_t M = mAngleSweepTrackedMuscles.size();
+
+    if (N == 0 || M == 0) {
+        LOG_WARN("No angle sweep data to write");
+        return;
+    }
+
+    // Prepare buffers
+    std::vector<float> angles(N), passiveForces(N);
+    std::vector<float> muscleFp(N * M), muscleLmNorm(N * M), muscleJtpMag(N * M);
+
+    for (size_t i = 0; i < N; ++i) {
+        const auto& d = mAngleSweepData[i];
+        angles[i] = static_cast<float>(d.joint_angle);
+        passiveForces[i] = static_cast<float>(d.passive_force_total);
+
+        for (size_t m = 0; m < M; ++m) {
+            const std::string& name = mAngleSweepTrackedMuscles[m];
+            muscleFp[i*M + m] = static_cast<float>(d.muscle_fp.at(name));
+            muscleLmNorm[i*M + m] = static_cast<float>(d.muscle_lm_norm.at(name));
+
+            double jtpMag = 0.0;
+            if (d.muscle_jtp.count(name)) {
+                for (double v : d.muscle_jtp.at(name)) jtpMag += v*v;
+                jtpMag = std::sqrt(jtpMag);
+            }
+            muscleJtpMag[i*M + m] = static_cast<float>(jtpMag);
+        }
+    }
+
+    // Write 1D datasets
+    hsize_t dims1[1] = {N};
+    H5::DataSpace space1(1, dims1);
+
+    H5::DataSet anglesDs = group.createDataSet("joint_angles", H5::PredType::NATIVE_FLOAT, space1);
+    anglesDs.write(angles.data(), H5::PredType::NATIVE_FLOAT);
+
+    H5::DataSet passiveDs = group.createDataSet("passive_forces", H5::PredType::NATIVE_FLOAT, space1);
+    passiveDs.write(passiveForces.data(), H5::PredType::NATIVE_FLOAT);
+
+    // Write 2D datasets (N steps × M muscles)
+    hsize_t dims2[2] = {N, M};
+    H5::DataSpace space2(2, dims2);
+
+    H5::DataSet fpDs = group.createDataSet("muscle_fp", H5::PredType::NATIVE_FLOAT, space2);
+    fpDs.write(muscleFp.data(), H5::PredType::NATIVE_FLOAT);
+
+    H5::DataSet lmDs = group.createDataSet("muscle_lm_norm", H5::PredType::NATIVE_FLOAT, space2);
+    lmDs.write(muscleLmNorm.data(), H5::PredType::NATIVE_FLOAT);
+
+    H5::DataSet jtpDs = group.createDataSet("muscle_jtp_mag", H5::PredType::NATIVE_FLOAT, space2);
+    jtpDs.write(muscleJtpMag.data(), H5::PredType::NATIVE_FLOAT);
+
+    // Write muscle names
+    H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+    hsize_t dimsM[1] = {M};
+    H5::DataSpace spaceM(1, dimsM);
+    std::vector<const char*> cstrs(M);
+    for (size_t m = 0; m < M; ++m) cstrs[m] = mAngleSweepTrackedMuscles[m].c_str();
+    H5::DataSet namesDs = group.createDataSet("muscle_names", strType, spaceM);
+    namesDs.write(cstrs.data(), strType);
+
+    // Trial-specific attributes
+    H5::DataSpace scalar(H5S_SCALAR);
+
+    H5::Attribute jointAttr = group.createAttribute("joint_name", strType, scalar);
+    jointAttr.write(strType, trial.angle_sweep.joint_name);
+
+    int dofIdx = trial.angle_sweep.dof_index;
+    H5::Attribute dofAttr = group.createAttribute("dof_index", H5::PredType::NATIVE_INT, scalar);
+    dofAttr.write(H5::PredType::NATIVE_INT, &dofIdx);
+
+    float angleMin = static_cast<float>(trial.angle_sweep.angle_min);
+    float angleMax = static_cast<float>(trial.angle_sweep.angle_max);
+    H5::Attribute minAttr = group.createAttribute("angle_min_rad", H5::PredType::NATIVE_FLOAT, scalar);
+    minAttr.write(H5::PredType::NATIVE_FLOAT, &angleMin);
+    H5::Attribute maxAttr = group.createAttribute("angle_max_rad", H5::PredType::NATIVE_FLOAT, scalar);
+    maxAttr.write(H5::PredType::NATIVE_FLOAT, &angleMax);
+}
+
+void PhysicalExam::writeForceSweepData(H5::Group& group, const TrialConfig& trial) {
+    size_t N = mRecordedData.size();
+
+    if (N == 0) {
+        LOG_WARN("No force sweep data to write");
+        return;
+    }
+
+    // Prepare buffers
+    std::vector<float> forceMags(N), passiveForces(N);
+    for (size_t i = 0; i < N; ++i) {
+        forceMags[i] = static_cast<float>(mRecordedData[i].force_magnitude);
+        passiveForces[i] = static_cast<float>(mRecordedData[i].passive_force_total);
+    }
+
+    // Flatten joint angles into 2D array
+    std::vector<std::string> jointNames;
+    size_t totalDofs = 0;
+    if (!mRecordedData.empty()) {
+        for (const auto& [jn, angles] : mRecordedData[0].joint_angles) {
+            jointNames.push_back(jn);
+            totalDofs += angles.size();
+        }
+    }
+
+    std::vector<float> jointAngles(N * totalDofs);
+    for (size_t i = 0; i < N; ++i) {
+        size_t offset = 0;
+        for (const auto& [jn, angles] : mRecordedData[i].joint_angles) {
+            for (int d = 0; d < angles.size(); ++d) {
+                jointAngles[i * totalDofs + offset + d] = static_cast<float>(angles[d]);
+            }
+            offset += angles.size();
+        }
+    }
+
+    // Write datasets
+    hsize_t dims1[1] = {N};
+    H5::DataSpace space1(1, dims1);
+
+    H5::DataSet forceDs = group.createDataSet("force_magnitudes", H5::PredType::NATIVE_FLOAT, space1);
+    forceDs.write(forceMags.data(), H5::PredType::NATIVE_FLOAT);
+
+    H5::DataSet passiveDs = group.createDataSet("passive_forces", H5::PredType::NATIVE_FLOAT, space1);
+    passiveDs.write(passiveForces.data(), H5::PredType::NATIVE_FLOAT);
+
+    if (totalDofs > 0) {
+        hsize_t dims2[2] = {N, totalDofs};
+        H5::DataSpace space2(2, dims2);
+        H5::DataSet angleDs = group.createDataSet("joint_angles", H5::PredType::NATIVE_FLOAT, space2);
+        angleDs.write(jointAngles.data(), H5::PredType::NATIVE_FLOAT);
+    }
+
+    // Write joint names
+    H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+    if (!jointNames.empty()) {
+        hsize_t dimsJ[1] = {jointNames.size()};
+        H5::DataSpace spaceJ(1, dimsJ);
+        std::vector<const char*> cstrs(jointNames.size());
+        for (size_t j = 0; j < jointNames.size(); ++j) cstrs[j] = jointNames[j].c_str();
+        H5::DataSet namesDs = group.createDataSet("joint_names", strType, spaceJ);
+        namesDs.write(cstrs.data(), strType);
+    }
+
+    // Trial-specific attributes
+    H5::DataSpace scalar(H5S_SCALAR);
+
+    H5::Attribute bodyAttr = group.createAttribute("force_body_node", strType, scalar);
+    bodyAttr.write(strType, trial.force_body_node);
+
+    float forceMin = static_cast<float>(trial.force_min);
+    float forceMax = static_cast<float>(trial.force_max);
+    H5::Attribute minAttr = group.createAttribute("force_min", H5::PredType::NATIVE_FLOAT, scalar);
+    minAttr.write(H5::PredType::NATIVE_FLOAT, &forceMin);
+    H5::Attribute maxAttr = group.createAttribute("force_max", H5::PredType::NATIVE_FLOAT, scalar);
+    maxAttr.write(H5::PredType::NATIVE_FLOAT, &forceMax);
+}
+
+void PhysicalExam::appendTrialToHDF5(const TrialConfig& trial) {
+    if (mExamOutputPath.empty()) {
+        LOG_ERROR("No exam HDF5 file initialized");
+        return;
+    }
+
+    try {
+        // Open existing HDF5 file in read-write mode
+        H5::H5File file(mExamOutputPath, H5F_ACC_RDWR);
+
+        // Create trial group
+        H5::Group trialGroup = file.createGroup("/" + trial.name);
+
+        // Write common trial attributes
+        H5::DataSpace scalar(H5S_SCALAR);
+        H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+
+        std::string modeStr = (trial.mode == TrialMode::ANGLE_SWEEP) ? "angle_sweep" : "force_sweep";
+        H5::Attribute modeAttr = trialGroup.createAttribute("trial_mode", strType, scalar);
+        modeAttr.write(strType, modeStr);
+
+        H5::Attribute descAttr = trialGroup.createAttribute("description", strType, scalar);
+        descAttr.write(strType, trial.description);
+
+        // Dispatch to mode-specific writer
+        if (trial.mode == TrialMode::ANGLE_SWEEP) {
+            writeAngleSweepData(trialGroup, trial);
+        } else {
+            writeForceSweepData(trialGroup, trial);
+        }
+
+        file.close();
+        LOG_INFO("Appended trial '" << trial.name << "' to HDF5: " << mExamOutputPath);
+
+    } catch (const H5::Exception& e) {
+        LOG_ERROR("HDF5 error appending trial: " << e.getCDetailMsg());
+    }
+}
+
+void PhysicalExam::runAllTrials() {
+    if (!mExamSettingLoaded || mTrials.empty()) {
+        LOG_ERROR("No exam setting loaded or no trials available");
+        return;
+    }
+
+    LOG_INFO("Running all " << mTrials.size() << " trials...");
+
+    for (size_t i = 0; i < mTrials.size(); ++i) {
+        mCurrentTrialIndex = static_cast<int>(i);
+        LOG_INFO("Trial " << (i+1) << "/" << mTrials.size() << ": " << mTrials[i].name);
+
+        mTrialRunning = true;
+        mCurrentForceStep = 0;
+        mRecordedData.clear();
+
+        runCurrentTrial();
+
+        mTrialRunning = false;
+    }
+
+    LOG_INFO("All trials complete. Results saved to: " << mExamOutputPath);
 }
 
 void PhysicalExam::setCamera() {

@@ -18,6 +18,7 @@
 #include "SurgeryExecutor.h"
 #include "SurgeryPanel.h"
 #include <memory>
+#include <H5Cpp.h>
 
 namespace PMuscle {
 
@@ -133,6 +134,7 @@ public:
     double computePassiveForce();
 
     // Examination execution
+    void setOutputDir(const std::string& output_dir);
     void loadExamSetting(const std::string& config_path);
     void runExamination(const std::string& config_path);  // Deprecated - loads and runs all trials
     void startNextTrial();
@@ -144,6 +146,14 @@ public:
     void collectAngleSweepTrialData(double angle);
     void setupTrackedMusclesForAngleSweep(const std::string& joint_name);
     void saveAngleSweepToCSV(const std::string& path);
+
+    // HDF5 exam export (all trials in single file)
+    std::string extractPidFromPath(const std::string& path) const;
+    void initExamHDF5();
+    void appendTrialToHDF5(const TrialConfig& trial);
+    void writeAngleSweepData(H5::Group& group, const TrialConfig& trial);
+    void writeForceSweepData(H5::Group& group, const TrialConfig& trial);
+    void runAllTrials();
 
     // Rendering
     void render();
@@ -344,6 +354,11 @@ private:
     // Angle sweep trial data
     std::vector<AngleSweepDataPoint> mAngleSweepData;
     std::vector<std::string> mAngleSweepTrackedMuscles;
+
+    // HDF5 exam export
+    std::string mOutputDir;        // Output directory (from command line)
+    std::string mExamOutputPath;   // HDF5 output path for entire exam
+    std::string mExamConfigPath;   // Original config path for naming
 
     // Pose presets
     int mCurrentPosePreset;  // 0=standing, 1=supine, 2=prone, 3=supine_knee_flexed

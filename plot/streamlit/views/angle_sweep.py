@@ -67,20 +67,24 @@ def render_controls(data_sample: dict, cfg: dict, all_data: list = None) -> dict
         all_data_list = [data_sample]
 
     # Metric selection
-    st.markdown("**Metric**")
     metric_options = ['fp', 'lm_norm', 'jtp_mag']
     metric_labels = [f"{METRIC_INFO[m][0]} ({METRIC_INFO[m][1]})" if METRIC_INFO[m][1]
                      else METRIC_INFO[m][0] for m in metric_options]
-    metric_idx = st.radio("", range(len(metric_options)),
+    metric_idx = st.radio("Metric", range(len(metric_options)),
                           format_func=lambda i: metric_labels[i],
                           horizontal=True, key="metric_radio")
     selected_metric = metric_options[metric_idx]
 
     # Muscle selection with checkboxes
-    label_col, btn_col = st.columns([4, 1])
+    label_col, sel_col, clr_col = st.columns([3, 1, 1])
     with label_col:
         st.markdown("**Select Muscles**")
-    with btn_col:
+    with sel_col:
+        if st.button("Select All"):
+            for muscle in muscles:
+                st.session_state[f"chk_muscle_{muscle}"] = True
+            st.rerun()
+    with clr_col:
         if st.button("Clear All"):
             for muscle in muscles:
                 st.session_state[f"chk_muscle_{muscle}"] = False

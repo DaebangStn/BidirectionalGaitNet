@@ -4,12 +4,13 @@ name: "seated_45deg"
 description: "Seated position with knee flexed 45 degrees"
 
 # Seated pose: hips flexed 90°, knees flexed 45°
+# Rotation values in degrees, translation (last 3 of Pelvis) in meters
 pose:
-  Pelvis: [0, 0.5, 0, 0, 0, 0]  # Lower pelvis for seated position
-  FemurR: [1.5708, 0, 0]  # 90° hip flexion (1.5708 rad = 90°)
-  FemurL: [1.5708, 0, 0]
-  TibiaR: 0.7854  # 45° knee flexion (0.7854 rad = 45°)
-  TibiaL: 0.7854
+  Pelvis: [0, 0, 0, 0, 0.5, 0]  # [rotX, rotY, rotZ, transX, transY, transZ]
+  FemurR: [90, 0, 0]  # 90° hip flexion
+  FemurL: [90, 0, 0]
+  TibiaR: 45  # 45° knee flexion
+  TibiaL: 45
   TalusR: 0
   TalusL: 0
 
@@ -25,5 +26,4 @@ force:
 
 recording:
   joints: ["TibiaR", "TalusR"]
-  output_file: "./results/knee_extension_seated_45deg.csv"
 

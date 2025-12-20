@@ -10,12 +10,18 @@ namespace po = boost::program_options;
 
 int main(int argc, char** argv) {
     std::string config_path;
+    std::string output_dir;
+    bool headless_mode = false;
 
     po::options_description desc("Physical Exam Options");
     desc.add_options()
         ("help,h", "Show help message")
         ("config,c", po::value<std::string>(&config_path)->default_value("@data/config/base.yaml"),
-         "Exam setting config file");
+         "Exam setting config file")
+        ("output-dir,o", po::value<std::string>(&output_dir)->default_value("./results"),
+         "Output directory for HDF5 results")
+        ("headless", po::bool_switch(&headless_mode),
+         "Run all trials without GUI and exit");
 
     po::positional_options_description pos;
     pos.add("config", 1);
@@ -37,8 +43,10 @@ int main(int argc, char** argv) {
         std::cout << "Usage: " << argv[0] << " [config_file]\n\n";
         std::cout << desc << std::endl;
         std::cout << "\nExamples:\n";
-        std::cout << "  " << argv[0] << "                                    # Uses default @data/config/base.yaml\n";
-        std::cout << "  " << argv[0] << " @data/config/knee_extension_exam.yaml\n";
+        std::cout << "  " << argv[0] << "                                    # Uses default config\n";
+        std::cout << "  " << argv[0] << " @data/config/angle_sweep_test.yaml\n";
+        std::cout << "  " << argv[0] << " @data/config/angle_sweep_test.yaml -o ./my_results\n";
+        std::cout << "  " << argv[0] << " --headless @data/config/angle_sweep_test.yaml\n";
         return 0;
     }
 
@@ -52,12 +60,21 @@ int main(int argc, char** argv) {
     exam.initialize();
 
     LOG_INFO("Loading exam setting from config: " << config_path);
+    LOG_INFO("Output directory: " << output_dir);
 
     try {
+        exam.setOutputDir(output_dir);
         exam.loadExamSetting(config_path);
-        LOG_INFO("Exam setting loaded. Starting in paused state.");
-        LOG_INFO("Use 'Start Next Trial' button to begin trials.");
-        exam.mainLoop();
+
+        if (headless_mode) {
+            LOG_INFO("Running in headless mode - executing all trials...");
+            exam.runAllTrials();
+            LOG_INFO("Headless mode completed.");
+        } else {
+            LOG_INFO("Exam setting loaded. Starting in paused state.");
+            LOG_INFO("Use 'Start Next Trial' button to begin trials.");
+            exam.mainLoop();
+        }
     } catch (const std::exception& e) {
         LOG_ERROR("Error loading exam setting: " << e.what());
         return 1;

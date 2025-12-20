@@ -252,32 +252,34 @@ def load_sampled_hdf5(dir_name: str) -> dict:
 
 
 @st.cache_data(ttl=60)
-def list_angle_sweep_files() -> list[str]:
-    """List CSV files in results/ directory.
+def list_angle_sweep_h5_files() -> list[str]:
+    """List HDF5 files in results/ directory.
 
-    Returns list of CSV filenames for angle sweep data.
+    Returns list of HDF5 filenames for angle sweep data.
     """
     try:
         if not RESULTS_DIR.exists():
             return []
         files = [f.name for f in RESULTS_DIR.iterdir()
-                 if f.is_file() and f.suffix.lower() == '.csv']
+                 if f.is_file() and f.suffix.lower() == '.h5']
         return sorted(files)
     except Exception as e:
-        print(f"[list_angle_sweep_files] exception: {e}")
+        print(f"[list_angle_sweep_h5_files] exception: {e}")
         return []
 
 
 @st.cache_data
-def load_angle_sweep_csv(filename: str) -> dict:
-    """Load angle sweep CSV data.
+def load_angle_sweep_h5(filename: str, trial_name: str = None) -> dict:
+    """Load angle sweep data from HDF5 file.
 
     Args:
-        filename: Name of the CSV file in results/
+        filename: HDF5 filename in results/ directory
+        trial_name: Trial group name (if None, uses first trial)
 
     Returns dict with:
         - source: 'angle_sweep'
         - filename: str
+        - trial_name: str
         - joint_angle_deg: np.array
         - passive_force_total: np.array
         - muscles: list[str]  (muscle names)
@@ -290,46 +292,53 @@ def load_angle_sweep_csv(filename: str) -> dict:
         }
     """
     try:
-        csv_path = RESULTS_DIR / filename
-        if not csv_path.exists():
-            st.error(f"File not found: {csv_path}")
+        h5_path = RESULTS_DIR / filename
+        if not h5_path.exists():
+            st.error(f"File not found: {h5_path}")
             return None
 
-        df = pd.read_csv(csv_path)
+        with h5py.File(h5_path, 'r') as f:
+            # Get trial group (first one if not specified)
+            if trial_name is None:
+                trial_names = [k for k in f.keys() if isinstance(f[k], h5py.Group)]
+                if not trial_names:
+                    st.error("No trial groups found in HDF5")
+                    return None
+                trial_name = trial_names[0]
 
-        data = {
-            'source': 'angle_sweep',
-            'filename': filename,
-            'joint_angle_deg': df['joint_angle_deg'].values,
-            'passive_force_total': df['passive_force_total'].values,
-            'muscles': [],
-            'muscle_data': {}
-        }
+            trial = f[trial_name]
 
-        # Parse muscle columns: {muscle}_fp, {muscle}_lm_norm, {muscle}_jtp_mag
-        columns = df.columns.tolist()
-        muscle_names = set()
-        for col in columns:
-            if col.endswith('_fp'):
-                muscle_names.add(col[:-3])
-            elif col.endswith('_lm_norm'):
-                muscle_names.add(col[:-8])
-            elif col.endswith('_jtp_mag'):
-                muscle_names.add(col[:-8])
+            # Read datasets
+            joint_angles_rad = trial['joint_angles'][:]
+            joint_angle_deg = np.degrees(joint_angles_rad)
+            passive_force_total = trial['passive_forces'][:]
 
-        data['muscles'] = sorted(list(muscle_names))
+            muscle_names = [name.decode() if isinstance(name, bytes) else name
+                           for name in trial['muscle_names'][:]]
 
-        for muscle in data['muscles']:
-            data['muscle_data'][muscle] = {}
-            if f'{muscle}_fp' in df.columns:
-                data['muscle_data'][muscle]['fp'] = df[f'{muscle}_fp'].values
-            if f'{muscle}_lm_norm' in df.columns:
-                data['muscle_data'][muscle]['lm_norm'] = df[f'{muscle}_lm_norm'].values
-            if f'{muscle}_jtp_mag' in df.columns:
-                data['muscle_data'][muscle]['jtp_mag'] = df[f'{muscle}_jtp_mag'].values
+            muscle_fp = trial['muscle_fp'][:]        # (N, M)
+            muscle_lm_norm = trial['muscle_lm_norm'][:]
+            muscle_jtp_mag = trial['muscle_jtp_mag'][:]
 
-        return data
+            # Build muscle_data dict
+            muscle_data = {}
+            for i, name in enumerate(muscle_names):
+                muscle_data[name] = {
+                    'fp': muscle_fp[:, i],
+                    'lm_norm': muscle_lm_norm[:, i],
+                    'jtp_mag': muscle_jtp_mag[:, i],
+                }
+
+            return {
+                'source': 'angle_sweep',
+                'filename': filename,
+                'trial_name': trial_name,
+                'joint_angle_deg': joint_angle_deg,
+                'passive_force_total': passive_force_total,
+                'muscles': muscle_names,
+                'muscle_data': muscle_data,
+            }
 
     except Exception as e:
-        st.error(f"Error loading angle sweep CSV: {e}")
+        st.error(f"Error loading angle sweep HDF5: {e}")
         return None

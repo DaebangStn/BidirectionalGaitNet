@@ -9,7 +9,7 @@ from pathlib import Path
 from core.data import (
     load_hdf5_data, list_pids, list_hdf_files,
     list_sampled_dirs, load_sampled_hdf5,
-    list_angle_sweep_files, load_angle_sweep_csv
+    list_angle_sweep_h5_files, load_angle_sweep_h5
 )
 from core.registry import load_view
 
@@ -112,20 +112,20 @@ def main():
         data_options = sampled_dirs
 
     else:  # Angle Sweep
-        # Angle sweep CSV file selection
-        csv_files = list_angle_sweep_files()
-        if not csv_files:
-            st.sidebar.warning("No angle sweep CSV files found")
+        # Angle sweep HDF5 file selection
+        h5_files = list_angle_sweep_h5_files()
+        if not h5_files:
+            st.sidebar.warning("No angle sweep HDF5 files found")
             st.info("No angle sweep data available in results/")
             return
 
-        selected_csv = st.sidebar.selectbox(
-            "Trial CSV",
-            csv_files,
+        selected_h5_file = st.sidebar.selectbox(
+            "Trial HDF5",
+            h5_files,
             index=0
         )
-        selected_item = selected_csv
-        data_options = csv_files
+        selected_item = selected_h5_file
+        data_options = h5_files
 
     # View selector - filter by source type
     st.sidebar.header("Visualization")
@@ -194,7 +194,7 @@ def main():
                 if pdata is not None:
                     pdata['panel_title'] = pdata.get('dir_name', item)
             else:  # Angle Sweep
-                pdata = load_angle_sweep_csv(item)
+                pdata = load_angle_sweep_h5(item)
                 if pdata is not None:
                     pdata['panel_title'] = item
 
@@ -218,7 +218,7 @@ def main():
                 if data is None:
                     st.error(f"Failed to load sampled data: {selected_item}")
             else:  # Angle Sweep
-                data = load_angle_sweep_csv(selected_item)
+                data = load_angle_sweep_h5(selected_item)
                 if data is None:
                     st.error(f"Failed to load angle sweep data: {selected_item}")
 

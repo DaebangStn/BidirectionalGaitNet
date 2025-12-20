@@ -4,6 +4,7 @@
 #include <rm/global.hpp>
 #include <cstring>
 #include <algorithm>
+#include <numeric>
 #include <fstream>
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
@@ -484,6 +485,7 @@ void MotionEditorApp::drawPIDBrowserTab()
                 if (i != mSelectedPID) {
                     mSelectedPID = i;
                     scanH5Files();
+                    scanSkeletonDirectory();
                     autoDetectSkeleton();
                 }
             }
@@ -497,6 +499,7 @@ void MotionEditorApp::drawPIDBrowserTab()
             mPreOp = true;
             if (mSelectedPID >= 0) {
                 scanH5Files();
+                scanSkeletonDirectory();
                 autoDetectSkeleton();
             }
         }
@@ -507,6 +510,7 @@ void MotionEditorApp::drawPIDBrowserTab()
             mPreOp = false;
             if (mSelectedPID >= 0) {
                 scanH5Files();
+                scanSkeletonDirectory();
                 autoDetectSkeleton();
             }
         }
@@ -583,7 +587,7 @@ void MotionEditorApp::drawDirectPathTab()
 void MotionEditorApp::drawSkeletonSection()
 {
     if (collapsingHeaderWithControls("Skeleton Config")) {
-        ImGui::Checkbox("Auto-detect", &mUseAutoSkeleton);
+        ImGui::Checkbox("Auto-detect (PID)", &mUseAutoSkeleton);
 
         if (mUseAutoSkeleton) {
             if (mAutoDetectedSkeletonPath.empty()) {
@@ -592,6 +596,44 @@ void MotionEditorApp::drawSkeletonSection()
                 ImGui::TextWrapped("Path: %s", mAutoDetectedSkeletonPath.c_str());
             }
         } else {
+            // PID skeleton directory browser
+            if (mSelectedPID >= 0) {
+                ImGui::Text("PID Skeleton Files:");
+                ImGui::SameLine();
+                if (ImGui::Button("Refresh##Skel")) {
+                    scanSkeletonDirectory();
+                }
+
+                // Listbox for skeleton files
+                if (!mSkeletonFiles.empty()) {
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::BeginListBox("##SkeletonList", ImVec2(-1, 100))) {
+                        for (size_t i = 0; i < mSkeletonFileNames.size(); ++i) {
+                            bool isSelected = (mSelectedSkeletonFile == static_cast<int>(i));
+                            if (ImGui::Selectable(mSkeletonFileNames[i].c_str(), isSelected)) {
+                                mSelectedSkeletonFile = static_cast<int>(i);
+                                // Copy path to manual path buffer and load
+                                strncpy(mManualSkeletonPath, mSkeletonFiles[i].c_str(), sizeof(mManualSkeletonPath) - 1);
+                                mManualSkeletonPath[sizeof(mManualSkeletonPath) - 1] = '\0';
+                                loadSkeleton(mSkeletonFiles[i]);
+                            }
+                            if (isSelected) {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        ImGui::EndListBox();
+                    }
+                    ImGui::TextWrapped("%s", mSkeletonDirectory.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "No skeleton files in PID folder");
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Select a PID first");
+            }
+
+            // Manual path input as fallback
+            ImGui::Separator();
+            ImGui::Text("Or enter path:");
             ImGui::SetNextItemWidth(-1);
             ImGui::InputText("##ManualSkel", mManualSkeletonPath, sizeof(mManualSkeletonPath));
         }
@@ -603,7 +645,14 @@ void MotionEditorApp::drawSkeletonSection()
             }
         }
 
+        // Show current loaded skeleton
+        if (mCharacter) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Loaded");
+        }
+
         // Render mode
+        ImGui::Separator();
         ImGui::Text("Render Mode:");
         int renderModeInt = static_cast<int>(mRenderMode);
         if (ImGui::RadioButton("Primitive", renderModeInt == 0)) mRenderMode = MotionEditorRenderMode::Primitive;
@@ -1345,6 +1394,61 @@ void MotionEditorApp::scanH5Files()
         LOG_INFO("[MotionEditor] Found " << mH5Files.size() << " H5 files for PID " << pid);
     } catch (const rm::RMError& e) {
         LOG_WARN("[MotionEditor] Failed to list H5 files: " << e.what());
+    }
+}
+
+void MotionEditorApp::scanSkeletonDirectory()
+{
+    mSkeletonFiles.clear();
+    mSkeletonFileNames.clear();
+    mSelectedSkeletonFile = -1;
+
+    if (!mResourceManager || mSelectedPID < 0 || mSelectedPID >= static_cast<int>(mPIDList.size())) {
+        return;
+    }
+
+    const std::string& pid = mPIDList[mSelectedPID];
+    std::string prePost = mPreOp ? "pre" : "post";
+    std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/skeleton";
+    mSkeletonDirectory = pattern;
+
+    try {
+        auto files = mResourceManager->list(pattern);
+        for (const auto& file : files) {
+            // Only include .yaml and .xml skeleton files
+            size_t len = file.size();
+            bool isYaml = len > 5 && file.substr(len - 5) == ".yaml";
+            bool isXml = len > 4 && file.substr(len - 4) == ".xml";
+            if (isYaml || isXml) {
+                // Resolve full path
+                std::string uri = pattern + "/" + file;
+                try {
+                    auto resolved = mResourceManager->resolve(uri);
+                    if (!resolved.empty() && fs::exists(resolved)) {
+                        mSkeletonFiles.push_back(resolved.string());
+                        mSkeletonFileNames.push_back(file);
+                    }
+                } catch (const rm::RMError&) {}
+            }
+        }
+        std::sort(mSkeletonFileNames.begin(), mSkeletonFileNames.end());
+        // Sort files to match names
+        std::vector<size_t> indices(mSkeletonFiles.size());
+        std::iota(indices.begin(), indices.end(), 0);
+        std::sort(indices.begin(), indices.end(), [this](size_t a, size_t b) {
+            return mSkeletonFileNames[a] < mSkeletonFileNames[b];
+        });
+        std::vector<std::string> sortedFiles, sortedNames;
+        for (size_t i : indices) {
+            sortedFiles.push_back(mSkeletonFiles[i]);
+            sortedNames.push_back(mSkeletonFileNames[i]);
+        }
+        mSkeletonFiles = std::move(sortedFiles);
+        mSkeletonFileNames = std::move(sortedNames);
+
+        LOG_INFO("[MotionEditor] Found " << mSkeletonFiles.size() << " skeleton files in " << pattern);
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[MotionEditor] Failed to scan skeleton directory: " << e.what());
     }
 }
 

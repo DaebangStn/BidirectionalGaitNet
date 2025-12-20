@@ -129,6 +129,7 @@ private:
     std::vector<std::string> mMotionList;        // Full paths for loading
     std::vector<std::string> mMotionDisplayNames; // Relative paths for display
     int mSelectedMotion = -1;
+    char mC3DFilter[64] = "";                    // Filter text for C3D files
     std::string mDirectorySearchPath;
 
     // Resource Manager for PID-based access (singleton reference)

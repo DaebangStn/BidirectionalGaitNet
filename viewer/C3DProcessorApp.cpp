@@ -834,10 +834,26 @@ void C3DProcessorApp::drawMotionListSection()
         ImGui::SameLine();
         ImGui::Text("%zu files", mMotionList.size());
 
+        // Filter input
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##C3DFilter", "Filter...", mC3DFilter, sizeof(mC3DFilter));
+
         // File list
         if (ImGui::BeginListBox("##C3DList", ImVec2(-1, 200))) {
+            std::string filterLower(mC3DFilter);
+            std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+
             for (int i = 0; i < static_cast<int>(mMotionList.size()); ++i) {
                 const std::string& displayName = mMotionDisplayNames[i];
+
+                // Apply filter
+                if (!filterLower.empty()) {
+                    std::string nameLower = displayName;
+                    std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+                    if (nameLower.find(filterLower) == std::string::npos) {
+                        continue;
+                    }
+                }
 
                 bool isSelected = (i == mSelectedMotion && mMotionSource == MotionSource::FileList);
                 if (ImGui::Selectable(displayName.c_str(), isSelected)) {

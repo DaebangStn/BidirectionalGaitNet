@@ -4,12 +4,13 @@ name: "supine_90deg"
 description: "Supine (lying on back) position with knee flexed 90 degrees"
 
 # Supine pose: lying on back, knee flexed 90°
+# Rotation values in degrees, translation (last 3 of Pelvis) in meters
 pose:
-  Pelvis: [-1.5708, 0, 0, 0, 0.75, 0]  # Supine position (laying on back)
-  FemurR: [-1.5708, 0, 0]  # 90° hip flexion
-  FemurL: [-1.5708, 0, 0]
-  TibiaR: 1.5708  # 90° knee flexion
-  TibiaL: 1.5708
+  Pelvis: [-90, 0, 0, 0, 0.75, 0]  # [rotX, rotY, rotZ, transX, transY, transZ] - laying on back
+  FemurR: [-90, 0, 0]  # 90° hip flexion (toward ceiling when supine)
+  FemurL: [-90, 0, 0]
+  TibiaR: 90  # 90° knee flexion
+  TibiaL: 90
   TalusR: 0
   TalusL: 0
 
@@ -25,5 +26,4 @@ force:
 
 recording:
   joints: ["TibiaR", "TalusR"]
-  output_file: "./results/knee_extension_supine_90deg.csv"
 
