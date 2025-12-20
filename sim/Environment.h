@@ -98,6 +98,10 @@ struct RewardConfig
     double vel_weight = 10.0;  // Velocity coefficient
     double com_weight = 10.0;  // Center of mass coefficient
 
+    // Multi-reference state configuration
+    int num_ref_in_state = 1;         // Number of future reference poses in state
+    bool include_ref_velocity = true; // Whether to include velocity for each reference
+
     // Reward clipping for initial simulation steps
     int clip_step = 0;
     double clip_value = 0.0;
@@ -152,6 +156,7 @@ public:
     // void setRefMotion(BVH *_bvh, Character *_character);
 
     void updateTargetPosAndVel(bool currentStep = false);
+    Eigen::VectorXd getFutureRefPose(int future_step);
 
     Eigen::VectorXd getRefPose() { return mRefPose; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }

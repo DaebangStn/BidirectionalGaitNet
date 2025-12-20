@@ -6,7 +6,11 @@ import streamlit as st
 import yaml
 from pathlib import Path
 
-from core.data import load_hdf5_data, list_pids, list_hdf_files, list_sampled_dirs, load_sampled_hdf5
+from core.data import (
+    load_hdf5_data, list_pids, list_hdf_files,
+    list_sampled_dirs, load_sampled_hdf5,
+    list_angle_sweep_files, load_angle_sweep_csv
+)
 from core.registry import load_view
 
 
@@ -48,7 +52,7 @@ def main():
     # Source type selection
     source_type = st.sidebar.radio(
         "Source Type",
-        ["Sampled Rollout", "Patient (PID)"],
+        ["Sampled Rollout", "Patient (PID)", "Angle Sweep"],
         horizontal=True
     )
 
@@ -90,7 +94,7 @@ def main():
             selected_item = selected_h5
             data_options = h5_files
 
-    else:  # Sampled Rollout
+    elif source_type == "Sampled Rollout":
         # Sampled directory selection
         sampled_dirs = list_sampled_dirs()
         if not sampled_dirs:
@@ -107,9 +111,30 @@ def main():
         selected_item = selected_dir
         data_options = sampled_dirs
 
+    else:  # Angle Sweep
+        # Angle sweep CSV file selection
+        csv_files = list_angle_sweep_files()
+        if not csv_files:
+            st.sidebar.warning("No angle sweep CSV files found")
+            st.info("No angle sweep data available in results/")
+            return
+
+        selected_csv = st.sidebar.selectbox(
+            "Trial CSV",
+            csv_files,
+            index=0
+        )
+        selected_item = selected_csv
+        data_options = csv_files
+
     # View selector - filter by source type
     st.sidebar.header("Visualization")
-    source_key = "pid" if source_type == "Patient (PID)" else "sampled"
+    source_key_map = {
+        "Patient (PID)": "pid",
+        "Sampled Rollout": "sampled",
+        "Angle Sweep": "angle_sweep"
+    }
+    source_key = source_key_map.get(source_type, "sampled")
     available_views = [
         v for v in config["views"]
         if source_key in v.get("sources", [])
@@ -164,10 +189,14 @@ def main():
                 pdata = load_hdf5_data(uri)
                 if pdata is not None:
                     pdata['panel_title'] = item  # Use h5 filename as title
-            else:
+            elif source_type == "Sampled Rollout":
                 pdata = load_sampled_hdf5(item)
                 if pdata is not None:
                     pdata['panel_title'] = pdata.get('dir_name', item)
+            else:  # Angle Sweep
+                pdata = load_angle_sweep_csv(item)
+                if pdata is not None:
+                    pdata['panel_title'] = item
 
             if pdata is not None:
                 panel_data_list.append(pdata)
@@ -184,10 +213,14 @@ def main():
                 data = load_hdf5_data(uri)
                 if data is None:
                     st.error(f"Failed to load: {uri}")
-            else:
+            elif source_type == "Sampled Rollout":
                 data = load_sampled_hdf5(selected_item)
                 if data is None:
                     st.error(f"Failed to load sampled data: {selected_item}")
+            else:  # Angle Sweep
+                data = load_angle_sweep_csv(selected_item)
+                if data is None:
+                    st.error(f"Failed to load angle sweep data: {selected_item}")
 
     # Plot width preset
     width_options = {"30%": 0.3, "50%": 0.5, "100%": 1.0}

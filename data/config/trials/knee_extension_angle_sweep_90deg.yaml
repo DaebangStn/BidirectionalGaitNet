@@ -1,0 +1,26 @@
+# Trial: Knee angle sweep from seated position with 90 degree hip flexion
+# Kinematic-only sweep - records passive forces at each joint angle
+
+name: "knee_angle_sweep_90deg"
+description: "Sweep knee angle from 0 to 90 degrees, record passive forces"
+
+mode: "angle_sweep"
+
+# Seated pose: hips flexed 90 degrees, ankle neutral
+pose:
+  Pelvis: [0, 0.5, 0, 0, 0, 0]  # Lower pelvis for seated position
+  FemurR: [1.5708, 0, 0]  # 90 degree hip flexion (1.5708 rad = 90 deg)
+  FemurL: [1.5708, 0, 0]
+  TibiaL: 1.5708  # Left knee flexed
+  TalusR: 0
+  TalusL: 0
+
+angle_sweep:
+  joint: "TibiaR"
+  dof_index: 0
+  angle_min: 0.0        # 0 degrees (knee extended)
+  angle_max: 1.5708     # 90 degrees (knee flexed)
+  num_steps: 50
+
+recording:
+  output_file: "./results/knee_angle_sweep_90deg.csv"

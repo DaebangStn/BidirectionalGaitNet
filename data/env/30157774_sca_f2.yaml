@@ -1,0 +1,71 @@
+# args:
+
+environment:
+  # Skeleton and Character
+  skeleton:
+    file: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
+    actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
+    kp_scale: 0.3
+    damping: 0.1
+    self_collide: true
+    use_critical_damping: true
+    scale_tau_on_weight: true
+    weight_from:
+      file: "@pid:30157774/gait/metadata.yaml"
+      prepost: "pre"
+  # Motion Reference
+  motion:
+    type: "h5"  # h5, bvh, npz
+    file: "@pid:30157774/gait/pre/h5/Trimmed_walk01-Dynamic_trimmed.h5"
+    use_mirror: false
+    get_stride_from_motion: true
+
+  # Muscle System
+  muscle:
+    file: "@data/muscle/base_vas.yaml"
+    scale_f0_on_weight: true  # Scale muscle f0 by mass^(2/3) 
+    clip_lm_norm: 1.4
+    mesh_lbs_weight: false
+    use_velocity_force: false
+    use_joint_state: true
+    pose_optimization:
+      enabled: true
+      rot: "one_foot"  # one_foot or mid_feet
+
+  # Simulation Timing
+  simulation:
+    sim_hz: 180
+    control_hz: 30
+
+  # Action and Control
+  action:
+    scale: 0.04
+    time_warping: -1  # -1 means disabled
+    gait_phase_mode: "contact"  # "contact" or "phase"
+    contact_debounce_alpha: 0.4
+    step_min_ratio: 0.1
+
+  # Reward System
+  reward:
+    type: "scadiver"  # deepmimic, gaitnet, scadiver
+    num_ref_in_state: 2
+    include_ref_velocity: false
+    clip:
+      step: 50
+      value: 0.1
+
+    # Imitation reward coefficients (deepmimic/scadiver)
+    ee_weight: 40.0
+    pos_weight: 20.0
+    vel_weight: 5.0
+    com_weight: 10.0
+
+    # Metabolic configuration
+    metabolic:
+      type: "A"  # A, A2, MA, MA2
+      weight: 0.02
+      scale: 1.0
+      multiplicative: true  # if true, multiplies with main reward term
+      torque:
+        coeff: 0.1
+        separate: true

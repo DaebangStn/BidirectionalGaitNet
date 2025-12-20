@@ -32,6 +32,27 @@ struct ROMDataPoint {
     double passive_force_total;
 };
 
+// Trial mode (force sweep vs angle sweep)
+enum class TrialMode { FORCE_SWEEP, ANGLE_SWEEP };
+
+// Angle sweep trial configuration (kinematic-only sweep)
+struct AngleSweepTrialConfig {
+    std::string joint_name;      // e.g., "TibiaR"
+    int dof_index;               // Which DOF (0 for single-DOF joints)
+    double angle_min;            // Radians
+    double angle_max;            // Radians
+    int num_steps;               // Number of sweep steps
+};
+
+// Angle sweep data point (per-step recording)
+struct AngleSweepDataPoint {
+    double joint_angle;                                    // Current sweep angle (radians)
+    double passive_force_total;                            // Sum of all muscle passive forces
+    std::map<std::string, double> muscle_fp;               // Per-muscle passive force
+    std::map<std::string, double> muscle_lm_norm;          // Per-muscle normalized length
+    std::map<std::string, std::vector<double>> muscle_jtp; // Per-muscle joint torques
+};
+
 // Posture control target
 struct PostureTarget {
     std::string bodyNodeName;
@@ -48,7 +69,10 @@ struct TrialConfig {
     std::string description;
     std::map<std::string, Eigen::VectorXd> pose;
 
-    // Force parameters
+    // Trial mode selection (default: FORCE_SWEEP for backward compatibility)
+    TrialMode mode = TrialMode::FORCE_SWEEP;
+
+    // Force sweep parameters (used when mode == FORCE_SWEEP)
     std::string force_body_node;
     Eigen::Vector3d force_offset;
     Eigen::Vector3d force_direction;
@@ -57,8 +81,11 @@ struct TrialConfig {
     int force_steps;
     double settle_time;
 
+    // Angle sweep parameters (used when mode == ANGLE_SWEEP)
+    AngleSweepTrialConfig angle_sweep;
+
     // Recording
-    std::vector<std::string> record_joints;
+    std::vector<std::string> record_joints;  // Used by force sweep
     std::string output_file;
 };
 
@@ -111,6 +138,12 @@ public:
     void startNextTrial();
     void runCurrentTrial();
     void saveToCSV(const std::string& output_path);
+
+    // Angle sweep trial execution (kinematic-only)
+    void runAngleSweepTrial(const TrialConfig& trial);
+    void collectAngleSweepTrialData(double angle);
+    void setupTrackedMusclesForAngleSweep(const std::string& joint_name);
+    void saveAngleSweepToCSV(const std::string& path);
 
     // Rendering
     void render();
@@ -307,6 +340,10 @@ private:
     bool mTrialRunning;
     int mCurrentForceStep;
     bool mExamSettingLoaded;
+
+    // Angle sweep trial data
+    std::vector<AngleSweepDataPoint> mAngleSweepData;
+    std::vector<std::string> mAngleSweepTrackedMuscles;
 
     // Pose presets
     int mCurrentPosePreset;  // 0=standing, 1=supine, 2=prone, 3=supine_knee_flexed

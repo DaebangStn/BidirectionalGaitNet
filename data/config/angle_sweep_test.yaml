@@ -1,0 +1,13 @@
+# Test Angle Sweep Trial
+# Simple exam config to test the angle sweep functionality
+
+name: "angle_sweep_test"
+description: "Test angle sweep trial implementation"
+
+character:
+  skeleton: "@data/skeleton/gaitnet_narrow_model.xml"
+  muscle: "@data/muscle/gaitnet_lower_only.xml"
+  actuator: "torque"
+
+trials:
+  - file: "@data/config/trials/knee_extension_angle_sweep_90deg.yaml"

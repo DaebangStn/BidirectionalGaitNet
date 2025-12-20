@@ -824,6 +824,10 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             mRewardConfig.vel_weight = reward["vel_weight"].as<double>(10.0);
         if (reward["com_weight"])
             mRewardConfig.com_weight = reward["com_weight"].as<double>(10.0);
+        if (reward["num_ref_in_state"])
+            mRewardConfig.num_ref_in_state = reward["num_ref_in_state"].as<int>(1);
+        if (reward["include_ref_velocity"])
+            mRewardConfig.include_ref_velocity = reward["include_ref_velocity"].as<bool>(true);
     }
 
     // === Locomotion rewards ===
@@ -1313,6 +1317,37 @@ void Environment::setAction(Eigen::VectorXd _action)
     mSimulationStep++;
 }
 
+Eigen::VectorXd Environment::getFutureRefPose(int future_step)
+{
+    double dTime = 1.0 / mControlHz;
+    Eigen::VectorXd pose;
+
+    if (mRewardType == gaitnet) {
+        double dPhase = dTime / (mMotion->getMaxTime() / mCadence);
+        double basePhase = mGaitPhase->getAdaptivePhase();
+        double targetPhase = basePhase + dPhase * future_step;
+
+        pose = mMotion->getTargetPose(targetPhase);
+    } else if (mRewardType == deepmimic || mRewardType == scadiver) {
+        double dPhase = dTime / mMotion->getMaxTime();
+        double basePhase = mGaitPhase->getAdaptivePhase();
+        double targetPhase = basePhase + dPhase * future_step;
+        double baseTime = mGaitPhase->getAdaptiveTime();
+        double targetTime = baseTime + dTime * future_step;
+
+        int cycleCount = mGaitPhase->getAdaptiveCycleCount(targetTime);
+
+        pose = mMotion->getTargetPose(targetPhase);
+
+        if (cycleCount > 0) {
+            pose[3] += mMotion->getCycleDistance()[0] * cycleCount;
+            pose[5] += mMotion->getCycleDistance()[2] * cycleCount;
+        }
+    }
+
+    return pose;
+}
+
 void Environment::updateTargetPosAndVel(bool currentStep)
 {
     double dTime = 1.0 / mControlHz;
@@ -1683,19 +1718,50 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
         // Integration of all states
         state = Eigen::VectorXd::Zero(com.rows() + p.rows() + v.rows() + phase.rows() + step_state.rows() + joint_state.rows() + proj_param_state.rows());
         state << com, p, v, phase, step_state, joint_state, proj_param_state;
-    } else {
+    } else if (mRewardType == deepmimic || mRewardType == scadiver) {
         auto skel = mCharacter->getSkeleton();
         auto [p, v] = buildPVState();
         const Eigen::VectorXd cur_p = skel->getPositions();
         const Eigen::VectorXd cur_v = skel->getVelocities();
-        skel->setPositions(mRefPose);
-        skel->setVelocities(mTargetVelocities);
-        auto [p_ref, v_ref] = buildPVState();
+        double dTime = 1.0 / mControlHz;
+
+        // Get future reference poses
+        std::vector<Eigen::VectorXd> future_poses;
+        int num_poses_needed = mRewardConfig.num_ref_in_state;
+        if (mRewardConfig.include_ref_velocity) {
+            num_poses_needed += 1;  // Need one extra for velocity computation
+        }
+        for (int step = 1; step <= num_poses_needed; step++) {
+            future_poses.push_back(getFutureRefPose(step));
+        }
+
+        // Build reference states for each future step
+        std::vector<Eigen::VectorXd> ref_p_states;
+        std::vector<Eigen::VectorXd> ref_v_states;
+
+        for (int i = 0; i < mRewardConfig.num_ref_in_state; i++) {
+            Eigen::VectorXd ref_pose = future_poses[i];
+            skel->setPositions(ref_pose);
+
+            if (mRewardConfig.include_ref_velocity) {
+                Eigen::VectorXd next_pose = future_poses[i + 1];
+                Eigen::VectorXd ref_vel = skel->getPositionDifferences(next_pose, ref_pose) / dTime;
+                skel->setVelocities(ref_vel);
+            }
+
+            auto [p_ref, v_ref] = buildPVState();
+            ref_p_states.push_back(p_ref);
+            if (mRewardConfig.include_ref_velocity) {
+                ref_v_states.push_back(v_ref);
+            }
+        }
+
         skel->setPositions(cur_p);
         skel->setVelocities(cur_v);
 
+        // Compute rel_root only for first reference (step 1)
         Eigen::Isometry3d cur_root = FreeJoint::convertToTransform(cur_p.head(6));
-        Eigen::Isometry3d ref_root = FreeJoint::convertToTransform(mRefPose.head(6));
+        Eigen::Isometry3d ref_root = FreeJoint::convertToTransform(future_poses[0].head(6));
         Eigen::Isometry3d rel_tx = ref_root.inverse() * cur_root;
 
         // Relative position (3D) + orientation 6D (first two columns of rotation matrix)
@@ -1704,8 +1770,26 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getProjState(const Eige
         rel_root.segment<3>(3) << rel_tx.linear()(0, 0), rel_tx.linear()(1, 0), rel_tx.linear()(2, 0);
         rel_root.segment<3>(6) << rel_tx.linear()(0, 1), rel_tx.linear()(1, 1), rel_tx.linear()(2, 1);
 
-        state = Eigen::VectorXd::Zero(p.rows() + v.rows() + p_ref.rows() + v_ref.rows() + rel_root.rows());
-        state << p, v, p_ref, v_ref, rel_root;
+        // Calculate total state size
+        int ref_p_total = 0, ref_v_total = 0;
+        for (const auto& rp : ref_p_states) ref_p_total += rp.rows();
+        for (const auto& rv : ref_v_states) ref_v_total += rv.rows();
+
+        state = Eigen::VectorXd::Zero(p.rows() + v.rows() + ref_p_total + ref_v_total + rel_root.rows());
+
+        // Concatenate: [p, v, p_ref1, (v_ref1), p_ref2, (v_ref2), ..., rel_root]
+        int offset = 0;
+        state.segment(offset, p.rows()) = p; offset += p.rows();
+        state.segment(offset, v.rows()) = v; offset += v.rows();
+        for (size_t i = 0; i < ref_p_states.size(); i++) {
+            state.segment(offset, ref_p_states[i].rows()) = ref_p_states[i];
+            offset += ref_p_states[i].rows();
+            if (mRewardConfig.include_ref_velocity) {
+                state.segment(offset, ref_v_states[i].rows()) = ref_v_states[i];
+                offset += ref_v_states[i].rows();
+            }
+        }
+        state.segment(offset, rel_root.rows()) = rel_root;
     }
     
     return {state, joint_state};

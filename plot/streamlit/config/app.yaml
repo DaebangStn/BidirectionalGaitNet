@@ -19,3 +19,7 @@ views:
     label: "Muscle Activity Heatmap"
     module: "views.muscle_heatmap"
     sources: ["sampled"]
+  - id: "angle_sweep"
+    label: "Angle Sweep - Passive Force"
+    module: "views.angle_sweep"
+    sources: ["angle_sweep"]

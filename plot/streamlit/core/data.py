@@ -5,11 +5,14 @@ sys.path.insert(0, '/home/geon/BidirectionalGaitNet')
 import streamlit as st
 import h5py
 import numpy as np
+import pandas as pd
 from pathlib import Path
 from rm import rm_mgr
 
 # Base path for sampled rollout data
 SAMPLED_DIR = Path('/home/geon/BidirectionalGaitNet/sampled')
+# Base path for angle sweep results
+RESULTS_DIR = Path('/home/geon/BidirectionalGaitNet/results')
 
 
 @st.cache_data
@@ -245,4 +248,88 @@ def load_sampled_hdf5(dir_name: str) -> dict:
 
     except Exception as e:
         st.error(f"Error loading sampled HDF5: {e}")
+        return None
+
+
+@st.cache_data(ttl=60)
+def list_angle_sweep_files() -> list[str]:
+    """List CSV files in results/ directory.
+
+    Returns list of CSV filenames for angle sweep data.
+    """
+    try:
+        if not RESULTS_DIR.exists():
+            return []
+        files = [f.name for f in RESULTS_DIR.iterdir()
+                 if f.is_file() and f.suffix.lower() == '.csv']
+        return sorted(files)
+    except Exception as e:
+        print(f"[list_angle_sweep_files] exception: {e}")
+        return []
+
+
+@st.cache_data
+def load_angle_sweep_csv(filename: str) -> dict:
+    """Load angle sweep CSV data.
+
+    Args:
+        filename: Name of the CSV file in results/
+
+    Returns dict with:
+        - source: 'angle_sweep'
+        - filename: str
+        - joint_angle_deg: np.array
+        - passive_force_total: np.array
+        - muscles: list[str]  (muscle names)
+        - muscle_data: {
+            'muscle_name': {
+                'fp': np.array,
+                'lm_norm': np.array,
+                'jtp_mag': np.array
+            }
+        }
+    """
+    try:
+        csv_path = RESULTS_DIR / filename
+        if not csv_path.exists():
+            st.error(f"File not found: {csv_path}")
+            return None
+
+        df = pd.read_csv(csv_path)
+
+        data = {
+            'source': 'angle_sweep',
+            'filename': filename,
+            'joint_angle_deg': df['joint_angle_deg'].values,
+            'passive_force_total': df['passive_force_total'].values,
+            'muscles': [],
+            'muscle_data': {}
+        }
+
+        # Parse muscle columns: {muscle}_fp, {muscle}_lm_norm, {muscle}_jtp_mag
+        columns = df.columns.tolist()
+        muscle_names = set()
+        for col in columns:
+            if col.endswith('_fp'):
+                muscle_names.add(col[:-3])
+            elif col.endswith('_lm_norm'):
+                muscle_names.add(col[:-8])
+            elif col.endswith('_jtp_mag'):
+                muscle_names.add(col[:-8])
+
+        data['muscles'] = sorted(list(muscle_names))
+
+        for muscle in data['muscles']:
+            data['muscle_data'][muscle] = {}
+            if f'{muscle}_fp' in df.columns:
+                data['muscle_data'][muscle]['fp'] = df[f'{muscle}_fp'].values
+            if f'{muscle}_lm_norm' in df.columns:
+                data['muscle_data'][muscle]['lm_norm'] = df[f'{muscle}_lm_norm'].values
+            if f'{muscle}_jtp_mag' in df.columns:
+                data['muscle_data'][muscle]['jtp_mag'] = df[f'{muscle}_jtp_mag'].values
+
+        return data
+
+    except Exception as e:
+        st.error(f"Error loading angle sweep CSV: {e}")
         return None
