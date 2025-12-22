@@ -48,7 +48,8 @@ struct AngleSweepTrialConfig {
 // Angle sweep data point (per-step recording)
 struct AngleSweepDataPoint {
     double joint_angle;                                    // Current sweep angle (radians)
-    double passive_force_total;                            // Sum of all muscle passive forces
+    double passive_torque_total;                           // Sum of passive torques at swept joint
+    double passive_torque_stiffness;                       // Passive stiffness (dtau/dtheta, Nm/rad)
     std::map<std::string, double> muscle_fp;               // Per-muscle passive force
     std::map<std::string, double> muscle_lm_norm;          // Per-muscle normalized length
     std::map<std::string, std::vector<double>> muscle_jtp; // Per-muscle joint torques
@@ -120,7 +121,6 @@ public:
     // Joint angle sweep
     void setupSweepMuscles();
     void runSweep();
-    void collectSweepData(double angle);
     void renderMusclePlots();
     void clearSweepData();
 
@@ -131,7 +131,7 @@ public:
     // Recording
     std::map<std::string, Eigen::VectorXd> recordJointAngles(
         const std::vector<std::string>& joint_names);
-    double computePassiveForce();
+    double getPassiveTorqueJoint(int joint_idx);  // Sum of passive torques at joint
 
     // Examination execution
     void setOutputDir(const std::string& output_dir);
@@ -143,9 +143,8 @@ public:
 
     // Angle sweep trial execution (kinematic-only)
     void runAngleSweepTrial(const TrialConfig& trial);
-    void collectAngleSweepTrialData(double angle);
+    void collectAngleSweepData(double angle, int joint_index);
     void setupTrackedMusclesForAngleSweep(const std::string& joint_name);
-    void saveAngleSweepToCSV(const std::string& path);
 
     // HDF5 exam export (all trials in single file)
     std::string extractPidFromPath(const std::string& path) const;
@@ -178,11 +177,13 @@ public:
     // Visualization Panel Sections
     void drawTrialManagementSection();
     void drawCurrentStateSection();
-    void drawRecordedDataSection();
-    void drawROMAnalysisSection();
     void drawCameraStatusSection();
-    void drawSweepMusclePlotsSection();
     void drawMuscleInfoSection();
+    
+    // Right Panel Tab Contents
+    void drawBasicTabContent();
+    void drawSweepTabContent();
+    void drawEtcTabContent();
 
     // Surgery Panel Sections
     void drawDistributePassiveForceSection();
@@ -317,8 +318,6 @@ private:
     };
 
     JointSweepConfig mSweepConfig;
-    std::vector<std::string> mTrackedMuscles;  // Muscles crossing swept joint
-    std::vector<double> mSweepAngles;          // X-axis data (joint angles)
     std::map<std::string, bool> mMuscleVisibility;  // Track which muscles to plot
     char mMuscleFilterBuffer[256];              // Filter text buffer for muscle search
 
@@ -354,6 +353,7 @@ private:
     // Angle sweep trial data
     std::vector<AngleSweepDataPoint> mAngleSweepData;
     std::vector<std::string> mAngleSweepTrackedMuscles;
+    int mAngleSweepJointIdx;  // Joint index for current angle sweep
 
     // HDF5 exam export
     std::string mOutputDir;        // Output directory (from command line)

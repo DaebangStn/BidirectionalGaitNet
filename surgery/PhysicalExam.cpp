@@ -592,18 +592,36 @@ std::map<std::string, Eigen::VectorXd> PhysicalExam::recordJointAngles(
     return angles;
 }
 
-double PhysicalExam::computePassiveForce() {
+double PhysicalExam::getPassiveTorqueJoint(int joint_idx) {
     if (!mCharacter) return 0.0;
-    if (!mUseMuscle) return 0.0;  // Guard: no muscles loaded
+    if (!mUseMuscle) return 0.0;
 
-    double total_force = 0.0;
+    auto skel = mCharacter->getSkeleton();
+    auto joint = skel->getJoint(joint_idx);
+    if (!joint) return 0.0;
+
+    // Get DOF range for this joint
+    int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+    int num_dofs = static_cast<int>(joint->getNumDofs());
+
+    double total_torque = 0.0;
     auto muscles = mCharacter->getMuscles();
 
     for (auto& muscle : muscles) {
-        total_force += muscle->Getf_p();  // Use passive force, not active
+        // GetRelatedJtp() returns a reduced vector indexed by related_dof_indices
+        Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+        const auto& related_indices = muscle->related_dof_indices;
+
+        // Check each related DOF to see if it's in this joint's range
+        for (size_t i = 0; i < related_indices.size(); ++i) {
+            int global_dof = related_indices[i];
+            if (global_dof >= first_dof && global_dof < first_dof + num_dofs) {
+                total_torque += jtp[i];
+            }
+        }
     }
 
-    return total_force;
+    return total_torque;
 }
 
 void PhysicalExam::loadExamSetting(const std::string& config_path) {
@@ -827,7 +845,7 @@ void PhysicalExam::runCurrentTrial() {
         ROMDataPoint data;
         data.force_magnitude = magnitude;
         data.joint_angles = recordJointAngles(trial.record_joints);
-        data.passive_force_total = computePassiveForce();
+        data.passive_force_total = 0.0;  // Deprecated: use getPassiveTorqueJoint() for angle sweep
         mRecordedData.push_back(data);
     }
 
@@ -914,11 +932,11 @@ void PhysicalExam::runExamination(const std::string& config_path) {
         ROMDataPoint data;
         data.force_magnitude = magnitude;
         data.joint_angles = recordJointAngles(record_joints);
-        data.passive_force_total = computePassiveForce();
+        data.passive_force_total = 0.0;  // Deprecated - use per-joint torque instead
         mRecordedData.push_back(data);
     }
 
-    // Save results
+    // Save results (deprecated)
     saveToCSV(output_file);
 
     LOG_INFO("Examination complete. Results saved to: " << output_file);
@@ -996,10 +1014,25 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
               << " muscles crossing joint " << joint_name);
 }
 
-void PhysicalExam::collectAngleSweepTrialData(double angle) {
+void PhysicalExam::collectAngleSweepData(double angle, int joint_index) {
     AngleSweepDataPoint data;
     data.joint_angle = angle;
-    data.passive_force_total = computePassiveForce();
+    data.passive_torque_total = getPassiveTorqueJoint(joint_index);
+    
+    // Compute stiffness (dtau/dtheta) using backward difference
+    size_t N = mAngleSweepData.size();
+    if (N >= 1) {
+        double angle_prev = mAngleSweepData[N-1].joint_angle;
+        double torque_prev = mAngleSweepData[N-1].passive_torque_total;
+        if (std::abs(angle - angle_prev) > 1e-10) {
+            data.passive_torque_stiffness = 
+                (data.passive_torque_total - torque_prev) / (angle - angle_prev);
+        } else {
+            data.passive_torque_stiffness = 0.0;
+        }
+    } else {
+        data.passive_torque_stiffness = 0.0;  // First point
+    }
 
     // Collect per-muscle data (only muscles crossing the swept joint)
     for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
@@ -1032,10 +1065,13 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
         return;
     }
 
-    // 3. Identify muscles crossing this joint
+    // 3. Store joint index for passive torque calculation
+    mAngleSweepJointIdx = static_cast<int>(joint->getJointIndexInSkeleton());
+
+    // 4. Identify muscles crossing this joint
     setupTrackedMusclesForAngleSweep(trial.angle_sweep.joint_name);
 
-    // 4. Clear previous data
+    // 5. Clear previous data
     mAngleSweepData.clear();
 
     // 5. Kinematic sweep loop (no physics settling - matches GUI sweep)
@@ -1056,56 +1092,13 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
         }
 
         // Collect data point
-        collectAngleSweepTrialData(angle);
+        collectAngleSweepData(angle, mAngleSweepJointIdx);
     }
 
     // 6. Append to exam HDF5
     appendTrialToHDF5(trial);
 
     LOG_INFO("Angle sweep trial completed (" << trial.angle_sweep.num_steps + 1 << " steps)");
-}
-
-void PhysicalExam::saveAngleSweepToCSV(const std::string& path) {
-    std::ofstream file(path);
-    if (!file.is_open()) {
-        LOG_ERROR("Failed to open output file: " << path);
-        return;
-    }
-
-    // Build header
-    file << "joint_angle_rad,joint_angle_deg,passive_force_total";
-    for (const auto& name : mAngleSweepTrackedMuscles) {
-        file << "," << name << "_fp";
-        file << "," << name << "_lm_norm";
-        // Add jtp column (magnitude across DOFs)
-        file << "," << name << "_jtp_mag";
-    }
-    file << "\n";
-
-    // Data rows
-    for (const auto& data : mAngleSweepData) {
-        file << data.joint_angle << ","
-             << (data.joint_angle * 180.0 / M_PI) << ","
-             << data.passive_force_total;
-
-        for (const auto& name : mAngleSweepTrackedMuscles) {
-            file << "," << data.muscle_fp.at(name);
-            file << "," << data.muscle_lm_norm.at(name);
-
-            // Calculate jtp magnitude (Euclidean norm across DOFs)
-            double jtp_mag = 0.0;
-            if (data.muscle_jtp.count(name)) {
-                for (double v : data.muscle_jtp.at(name)) {
-                    jtp_mag += v * v;
-                }
-                jtp_mag = std::sqrt(jtp_mag);
-            }
-            file << "," << jtp_mag;
-        }
-        file << "\n";
-    }
-
-    file.close();
 }
 
 // ============================================================================
@@ -1210,13 +1203,14 @@ void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& tria
     }
 
     // Prepare buffers
-    std::vector<float> angles(N), passiveForces(N);
+    std::vector<float> angles(N), passiveTorques(N), passiveTorqueStiffness(N);
     std::vector<float> muscleFp(N * M), muscleLmNorm(N * M), muscleJtpMag(N * M);
 
     for (size_t i = 0; i < N; ++i) {
         const auto& d = mAngleSweepData[i];
         angles[i] = static_cast<float>(d.joint_angle);
-        passiveForces[i] = static_cast<float>(d.passive_force_total);
+        passiveTorques[i] = static_cast<float>(d.passive_torque_total);
+        passiveTorqueStiffness[i] = static_cast<float>(d.passive_torque_stiffness);
 
         for (size_t m = 0; m < M; ++m) {
             const std::string& name = mAngleSweepTrackedMuscles[m];
@@ -1239,8 +1233,11 @@ void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& tria
     H5::DataSet anglesDs = group.createDataSet("joint_angles", H5::PredType::NATIVE_FLOAT, space1);
     anglesDs.write(angles.data(), H5::PredType::NATIVE_FLOAT);
 
-    H5::DataSet passiveDs = group.createDataSet("passive_forces", H5::PredType::NATIVE_FLOAT, space1);
-    passiveDs.write(passiveForces.data(), H5::PredType::NATIVE_FLOAT);
+    H5::DataSet passiveDs = group.createDataSet("passive_torques", H5::PredType::NATIVE_FLOAT, space1);
+    passiveDs.write(passiveTorques.data(), H5::PredType::NATIVE_FLOAT);
+
+    H5::DataSet stiffnessDs = group.createDataSet("passive_torque_stiffness", H5::PredType::NATIVE_FLOAT, space1);
+    stiffnessDs.write(passiveTorqueStiffness.data(), H5::PredType::NATIVE_FLOAT);
 
     // Write 2D datasets (N steps × M muscles)
     hsize_t dims2[2] = {N, M};
@@ -1492,7 +1489,7 @@ void PhysicalExam::mainLoop() {
                 }
 
                 // Collect muscle data at this angle
-                collectSweepData(angle);
+                collectAngleSweepData(angle, mSweepConfig.joint_index);
 
                 mSweepCurrentStep++;
             } else {
@@ -1501,7 +1498,7 @@ void PhysicalExam::mainLoop() {
                     joint->setPositions(mSweepOriginalPos);
                 }
                 mSweepRunning = false;
-                LOG_INFO("Sweep completed. Collected " << mSweepAngles.size()
+                LOG_INFO("Sweep completed. Collected " << mAngleSweepData.size()
                           << " data points");
             }
 
@@ -1595,6 +1592,26 @@ void PhysicalExam::drawRightPanel() {
     ImGui::Begin("Visualization & Data", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
+    if (ImGui::BeginTabBar("RightPanelTabs")) {
+        if (ImGui::BeginTabItem("Basic")) {
+            drawBasicTabContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Sweep")) {
+            drawSweepTabContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Etc")) {
+            drawEtcTabContent();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    ImGui::End();
+}
+
+void PhysicalExam::drawBasicTabContent() {
     // Loaded Files Section
     if (collapsingHeaderWithControls("Loaded Files")) {
         ImGui::Indent();
@@ -1624,16 +1641,113 @@ void PhysicalExam::drawRightPanel() {
     ImGui::Spacing();
 
     drawCurrentStateSection();
-    drawRecordedDataSection();
-    drawROMAnalysisSection();
-    drawCameraStatusSection();
-    drawSweepMusclePlotsSection();
     drawMuscleInfoSection();
+    drawCameraStatusSection();
+}
 
+void PhysicalExam::drawSweepTabContent() {
+    if (mAngleSweepData.empty()) {
+        ImGui::TextDisabled("No sweep data available");
+        ImGui::TextWrapped("Run a joint angle sweep from the control panel to generate plots");
+        return;
+    }
+
+    // Muscle Selection Section
+    if (collapsingHeaderWithControls("Muscle Selection")) {
+        if (mAngleSweepTrackedMuscles.empty()) {
+            ImGui::TextDisabled("No muscles tracked");
+        } else {
+            ImGui::Indent();
+            
+            // Filter textbox
+            ImGui::Text("Filter:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(200);
+            ImGui::InputText("##MuscleFilter", mMuscleFilterBuffer, sizeof(mMuscleFilterBuffer));
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear")) {
+                mMuscleFilterBuffer[0] = '\0';
+            }
+            
+            // Convert filter to lowercase for case-insensitive matching
+            std::string filter_lower(mMuscleFilterBuffer);
+            std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+            
+            // Build filtered muscle list
+            std::vector<std::string> filteredMuscles;
+            for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
+                // Case-insensitive substring search
+                std::string muscle_lower = muscle_name;
+                std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
+                
+                if (filter_lower.empty() || muscle_lower.find(filter_lower) != std::string::npos) {
+                    filteredMuscles.push_back(muscle_name);
+                }
+            }
+            
+            // Count visible muscles (from filtered list)
+            int visibleCount = 0;
+            for (const auto& muscle_name : filteredMuscles) {
+                if (mMuscleVisibility[muscle_name]) {
+                    visibleCount++;
+                }
+            }
+
+            // Display visibility count
+            ImGui::Text("Show (%d/%zu)", visibleCount, filteredMuscles.size());
+            if (!filter_lower.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(total %zu)", mAngleSweepTrackedMuscles.size());
+            }
+            ImGui::SameLine();
+
+            // Select All / Deselect All buttons (operate on filtered list)
+            if (ImGui::SmallButton("Select All")) {
+                for (const auto& muscle_name : filteredMuscles) {
+                    mMuscleVisibility[muscle_name] = true;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Deselect All")) {
+                for (const auto& muscle_name : filteredMuscles) {
+                    mMuscleVisibility[muscle_name] = false;
+                }
+            }
+
+            ImGui::Separator();
+
+            // Individual muscle checkboxes (in a scrollable region if many muscles)
+            if (filteredMuscles.size() > 10) {
+                // Scrollable region for many muscles
+                ImGui::BeginChild("MuscleCheckboxes", ImVec2(0, 100), true);
+            }
+
+            for (auto& muscle_name : filteredMuscles) {
+                bool isVisible = mMuscleVisibility[muscle_name];
+                if (ImGui::Checkbox(muscle_name.c_str(), &isVisible)) {
+                    mMuscleVisibility[muscle_name] = isVisible;
+                }
+            }
+
+            if (filteredMuscles.size() > 10) {
+                ImGui::EndChild();
+            }
+            
+            ImGui::Unindent();
+        }
+    }
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Render the plots with filtered muscles
+    renderMusclePlots();
+}
+
+void PhysicalExam::drawEtcTabContent() {
     // Posture control graphs
     drawGraphPanel();
-
-    ImGui::End();
 }
 
 // ============================================================================
@@ -5129,7 +5243,7 @@ void PhysicalExam::setupSweepMuscles() {
         }
     }
 
-    mTrackedMuscles.clear();
+    mAngleSweepTrackedMuscles.clear();
     if (!mCharacter) return;
     if (!mUseMuscle) return;  // Guard: no muscles loaded
 
@@ -5150,21 +5264,7 @@ void PhysicalExam::setupSweepMuscles() {
         if (std::find(related_joints.begin(), related_joints.end(), joint)
             != related_joints.end()) {
             std::string muscleName = muscle->GetName();
-            mTrackedMuscles.push_back(muscleName);
-
-            // Register graph data keys for this muscle
-            mGraphData->register_key(muscleName + "_fp", 500);
-            mGraphData->register_key(muscleName + "_lm", 500);
-            mGraphData->register_key(muscleName + "_lm_norm", 500);
-
-            // Register keys for per-muscle passive joint torques (for all DOFs this muscle affects)
-            for (size_t i = 0; i < muscle->related_dof_indices.size(); ++i) {
-                int global_dof = muscle->related_dof_indices[i];
-                int adjusted_dof = global_dof - root_dofs;
-                if (adjusted_dof >= 0 && adjusted_dof < total_dofs) {
-                    mGraphData->register_key(muscleName + "_jtp_" + std::to_string(adjusted_dof), 500);
-                }
-            }
+            mAngleSweepTrackedMuscles.push_back(muscleName);
 
             // Initialize visibility
             if (oldVisibility.find(muscleName) != oldVisibility.end()) {
@@ -5182,12 +5282,12 @@ void PhysicalExam::setupSweepMuscles() {
 
     // Remove visibility entries for muscles no longer tracked
     std::map<std::string, bool> newVisibility;
-    for (const auto& muscleName : mTrackedMuscles) {
+    for (const auto& muscleName : mAngleSweepTrackedMuscles) {
         newVisibility[muscleName] = mMuscleVisibility[muscleName];
     }
     mMuscleVisibility = newVisibility;
 
-    LOG_INFO("Detected " << mTrackedMuscles.size()
+    LOG_INFO("Detected " << mAngleSweepTrackedMuscles.size()
               << " muscles crossing joint: "
               << joint->getName());
 }
@@ -5202,7 +5302,7 @@ void PhysicalExam::runSweep() {
     clearSweepData();
     setupSweepMuscles();
 
-    if (mTrackedMuscles.empty()) {
+    if (mAngleSweepTrackedMuscles.empty()) {
         LOG_INFO("No muscles cross this joint");
         return;
     }
@@ -5215,6 +5315,12 @@ void PhysicalExam::runSweep() {
               << " to " << mSweepConfig.angle_max
               << " rad (" << mSweepConfig.num_steps << " steps)");
 
+    // Clear previous sweep data
+    mAngleSweepData.clear();
+    
+    // Set joint index for passive torque calculation
+    mAngleSweepJointIdx = mSweepConfig.joint_index;
+
     // Store original joint position for restoration
     mSweepOriginalPos = joint->getPositions();
 
@@ -5223,83 +5329,47 @@ void PhysicalExam::runSweep() {
     mSweepCurrentStep = 0;
 }
 
-void PhysicalExam::collectSweepData(double angle) {
-    mSweepAngles.push_back(angle);
-
-    if (!mUseMuscle) return;  // Guard: no muscles loaded
-
-    auto muscles = mCharacter->getMuscles();
-    auto skel = mCharacter->getSkeleton();
-    int root_dofs = skel->getRootJoint()->getNumDofs();
-
-    for (auto muscle : muscles) {
-        std::string name = muscle->GetName();
-
-        // Only collect data for tracked muscles
-        if (std::find(mTrackedMuscles.begin(), mTrackedMuscles.end(), name)
-            != mTrackedMuscles.end()) {
-
-            double f_p = muscle->Getf_p();       // Passive force
-            double l_m = muscle->lm_rel;         // Muscle length
-            double l_m_norm = muscle->lm_norm;   // Normalized muscle length
-
-            mGraphData->push(name + "_fp", f_p);
-            mGraphData->push(name + "_lm", l_m);
-            mGraphData->push(name + "_lm_norm", l_m_norm);
-
-            // Per-muscle passive joint torques
-            Eigen::VectorXd JtP_reduced = muscle->GetRelatedJtp();
-            for (size_t i = 0; i < muscle->related_dof_indices.size(); ++i) {
-                int global_dof = muscle->related_dof_indices[i];
-                int adjusted_dof = global_dof - root_dofs;  // Skip root DOFs
-                if (adjusted_dof >= 0) {
-                    // Key format: {muscle_name}_jtp_{dof_index}
-                    std::string key = name + "_jtp_" + std::to_string(adjusted_dof);
-                    mGraphData->push(key, JtP_reduced[i]);
-                }
-            }
-        }
-    }
-}
 
 void PhysicalExam::renderMusclePlots() {
-    if (mSweepAngles.empty()) return;
+    if (mAngleSweepData.empty()) return;
 
     static bool sShowSweepLegend = true;
-    static bool sShowPassivePlot = true;
-    static bool sShowLmNormPlot = true;
-    static bool sShowJtpPlot = true;
 
     ImGui::Checkbox("Show Legend", &sShowSweepLegend);
-    ImGui::SameLine();
-    ImGui::Checkbox("Passive", &sShowPassivePlot);
-    ImGui::SameLine();
-    ImGui::Checkbox("l_m_norm", &sShowLmNormPlot);
-    ImGui::SameLine();
-    ImGui::Checkbox("Jtp", &sShowJtpPlot);
 
+    // Build x_data (angles in degrees)
     std::vector<double> x_data;
-    x_data.reserve(mSweepAngles.size());
-    for (double angle_rad : mSweepAngles) {
-        x_data.push_back(angle_rad * 180.0 / M_PI);
+    x_data.reserve(mAngleSweepData.size());
+    for (const auto& pt : mAngleSweepData) {
+        x_data.push_back(pt.joint_angle * 180.0 / M_PI);
     }
 
     ImPlotFlags plot_flags = sShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
 
-    if (sShowPassivePlot) {
+    // Passive Forces Plot
+    if (collapsingHeaderWithControls("Passive Forces")) {
         if (ImPlot::BeginPlot("Passive Forces vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
             ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
                 mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
             ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
             ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
 
-            for (const auto& muscle_name : mTrackedMuscles) {
+            for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
                 auto vis_it = mMuscleVisibility.find(muscle_name);
                 if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
                     continue;
                 }
 
-                auto fp_data = mGraphData->get(muscle_name + "_fp");
+                // Build y_data for this muscle
+                std::vector<double> fp_data;
+                fp_data.reserve(mAngleSweepData.size());
+                for (const auto& pt : mAngleSweepData) {
+                    auto it = pt.muscle_fp.find(muscle_name);
+                    if (it != pt.muscle_fp.end()) {
+                        fp_data.push_back(it->second);
+                    }
+                }
+                
                 if (!fp_data.empty() && fp_data.size() == x_data.size()) {
                     ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                         fp_data.data(), fp_data.size());
@@ -5307,23 +5377,32 @@ void PhysicalExam::renderMusclePlots() {
             }
             ImPlot::EndPlot();
         }
-        ImGui::Spacing();
     }
 
-    if (sShowLmNormPlot) {
+    // Normalized Muscle Length Plot
+    if (collapsingHeaderWithControls("Normalized Length (l_m_norm)")) {
         if (ImPlot::BeginPlot("Normalized Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
             ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
                 mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
             ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
             ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
 
-            for (const auto& muscle_name : mTrackedMuscles) {
+            for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
                 auto vis_it = mMuscleVisibility.find(muscle_name);
                 if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
                     continue;
                 }
 
-                auto lm_norm_data = mGraphData->get(muscle_name + "_lm_norm");
+                // Build y_data for this muscle
+                std::vector<double> lm_norm_data;
+                lm_norm_data.reserve(mAngleSweepData.size());
+                for (const auto& pt : mAngleSweepData) {
+                    auto it = pt.muscle_lm_norm.find(muscle_name);
+                    if (it != pt.muscle_lm_norm.end()) {
+                        lm_norm_data.push_back(it->second);
+                    }
+                }
+                
                 if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
                     ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                         lm_norm_data.data(), lm_norm_data.size());
@@ -5331,129 +5410,124 @@ void PhysicalExam::renderMusclePlots() {
             }
             ImPlot::EndPlot();
         }
-        ImGui::Spacing();
     }
 
-    // Joint Torque Plot with joint selection
-    if (sShowJtpPlot && mCharacter) {
-        auto skel = mCharacter->getSkeleton();
-        int root_dofs = skel->getRootJoint()->getNumDofs();
+    // Total Passive Torque & Stiffness Plot
+    if (collapsingHeaderWithControls("Total Passive Torque")) {
+        // Build torque and stiffness data
+        std::vector<double> torque_data, stiffness_data;
+        torque_data.reserve(mAngleSweepData.size());
+        stiffness_data.reserve(mAngleSweepData.size());
+        for (const auto& pt : mAngleSweepData) {
+            torque_data.push_back(pt.passive_torque_total);
+            stiffness_data.push_back(pt.passive_torque_stiffness);
+        }
+        
+        if (torque_data.empty()) {
+            ImGui::TextDisabled("No total passive torque data available");
+        } else {
+            // Torque plot
+            if (ImPlot::BeginPlot("Total Passive Torque vs Joint Angle", ImVec2(-1, 300), plot_flags)) {
+                ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+                    mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+                ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+                ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
+                ImPlot::PlotLine("Total Torque", x_data.data(), torque_data.data(), torque_data.size());
+                ImPlot::EndPlot();
+            }
 
-        static bool mShowTotalTorque = true;
-        // Joint selection listbox
-        ImGui::Text("Select Joint for Torque Plot:");
-        ImGui::SameLine();
-        ImGui::Checkbox("Total", &mShowTotalTorque);
-        if (ImGui::BeginListBox("##JointSelect", ImVec2(-1, 100))) {
-            for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root
-                auto joint = skel->getJoint(i);
-                bool is_selected = (mSelectedPlotJointIndex == static_cast<int>(i));
-                if (ImGui::Selectable(joint->getName().c_str(), is_selected)) {
-                    mSelectedPlotJointIndex = static_cast<int>(i);
+            // Stiffness plot
+            if (!stiffness_data.empty()) {
+                if (ImPlot::BeginPlot("Passive Stiffness (dτ/dθ) vs Joint Angle", ImVec2(-1, 300), plot_flags)) {
+                    ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+                        mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+                    ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+                    ImPlot::SetupAxis(ImAxis_Y1, "Stiffness (Nm/rad)");
+                    ImPlot::PlotLine("Stiffness", x_data.data(), stiffness_data.data(), stiffness_data.size());
+                    ImPlot::EndPlot();
                 }
             }
-            ImGui::EndListBox();
         }
+    }
 
-        // Get selected joint info
-        auto selected_joint = skel->getJoint(mSelectedPlotJointIndex);
-        std::string joint_name = selected_joint->getName();
-        int joint_first_dof = selected_joint->getIndexInSkeleton(0) - root_dofs;
+    // Per-Muscle Joint Torque Plot with joint selection
+    if (collapsingHeaderWithControls("Per-Muscle Joint Torque")) {
+        if (!mCharacter) {
+            ImGui::TextDisabled("No character loaded");
+        } else {
+            auto skel = mCharacter->getSkeleton();
+            int root_dofs = skel->getRootJoint()->getNumDofs();
 
-        // Plot
-        std::string plot_title = "Passive Joint Torque: " + joint_name;
-        if (ImPlot::BeginPlot(plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
-            ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-                mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
-            ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
-            ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
+            // Joint selection listbox
+            ImGui::Text("Select Joint:");
+            if (ImGui::BeginListBox("##JointSelect", ImVec2(-1, 100))) {
+                for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root
+                    auto joint = skel->getJoint(i);
+                    bool is_selected = (mSelectedPlotJointIndex == static_cast<int>(i));
+                    if (ImGui::Selectable(joint->getName().c_str(), is_selected)) {
+                        mSelectedPlotJointIndex = static_cast<int>(i);
+                    }
+                }
+                ImGui::EndListBox();
+            }
 
+            // Get selected joint info
+            auto selected_joint = skel->getJoint(mSelectedPlotJointIndex);
+            std::string joint_name = selected_joint->getName();
+            int joint_first_dof = selected_joint->getIndexInSkeleton(0) - root_dofs;
             int num_dofs = selected_joint->getNumDofs();
 
-            if (mShowTotalTorque) {
-                // Sum all muscles' passive torques for this joint
-                std::vector<double> total_passive_torque;
-                bool has_data = false;
+            // Plot each muscle's contribution to this joint (magnitude across all DOFs)
+            std::string plot_title = "Per-Muscle Passive Torque: " + joint_name;
+            if (ImPlot::BeginPlot(plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
+                ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
+                    mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+                ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+                ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
 
-                // Initialize from first valid key to get size
-                for (const auto& muscle_name : mTrackedMuscles) {
-                    std::string first_key = muscle_name + "_jtp_" + std::to_string(joint_first_dof);
-                    auto first_data = mGraphData->get(first_key);
-                    if (!first_data.empty() && first_data.size() == x_data.size()) {
-                        total_passive_torque.resize(first_data.size(), 0.0);
-                        has_data = true;
-                        break;
-                    }
-                }
-
-                if (has_data) {
-                    // Sum contributions from all muscles (sign preserved)
-                    for (const auto& muscle_name : mTrackedMuscles) {
-                        for (int d = 0; d < num_dofs; ++d) {
-                            int dof_idx = joint_first_dof + d;
-                            std::string key = muscle_name + "_jtp_" + std::to_string(dof_idx);
-                            auto jtp_data = mGraphData->get(key);
-                            if (!jtp_data.empty() && jtp_data.size() == x_data.size()) {
-                                for (size_t i = 0; i < jtp_data.size(); ++i) {
-                                    total_passive_torque[i] += jtp_data[i];
-                                }
-                            }
-                        }
-                    }
-                    ImPlot::PlotLine("Total", x_data.data(),
-                        total_passive_torque.data(), total_passive_torque.size());
-                }
-            } else {
-                // Plot each muscle's contribution to this joint (magnitude across all DOFs)
-                for (const auto& muscle_name : mTrackedMuscles) {
+                for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
                     auto vis_it = mMuscleVisibility.find(muscle_name);
                     if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
 
+                    // Build magnitude data from mAngleSweepData
                     std::vector<double> magnitude_data;
-                    bool has_data = false;
-
-                    std::string first_key = muscle_name + "_jtp_" + std::to_string(joint_first_dof);
-                    auto first_data = mGraphData->get(first_key);
-                    if (!first_data.empty() && first_data.size() == x_data.size()) {
-                        has_data = true;
-                        magnitude_data.resize(first_data.size(), 0.0);
-
-                        // Sum squared values across all DOFs
-                        for (int d = 0; d < num_dofs; ++d) {
-                            int dof_idx = joint_first_dof + d;
-                            std::string key = muscle_name + "_jtp_" + std::to_string(dof_idx);
-                            auto jtp_data = mGraphData->get(key);
-                            if (!jtp_data.empty() && jtp_data.size() == x_data.size()) {
-                                for (size_t i = 0; i < jtp_data.size(); ++i) {
-                                    magnitude_data[i] += jtp_data[i] * jtp_data[i];
-                                }
+                    magnitude_data.reserve(mAngleSweepData.size());
+                    
+                    for (const auto& pt : mAngleSweepData) {
+                        auto it = pt.muscle_jtp.find(muscle_name);
+                        if (it != pt.muscle_jtp.end()) {
+                            const std::vector<double>& jtp_vec = it->second;
+                            // Compute magnitude across DOFs for this joint
+                            double mag_squared = 0.0;
+                            for (size_t i = 0; i < jtp_vec.size(); ++i) {
+                                // Check if this DOF belongs to the selected joint
+                                // Note: jtp_vec contains torques for all related DOFs
+                                // We need to select only the DOFs for this joint
+                                // This is a simplified version - may need adjustment based on DOF mapping
+                                mag_squared += jtp_vec[i] * jtp_vec[i];
                             }
-                        }
-
-                        // Take square root to get magnitude
-                        for (size_t i = 0; i < magnitude_data.size(); ++i) {
-                            magnitude_data[i] = std::sqrt(magnitude_data[i]);
+                            magnitude_data.push_back(std::sqrt(mag_squared));
+                        } else {
+                            magnitude_data.push_back(0.0);
                         }
                     }
 
-                    if (has_data) {
+                    if (!magnitude_data.empty() && magnitude_data.size() == x_data.size()) {
                         ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                             magnitude_data.data(), magnitude_data.size());
                     }
                 }
+                ImPlot::EndPlot();
             }
-            ImPlot::EndPlot();
         }
     }
 }
 
 void PhysicalExam::clearSweepData() {
-    mSweepAngles.clear();
-    mTrackedMuscles.clear();
+    mAngleSweepData.clear();
+    mAngleSweepTrackedMuscles.clear();
     // DON'T clear mMuscleVisibility - preserve user selections across sweeps
-    if (mGraphData) {
-        mGraphData->clear_all();
-    }
+    // Note: mGraphData is now only used for posture control, not sweep data
     LOG_INFO("Sweep data cleared");
 }
 
@@ -5594,7 +5668,7 @@ void PhysicalExam::drawRecordingSection() {
                 data.force_magnitude = mForceMagnitude;
                 std::vector<std::string> joints = {"FemurR", "TibiaR", "TalusR"};
                 data.joint_angles = recordJointAngles(joints);
-                data.passive_force_total = computePassiveForce();
+                data.passive_force_total = 0.0;  // Deprecated: use getPassiveTorqueJoint() for angle sweep
                 mRecordedData.push_back(data);
             }
         }
@@ -6052,9 +6126,9 @@ void PhysicalExam::drawJointAngleSweepSection() {
 
             // Status display
             ImGui::Separator();
-            if (!mSweepAngles.empty()) {
-                ImGui::Text("Data points: %zu", mSweepAngles.size());
-                ImGui::Text("Tracked muscles: %zu", mTrackedMuscles.size());
+            if (!mAngleSweepData.empty()) {
+                ImGui::Text("Data points: %zu", mAngleSweepData.size());
+                ImGui::Text("Tracked muscles: %zu", mAngleSweepTrackedMuscles.size());
             } else {
                 ImGui::TextDisabled("No sweep data available");
             }
@@ -6210,71 +6284,6 @@ void PhysicalExam::drawCurrentStateSection() {
     }
 }
 
-void PhysicalExam::drawRecordedDataSection() {
-    if (collapsingHeaderWithControls("Recorded Data")) {
-        ImGui::Text("Total data points: %zu", mRecordedData.size());
-
-        if (!mRecordedData.empty()) {
-            ImGui::Separator();
-
-            // Table header
-            ImGui::Columns(3, "romdata");
-            ImGui::Text("Force (N)");
-            ImGui::NextColumn();
-            ImGui::Text("Passive (N)");
-            ImGui::NextColumn();
-            ImGui::Text("Joints");
-            ImGui::NextColumn();
-            ImGui::Separator();
-
-            // Show last 10 data points
-            size_t start = mRecordedData.size() > 10 ? mRecordedData.size() - 10 : 0;
-            for (size_t i = start; i < mRecordedData.size(); ++i) {
-                ImGui::Text("%.2f", mRecordedData[i].force_magnitude);
-                ImGui::NextColumn();
-                ImGui::Text("%.2f", mRecordedData[i].passive_force_total);
-                ImGui::NextColumn();
-                ImGui::Text("%zu", mRecordedData[i].joint_angles.size());
-                ImGui::NextColumn();
-            }
-
-            ImGui::Columns(1);
-        } else {
-            ImGui::TextDisabled("No data recorded yet");
-        }
-    }
-}
-
-void PhysicalExam::drawROMAnalysisSection() {
-    if (collapsingHeaderWithControls("ROM Analysis")) {
-        if (mRecordedData.size() >= 2) {
-            ImGui::Text("Data Range:");
-            double minForce = mRecordedData[0].force_magnitude;
-            double maxForce = mRecordedData.back().force_magnitude;
-            ImGui::Text("  Force: %.2f - %.2f N", minForce, maxForce);
-
-            // Find min/max joint angles
-            if (!mRecordedData.empty() && !mRecordedData[0].joint_angles.empty()) {
-                std::string firstJoint = mRecordedData[0].joint_angles.begin()->first;
-                double minAngle = mRecordedData[0].joint_angles.begin()->second[0];
-                double maxAngle = minAngle;
-
-                for (const auto& data : mRecordedData) {
-                    if (data.joint_angles.count(firstJoint)) {
-                        double angle = data.joint_angles.at(firstJoint)[0];
-                        minAngle = std::min(minAngle, angle);
-                        maxAngle = std::max(maxAngle, angle);
-                    }
-                }
-
-                ImGui::Text("  %s ROM: %.2f\u00b0", firstJoint.c_str(), (maxAngle - minAngle) * 180.0 / M_PI);
-            }
-        } else {
-            ImGui::TextDisabled("Record at least 2 data points");
-        }
-    }
-}
-
 void PhysicalExam::drawCameraStatusSection() {
     if (collapsingHeaderWithControls("Camera Status")) {
         // Current preset description
@@ -6306,104 +6315,6 @@ void PhysicalExam::drawCameraStatusSection() {
                 ImGui::Text("Press %d: %s", (i == 0 ? 8 : (i == 1 ? 9 : 0)),
                            mCameraPresets[i].description.c_str());
             }
-        }
-    }
-}
-
-void PhysicalExam::drawSweepMusclePlotsSection() {
-    if (collapsingHeaderWithControls("Sweep Muscle Plots")) {
-        if (mSweepAngles.empty()) {
-            ImGui::TextDisabled("No sweep data available");
-            ImGui::TextWrapped("Run a joint angle sweep from the control panel to generate plots");
-        } else {
-            ImGui::Indent();
-            // Muscle Selection Sub-header
-            if (collapsingHeaderWithControls("Muscle Selection")) {
-                if (mTrackedMuscles.empty()) {
-                    ImGui::TextDisabled("No muscles tracked");
-                } else {
-                    // Filter textbox
-                    ImGui::Text("Filter:");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(200);
-                    ImGui::InputText("##MuscleFilter", mMuscleFilterBuffer, sizeof(mMuscleFilterBuffer));
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Clear")) {
-                        mMuscleFilterBuffer[0] = '\0';
-                    }
-                    
-                    // Convert filter to lowercase for case-insensitive matching
-                    std::string filter_lower(mMuscleFilterBuffer);
-                    std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
-                    
-                    // Build filtered muscle list
-                    std::vector<std::string> filteredMuscles;
-                    for (const auto& muscle_name : mTrackedMuscles) {
-                        // Case-insensitive substring search
-                        std::string muscle_lower = muscle_name;
-                        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
-                        
-                        if (filter_lower.empty() || muscle_lower.find(filter_lower) != std::string::npos) {
-                            filteredMuscles.push_back(muscle_name);
-                        }
-                    }
-                    
-                    // Count visible muscles (from filtered list)
-                    int visibleCount = 0;
-                    for (const auto& muscle_name : filteredMuscles) {
-                        if (mMuscleVisibility[muscle_name]) {
-                            visibleCount++;
-                        }
-                    }
-
-                    // Display visibility count
-                    ImGui::Text("Show (%d/%zu)", visibleCount, filteredMuscles.size());
-                    if (!filter_lower.empty()) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(total %zu)", mTrackedMuscles.size());
-                    }
-                    ImGui::SameLine();
-
-                    // Select All / Deselect All buttons (operate on filtered list)
-                    if (ImGui::SmallButton("Select All")) {
-                        for (const auto& muscle_name : filteredMuscles) {
-                            mMuscleVisibility[muscle_name] = true;
-                        }
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Deselect All")) {
-                        for (const auto& muscle_name : filteredMuscles) {
-                            mMuscleVisibility[muscle_name] = false;
-                        }
-                    }
-
-                    ImGui::Separator();
-
-                    // Individual muscle checkboxes (in a scrollable region if many muscles)
-                    if (filteredMuscles.size() > 10) {
-                        // Scrollable region for many muscles
-                        ImGui::BeginChild("MuscleCheckboxes", ImVec2(0, 100), true);
-                    }
-
-                    for (auto& muscle_name : filteredMuscles) {
-                        bool isVisible = mMuscleVisibility[muscle_name];
-                        if (ImGui::Checkbox(muscle_name.c_str(), &isVisible)) {
-                            mMuscleVisibility[muscle_name] = isVisible;
-                        }
-                    }
-
-                    if (filteredMuscles.size() > 10) {
-                        ImGui::EndChild();
-                    }
-                }
-            }
-            ImGui::Unindent();
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // Render the plots with filtered muscles
-            renderMusclePlots();
         }
     }
 }

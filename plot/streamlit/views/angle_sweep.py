@@ -8,6 +8,8 @@ METRIC_INFO = {
     'fp': ('Passive Force', 'N'),
     'lm_norm': ('Normalized Length', ''),
     'jtp_mag': ('Joint Torque', 'Nm'),
+    'passive_torque': ('Total Passive Torque', 'Nm'),
+    'passive_torque_stiffness': ('Passive Stiffness (dτ/dθ)', 'Nm/rad'),
 }
 
 # Color palette for muscles
@@ -24,7 +26,7 @@ def compute_data_range(all_data_list: list, muscles: list, metric: str) -> tuple
     Args:
         all_data_list: List of data dicts from multiple sources
         muscles: List of muscle names to include
-        metric: 'fp', 'lm_norm', or 'jtp_mag'
+        metric: 'fp', 'lm_norm', 'jtp_mag', or 'passive_torque'
 
     Returns:
         (min_val, max_val) or (None, None) if no data
@@ -33,12 +35,25 @@ def compute_data_range(all_data_list: list, muscles: list, metric: str) -> tuple
     for data in all_data_list:
         if data is None:
             continue
-        for muscle in muscles:
-            muscle_data = data.get('muscle_data', {}).get(muscle, {})
-            if metric in muscle_data:
-                values = muscle_data[metric]
-                if len(values) > 0:
-                    all_values.extend(values)
+
+        # Handle total passive torque and stiffness (not per-muscle)
+        if metric == 'passive_torque':
+            values = data.get('passive_torque_total')
+            if values is not None and len(values) > 0:
+                all_values.extend(values)
+        elif metric == 'passive_torque_stiffness':
+            values = data.get('passive_torque_stiffness')
+            if values is not None and len(values) > 0:
+                all_values.extend(values)
+        else:
+            # Per-muscle metrics
+            for muscle in muscles:
+                muscle_data = data.get('muscle_data', {}).get(muscle, {})
+                if metric in muscle_data:
+                    values = muscle_data[metric]
+                    if len(values) > 0:
+                        all_values.extend(values)
+
     if all_values:
         return float(np.min(all_values)), float(np.max(all_values))
     return None, None
@@ -67,7 +82,7 @@ def render_controls(data_sample: dict, cfg: dict, all_data: list = None) -> dict
         all_data_list = [data_sample]
 
     # Metric selection
-    metric_options = ['fp', 'lm_norm', 'jtp_mag']
+    metric_options = ['passive_torque', 'passive_torque_stiffness', 'fp', 'lm_norm', 'jtp_mag']
     metric_labels = [f"{METRIC_INFO[m][0]} ({METRIC_INFO[m][1]})" if METRIC_INFO[m][1]
                      else METRIC_INFO[m][0] for m in metric_options]
     metric_idx = st.radio("Metric", range(len(metric_options)),
@@ -75,35 +90,36 @@ def render_controls(data_sample: dict, cfg: dict, all_data: list = None) -> dict
                           horizontal=True, key="metric_radio")
     selected_metric = metric_options[metric_idx]
 
-    # Muscle selection with checkboxes
-    label_col, sel_col, clr_col = st.columns([3, 1, 1])
-    with label_col:
-        st.markdown("**Select Muscles**")
-    with sel_col:
-        if st.button("Select All"):
-            for muscle in muscles:
-                st.session_state[f"chk_muscle_{muscle}"] = True
-            st.rerun()
-    with clr_col:
-        if st.button("Clear All"):
-            for muscle in muscles:
-                st.session_state[f"chk_muscle_{muscle}"] = False
-            st.rerun()
-
+    # Muscle selection (not needed for passive_torque/stiffness which are totals)
     selected_muscles = []
-    # Display muscles in columns
-    num_cols = min(4, len(muscles))
-    cols = st.columns(num_cols)
-    for i, muscle in enumerate(muscles):
-        with cols[i % num_cols]:
-            # Default: select first 3 muscles
-            default_checked = i < 3
-            if st.checkbox(muscle, value=default_checked, key=f"chk_muscle_{muscle}"):
-                selected_muscles.append(muscle)
+    if selected_metric not in ('passive_torque', 'passive_torque_stiffness'):
+        label_col, sel_col, clr_col = st.columns([3, 1, 1])
+        with label_col:
+            st.markdown("**Select Muscles**")
+        with sel_col:
+            if st.button("Select All"):
+                for muscle in muscles:
+                    st.session_state[f"chk_muscle_{muscle}"] = True
+                st.rerun()
+        with clr_col:
+            if st.button("Clear All"):
+                for muscle in muscles:
+                    st.session_state[f"chk_muscle_{muscle}"] = False
+                st.rerun()
 
-    if not selected_muscles:
-        st.warning("Select at least one muscle")
-        return None
+        # Display muscles in columns
+        num_cols = min(4, len(muscles))
+        cols = st.columns(num_cols)
+        for i, muscle in enumerate(muscles):
+            with cols[i % num_cols]:
+                # Default: select first 3 muscles
+                default_checked = i < 3
+                if st.checkbox(muscle, value=default_checked, key=f"chk_muscle_{muscle}"):
+                    selected_muscles.append(muscle)
+
+        if not selected_muscles:
+            st.warning("Select at least one muscle")
+            return None
 
     # Y-axis range control
     metric_label, metric_unit = METRIC_INFO[selected_metric]
@@ -115,7 +131,19 @@ def render_controls(data_sample: dict, cfg: dict, all_data: list = None) -> dict
     data_min, data_max = compute_data_range(all_data_list, selected_muscles, selected_metric)
 
     # Set reasonable defaults based on metric
-    if selected_metric == 'fp':
+    if selected_metric == 'passive_torque':
+        abs_min, abs_max = -50.0, 100.0
+        default_min, default_max = -20.0, 50.0
+        step = 1.0
+        fmt = "%.1f"
+        padding = 5.0
+    elif selected_metric == 'passive_torque_stiffness':
+        abs_min, abs_max = -200.0, 200.0
+        default_min, default_max = -50.0, 50.0
+        step = 1.0
+        fmt = "%.1f"
+        padding = 10.0
+    elif selected_metric == 'fp':
         abs_min, abs_max = 0.0, 500.0
         default_min, default_max = 0.0, 100.0
         step = 1.0
@@ -184,7 +212,10 @@ def get_summary(controls: dict) -> str:
     """Get a summary string of the current control values."""
     if controls is None:
         return ""
-    metric_label = METRIC_INFO[controls['metric']][0]
+    metric = controls['metric']
+    metric_label = METRIC_INFO[metric][0]
+    if metric in ('passive_torque', 'passive_torque_stiffness'):
+        return f"**Metric:** {metric_label}"
     muscle_count = len(controls.get('selected_muscles', []))
     return f"**Metric:** {metric_label} | **Muscles:** {muscle_count} selected"
 
@@ -194,7 +225,7 @@ def render_plot(data: dict, cfg: dict, controls: dict,
     """Render plot using provided control values.
 
     Args:
-        data: Data from load_angle_sweep_csv()
+        data: Data from load_angle_sweep_h5()
         cfg: View configuration
         controls: Control values from render_controls()
         title_prefix: Optional prefix for plot title
@@ -210,7 +241,8 @@ def render_plot(data: dict, cfg: dict, controls: dict,
     show_info = controls.get('show_info', True)
     show_legend = controls.get('show_legend', True)
 
-    if not selected_muscles:
+    # For per-muscle metrics, need muscle selection
+    if metric not in ('passive_torque', 'passive_torque_stiffness') and not selected_muscles:
         st.warning("No muscles selected")
         return
 
@@ -244,20 +276,36 @@ def render_plot(data: dict, cfg: dict, controls: dict,
         metric_label, metric_unit = METRIC_INFO[metric]
         unit_str = f" ({metric_unit})" if metric_unit else ""
 
-        for i, muscle in enumerate(selected_muscles):
-            color = MUSCLE_COLORS[i % len(MUSCLE_COLORS)]
-            m_data = muscle_data.get(muscle, {})
-            if metric in m_data:
-                values = m_data[metric]
-                ax.plot(joint_angle_deg, values, color=color,
-                        linewidth=1.5, label=muscle)
+        if metric == 'passive_torque':
+            # Plot total passive torque (single line)
+            passive_torque = data.get('passive_torque_total')
+            if passive_torque is not None:
+                ax.plot(joint_angle_deg, passive_torque, color='#1f77b4',
+                        linewidth=2, label='Total Passive Torque')
+                ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
+        elif metric == 'passive_torque_stiffness':
+            # Plot passive torque stiffness (single line)
+            stiffness = data.get('passive_torque_stiffness')
+            if stiffness is not None:
+                ax.plot(joint_angle_deg, stiffness, color='#d62728',
+                        linewidth=2, label='Passive Stiffness (dτ/dθ)')
+                ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
+        else:
+            # Plot per-muscle metrics
+            for i, muscle in enumerate(selected_muscles):
+                color = MUSCLE_COLORS[i % len(MUSCLE_COLORS)]
+                m_data = muscle_data.get(muscle, {})
+                if metric in m_data:
+                    values = m_data[metric]
+                    ax.plot(joint_angle_deg, values, color=color,
+                            linewidth=1.5, label=muscle)
 
         ax.set_xlabel('Joint Angle (deg)')
         ax.set_ylabel(f'{metric_label}{unit_str}')
         ax.set_ylim(y_range)
         ax.grid(True, alpha=0.3)
 
-        if show_legend and len(selected_muscles) <= 10:
+        if show_legend and (metric in ('passive_torque', 'passive_torque_stiffness') or len(selected_muscles) <= 10):
             ax.legend(loc='upper left', fontsize=8)
 
         plt.tight_layout()
@@ -266,14 +314,23 @@ def render_plot(data: dict, cfg: dict, controls: dict,
 
         # Show summary stats
         if show_info:
-            stats = []
-            for muscle in selected_muscles[:3]:  # Show first 3
-                m_data = muscle_data.get(muscle, {})
-                if metric in m_data:
-                    values = m_data[metric]
-                    stats.append(f"{muscle}: {np.max(values):.1f} max")
-            if stats:
-                st.caption(" | ".join(stats))
+            if metric == 'passive_torque':
+                passive_torque = data.get('passive_torque_total')
+                if passive_torque is not None:
+                    st.caption(f"Range: {np.min(passive_torque):.1f} to {np.max(passive_torque):.1f} Nm")
+            elif metric == 'passive_torque_stiffness':
+                stiffness = data.get('passive_torque_stiffness')
+                if stiffness is not None:
+                    st.caption(f"Range: {np.min(stiffness):.1f} to {np.max(stiffness):.1f} Nm/rad")
+            else:
+                stats = []
+                for muscle in selected_muscles[:3]:  # Show first 3
+                    m_data = muscle_data.get(muscle, {})
+                    if metric in m_data:
+                        values = m_data[metric]
+                        stats.append(f"{muscle}: {np.max(values):.1f} max")
+                if stats:
+                    st.caption(" | ".join(stats))
 
 
 def render(data: dict, cfg: dict) -> None:

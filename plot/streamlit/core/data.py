@@ -311,7 +311,21 @@ def load_angle_sweep_h5(filename: str, trial_name: str = None) -> dict:
             # Read datasets
             joint_angles_rad = trial['joint_angles'][:]
             joint_angle_deg = np.degrees(joint_angles_rad)
-            passive_force_total = trial['passive_forces'][:]
+
+            # Handle both old (passive_forces) and new (passive_torques) formats
+            if 'passive_torques' in trial:
+                passive_torque_total = trial['passive_torques'][:]
+            elif 'passive_forces' in trial:
+                # Legacy format - load but note it's deprecated
+                passive_torque_total = trial['passive_forces'][:]
+            else:
+                passive_torque_total = np.zeros(len(joint_angles_rad))
+
+            # Load passive torque stiffness (dtau/dtheta) if available
+            if 'passive_torque_stiffness' in trial:
+                passive_torque_stiffness = trial['passive_torque_stiffness'][:]
+            else:
+                passive_torque_stiffness = np.zeros(len(joint_angles_rad))
 
             muscle_names = [name.decode() if isinstance(name, bytes) else name
                            for name in trial['muscle_names'][:]]
@@ -334,7 +348,8 @@ def load_angle_sweep_h5(filename: str, trial_name: str = None) -> dict:
                 'filename': filename,
                 'trial_name': trial_name,
                 'joint_angle_deg': joint_angle_deg,
-                'passive_force_total': passive_force_total,
+                'passive_torque_total': passive_torque_total,
+                'passive_torque_stiffness': passive_torque_stiffness,
                 'muscles': muscle_names,
                 'muscle_data': muscle_data,
             }
