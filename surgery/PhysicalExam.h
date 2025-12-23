@@ -91,6 +91,12 @@ struct TrialConfig {
     std::string output_file;
 };
 
+// Trial file info (cached from directory scan)
+struct TrialFileInfo {
+    std::string file_path;  // Full resolved path
+    std::string name;       // Trial name (from YAML "name" field, used for display)
+};
+
 class PhysicalExam : public SurgeryExecutor {
 public:
     PhysicalExam(int width = 1920, int height = 1080);
@@ -132,6 +138,11 @@ public:
     std::map<std::string, Eigen::VectorXd> recordJointAngles(
         const std::vector<std::string>& joint_names);
     double getPassiveTorqueJoint(int joint_idx);  // Sum of passive torques at joint
+    double getPassiveTorqueJoint_forCharacter(Character* character, dart::dynamics::Joint* joint);  // Helper for specific character
+
+    // Pose synchronization between main and standard characters
+    void setCharacterPose(const Eigen::VectorXd& positions);  // Sets positions for both main and std characters
+    void setCharacterPose(const std::string& joint_name, const Eigen::VectorXd& positions);  // Sets joint positions for both characters
 
     // Examination execution
     void setOutputDir(const std::string& output_dir);
@@ -140,6 +151,10 @@ public:
     void startNextTrial();
     void runCurrentTrial();
     void saveToCSV(const std::string& output_path);
+    
+    // Trial file management
+    void scanTrialFiles();
+    void loadAndRunTrial(const std::string& trial_file_path);
 
     // Angle sweep trial execution (kinematic-only)
     void runAngleSweepTrial(const TrialConfig& trial);
@@ -151,6 +166,11 @@ public:
     void initExamHDF5();
     void appendTrialToHDF5(const TrialConfig& trial);
     void writeAngleSweepData(H5::Group& group, const TrialConfig& trial);
+    void writeAngleSweepDataForCharacter(
+        H5::Group& group, 
+        const TrialConfig& trial,
+        const std::vector<AngleSweepDataPoint>& data,
+        const std::vector<std::string>& tracked_muscles);
     void writeForceSweepData(H5::Group& group, const TrialConfig& trial);
     void runAllTrials();
 
@@ -253,7 +273,21 @@ private:
     // Loaded file paths
     std::string mSkeletonPath;
     std::string mMusclePath;
-    bool mUseMuscle;  // Flag to control muscle loading and muscle-related operations
+
+    // Standard character for comparison
+    Character* mStdCharacter;
+    std::string mStdSkeletonPath;
+    std::string mStdMusclePath;
+
+    // Standard character sweep data
+    std::vector<AngleSweepDataPoint> mStdAngleSweepData;
+    std::vector<std::string> mStdAngleSweepTrackedMuscles;
+
+    // Rendering control
+    bool mRenderMainCharacter;
+    bool mRenderStdCharacter;
+    bool mShowStdCharacterInPlots;  // Toggle for plot overlay
+    bool mPlotWhiteBackground;  // Toggle for white plot background
 
     // GLFW/ImGui
     GLFWwindow* mWindow;
@@ -349,6 +383,10 @@ private:
     bool mTrialRunning;
     int mCurrentForceStep;
     bool mExamSettingLoaded;
+    
+    // Trial file scanning
+    std::vector<TrialFileInfo> mAvailableTrialFiles;
+    int mSelectedTrialFileIndex;
 
     // Angle sweep trial data
     std::vector<AngleSweepDataPoint> mAngleSweepData;

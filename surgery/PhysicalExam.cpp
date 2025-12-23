@@ -69,6 +69,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mTrialRunning(false)
     , mCurrentForceStep(0)
     , mExamSettingLoaded(false)
+    , mSelectedTrialFileIndex(-1)
     , mPassiveForceNormalizer(10.0f)  // Default normalization factor
     , mMuscleTransparency(1.0f)        // Default muscle transparency (0.0-1.0)
     , mShowJointPassiveForces(true)   // Show joint passive forces by default
@@ -91,8 +92,12 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mRecordingScriptPath("")       // Will be constructed from buffer
     , mLoadScriptPath("")            // Will be constructed from buffer
     , mShowScriptPreview(false)     // Script preview hidden by default
-    , mUseMuscle(true)              // Default to true for backward compatibility
     , mRenderMode(RenderMode::Wireframe)  // Default render mode
+    , mStdCharacter(nullptr)  // Initialize to nullptr
+    , mRenderMainCharacter(true)  // Default to rendering main character
+    , mRenderStdCharacter(false)  // Default to not rendering std character
+    , mShowStdCharacterInPlots(true)  // Default to showing std character in plots
+    , mPlotWhiteBackground(false)  // Default to dark plot background
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
@@ -168,11 +173,20 @@ PhysicalExam::PhysicalExam(int width, int height)
 
     // Load render config from YAML (geometry section only, skip glfwapp)
     loadRenderConfig();
+    
+    // Scan trial files from directory
+    scanTrialFiles();
 }
 
 PhysicalExam::~PhysicalExam() {
     // Note: Character has no destructor, so we don't delete it
     // It will be cleaned up when the program exits
+    
+    // Clean up standard character
+    if (mStdCharacter) {
+        delete mStdCharacter;
+        mStdCharacter = nullptr;
+    }
 
     if (mGraphData) {
         delete mGraphData;
@@ -437,8 +451,8 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     // Create character
     mCharacter = new Character(resolved_skel, SKEL_COLLIDE_ALL);
 
-    // Load muscles if path is provided and mUseMuscle is true
-    if (!muscle_path.empty() && mUseMuscle) {
+    // Load muscles if path is provided
+    if (!muscle_path.empty()) {
         std::string resolved_muscle = rm::resolve(muscle_path);
         LOG_INFO("Loading muscle: " << resolved_muscle);
         mCharacter->setMuscles(resolved_muscle);
@@ -448,8 +462,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
             mCharacter->setActivations(mCharacter->getActivations().setZero());
         }
     } else {
-        LOG_INFO("Skipping muscle loading" << (mUseMuscle ? " (no muscle path provided)" : " (muscles disabled)"));
-        mUseMuscle = false;  // Ensure mUseMuscle is false if no muscles loaded
+        LOG_INFO("Skipping muscle loading (no muscle path provided)");
     }
 
     // Set actuator type
@@ -457,6 +470,26 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
 
     // Add to world
     mWorld->addSkeleton(mCharacter->getSkeleton());
+
+    // Load standard character if paths are set
+    if (!mStdSkeletonPath.empty()) {
+        std::string resolved_std_skel = rm::resolve(mStdSkeletonPath);
+        LOG_INFO("Loading standard character skeleton: " << resolved_std_skel);
+        
+        mStdCharacter = new Character(resolved_std_skel, SKEL_COLLIDE_ALL);
+        
+        if (!mStdMusclePath.empty()) {
+            std::string resolved_std_muscle = rm::resolve(mStdMusclePath);
+            LOG_INFO("Loading standard character muscle: " << resolved_std_muscle);
+            mStdCharacter->setMuscles(resolved_std_muscle);
+            
+            if (mStdCharacter->getMuscles().size() > 0) {
+                mStdCharacter->setActivations(mStdCharacter->getActivations().setZero());
+            }
+        }
+        
+        LOG_INFO("Standard character loaded successfully");
+    }
 
     // Set initial pose to supine (laying on back on examination bed)
     setPoseSupine();
@@ -502,7 +535,8 @@ void PhysicalExam::applyPosePreset(const std::map<std::string, Eigen::VectorXd>&
             continue;
         }
 
-        joint->setPositions(angles);
+        // Use synced method to set both main and std character
+        setCharacterPose(joint_name, angles);
     }
 
     // Store as initial pose for reset
@@ -592,9 +626,37 @@ std::map<std::string, Eigen::VectorXd> PhysicalExam::recordJointAngles(
     return angles;
 }
 
+double PhysicalExam::getPassiveTorqueJoint_forCharacter(Character* character, dart::dynamics::Joint* joint) {
+    if (!character || !joint) return 0.0;
+    if (character->getMuscles().empty()) return 0.0;
+
+    // Get DOF range for this joint
+    int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+    int num_dofs = static_cast<int>(joint->getNumDofs());
+
+    double total_torque = 0.0;
+    auto muscles = character->getMuscles();
+
+    for (auto& muscle : muscles) {
+        // GetRelatedJtp() returns a reduced vector indexed by related_dof_indices
+        Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+        const auto& related_indices = muscle->related_dof_indices;
+
+        // Check each related DOF to see if it's in this joint's range
+        for (size_t i = 0; i < related_indices.size(); ++i) {
+            int dof_idx = related_indices[i];
+            if (dof_idx >= first_dof && dof_idx < first_dof + num_dofs) {
+                total_torque += jtp[i];
+            }
+        }
+    }
+
+    return total_torque;
+}
+
 double PhysicalExam::getPassiveTorqueJoint(int joint_idx) {
     if (!mCharacter) return 0.0;
-    if (!mUseMuscle) return 0.0;
+    if (mCharacter->getMuscles().empty()) return 0.0;
 
     auto skel = mCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_idx);
@@ -624,6 +686,45 @@ double PhysicalExam::getPassiveTorqueJoint(int joint_idx) {
     return total_torque;
 }
 
+// Pose synchronization methods
+void PhysicalExam::setCharacterPose(const Eigen::VectorXd& positions) {
+    if (mCharacter) {
+        mCharacter->getSkeleton()->setPositions(positions);
+    } else {
+        LOG_WARN("No main character loaded");
+    }
+    
+    if (mStdCharacter) {
+        auto std_skel = mStdCharacter->getSkeleton();
+        // Only set if the DOF counts match
+        if (std_skel->getNumDofs() == positions.size()) {
+            std_skel->setPositions(positions);
+        }
+    } else {
+        LOG_WARN("No standard character loaded");
+    }
+}
+
+void PhysicalExam::setCharacterPose(const std::string& joint_name, const Eigen::VectorXd& positions) {
+    if (mCharacter) {
+        auto joint = mCharacter->getSkeleton()->getJoint(joint_name);
+        if (joint) {
+            joint->setPositions(positions);
+        }
+    } else {
+        LOG_WARN("No main character loaded: " << joint_name);
+    }
+    
+    if (mStdCharacter) {
+        auto std_joint = mStdCharacter->getSkeleton()->getJoint(joint_name);
+        if (std_joint && std_joint->getNumDofs() == positions.size()) {
+            std_joint->setPositions(positions);
+        }
+    } else {
+        LOG_WARN("No standard character loaded: " << joint_name);
+    }
+}
+
 void PhysicalExam::loadExamSetting(const std::string& config_path) {
     // Store original config path for output naming
     mExamConfigPath = config_path;
@@ -641,7 +742,6 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     
     std::string skeleton_path = config["character"]["skeleton"].as<std::string>();
     std::string muscle_path = config["character"]["muscle"] ? config["character"]["muscle"].as<std::string>() : "";
-    mUseMuscle = config["character"]["use_muscle"] ? config["character"]["use_muscle"].as<bool>() : true;  // Default to true for backward compatibility
     std::string _actTypeString = config["character"]["actuator"].as<std::string>();
     ActuatorType _actType = getActuatorType(_actTypeString);
 
@@ -649,127 +749,197 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     if (!mExamDescription.empty()) {
         LOG_INFO("Description: " << mExamDescription);
     }
-
-    // Load character (muscle loading controlled by mUseMuscle option)
-    if (!mUseMuscle) {
-        muscle_path = "";  // Clear muscle path if mUseMuscle is false
-        LOG_INFO("Muscle loading disabled by configuration");
+    // Set standard character paths from config before loading main character
+    if (config["std_character"]) {
+        mStdSkeletonPath = config["std_character"]["skeleton"].as<std::string>();
+        mStdMusclePath = config["std_character"]["muscle"] 
+            ? config["std_character"]["muscle"].as<std::string>() 
+            : "";
+    } else {
+        mStdSkeletonPath = "";
+        mStdMusclePath = "";
+        mStdCharacter = nullptr;
     }
+    
     loadCharacter(skeleton_path, muscle_path, _actType);
     
-    // Parse trials
-    mTrials.clear();
-    if (config["trials"]) {
-        for (size_t i = 0; i < config["trials"].size(); ++i) {
-            const YAML::Node trial_ref = config["trials"][i];
-            TrialConfig trial;
-            
-            // Check if this is a file reference or inline trial
-            YAML::Node trial_node;
-            if (trial_ref["file"]) {
-                // Load trial from external file
-                std::string trial_file = trial_ref["file"].as<std::string>();
-
-                // Resolve URI if needed
-                std::string resolved_path = rm::resolve(trial_file);
-                
-                LOG_INFO("  Loading trial from file: " << resolved_path);
-                trial_node = YAML::LoadFile(resolved_path);
-            } else {
-                // Inline trial definition - use the node directly
-                trial_node = trial_ref;
-            }
-            
-            // Parse trial configuration
-            trial.name = trial_node["name"].as<std::string>();
-            trial.description = trial_node["description"] ?
-                trial_node["description"].as<std::string>() : "";
-
-            // Parse mode (default: force_sweep for backward compatibility)
-            std::string mode_str = trial_node["mode"] ?
-                trial_node["mode"].as<std::string>() : "force_sweep";
-            if (mode_str == "angle_sweep") {
-                trial.mode = TrialMode::ANGLE_SWEEP;
-            } else {
-                trial.mode = TrialMode::FORCE_SWEEP;
-            }
-
-            // Parse pose (values in degrees, converted to radians)
-            YAML::Node pose_node = trial_node["pose"];
-            for (YAML::const_iterator it = pose_node.begin(); it != pose_node.end(); ++it) {
-                std::string joint_name = it->first.as<std::string>();
-                bool is_root = (joint_name == "Pelvis");
-
-                if (it->second.IsSequence()) {
-                    std::vector<double> values = it->second.as<std::vector<double>>();
-                    Eigen::VectorXd angles(values.size());
-                    for (size_t i = 0; i < values.size(); ++i) {
-                        // For root joint: first 3 are rotations (convert), last 3 are translations (keep)
-                        // For other joints: all are rotations (convert)
-                        if (is_root && i >= 3) {
-                            angles[i] = values[i];  // Translation - keep as meters
-                        } else {
-                            angles[i] = values[i] * M_PI / 180.0;  // Rotation - degrees to radians
-                        }
-                    }
-                    trial.pose[joint_name] = angles;
-                } else {
-                    Eigen::VectorXd angles(1);
-                    angles[0] = it->second.as<double>() * M_PI / 180.0;  // Degrees to radians
-                    trial.pose[joint_name] = angles;
-                }
-            }
-
-            // Parse mode-specific configuration
-            if (trial.mode == TrialMode::ANGLE_SWEEP) {
-                // Parse angle sweep configuration (angles in degrees, converted to radians)
-                YAML::Node angle_cfg = trial_node["angle_sweep"];
-                trial.angle_sweep.joint_name = angle_cfg["joint"].as<std::string>();
-                trial.angle_sweep.dof_index = angle_cfg["dof_index"] ?
-                    angle_cfg["dof_index"].as<int>() : 0;
-                trial.angle_sweep.angle_min = angle_cfg["angle_min"].as<double>() * M_PI / 180.0;
-                trial.angle_sweep.angle_max = angle_cfg["angle_max"].as<double>() * M_PI / 180.0;
-                trial.angle_sweep.num_steps = angle_cfg["num_steps"].as<int>();
-
-                LOG_INFO("  Loaded angle sweep trial: " << trial.name
-                          << " (joint: " << trial.angle_sweep.joint_name << ")");
-            } else {
-                // Parse force configuration (existing logic)
-                YAML::Node force_cfg = trial_node["force"];
-                trial.force_body_node = force_cfg["body_node"].as<std::string>();
-                std::vector<double> offset_vec = force_cfg["position_offset"].as<std::vector<double>>();
-                std::vector<double> dir_vec = force_cfg["direction"].as<std::vector<double>>();
-                trial.force_offset = Eigen::Vector3d(offset_vec[0], offset_vec[1], offset_vec[2]);
-                trial.force_direction = Eigen::Vector3d(dir_vec[0], dir_vec[1], dir_vec[2]);
-                trial.force_min = force_cfg["magnitude_min"].as<double>();
-                trial.force_max = force_cfg["magnitude_max"].as<double>();
-                trial.force_steps = force_cfg["magnitude_steps"].as<int>();
-                trial.settle_time = force_cfg["settle_time"].as<double>();
-
-                // Parse which joints to record (for data collection)
-                if (trial_node["recording"] && trial_node["recording"]["joints"]) {
-                    trial.record_joints = trial_node["recording"]["joints"].as<std::vector<std::string>>();
-                }
-
-                LOG_INFO("  Loaded force sweep trial: " << trial.name);
-            }
-
-            mTrials.push_back(trial);
-        }
-    }
+    // Initialize rendering flags
+    mRenderMainCharacter = true;
+    mRenderStdCharacter = false;  // Default to only showing main
+    mShowStdCharacterInPlots = true;  // Default to showing overlay in plots
     
     mExamSettingLoaded = true;
     mCurrentTrialIndex = -1;
     mTrialRunning = false;
     setPaused(true);
     
-    if (mTrials.empty()) {
-        LOG_INFO("Exam setting loaded (no trials defined - interactive mode)");
-    } else {
-        LOG_INFO("Exam setting loaded with " << mTrials.size() << " trial(s)");
+    LOG_INFO("Exam setting loaded: " << mExamName);
+}
 
-        // Initialize HDF5 file for exam results
-        initExamHDF5();
+void PhysicalExam::scanTrialFiles() {
+    namespace fs = std::filesystem;
+    
+    mAvailableTrialFiles.clear();
+    
+    // Resolve the trials directory URI using resolveDir for directories
+    std::string trials_dir_uri = "@data/config/trials";
+    std::filesystem::path resolved_path = rm::getManager().resolveDir(trials_dir_uri);
+    
+    if (resolved_path.empty() || !fs::exists(resolved_path) || !fs::is_directory(resolved_path)) {
+        LOG_WARN("Trial directory not found: " << trials_dir_uri);
+        return;
+    }
+    
+    std::string resolved_dir = resolved_path.string();
+    
+    // Scan for YAML files
+    for (const auto& entry : fs::directory_iterator(resolved_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            try {
+                // Load YAML to extract name
+                std::string file_path = entry.path().string();
+                YAML::Node trial_node = YAML::LoadFile(file_path);
+                
+                TrialFileInfo info;
+                info.file_path = file_path;
+                
+                // Extract name field
+                if (trial_node["name"]) {
+                    info.name = trial_node["name"].as<std::string>();
+                } else {
+                    // Fallback to filename if name not found
+                    info.name = entry.path().filename().string();
+                }
+                
+                mAvailableTrialFiles.push_back(info);
+            } catch (const std::exception& e) {
+                LOG_WARN("Failed to load trial file " << entry.path().string() << ": " << e.what());
+            }
+        }
+    }
+    
+    // Sort alphabetically by name
+    std::sort(mAvailableTrialFiles.begin(), mAvailableTrialFiles.end(),
+              [](const TrialFileInfo& a, const TrialFileInfo& b) {
+                  return a.name < b.name;
+              });
+    
+    LOG_INFO("Scanned " << mAvailableTrialFiles.size() << " trial file(s) from " << resolved_dir);
+}
+
+void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
+    if (!mExamSettingLoaded || !mCharacter) {
+        LOG_ERROR("Cannot run trial: exam setting not loaded or character not available");
+        return;
+    }
+    
+    if (mTrialRunning) {
+        LOG_WARN("Trial already running, please wait for completion");
+        return;
+    }
+    
+    try {
+        // Load and parse trial YAML
+        YAML::Node trial_node = YAML::LoadFile(trial_file_path);
+        
+        TrialConfig trial;
+        
+        // Parse trial configuration
+        trial.name = trial_node["name"].as<std::string>();
+        trial.description = trial_node["description"] ?
+            trial_node["description"].as<std::string>() : "";
+
+        // Parse mode (default: force_sweep for backward compatibility)
+        std::string mode_str = trial_node["mode"] ?
+            trial_node["mode"].as<std::string>() : "force_sweep";
+        if (mode_str == "angle_sweep") {
+            trial.mode = TrialMode::ANGLE_SWEEP;
+        } else {
+            trial.mode = TrialMode::FORCE_SWEEP;
+        }
+
+        // Parse pose (values in degrees, converted to radians)
+        YAML::Node pose_node = trial_node["pose"];
+        for (YAML::const_iterator it = pose_node.begin(); it != pose_node.end(); ++it) {
+            std::string joint_name = it->first.as<std::string>();
+            bool is_root = (joint_name == "Pelvis");
+
+            if (it->second.IsSequence()) {
+                std::vector<double> values = it->second.as<std::vector<double>>();
+                Eigen::VectorXd angles(values.size());
+                for (size_t i = 0; i < values.size(); ++i) {
+                    // For root joint: first 3 are rotations (convert), last 3 are translations (keep)
+                    // For other joints: all are rotations (convert)
+                    if (is_root && i >= 3) {
+                        angles[i] = values[i];  // Translation - keep as meters
+                    } else {
+                        angles[i] = values[i] * M_PI / 180.0;  // Rotation - degrees to radians
+                    }
+                }
+                trial.pose[joint_name] = angles;
+            } else {
+                Eigen::VectorXd angles(1);
+                angles[0] = it->second.as<double>() * M_PI / 180.0;  // Degrees to radians
+                trial.pose[joint_name] = angles;
+            }
+        }
+
+        // Parse mode-specific configuration
+        if (trial.mode == TrialMode::ANGLE_SWEEP) {
+            // Parse angle sweep configuration (angles in degrees, converted to radians)
+            YAML::Node angle_cfg = trial_node["angle_sweep"];
+            trial.angle_sweep.joint_name = angle_cfg["joint"].as<std::string>();
+            trial.angle_sweep.dof_index = angle_cfg["dof_index"] ?
+                angle_cfg["dof_index"].as<int>() : 0;
+            trial.angle_sweep.angle_min = angle_cfg["angle_min"].as<double>() * M_PI / 180.0;
+            trial.angle_sweep.angle_max = angle_cfg["angle_max"].as<double>() * M_PI / 180.0;
+            trial.angle_sweep.num_steps = angle_cfg["num_steps"].as<int>();
+
+            LOG_INFO("Loaded angle sweep trial: " << trial.name
+                      << " (joint: " << trial.angle_sweep.joint_name << ")");
+        } else {
+            // Parse force configuration (existing logic)
+            YAML::Node force_cfg = trial_node["force"];
+            trial.force_body_node = force_cfg["body_node"].as<std::string>();
+            std::vector<double> offset_vec = force_cfg["position_offset"].as<std::vector<double>>();
+            std::vector<double> dir_vec = force_cfg["direction"].as<std::vector<double>>();
+            trial.force_offset = Eigen::Vector3d(offset_vec[0], offset_vec[1], offset_vec[2]);
+            trial.force_direction = Eigen::Vector3d(dir_vec[0], dir_vec[1], dir_vec[2]);
+            trial.force_min = force_cfg["magnitude_min"].as<double>();
+            trial.force_max = force_cfg["magnitude_max"].as<double>();
+            trial.force_steps = force_cfg["magnitude_steps"].as<int>();
+            trial.settle_time = force_cfg["settle_time"].as<double>();
+
+            // Parse which joints to record (for data collection)
+            if (trial_node["recording"] && trial_node["recording"]["joints"]) {
+                trial.record_joints = trial_node["recording"]["joints"].as<std::vector<std::string>>();
+            }
+
+            LOG_INFO("Loaded force sweep trial: " << trial.name);
+        }
+
+        // Create single-element trials vector and set current index
+        mTrials.clear();
+        mTrials.push_back(trial);
+        mCurrentTrialIndex = 0;
+        mTrialRunning = true;
+        mCurrentForceStep = 0;
+        mRecordedData.clear();
+        
+        // Initialize HDF5 if needed
+        if (mExamOutputPath.empty()) {
+            initExamHDF5();
+        }
+        
+        // Run the trial
+        runCurrentTrial();
+        
+        mTrialRunning = false;
+        LOG_INFO("Trial completed. Results saved to: " << mExamOutputPath);
+        
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to load and run trial from " << trial_file_path << ": " << e.what());
+        mTrialRunning = false;
     }
 }
 
@@ -989,7 +1159,7 @@ void PhysicalExam::saveToCSV(const std::string& output_path) {
 void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_name) {
     mAngleSweepTrackedMuscles.clear();
 
-    if (!mCharacter || !mUseMuscle) return;
+    if (!mCharacter || mCharacter->getMuscles().empty()) return;
 
     auto skel = mCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_name);
@@ -1049,6 +1219,51 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index) {
     }
 
     mAngleSweepData.push_back(data);
+    
+    // Collect standard character data if available
+    if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+        AngleSweepDataPoint std_data;
+        std_data.joint_angle = angle;
+        
+        // Note: std character is already in sync with main character via setCharacterPose
+        auto std_skel = mStdCharacter->getSkeleton();
+        auto main_skel = mCharacter->getSkeleton();
+        auto main_joint = main_skel->getJoint(joint_index);
+        
+        // Compute passive torque for std character
+        std_data.passive_torque_total = getPassiveTorqueJoint_forCharacter(
+            mStdCharacter, std_skel->getJoint(main_joint->getName()));
+        
+        // Compute stiffness for std
+        size_t N_std = mStdAngleSweepData.size();
+        if (N_std >= 1) {
+            double angle_prev = mStdAngleSweepData[N_std-1].joint_angle;
+            double torque_prev = mStdAngleSweepData[N_std-1].passive_torque_total;
+            if (std::abs(angle - angle_prev) > 1e-10) {
+                std_data.passive_torque_stiffness = 
+                    (std_data.passive_torque_total - torque_prev) / (angle - angle_prev);
+            } else {
+                std_data.passive_torque_stiffness = 0.0;
+            }
+        } else {
+            std_data.passive_torque_stiffness = 0.0;
+        }
+        
+        // Collect std muscle data
+        for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
+            Muscle* muscle = mStdCharacter->getMuscleByName(muscle_name);
+            if (!muscle) continue;
+            
+            std_data.muscle_fp[muscle_name] = muscle->Getf_p();
+            std_data.muscle_lm_norm[muscle_name] = muscle->lm_norm;
+            
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            std::vector<double> jtp_vec(jtp.data(), jtp.data() + jtp.size());
+            std_data.muscle_jtp[muscle_name] = jtp_vec;
+        }
+        
+        mStdAngleSweepData.push_back(std_data);
+    }
 }
 
 void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
@@ -1084,11 +1299,14 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
         // Set swept joint to target angle
         Eigen::VectorXd pos = joint->getPositions();
         pos[trial.angle_sweep.dof_index] = angle;
-        joint->setPositions(pos);
+        setCharacterPose(joint->getName(), pos);
 
         // Update muscle geometry (kinematic only - no physics step)
-        if (mUseMuscle) {
+        if (!mCharacter->getMuscles().empty()) {
             mCharacter->getMuscleTuple();
+        }
+        if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+            mStdCharacter->getMuscleTuple();
         }
 
         // Collect data point
@@ -1193,9 +1411,14 @@ void PhysicalExam::initExamHDF5() {
     LOG_INFO("Created exam HDF5: " << mExamOutputPath);
 }
 
-void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& trial) {
-    size_t N = mAngleSweepData.size();
-    size_t M = mAngleSweepTrackedMuscles.size();
+void PhysicalExam::writeAngleSweepDataForCharacter(
+    H5::Group& group, 
+    const TrialConfig& trial,
+    const std::vector<AngleSweepDataPoint>& data,
+    const std::vector<std::string>& tracked_muscles) {
+    
+    size_t N = data.size();
+    size_t M = tracked_muscles.size();
 
     if (N == 0 || M == 0) {
         LOG_WARN("No angle sweep data to write");
@@ -1207,13 +1430,13 @@ void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& tria
     std::vector<float> muscleFp(N * M), muscleLmNorm(N * M), muscleJtpMag(N * M);
 
     for (size_t i = 0; i < N; ++i) {
-        const auto& d = mAngleSweepData[i];
+        const auto& d = data[i];
         angles[i] = static_cast<float>(d.joint_angle);
         passiveTorques[i] = static_cast<float>(d.passive_torque_total);
         passiveTorqueStiffness[i] = static_cast<float>(d.passive_torque_stiffness);
 
         for (size_t m = 0; m < M; ++m) {
-            const std::string& name = mAngleSweepTrackedMuscles[m];
+            const std::string& name = tracked_muscles[m];
             muscleFp[i*M + m] = static_cast<float>(d.muscle_fp.at(name));
             muscleLmNorm[i*M + m] = static_cast<float>(d.muscle_lm_norm.at(name));
 
@@ -1257,7 +1480,7 @@ void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& tria
     hsize_t dimsM[1] = {M};
     H5::DataSpace spaceM(1, dimsM);
     std::vector<const char*> cstrs(M);
-    for (size_t m = 0; m < M; ++m) cstrs[m] = mAngleSweepTrackedMuscles[m].c_str();
+    for (size_t m = 0; m < M; ++m) cstrs[m] = tracked_muscles[m].c_str();
     H5::DataSet namesDs = group.createDataSet("muscle_names", strType, spaceM);
     namesDs.write(cstrs.data(), strType);
 
@@ -1277,6 +1500,20 @@ void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& tria
     minAttr.write(H5::PredType::NATIVE_FLOAT, &angleMin);
     H5::Attribute maxAttr = group.createAttribute("angle_max_rad", H5::PredType::NATIVE_FLOAT, scalar);
     maxAttr.write(H5::PredType::NATIVE_FLOAT, &angleMax);
+}
+
+void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& trial) {
+    // Create /main subgroup
+    H5::Group mainGroup = group.createGroup("main");
+    writeAngleSweepDataForCharacter(mainGroup, trial, 
+        mAngleSweepData, mAngleSweepTrackedMuscles);
+    
+    // Create /std subgroup if data exists
+    if (!mStdAngleSweepData.empty() && mStdCharacter) {
+        H5::Group stdGroup = group.createGroup("std");
+        writeAngleSweepDataForCharacter(stdGroup, trial, 
+            mStdAngleSweepData, mStdAngleSweepTrackedMuscles);
+    }
 }
 
 void PhysicalExam::writeForceSweepData(H5::Group& group, const TrialConfig& trial) {
@@ -1481,11 +1718,14 @@ void PhysicalExam::mainLoop() {
                 // Set joint position for selected DOF
                 Eigen::VectorXd pos = joint->getPositions();
                 pos[mSweepConfig.dof_index] = angle;
-                joint->setPositions(pos);
+                setCharacterPose(joint->getName(), pos);
 
                 // Update muscle state (recalculate muscle lengths and forces)
-                if (mUseMuscle) {  // Guard: only update muscles if loaded
+                if (!mCharacter->getMuscles().empty()) {
                     mCharacter->getMuscleTuple();
+                }
+                if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+                    mStdCharacter->getMuscleTuple();
                 }
 
                 // Collect muscle data at this angle
@@ -1495,7 +1735,7 @@ void PhysicalExam::mainLoop() {
             } else {
                 // Sweep complete - restore original position if enabled
                 if (mSweepRestorePosition) {
-                    joint->setPositions(mSweepOriginalPos);
+                    setCharacterPose(joint->getName(), mSweepOriginalPos);
                 }
                 mSweepRunning = false;
                 LOG_INFO("Sweep completed. Collected " << mAngleSweepData.size()
@@ -1505,7 +1745,7 @@ void PhysicalExam::mainLoop() {
             // Check for user interruption (ESC key)
             if (glfwGetKey(mWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
                 if (mSweepRestorePosition) {
-                    joint->setPositions(mSweepOriginalPos);
+                    setCharacterPose(joint->getName(), mSweepOriginalPos);
                 }
                 mSweepRunning = false;
                 LOG_INFO("Sweep interrupted by user");
@@ -1572,7 +1812,7 @@ void PhysicalExam::drawLeftPanel() {
     // Left panel - matches GLFWApp layout
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(400, mHeight), ImGuiCond_Once);
-    ImGui::Begin("Controls##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Controls##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
     drawPosePresetsSection();
     drawForceApplicationSection();
@@ -1589,8 +1829,14 @@ void PhysicalExam::drawLeftPanel() {
 void PhysicalExam::drawRightPanel() {
     // Right panel - matches GLFWApp layout
     ImGui::SetNextWindowSize(ImVec2(400, mHeight), ImGuiCond_Once);
-    ImGui::Begin("Visualization & Data", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-    ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
+    ImGui::Begin("Visualization & Data", nullptr,
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0),
+                        ImGuiCond_Always);
+
+    // Scrollable child area for plots
+    ImGui::BeginChild("ScrollArea", ImVec2(0, 0), false,
+        ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
     if (ImGui::BeginTabBar("RightPanelTabs")) {
         if (ImGui::BeginTabItem("Basic")) {
@@ -1608,6 +1854,7 @@ void PhysicalExam::drawRightPanel() {
         ImGui::EndTabBar();
     }
 
+    ImGui::EndChild();
     ImGui::End();
 }
 
@@ -1953,7 +2200,7 @@ bool PhysicalExam::editAnchorPosition(const std::string& muscle, int anchor_inde
     bool success = SurgeryExecutor::editAnchorPosition(muscle, anchor_index, position);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
+    if (success && mCharacter && !mCharacter->getMuscles().empty()) {
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -1972,7 +2219,7 @@ bool PhysicalExam::editAnchorWeights(const std::string& muscle, int anchor_index
     bool success = SurgeryExecutor::editAnchorWeights(muscle, anchor_index, weights);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
+    if (success && mCharacter && !mCharacter->getMuscles().empty()) {
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -1991,7 +2238,7 @@ bool PhysicalExam::addBodyNodeToAnchor(const std::string& muscle, int anchor_ind
     bool success = SurgeryExecutor::addBodyNodeToAnchor(muscle, anchor_index, bodynode_name, weight);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
+    if (success && mCharacter && !mCharacter->getMuscles().empty()) {
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -2010,7 +2257,7 @@ bool PhysicalExam::removeBodyNodeFromAnchor(const std::string& muscle, int ancho
     bool success = SurgeryExecutor::removeBodyNodeFromAnchor(muscle, anchor_index, bodynode_index);
     
     // Add GUI-specific logic if successful
-    if (success && mCharacter && mUseMuscle) {  // Guard: check muscles loaded
+    if (success && mCharacter && !mCharacter->getMuscles().empty()) {
         auto muscles = mCharacter->getMuscles();
         for (auto m : muscles) {
             if (m->name == muscle) {
@@ -3738,12 +3985,41 @@ void PhysicalExam::drawSimFrame() {
         glPopMatrix();
     }
 
-    if (mCharacter) {
+    // Render main character
+    if (mCharacter && mRenderMainCharacter) {
         drawSkeleton(mCharacter->getSkeleton());
         drawMuscles();
         drawJointPassiveForces();
         drawSelectedAnchors();
         drawReferenceAnchor();
+    }
+    
+    // Render standard character with different visual style
+    if (mStdCharacter && mRenderStdCharacter) {
+        // Save current color and set semi-transparent gray for std character
+        glPushAttrib(GL_CURRENT_BIT | GL_LIGHTING_BIT);
+        glColor4f(0.5f, 0.5f, 0.5f, 0.5f);  // Gray with 50% transparency
+        
+        drawSkeleton(mStdCharacter->getSkeleton());
+        
+        // Draw std character muscles if available
+        if (!mStdCharacter->getMuscles().empty()) {
+            auto muscles = mStdCharacter->getMuscles();
+            glDisable(GL_LIGHTING);
+            glLineWidth(1.5f);
+            for (auto muscle : muscles) {
+                auto& anchors = muscle->GetAnchors();
+                glColor4f(0.6f, 0.4f, 0.4f, 0.4f);  // Semi-transparent reddish for muscles
+                glBegin(GL_LINE_STRIP);
+                for (auto& anchor : anchors) {
+                    Eigen::Vector3d pos = anchor->GetPoint();
+                    glVertex3f(pos[0], pos[1], pos[2]);
+                }
+                glEnd();
+            }
+        }
+        
+        glPopAttrib();
     }
 
     drawForceArrow();
@@ -3861,7 +4137,7 @@ void PhysicalExam::drawShape(const dart::dynamics::Shape* shape, const Eigen::Ve
 
 void PhysicalExam::drawMuscles() {
     if (!mCharacter) return;
-    if (!mUseMuscle) return;
+    if (mCharacter->getMuscles().empty()) return;
 
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_DEPTH_TEST);
@@ -4152,7 +4428,7 @@ void PhysicalExam::drawReferenceAnchor() {
 
 void PhysicalExam::drawJointPassiveForces() {
     if (!mCharacter || !mShowJointPassiveForces) return;
-    if (!mUseMuscle) return;  // Guard: no muscles loaded
+    if (mCharacter->getMuscles().empty()) return;
 
     // Get muscle tuple to extract passive joint torques
     MuscleTuple mt = mCharacter->getMuscleTuple(false);
@@ -4382,6 +4658,27 @@ void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
     else if (key == GLFW_KEY_S) {
         if (mSimulationPaused) mSingleStep = true;
     }
+    else if (key == GLFW_KEY_C && (mods & GLFW_MOD_CONTROL)) {
+        // Ctrl+C: Toggle between main and standard character rendering
+        if (mStdCharacter) {
+            if (mRenderMainCharacter && !mRenderStdCharacter) {
+                // Currently showing main -> switch to std
+                mRenderMainCharacter = false;
+                mRenderStdCharacter = true;
+                LOG_INFO("Rendering: Standard Character");
+            } else if (!mRenderMainCharacter && mRenderStdCharacter) {
+                // Currently showing std -> switch to main
+                mRenderMainCharacter = true;
+                mRenderStdCharacter = false;
+                LOG_INFO("Rendering: Main Character");
+            } else {
+                // Currently showing both or neither -> switch to main
+                mRenderMainCharacter = true;
+                mRenderStdCharacter = false;
+                LOG_INFO("Rendering: Main Character");
+            }
+        }
+    }
     else if (key == GLFW_KEY_R) {
         reset();
     }
@@ -4546,14 +4843,14 @@ void PhysicalExam::setPoseStanding() {
     auto skel = mCharacter->getSkeleton();
 
     // Reset to default standing pose
-    skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+    setCharacterPose(Eigen::VectorXd::Zero(skel->getNumDofs()));
 
     // Set pelvis height
     auto root = skel->getRootJoint();
     if (root->getNumDofs() >= 6) {
         Eigen::VectorXd root_pos = root->getPositions();
         root_pos[4] = 0.98;  // Y position (height)
-        root->setPositions(root_pos);
+        setCharacterPose(root->getName(), root_pos);
     }
 
     LOG_INFO("Pose: Standing");
@@ -4566,7 +4863,7 @@ void PhysicalExam::setPoseSupine() {
     auto skel = mCharacter->getSkeleton();
 
     // Reset all joints
-    skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+    setCharacterPose(Eigen::VectorXd::Zero(skel->getNumDofs()));
 
     // Rotate to lay on back (supine = face up)
     // Root joint: indices 0,1,2 are rotation (roll, pitch, yaw), indices 3,4,5 are translation (x,y,z)
@@ -4575,7 +4872,7 @@ void PhysicalExam::setPoseSupine() {
         Eigen::VectorXd root_pos = root->getPositions();
         root_pos[0] = -M_PI / 2.0;  // Rotate around X axis (roll) - index 0 is roll rotation
         root_pos[4] = 0.1;  // Table height - index 4 is Y translation
-        root->setPositions(root_pos);
+        setCharacterPose(root->getName(), root_pos);
     }
 
     LOG_INFO("Pose: Supine (laying on back)");
@@ -4588,7 +4885,7 @@ void PhysicalExam::setPoseProne() {
     auto skel = mCharacter->getSkeleton();
 
     // Reset all joints
-    skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+    setCharacterPose(Eigen::VectorXd::Zero(skel->getNumDofs()));
 
     // Rotate to lay on front (prone = face down)
     // Root joint: indices 0,1,2 are rotation (roll, pitch, yaw), indices 3,4,5 are translation (x,y,z)
@@ -4597,7 +4894,7 @@ void PhysicalExam::setPoseProne() {
         Eigen::VectorXd root_pos = root->getPositions();
         root_pos[0] = M_PI / 2.0;  // Rotate around X axis (negative roll) - index 0 is roll rotation
         root_pos[4] = 0.1;  // Table height - index 4 is Y translation
-        root->setPositions(root_pos);
+        setCharacterPose(root->getName(), root_pos);
     }
 
     LOG_INFO("Pose: Prone (laying on front)");
@@ -4627,8 +4924,8 @@ void PhysicalExam::setPoseSupineKneeFlexed(double knee_angle) {
         if (hip_r_pos.size() > 0) hip_r_pos[0] = -angle_rad;
         if (hip_l_pos.size() > 0) hip_l_pos[0] = -angle_rad;
         
-        hip_flex_r->setPositions(hip_r_pos);
-        hip_flex_l->setPositions(hip_l_pos);
+        setCharacterPose(hip_flex_r->getName(), hip_r_pos);
+        setCharacterPose(hip_flex_l->getName(), hip_l_pos);
     }
 
     if (knee_r && knee_l) {
@@ -4638,8 +4935,8 @@ void PhysicalExam::setPoseSupineKneeFlexed(double knee_angle) {
         if (knee_r_pos.size() > 0) knee_r_pos[0] = angle_rad;
         if (knee_l_pos.size() > 0) knee_l_pos[0] = angle_rad;
 
-        knee_r->setPositions(knee_r_pos);
-        knee_l->setPositions(knee_l_pos);
+        setCharacterPose(knee_r->getName(), knee_r_pos);
+        setCharacterPose(knee_l->getName(), knee_l_pos);
     }
 
     LOG_INFO("Pose: Supine with knee flexion (" << knee_angle << " degrees)");
@@ -5107,10 +5404,7 @@ void PhysicalExam::loadCameraPreset(int index) {
     mTrans = mCameraPresets[index].trans;
     mZoom = mCameraPresets[index].zoom;
     mTrackball.setQuaternion(mCameraPresets[index].quat);
-    mCurrentCameraPreset = index;
-    
-    LOG_INFO("Camera preset " << (index + 1) << " loaded: " 
-              << mCameraPresets[index].description);
+    mCurrentCameraPreset = index;    
 }
 
 // ============================================================================
@@ -5183,8 +5477,6 @@ void PhysicalExam::initializeCameraPresets() {
                 mCameraPresets[i].quat = Eigen::Quaterniond(quatVals[0], quatVals[1], 
                                                             quatVals[2], quatVals[3]);
                 mCameraPresets[i].isSet = true;
-                
-                LOG_INFO("Camera preset " << (i + 1) << " parsed: " << tokens[1]);
             }
         }
     }
@@ -5245,7 +5537,7 @@ void PhysicalExam::setupSweepMuscles() {
 
     mAngleSweepTrackedMuscles.clear();
     if (!mCharacter) return;
-    if (!mUseMuscle) return;  // Guard: no muscles loaded
+    if (mCharacter->getMuscles().empty()) return;
 
     auto skel = mCharacter->getSkeleton();
     if (mSweepConfig.joint_index >= skel->getNumJoints()) {
@@ -5290,6 +5582,26 @@ void PhysicalExam::setupSweepMuscles() {
     LOG_INFO("Detected " << mAngleSweepTrackedMuscles.size()
               << " muscles crossing joint: "
               << joint->getName());
+    
+    // Setup standard character muscles
+    if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+        mStdAngleSweepTrackedMuscles.clear();
+        auto std_muscles = mStdCharacter->getMuscles();
+        auto std_skel = mStdCharacter->getSkeleton();
+        auto std_joint = std_skel->getJoint(joint->getName());
+        
+        if (std_joint) {
+            for (auto muscle : std_muscles) {
+                auto related_joints = muscle->GetRelatedJoints();
+                if (std::find(related_joints.begin(), related_joints.end(), std_joint)
+                    != related_joints.end()) {
+                    mStdAngleSweepTrackedMuscles.push_back(muscle->GetName());
+                }
+            }
+            LOG_INFO("Standard character: " << mStdAngleSweepTrackedMuscles.size()
+                      << " muscles crossing joint");
+        }
+    }
 }
 
 void PhysicalExam::runSweep() {
@@ -5317,6 +5629,7 @@ void PhysicalExam::runSweep() {
 
     // Clear previous sweep data
     mAngleSweepData.clear();
+    mStdAngleSweepData.clear();
     
     // Set joint index for passive torque calculation
     mAngleSweepJointIdx = mSweepConfig.joint_index;
@@ -5333,9 +5646,44 @@ void PhysicalExam::runSweep() {
 void PhysicalExam::renderMusclePlots() {
     if (mAngleSweepData.empty()) return;
 
+    // Apply plot background color based on checkbox
+    ImPlotStyle& style = ImPlot::GetStyle();
+    if (mPlotWhiteBackground) {
+        style.Colors[ImPlotCol_PlotBg] = ImVec4(1, 1, 1, 1);
+        style.Colors[ImPlotCol_AxisGrid] = ImVec4(0, 0, 0, 1);  // Black grid lines on white background
+    } else {
+        // Restore default (dark background)
+        style.Colors[ImPlotCol_PlotBg] = ImVec4(0.15f, 0.15f, 0.15f, 1.0f);
+        style.Colors[ImPlotCol_AxisGrid] = ImVec4(0.5f, 0.5f, 0.5f, 0.25f);  // Default light gray grid lines
+    }
+
     static bool sShowSweepLegend = true;
 
     ImGui::Checkbox("Show Legend", &sShowSweepLegend);
+    
+    // NEW: Checkbox to toggle standard character overlay
+    if (mStdCharacter && !mStdAngleSweepData.empty()) {
+        ImGui::SameLine();
+        ImGui::Checkbox("Show Standard Character", &mShowStdCharacterInPlots);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Overlay standard character data (dashed lines) for comparison");
+        }
+    }
+
+    // Determine angle range: use trial's range if available, otherwise use mSweepConfig
+    double angle_min, angle_max;
+    if (mCurrentTrialIndex >= 0 && mCurrentTrialIndex < static_cast<int>(mTrials.size()) &&
+        mTrials[mCurrentTrialIndex].mode == TrialMode::ANGLE_SWEEP) {
+        // Use trial's angle sweep range
+        angle_min = mTrials[mCurrentTrialIndex].angle_sweep.angle_min;
+        angle_max = mTrials[mCurrentTrialIndex].angle_sweep.angle_max;
+    } else {
+        // Fall back to mSweepConfig (for manual GUI sweeps)
+        angle_min = mSweepConfig.angle_min;
+        angle_max = mSweepConfig.angle_max;
+    }
 
     // Build x_data (angles in degrees)
     std::vector<double> x_data;
@@ -5343,14 +5691,23 @@ void PhysicalExam::renderMusclePlots() {
     for (const auto& pt : mAngleSweepData) {
         x_data.push_back(pt.joint_angle * 180.0 / M_PI);
     }
+    
+    // Build std character x_data
+    std::vector<double> std_x_data;
+    if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty()) {
+        std_x_data.reserve(mStdAngleSweepData.size());
+        for (const auto& pt : mStdAngleSweepData) {
+            std_x_data.push_back(pt.joint_angle * 180.0 / M_PI);
+        }
+    }
 
     ImPlotFlags plot_flags = sShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
 
     // Passive Forces Plot
     if (collapsingHeaderWithControls("Passive Forces")) {
         if (ImPlot::BeginPlot("Passive Forces vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-            ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-                mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
+                angle_max * 180.0 / M_PI, ImGuiCond_Always);
             ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
             ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
 
@@ -5375,6 +5732,35 @@ void PhysicalExam::renderMusclePlots() {
                         fp_data.data(), fp_data.size());
                 }
             }
+            
+            // Plot standard character data (dashed lines) - only if checkbox enabled
+            if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                        continue;
+                    }
+                    
+                    // Build y_data for this muscle
+                    std::vector<double> std_fp_data;
+                    std_fp_data.reserve(mStdAngleSweepData.size());
+                    for (const auto& pt : mStdAngleSweepData) {
+                        auto it = pt.muscle_fp.find(muscle_name);
+                        if (it != pt.muscle_fp.end()) {
+                            std_fp_data.push_back(it->second);
+                        }
+                    }
+                    
+                    if (!std_fp_data.empty() && std_fp_data.size() == std_x_data.size()) {
+                        std::string label = muscle_name + " (std)";
+                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                        ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
+                        ImPlot::PlotLine(label.c_str(), std_x_data.data(),
+                            std_fp_data.data(), std_fp_data.size());
+                    }
+                }
+            }
+            
             ImPlot::EndPlot();
         }
     }
@@ -5382,8 +5768,8 @@ void PhysicalExam::renderMusclePlots() {
     // Normalized Muscle Length Plot
     if (collapsingHeaderWithControls("Normalized Length (l_m_norm)")) {
         if (ImPlot::BeginPlot("Normalized Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-            ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-                mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
+                angle_max * 180.0 / M_PI, ImGuiCond_Always);
             ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
             ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
 
@@ -5408,6 +5794,35 @@ void PhysicalExam::renderMusclePlots() {
                         lm_norm_data.data(), lm_norm_data.size());
                 }
             }
+            
+            // Plot standard character data (dashed lines) - only if checkbox enabled
+            if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                        continue;
+                    }
+                    
+                    // Build y_data for this muscle
+                    std::vector<double> std_lm_norm_data;
+                    std_lm_norm_data.reserve(mStdAngleSweepData.size());
+                    for (const auto& pt : mStdAngleSweepData) {
+                        auto it = pt.muscle_lm_norm.find(muscle_name);
+                        if (it != pt.muscle_lm_norm.end()) {
+                            std_lm_norm_data.push_back(it->second);
+                        }
+                    }
+                    
+                    if (!std_lm_norm_data.empty() && std_lm_norm_data.size() == std_x_data.size()) {
+                        std::string label = muscle_name + " (std)";
+                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                        ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
+                        ImPlot::PlotLine(label.c_str(), std_x_data.data(),
+                            std_lm_norm_data.data(), std_lm_norm_data.size());
+                    }
+                }
+            }
+            
             ImPlot::EndPlot();
         }
     }
@@ -5428,22 +5843,54 @@ void PhysicalExam::renderMusclePlots() {
         } else {
             // Torque plot
             if (ImPlot::BeginPlot("Total Passive Torque vs Joint Angle", ImVec2(-1, 300), plot_flags)) {
-                ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-                    mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
+                    angle_max * 180.0 / M_PI, ImGuiCond_Always);
                 ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
                 ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
                 ImPlot::PlotLine("Total Torque", x_data.data(), torque_data.data(), torque_data.size());
+                
+                // Plot standard character data
+                if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                    std::vector<double> std_torque_data;
+                    std_torque_data.reserve(mStdAngleSweepData.size());
+                    for (const auto& pt : mStdAngleSweepData) {
+                        std_torque_data.push_back(pt.passive_torque_total);
+                    }
+                    if (!std_torque_data.empty() && std_torque_data.size() == std_x_data.size()) {
+                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                        ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
+                        ImPlot::PlotLine("Total Torque (std)", std_x_data.data(), 
+                            std_torque_data.data(), std_torque_data.size());
+                    }
+                }
+                
                 ImPlot::EndPlot();
             }
 
             // Stiffness plot
             if (!stiffness_data.empty()) {
                 if (ImPlot::BeginPlot("Passive Stiffness (dτ/dθ) vs Joint Angle", ImVec2(-1, 300), plot_flags)) {
-                    ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-                        mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+                    ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
+                        angle_max * 180.0 / M_PI, ImGuiCond_Always);
                     ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
                     ImPlot::SetupAxis(ImAxis_Y1, "Stiffness (Nm/rad)");
                     ImPlot::PlotLine("Stiffness", x_data.data(), stiffness_data.data(), stiffness_data.size());
+                    
+                    // Plot standard character data
+                    if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                        std::vector<double> std_stiffness_data;
+                        std_stiffness_data.reserve(mStdAngleSweepData.size());
+                        for (const auto& pt : mStdAngleSweepData) {
+                            std_stiffness_data.push_back(pt.passive_torque_stiffness);
+                        }
+                        if (!std_stiffness_data.empty() && std_stiffness_data.size() == std_x_data.size()) {
+                            ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                            ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
+                            ImPlot::PlotLine("Stiffness (std)", std_x_data.data(), 
+                                std_stiffness_data.data(), std_stiffness_data.size());
+                        }
+                    }
+                    
                     ImPlot::EndPlot();
                 }
             }
@@ -5480,8 +5927,8 @@ void PhysicalExam::renderMusclePlots() {
             // Plot each muscle's contribution to this joint (magnitude across all DOFs)
             std::string plot_title = "Per-Muscle Passive Torque: " + joint_name;
             if (ImPlot::BeginPlot(plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
-                ImPlot::SetupAxisLimits(ImAxis_X1, mSweepConfig.angle_min * 180.0 / M_PI,
-                    mSweepConfig.angle_max * 180.0 / M_PI, ImGuiCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
+                    angle_max * 180.0 / M_PI, ImGuiCond_Always);
                 ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
                 ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
 
@@ -5526,6 +5973,8 @@ void PhysicalExam::renderMusclePlots() {
 void PhysicalExam::clearSweepData() {
     mAngleSweepData.clear();
     mAngleSweepTrackedMuscles.clear();
+    mStdAngleSweepData.clear();
+    mStdAngleSweepTrackedMuscles.clear();
     // DON'T clear mMuscleVisibility - preserve user selections across sweeps
     // Note: mGraphData is now only used for posture control, not sweep data
     LOG_INFO("Sweep data cleared");
@@ -5695,6 +6144,35 @@ void PhysicalExam::drawRecordingSection() {
 
 void PhysicalExam::drawRenderOptionsSection() {
     if (collapsingHeaderWithControls("Render")) {
+        // Character rendering selection
+        if (mStdCharacter) {
+            ImGui::Text("Character Display:");
+            int render_option = 0;
+            if (mRenderMainCharacter && mRenderStdCharacter) render_option = 2;
+            else if (mRenderStdCharacter) render_option = 1;
+            else render_option = 0;
+            
+            if (ImGui::RadioButton("Main Only", &render_option, 0)) {
+                mRenderMainCharacter = true;
+                mRenderStdCharacter = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Std Only", &render_option, 1)) {
+                mRenderMainCharacter = false;
+                mRenderStdCharacter = true;
+            }
+        } else {
+            // No standard character loaded - just show status
+            ImGui::Text("Rendering: Main Character");
+        }
+        
+        ImGui::Separator();
+        
+        // Plot background color
+        ImGui::Checkbox("White Plot", &mPlotWhiteBackground);
+        
+        ImGui::Separator();
+        
         // Render Mode section
         ImGui::Text("Render Mode (O):");
         int mode = static_cast<int>(mRenderMode);
@@ -5996,7 +6474,7 @@ void PhysicalExam::drawJointControlSection() {
 
             // Update positions if interpolation is disabled (convert degrees back to radians)
             if (!mEnableInterpolation) {
-                skel->setPositions(pos_rad.cast<double>());
+                setCharacterPose(pos_rad.cast<double>());
             }
             // With interpolation enabled, targets are set when sliders change (marked automatically)
         }
@@ -6146,65 +6624,79 @@ void PhysicalExam::drawTrialManagementSection() {
             if (!mExamDescription.empty()) {
                 ImGui::TextWrapped("%s", mExamDescription.c_str());
             }
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No exam setting loaded");
+            ImGui::TextWrapped("Load an exam setting config to run trials");
+        }
 
-            ImGui::Separator();
-            ImGui::Text("Total Trials: %zu", mTrials.size());
+        ImGui::Separator();
 
-            if (mCurrentTrialIndex >= 0 && mCurrentTrialIndex < static_cast<int>(mTrials.size())) {
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f),
-                                  "Current Trial: %d / %zu",
-                                  mCurrentTrialIndex + 1,
-                                  mTrials.size());
-                ImGui::Text("Name: %s", mTrials[mCurrentTrialIndex].name.c_str());
-                if (!mTrials[mCurrentTrialIndex].description.empty()) {
-                    ImGui::TextWrapped("  %s", mTrials[mCurrentTrialIndex].description.c_str());
-                }
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "No trial selected");
+        // Trial list box
+        if (mAvailableTrialFiles.empty()) {
+            ImGui::TextDisabled("No trial files found in data/config/trials");
+        } else {
+            // Create array of C-style strings for list box
+            std::vector<const char*> trial_names;
+            for (const auto& trial_file : mAvailableTrialFiles) {
+                trial_names.push_back(trial_file.name.c_str());
             }
-
-            ImGui::Separator();
-
-            // Remaining trials
-            int remaining = mTrials.size() - (mCurrentTrialIndex + 1);
-            if (remaining > 0) {
-                ImGui::Text("Remaining Trials: %d", remaining);
-                ImGui::Indent();
-                for (int i = mCurrentTrialIndex + 1; i < static_cast<int>(mTrials.size()); ++i) {
-                    ImGui::BulletText("%d. %s", i + 1, mTrials[i].name.c_str());
-                }
-                ImGui::Unindent();
-            } else if (mCurrentTrialIndex >= 0) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "All trials completed!");
+            
+            // List box
+            int list_height = std::min(static_cast<int>(mAvailableTrialFiles.size()), 2) * 2.5;
+            if (ImGui::ListBox("##TrialList", &mSelectedTrialFileIndex, 
+                               trial_names.data(), static_cast<int>(trial_names.size()), 
+                               list_height)) {
+                // Selection changed
             }
-
+            
             ImGui::Separator();
-
-            // Start trial button
-            bool canStartNext = (mCurrentTrialIndex + 1) < static_cast<int>(mTrials.size());
-            if (canStartNext) {
-                if (ImGui::Button("Start Next Trial", ImVec2(180, 40))) {
-                    startNextTrial();
-                }
-            } else if (mCurrentTrialIndex < 0) {
-                if (ImGui::Button("Start First Trial", ImVec2(180, 40))) {
-                    startNextTrial();
-                }
-            } else {
-                ImGui::TextDisabled("All trials completed");
+            
+            // Run Selected Trial button
+            bool canRunTrial = (mSelectedTrialFileIndex >= 0 && 
+                               mSelectedTrialFileIndex < static_cast<int>(mAvailableTrialFiles.size()) &&
+                               mExamSettingLoaded && 
+                               !mTrialRunning);
+            
+            if (!canRunTrial) {
+                ImGui::BeginDisabled();
             }
-
+            
+            if (ImGui::Button("Run Selected Trial", ImVec2(180, 40))) {
+                if (mSelectedTrialFileIndex >= 0 && 
+                    mSelectedTrialFileIndex < static_cast<int>(mAvailableTrialFiles.size())) {
+                    loadAndRunTrial(mAvailableTrialFiles[mSelectedTrialFileIndex].file_path);
+                }
+            }
+            
+            if (!canRunTrial) {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered()) {
+                    if (mSelectedTrialFileIndex < 0) {
+                        ImGui::SetTooltip("Select a trial from the list");
+                    } else if (!mExamSettingLoaded) {
+                        ImGui::SetTooltip("Load an exam setting first");
+                    } else if (mTrialRunning) {
+                        ImGui::SetTooltip("Trial is currently running");
+                    }
+                }
+            }
+            
             ImGui::SameLine();
             if (ImGui::Button("Reset Trials", ImVec2(120, 40))) {
                 mCurrentTrialIndex = -1;
                 mTrialRunning = false;
                 mRecordedData.clear();
+                mTrials.clear();
                 LOG_INFO("Trials reset");
             }
-
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No exam setting loaded");
-            ImGui::TextWrapped("Load an exam setting config to start trials");
+            
+            // Show current trial status if running
+            if (mTrialRunning && mCurrentTrialIndex >= 0 && 
+                mCurrentTrialIndex < static_cast<int>(mTrials.size())) {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Running: %s", 
+                                  mTrials[mCurrentTrialIndex].name.c_str());
+            }
         }
     }
 }
@@ -6215,7 +6707,7 @@ void PhysicalExam::drawCurrentStateSection() {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Character Loaded");
             ImGui::Text("Skeleton DOFs: %zu", mCharacter->getSkeleton()->getNumDofs());
             ImGui::Text("Body Nodes: %zu", mCharacter->getSkeleton()->getNumBodyNodes());
-            if (mUseMuscle) {  // Guard: only show muscle count if muscles loaded
+            if (!mCharacter->getMuscles().empty()) {
                 ImGui::Text("Muscles: %zu", mCharacter->getMuscles().size());
             } else {
                 ImGui::TextDisabled("Muscles: Not loaded");
@@ -6237,7 +6729,7 @@ void PhysicalExam::drawCurrentStateSection() {
             ImGui::Separator();
 
             // Muscle passive forces (only if muscles loaded)
-            if (mUseMuscle) {  // Guard: only show muscle forces if muscles loaded
+            if (!mCharacter->getMuscles().empty()) {
                 ImGui::Text("Muscle Forces:");
                 double total_passive = 0.0;
                 std::vector<std::pair<double, std::string>> muscle_forces;

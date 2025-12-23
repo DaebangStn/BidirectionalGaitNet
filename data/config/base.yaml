@@ -9,5 +9,8 @@ character:
   # skeleton: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
   skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
   muscle: "@data/muscle/base_vas.yaml"
-  use_muscle: true
   actuator: "mass_lower"
+
+std_character:
+  skeleton: "@data/skeleton/base.xml"  # Fixed standard skeleton
+  muscle: "@data/muscle/base_vas.yaml"  # Fixed standard muscle
