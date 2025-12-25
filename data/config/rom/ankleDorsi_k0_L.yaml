@@ -1,0 +1,35 @@
+# ROM examination pose with observed passive torques
+# Ankle Dorsiflexion test - Left ankle with knee extended
+
+name: "ankleDorsi_k0_L"
+description: "Left ankle dorsiflexion ROM with knee extended"
+mode: "angle_sweep"
+
+# Base pose for this ROM test
+pose:
+  Pelvis: [0, 0, 0, 0, 0.5, 0]    # Supine position
+  FemurL: [0, 0, 0]
+  TibiaL: 0                        # Knee extended
+  TalusL: [0, 0, 0]
+
+# Joint to sweep for ROM measurement
+angle_sweep:
+  joint: "TalusL"
+  dof_index: 0      # Dorsiflexion/plantarflexion DOF
+  angle_min: -30    # degrees (plantarflexion)
+  angle_max: 30     # degrees (dorsiflexion)
+  num_steps: 100
+
+# CRITICAL: Observed passive torques from clinical measurement
+# Note: Different torques compared to k90 due to gastrocnemius stretch
+observed_torques:
+  - angle: -20.0    # degrees
+    torque: -3.2    # Nm (higher resistance due to gastrocnemius)
+  - angle: -10.0
+    torque: -1.2
+  - angle: 0.0
+    torque: 0.5
+  - angle: 10.0
+    torque: 3.5
+  - angle: 20.0
+    torque: 8.9

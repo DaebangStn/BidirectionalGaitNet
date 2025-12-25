@@ -5,10 +5,22 @@
 #include <Eigen/Geometry>
 #include <assimp/cimport.h>
 #include <assimp/scene.h>
+#include <memory>
+
+// Forward declarations
+namespace dart {
+namespace dynamics {
+class Skeleton;
+class BodyNode;
+class ShapeNode;
+}
+}
 
 enum class GroundMode { Wireframe, Solid };
+enum class RenderMode { Primitive, Mesh, Wireframe };
 
 struct GLFWwindow;
+class ShapeRenderer;
 
 namespace GUI
 {
@@ -50,6 +62,17 @@ namespace GUI
 
 	void DrawOriginAxisGizmo(const Eigen::Vector3d& center, float length = 0.05f, float colorTint = 0.0f);
 	void DrawGroundGrid(GroundMode mode = GroundMode::Wireframe, int gridSize = 10, float cellSize = 0.5f);
+
+	// Skeleton rendering (centralized)
+	void DrawSkeleton(std::shared_ptr<dart::dynamics::Skeleton> skel,
+	                  const Eigen::Vector4d& color,
+	                  RenderMode mode = RenderMode::Mesh,
+	                  ShapeRenderer* shapeRenderer = nullptr);
+
+	void DrawBodyNode(const dart::dynamics::BodyNode* bn,
+	                  const Eigen::Vector4d& color,
+	                  RenderMode mode = RenderMode::Mesh,
+	                  ShapeRenderer* shapeRenderer = nullptr);
 
 	void InitGL();
 	void InitLighting();

@@ -884,7 +884,7 @@ Eigen::VectorXd Character::heightCalibration(dart::simulation::WorldPtr _world)
 }
 
 // Muscle
-void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbsWeight)
+void Character::setMuscles(std::string path, bool meshLbsWeight)
 {
     // If path is empty, use default
     if (path.empty()) {
@@ -900,21 +900,21 @@ void Character::setMuscles(std::string path, bool useVelocityForce, bool meshLbs
                    (len >= 4 && path.substr(len - 4) == ".yml");
 
     if (is_yaml) {
-        setMusclesYAML(path, useVelocityForce);
+        setMusclesYAML(path);
     } else {
-        setMusclesXML(path, useVelocityForce, meshLbsWeight);
+        setMusclesXML(path, meshLbsWeight);
     }
 }
 
-void Character::setMusclesXML(std::string path, bool useVelocityForce, bool meshLbsWeight)
+void Character::setMusclesXML(std::string path, bool meshLbsWeight)
 {
     TiXmlDocument doc;
-    
+
     if (doc.LoadFile(path.c_str())) {
         LOG_ERROR("[Character] Failed to load muscle file: " << path);
         exit(-1);
     }
-    
+
     bool uselegacy = false;
     TiXmlElement *muscledoc = doc.FirstChildElement("Muscle");
     for (TiXmlElement *unit = muscledoc->FirstChildElement("Unit"); unit != nullptr; unit = unit->NextSiblingElement("Unit"))
@@ -923,12 +923,9 @@ void Character::setMusclesXML(std::string path, bool useVelocityForce, bool mesh
         double f0 = std::stod(unit->Attribute("f0"));
         double lm = std::stod(unit->Attribute("lm"));
         double lt = std::stod(unit->Attribute("lt"));
-        double pa = std::stod(unit->Attribute("pen_angle"));
-        double type1_fraction = 0.5;
-        if (unit->Attribute("type1_fraction") != nullptr) type1_fraction = std::stod(unit->Attribute("type1_fraction"));
 
-        Muscle *muscle_elem = new Muscle(name, f0, lm, lt, pa, type1_fraction, useVelocityForce);
-        Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt, pa, type1_fraction, useVelocityForce);
+        Muscle *muscle_elem = new Muscle(name, f0, lm, lt);
+        Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt);
 
         bool isValid = true;
         int num_waypoints = 0;
@@ -1049,7 +1046,7 @@ static Eigen::Vector3d getBodyNodeSize(dart::dynamics::BodyNode* body_node) {
     return Eigen::Vector3d(1.0, 1.0, 1.0);
 }
 
-void Character::setMusclesYAML(std::string path, bool useVelocityForce)
+void Character::setMusclesYAML(std::string path)
 {
     try {
         YAML::Node config = YAML::LoadFile(path);
@@ -1064,16 +1061,12 @@ void Character::setMusclesYAML(std::string path, bool useVelocityForce)
             // Parse muscle properties
             std::string name = muscle_node["name"].as<std::string>();
             double f0 = muscle_node["f0"].as<double>();
-            double lm = muscle_node["lm"].as<double>();
-            double lt = muscle_node["lt"].as<double>();
-
-            // Use defaults for optional fields
-            double pen_angle = 0.0;
-            double type1_fraction = 0.5;
+            double lm_contract = muscle_node["lm_contract"].as<double>();
+            double lt_rel = muscle_node["lt_rel"].as<double>();
 
             // Create muscle objects (for both skeleton and reference)
-            Muscle *muscle_elem = new Muscle(name, f0, lm, lt, pen_angle, type1_fraction, useVelocityForce);
-            Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt, pen_angle, type1_fraction, useVelocityForce);
+            Muscle *muscle_elem = new Muscle(name, f0, lm_contract, lt_rel);
+            Muscle *refmuscle_elem = new Muscle(name, f0, lm_contract, lt_rel);
 
             bool isValid = true;
 
@@ -1942,8 +1935,7 @@ double Character::calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const st
     return lambdaShape * shapeTerm / numSampling / simpleMotions.size() + lambdaLengthCurve * lengthCurveTerm / simpleMotions.size() + lambdaRegularizer * regularizerTerm;
 }
 
-double
-Character::fShape(Muscle *stdMuscle, Muscle *rtgMuscle)
+double Character::fShape(Muscle *stdMuscle, Muscle *rtgMuscle)
 {
     double ret = 0;
     int cnt = 0;

@@ -1191,4 +1191,116 @@ void GUI::InitImGui(GLFWwindow* window, bool useImPlot)
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 150");
+}// Skeleton rendering implementation - to be appended to GLfunctions.cpp
+
+#include "dart/dynamics/Skeleton.hpp"
+#include "dart/dynamics/BodyNode.hpp"
+#include "dart/dynamics/ShapeNode.hpp"
+#include "dart/dynamics/Shape.hpp"
+#include "dart/dynamics/MeshShape.hpp"
+#include "dart/dynamics/BoxShape.hpp"
+#include "dart/dynamics/CapsuleShape.hpp"
+#include "dart/dynamics/SphereShape.hpp"
+#include "dart/dynamics/CylinderShape.hpp"
+#include "ShapeRenderer.h"
+
+using namespace dart::dynamics;
+
+void GUI::DrawBodyNode(const BodyNode* bn,
+                       const Eigen::Vector4d& color,
+                       RenderMode mode,
+                       ShapeRenderer* shapeRenderer)
+{
+    if (!bn) return;
+
+    glPushMatrix();
+    glMultMatrixd(bn->getTransform().data());
+
+    bn->eachShapeNodeWith<VisualAspect>([&color, mode, shapeRenderer](const ShapeNode* sn) {
+        if (!sn) return true;
+
+        const auto& va = sn->getVisualAspect();
+        if (!va || va->isHidden()) return true;
+
+        glPushMatrix();
+        glMultMatrixd(sn->getRelativeTransform().data());
+
+        const Shape* shape = sn->getShape().get();
+        if (!shape) {
+            glPopMatrix();
+            return true;
+        }
+
+        // Use the given color directly (no blending)
+        const Eigen::Vector4d& finalColor = color;
+
+        // Handle wireframe mode
+        if (mode == RenderMode::Wireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(2.0f);
+            glColor4d(finalColor[0], finalColor[1], finalColor[2], finalColor[3]);
+        }
+
+        // Render based on mode
+        if (mode == RenderMode::Mesh) {
+            // Mesh mode: only render actual mesh shapes, skip primitives
+            if (shapeRenderer && shape->is<MeshShape>()) {
+                const MeshShape* mesh = static_cast<const MeshShape*>(shape);
+                shapeRenderer->renderMesh(mesh, false, 0.0, finalColor);
+            }
+            // Skip non-mesh shapes in Mesh mode
+        } else {
+            // Primitive/Wireframe mode: render primitive shapes
+            glColor4d(finalColor[0], finalColor[1], finalColor[2], finalColor[3]);
+
+            if (shape->is<BoxShape>()) {
+                GUI::DrawCube(static_cast<const BoxShape*>(shape)->getSize());
+            } else if (shape->is<CapsuleShape>()) {
+                const CapsuleShape* cap = static_cast<const CapsuleShape*>(shape);
+                GUI::DrawCapsule(cap->getRadius(), cap->getHeight());
+            } else if (shape->is<SphereShape>()) {
+                GUI::DrawSphere(static_cast<const SphereShape*>(shape)->getRadius());
+            } else if (shape->is<CylinderShape>()) {
+                const CylinderShape* cyl = static_cast<const CylinderShape*>(shape);
+                GUI::DrawCylinder(cyl->getRadius(), cyl->getHeight());
+            }
+        }
+
+        // Restore polygon mode
+        if (mode == RenderMode::Wireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            glLineWidth(1.0f);
+        }
+
+        glPopMatrix();
+        return true;
+    });
+
+    glPopMatrix();
+}
+
+void GUI::DrawSkeleton(std::shared_ptr<Skeleton> skel,
+                       const Eigen::Vector4d& color,
+                       RenderMode mode,
+                       ShapeRenderer* shapeRenderer)
+{
+    if (!skel) return;
+
+    // Setup GL state
+    // For wireframe mode, disable lighting to show pure colors
+    if (mode == RenderMode::Wireframe) {
+        glDisable(GL_LIGHTING);
+        glDisable(GL_COLOR_MATERIAL);
+        glDisable(GL_TEXTURE_2D);
+        } else {
+        glEnable(GL_LIGHTING);
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+        glEnable(GL_COLOR_MATERIAL);
+    }
+
+    // Render all body nodes
+    for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
+        const BodyNode* bn = skel->getBodyNode(i);
+        DrawBodyNode(bn, color, mode, shapeRenderer);
+    }
 }

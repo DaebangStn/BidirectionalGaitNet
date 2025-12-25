@@ -85,9 +85,6 @@ include_directories(${HDF5_INCLUDE_DIRS})
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold -Wl,-O1 -Wl,--as-needed -Wl,--hash-style=gnu")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=gold -Wl,-O1 -Wl,--as-needed -Wl,--hash-style=gnu")
 
-# Optional Ceres-based bone optimization (for 2-marker bones)
-option(USE_CERES "Enable Ceres-based bone optimization" OFF)
-
 add_subdirectory( rm )
 add_subdirectory( sim )
 add_subdirectory( rollouts )

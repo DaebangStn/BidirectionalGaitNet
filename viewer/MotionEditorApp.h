@@ -9,6 +9,7 @@
 #include "HDF.h"
 #include "rm/rm.hpp"
 #include "motion/PlaybackController.h"
+#include "common/PIDNavigator.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -119,18 +120,19 @@ private:
     rm::ResourceManager* mResourceManager = nullptr;
     std::string mConfigPath;
 
-    // === PID Browser State ===
-    std::vector<std::string> mPIDList;
-    std::vector<std::string> mPIDNames;
-    std::vector<std::string> mPIDGMFCS;
-    int mSelectedPID = -1;
-    char mPIDFilter[128] = {0};
-    bool mPreOp = true;
+    // === PID Browser (using shared PIDNavigator) ===
+    std::unique_ptr<PIDNav::PIDNavigator> mPIDNavigator;
 
-    // === H5 File Browser ===
-    std::vector<std::string> mH5Files;
-    int mSelectedH5 = -1;
-    char mH5Filter[64] = {0};
+    // OLD CODE (kept for comparison, will be removed after validation):
+    // std::vector<std::string> mPIDList;
+    // std::vector<std::string> mPIDNames;
+    // std::vector<std::string> mPIDGMFCS;
+    // int mSelectedPID = -1;
+    // char mPIDFilter[128] = {0};
+    // bool mPreOp = true;
+    // std::vector<std::string> mH5Files;
+    // int mSelectedH5 = -1;
+    // char mH5Filter[64] = {0};
 
     // === Motion Data ===
     Motion* mMotion = nullptr;
@@ -213,7 +215,7 @@ private:
     // === UI Panels ===
     void drawLeftPanel();
     void drawRightPanel();
-    void drawPIDBrowserTab();
+    void drawPIDBrowserTab();  // Updated to use PIDNavigator
     void drawDirectPathTab();
     void drawSkeletonSection();
     void drawPlaybackSection();
@@ -234,8 +236,9 @@ private:
     bool isPanelDefaultOpen(const std::string& panelName) const;
 
     // === PID Scanner Methods ===
-    void scanPIDList();
-    void scanH5Files();
+    // OLD CODE (will be removed after validation):
+    // void scanPIDList();
+    // void scanH5Files();
     void scanSkeletonDirectory();
     void loadH5Motion(const std::string& path);
     void autoDetectSkeleton();

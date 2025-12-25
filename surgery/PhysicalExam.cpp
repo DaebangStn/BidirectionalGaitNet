@@ -41,6 +41,8 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mWindowYPos(0)
     , mControlPanelWidth(250)
     , mPlotPanelWidth(350)
+    , mPhysicalExamControlPanelWidth(400)
+    , mPhysicalExamDataPanelWidth(400)
     , mMouseDown(false)
     , mRotate(false)
     , mTranslate(false)
@@ -98,6 +100,8 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mRenderStdCharacter(false)  // Default to not rendering std character
     , mShowStdCharacterInPlots(true)  // Default to showing std character in plots
     , mPlotWhiteBackground(false)  // Default to dark plot background
+    , mShowTrialNameInPlots(true)  // Default to showing trial name
+    , mCurrentSweepName("GUI Sweep")  // Default sweep name
 {
     mForceBodyNode = "FemurR";  // Default body node
     mMuscleFilterBuffer[0] = '\0';  // Initialize filter buffer as empty string
@@ -231,10 +235,20 @@ void PhysicalExam::loadRenderConfig() {
                 mPlotPanelWidth = config["geometry"]["plot"].as<int>();
         }
 
+        // Load physical_exam panel widths
+        if (config["physical_exam"]) {
+            if (config["physical_exam"]["control_panel_width"])
+                mPhysicalExamControlPanelWidth = config["physical_exam"]["control_panel_width"].as<int>();
+            if (config["physical_exam"]["data_panel_width"])
+                mPhysicalExamDataPanelWidth = config["physical_exam"]["data_panel_width"].as<int>();
+        }
+
         LOG_INFO("[Config] Loaded - Window: " << mWidth << "x" << mHeight
                   << " at (" << mWindowXPos << "," << mWindowYPos << ")"
                   << ", Control: " << mControlPanelWidth
-                  << ", Plot: " << mPlotPanelWidth);
+                  << ", Plot: " << mPlotPanelWidth
+                  << ", PhysExam Control: " << mPhysicalExamControlPanelWidth
+                  << ", PhysExam Data: " << mPhysicalExamDataPanelWidth);
 
         // Load default open panels
         if (config["default_open_panels"]) {
@@ -1174,7 +1188,7 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
         auto related_joints = muscle->GetRelatedJoints();
         for (auto* rj : related_joints) {
             if (rj == joint) {
-                mAngleSweepTrackedMuscles.push_back(muscle->name);
+                mAngleSweepTrackedMuscles.push_back(muscle->GetName());
                 break;
             }
         }
@@ -1182,6 +1196,26 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
 
     LOG_INFO("Angle sweep: Tracking " << mAngleSweepTrackedMuscles.size()
               << " muscles crossing joint " << joint_name);
+
+    // Setup standard character muscles
+    if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+        mStdAngleSweepTrackedMuscles.clear();
+        auto std_muscles = mStdCharacter->getMuscles();
+        auto std_skel = mStdCharacter->getSkeleton();
+        auto std_joint = std_skel->getJoint(joint_name);
+
+        if (std_joint) {
+            for (auto muscle : std_muscles) {
+                auto related_joints = muscle->GetRelatedJoints();
+                if (std::find(related_joints.begin(), related_joints.end(), std_joint)
+                    != related_joints.end()) {
+                    mStdAngleSweepTrackedMuscles.push_back(muscle->GetName());
+                }
+            }
+            LOG_INFO("Standard character: " << mStdAngleSweepTrackedMuscles.size()
+                      << " muscles crossing joint " << joint_name);
+        }
+    }
 }
 
 void PhysicalExam::collectAngleSweepData(double angle, int joint_index) {
@@ -1207,7 +1241,10 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index) {
     // Collect per-muscle data (only muscles crossing the swept joint)
     for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
         Muscle* muscle = mCharacter->getMuscleByName(muscle_name);
-        if (!muscle) continue;
+        if (!muscle) {
+            LOG_WARN("Muscle not found during data collection: " << muscle_name);
+            continue;
+        }
 
         data.muscle_fp[muscle_name] = muscle->Getf_p();
         data.muscle_lm_norm[muscle_name] = muscle->lm_norm;
@@ -1266,8 +1303,123 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index) {
     }
 }
 
+ROMMetrics PhysicalExam::computeROMMetrics(
+    const std::vector<AngleSweepDataPoint>& data) const {
+
+    ROMMetrics metrics;
+
+    if (data.empty()) {
+        return metrics;  // Return zeros
+    }
+
+    // Peak value tracking
+    metrics.peak_stiffness = 0.0;
+    metrics.peak_torque = 0.0;
+
+    // Find the largest continuous angle range where values stay within thresholds
+    double best_rom_start_rad = data.front().joint_angle;
+    double best_rom_end_rad = data.front().joint_angle;
+    double best_rom_size_rad = 0.0;
+
+    double current_range_start_rad = data.front().joint_angle;
+    bool in_valid_range = false;
+
+    for (const auto& pt : data) {
+        double abs_stiffness = std::abs(pt.passive_torque_stiffness);
+        double abs_torque = std::abs(pt.passive_torque_total);
+
+        // Track peak values
+        if (abs_stiffness > metrics.peak_stiffness) {
+            metrics.peak_stiffness = abs_stiffness;
+            metrics.angle_at_peak_stiffness = pt.joint_angle * 180.0 / M_PI;
+        }
+
+        if (abs_torque > metrics.peak_torque) {
+            metrics.peak_torque = abs_torque;
+            metrics.angle_at_peak_torque = pt.joint_angle * 180.0 / M_PI;
+        }
+
+        // Check if current point is within threshold
+        bool stiffness_ok = abs_stiffness <= mROMThresholds.max_stiffness;
+        bool torque_ok = abs_torque <= mROMThresholds.max_torque;
+
+        bool within_threshold = false;
+        switch (mROMMetric) {
+            case ROMMetric::STIFFNESS:
+                within_threshold = stiffness_ok;
+                break;
+            case ROMMetric::TORQUE:
+                within_threshold = torque_ok;
+                break;
+            case ROMMetric::EITHER:
+                // For EITHER mode: point is valid only if BOTH metrics are ok
+                within_threshold = stiffness_ok && torque_ok;
+                break;
+            case ROMMetric::BOTH:
+                // For BOTH mode: point is valid if at least one metric is ok
+                within_threshold = stiffness_ok || torque_ok;
+                break;
+        }
+
+        if (within_threshold) {
+            if (!in_valid_range) {
+                // Start of new valid range
+                current_range_start_rad = pt.joint_angle;
+                in_valid_range = true;
+            }
+            // Continue valid range - check if this makes it the best so far
+            double current_size_rad = pt.joint_angle - current_range_start_rad;
+            if (current_size_rad > best_rom_size_rad) {
+                best_rom_size_rad = current_size_rad;
+                best_rom_start_rad = current_range_start_rad;
+                best_rom_end_rad = pt.joint_angle;
+            }
+        } else {
+            // Out of threshold - end current range
+            in_valid_range = false;
+        }
+    }
+
+    // Functional ROM = largest continuous range within thresholds
+    metrics.rom_min_angle = best_rom_start_rad * 180.0 / M_PI;
+    metrics.rom_max_angle = best_rom_end_rad * 180.0 / M_PI;
+    metrics.rom_deg = metrics.rom_max_angle - metrics.rom_min_angle;
+
+    return metrics;
+}
+
+std::vector<double> PhysicalExam::normalizeXAxis(
+    const std::vector<double>& x_data_deg,
+    double rom_min_deg, double rom_max_deg) const {
+
+    if (mXAxisMode == XAxisMode::RAW_ANGLE || x_data_deg.empty()) {
+        return x_data_deg;  // No transformation
+    }
+
+    // Normalize to 0-100% based on computed ROM range
+    // Maps [rom_min, rom_max] → [0%, 100%]
+    double range = rom_max_deg - rom_min_deg;
+
+    std::vector<double> normalized;
+    normalized.reserve(x_data_deg.size());
+
+    if (range > 1e-6) {  // Avoid division by zero
+        for (double angle : x_data_deg) {
+            // Map angle to percentage of ROM range
+            normalized.push_back((angle - rom_min_deg) / range * 100.0);
+        }
+    } else {
+        normalized = x_data_deg;  // Fallback to raw
+    }
+
+    return normalized;
+}
+
 void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
     LOG_INFO("Running angle sweep trial: " << trial.name);
+
+    // Set current sweep name for plot titles
+    mCurrentSweepName = trial.name;
 
     // 1. Apply initial pose
     applyPosePreset(trial.pose);
@@ -1286,8 +1438,9 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
     // 4. Identify muscles crossing this joint
     setupTrackedMusclesForAngleSweep(trial.angle_sweep.joint_name);
 
-    // 5. Clear previous data
+    // 5. Clear previous data (both main and standard character)
     mAngleSweepData.clear();
+    mStdAngleSweepData.clear();
 
     // 5. Kinematic sweep loop (no physics settling - matches GUI sweep)
     for (int step = 0; step <= trial.angle_sweep.num_steps; ++step) {
@@ -1312,6 +1465,8 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
         // Collect data point
         collectAngleSweepData(angle, mAngleSweepJointIdx);
     }
+
+    LOG_INFO("Collected " << mAngleSweepData.size() << " angle sweep data points");
 
     // 6. Append to exam HDF5
     appendTrialToHDF5(trial);
@@ -1811,7 +1966,7 @@ void PhysicalExam::mainLoop() {
 void PhysicalExam::drawLeftPanel() {
     // Left panel - matches GLFWApp layout
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(400, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mPhysicalExamControlPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Controls##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
     drawPosePresetsSection();
@@ -1828,7 +1983,7 @@ void PhysicalExam::drawLeftPanel() {
 
 void PhysicalExam::drawRightPanel() {
     // Right panel - matches GLFWApp layout
-    ImGui::SetNextWindowSize(ImVec2(400, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mPhysicalExamDataPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Visualization & Data", nullptr,
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0),
@@ -5610,6 +5765,9 @@ void PhysicalExam::runSweep() {
         return;
     }
 
+    // Set current sweep name for plot titles
+    mCurrentSweepName = "GUI Sweep";
+
     // Initialize sweep
     clearSweepData();
     setupSweepMuscles();
@@ -5672,6 +5830,17 @@ void PhysicalExam::renderMusclePlots() {
         }
     }
 
+    // X-axis normalization control
+    ImGui::SeparatorText("X-Axis Mode");
+    int mode_idx = static_cast<int>(mXAxisMode);
+    if (ImGui::RadioButton("Angle (deg)", &mode_idx, 0)) {
+        mXAxisMode = XAxisMode::RAW_ANGLE;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Normalized (%)", &mode_idx, 1)) {
+        mXAxisMode = XAxisMode::NORMALIZED;
+    }
+
     // Determine angle range: use trial's range if available, otherwise use mSweepConfig
     double angle_min, angle_max;
     if (mCurrentTrialIndex >= 0 && mCurrentTrialIndex < static_cast<int>(mTrials.size()) &&
@@ -5685,92 +5854,251 @@ void PhysicalExam::renderMusclePlots() {
         angle_max = mSweepConfig.angle_max;
     }
 
-    // Build x_data (angles in degrees)
-    std::vector<double> x_data;
-    x_data.reserve(mAngleSweepData.size());
-    for (const auto& pt : mAngleSweepData) {
-        x_data.push_back(pt.joint_angle * 180.0 / M_PI);
+    // Compute ROM metrics for both characters (needed for normalization)
+    ROMMetrics main_rom_metrics = computeROMMetrics(mAngleSweepData);
+    ROMMetrics std_rom_metrics;
+    bool has_std_for_plots = mShowStdCharacterInPlots && !mStdAngleSweepData.empty();
+    if (has_std_for_plots) {
+        std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
     }
-    
-    // Build std character x_data
-    std::vector<double> std_x_data;
-    if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty()) {
-        std_x_data.reserve(mStdAngleSweepData.size());
+
+    // Build x_data_raw (convert from radians to degrees)
+    std::vector<double> x_data_raw;
+    x_data_raw.reserve(mAngleSweepData.size());
+    for (const auto& pt : mAngleSweepData) {
+        x_data_raw.push_back(pt.joint_angle * 180.0 / M_PI);
+    }
+
+    // Apply normalization using main character's ROM range
+    std::vector<double> x_data = normalizeXAxis(x_data_raw,
+                                                 main_rom_metrics.rom_min_angle,
+                                                 main_rom_metrics.rom_max_angle);
+
+    // Build std character x_data_raw
+    std::vector<double> std_x_data_raw;
+    if (has_std_for_plots) {
+        std_x_data_raw.reserve(mStdAngleSweepData.size());
         for (const auto& pt : mStdAngleSweepData) {
-            std_x_data.push_back(pt.joint_angle * 180.0 / M_PI);
+            std_x_data_raw.push_back(pt.joint_angle * 180.0 / M_PI);
         }
+    }
+
+    // Apply normalization to std character using its own ROM range
+    std::vector<double> std_x_data = normalizeXAxis(std_x_data_raw,
+                                                     std_rom_metrics.rom_min_angle,
+                                                     std_rom_metrics.rom_max_angle);
+
+    // Update x-axis label and limits based on mode
+    const char* x_axis_label;
+    double x_min, x_max;
+
+    if (mXAxisMode == XAxisMode::RAW_ANGLE) {
+        x_axis_label = "Joint Angle (deg)";
+        x_min = angle_min * 180.0 / M_PI;
+        x_max = angle_max * 180.0 / M_PI;
+    } else {
+        x_axis_label = "Normalized Position (%)";
+        x_min = 0.0;   // Fixed 0-100 range
+        x_max = 100.0;
     }
 
     ImPlotFlags plot_flags = sShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
 
-    // Passive Forces Plot
-    if (collapsingHeaderWithControls("Passive Forces")) {
-        if (ImPlot::BeginPlot("Passive Forces vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-            ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
-                angle_max * 180.0 / M_PI, ImGuiCond_Always);
-            ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
-            ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
+    // Use trial name for plot titles if enabled, with ## suffixes for uniqueness
+    std::string passive_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##passive") : "Passive Forces vs Joint Angle";
+    std::string length_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##length") : "Normalized Muscle Length vs Joint Angle";
+    std::string torque_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##torque") : "Total Passive Torque vs Joint Angle";
+    std::string stiffness_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##stiffness") : "Passive Stiffness (dtau/dtheta) vs Joint Angle";
 
-            for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
-                auto vis_it = mMuscleVisibility.find(muscle_name);
-                if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                    continue;
-                }
-
-                // Build y_data for this muscle
-                std::vector<double> fp_data;
-                fp_data.reserve(mAngleSweepData.size());
-                for (const auto& pt : mAngleSweepData) {
-                    auto it = pt.muscle_fp.find(muscle_name);
-                    if (it != pt.muscle_fp.end()) {
-                        fp_data.push_back(it->second);
-                    }
-                }
-                
-                if (!fp_data.empty() && fp_data.size() == x_data.size()) {
-                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
-                        fp_data.data(), fp_data.size());
-                }
+    // ====================================================================
+    // RANGE OF MOTION ANALYSIS
+    // ====================================================================
+    if (collapsingHeaderWithControls("Range of Motion Analysis")) {
+        if (mAngleSweepData.empty()) {
+            ImGui::TextDisabled("No sweep data available. Run a sweep first.");
+        } else {
+            // ROM metric selector
+            ImGui::SeparatorText("ROM Metric Selection");
+            ImGui::Text("Compute ROM using:");
+            int metric_idx = static_cast<int>(mROMMetric);
+            if (ImGui::RadioButton("Stiffness only", &metric_idx, 0)) {
+                mROMMetric = ROMMetric::STIFFNESS;
             }
-            
-            // Plot standard character data (dashed lines) - only if checkbox enabled
-            if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-                for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
-                    auto vis_it = mMuscleVisibility.find(muscle_name);
-                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                        continue;
-                    }
-                    
-                    // Build y_data for this muscle
-                    std::vector<double> std_fp_data;
-                    std_fp_data.reserve(mStdAngleSweepData.size());
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Torque only", &metric_idx, 1)) {
+                mROMMetric = ROMMetric::TORQUE;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Either (OR)", &metric_idx, 2)) {
+                mROMMetric = ROMMetric::EITHER;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Both (AND)", &metric_idx, 3)) {
+                mROMMetric = ROMMetric::BOTH;
+            }
+
+            // Threshold configuration
+            ImGui::SeparatorText("Threshold Criteria");
+            ImGui::Text("Maximum |Stiffness|:");
+            ImGui::SameLine(200);
+            ImGui::PushItemWidth(120);
+            ImGui::InputFloat("##max_stiffness", &mROMThresholds.max_stiffness, 1.0f, 10.0f, "%.1f Nm/rad");
+            ImGui::PopItemWidth();
+
+            ImGui::Text("Maximum |Torque|:");
+            ImGui::SameLine(200);
+            ImGui::PushItemWidth(120);
+            ImGui::InputFloat("##max_torque", &mROMThresholds.max_torque, 1.0f, 10.0f, "%.1f Nm");
+            ImGui::PopItemWidth();
+
+            // Use already-computed ROM metrics
+            const ROMMetrics& main_metrics = main_rom_metrics;
+            const ROMMetrics& std_metrics = std_rom_metrics;
+            bool has_std = !mStdAngleSweepData.empty() && mStdCharacter;
+
+            // Display table
+            ImGui::SeparatorText("ROM Metrics");
+            if (ImGui::BeginTable("ROM_Table", has_std ? 4 : 2,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+
+                // Header
+                ImGui::TableSetupColumn("Metric");
+                ImGui::TableSetupColumn("Main Character");
+                if (has_std) {
+                    ImGui::TableSetupColumn("Standard Character");
+                    ImGui::TableSetupColumn("Difference");
+                }
+                ImGui::TableHeadersRow();
+
+                // ROM row
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("ROM");
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f deg [%.1f° to %.1f°]", main_metrics.rom_deg,
+                    main_metrics.rom_min_angle, main_metrics.rom_max_angle);
+                if (has_std) {
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f deg [%.1f° to %.1f°]", std_metrics.rom_deg,
+                        std_metrics.rom_min_angle, std_metrics.rom_max_angle);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f deg", main_metrics.rom_deg - std_metrics.rom_deg);
+                }
+
+                // Peak Stiffness row
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Peak Stiffness");
+                ImGui::TableNextColumn();
+                bool stiff_flag = main_metrics.peak_stiffness > mROMThresholds.max_stiffness;
+                if (stiff_flag) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                ImGui::Text("%.2f Nm/rad @ %.1f°", main_metrics.peak_stiffness,
+                    main_metrics.angle_at_peak_stiffness);
+                if (stiff_flag) ImGui::PopStyleColor();
+                if (has_std) {
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f Nm/rad @ %.1f°", std_metrics.peak_stiffness,
+                        std_metrics.angle_at_peak_stiffness);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f Nm/rad", main_metrics.peak_stiffness - std_metrics.peak_stiffness);
+                }
+
+                // Peak Torque row
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Peak Torque");
+                ImGui::TableNextColumn();
+                bool torque_flag = main_metrics.peak_torque > mROMThresholds.max_torque;
+                if (torque_flag) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                ImGui::Text("%.2f Nm @ %.1f°", main_metrics.peak_torque,
+                    main_metrics.angle_at_peak_torque);
+                if (torque_flag) ImGui::PopStyleColor();
+                if (has_std) {
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f Nm @ %.1f°", std_metrics.peak_torque,
+                        std_metrics.angle_at_peak_torque);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f Nm", main_metrics.peak_torque - std_metrics.peak_torque);
+                }
+
+                ImGui::EndTable();
+            }
+        }
+    }
+
+    // Total Passive Torque & Stiffness Plot
+    if (collapsingHeaderWithControls("Total Passive Torque")) {
+        // Build torque and stiffness data
+        std::vector<double> torque_data, stiffness_data;
+        torque_data.reserve(mAngleSweepData.size());
+        stiffness_data.reserve(mAngleSweepData.size());
+        for (const auto& pt : mAngleSweepData) {
+            torque_data.push_back(pt.passive_torque_total);
+            stiffness_data.push_back(pt.passive_torque_stiffness);
+        }
+
+        if (torque_data.empty()) {
+            ImGui::TextDisabled("No total passive torque data available");
+        } else {
+            // Torque plot
+            if (ImPlot::BeginPlot(torque_plot_title.c_str(), ImVec2(-1, 300), plot_flags)) {
+                ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
+                ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
+                ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
+                ImPlot::PlotLine("Total Torque", x_data.data(), torque_data.data(), torque_data.size());
+
+                // Plot standard character data
+                if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                    std::vector<double> std_torque_data;
+                    std_torque_data.reserve(mStdAngleSweepData.size());
                     for (const auto& pt : mStdAngleSweepData) {
-                        auto it = pt.muscle_fp.find(muscle_name);
-                        if (it != pt.muscle_fp.end()) {
-                            std_fp_data.push_back(it->second);
-                        }
+                        std_torque_data.push_back(pt.passive_torque_total);
                     }
-                    
-                    if (!std_fp_data.empty() && std_fp_data.size() == std_x_data.size()) {
-                        std::string label = muscle_name + " (std)";
+                    if (!std_torque_data.empty() && std_torque_data.size() == std_x_data.size()) {
                         ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
                         ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-                        ImPlot::PlotLine(label.c_str(), std_x_data.data(),
-                            std_fp_data.data(), std_fp_data.size());
+                        ImPlot::PlotLine("Total Torque (std)", std_x_data.data(),
+                            std_torque_data.data(), std_torque_data.size());
                     }
                 }
+
+                ImPlot::EndPlot();
             }
-            
-            ImPlot::EndPlot();
+
+            // Stiffness plot
+            if (!stiffness_data.empty()) {
+                if (ImPlot::BeginPlot(stiffness_plot_title.c_str(), ImVec2(-1, 300), plot_flags)) {
+                    ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
+                    ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
+                    ImPlot::SetupAxis(ImAxis_Y1, "Stiffness (Nm/rad)");
+                    ImPlot::PlotLine("Stiffness", x_data.data(), stiffness_data.data(), stiffness_data.size());
+
+                    // Plot standard character data
+                    if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                        std::vector<double> std_stiffness_data;
+                        std_stiffness_data.reserve(mStdAngleSweepData.size());
+                        for (const auto& pt : mStdAngleSweepData) {
+                            std_stiffness_data.push_back(pt.passive_torque_stiffness);
+                        }
+                        if (!std_stiffness_data.empty() && std_stiffness_data.size() == std_x_data.size()) {
+                            ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                            ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
+                            ImPlot::PlotLine("Stiffness (std)", std_x_data.data(),
+                                std_stiffness_data.data(), std_stiffness_data.size());
+                        }
+                    }
+
+                    ImPlot::EndPlot();
+                }
+            }
         }
     }
 
     // Normalized Muscle Length Plot
     if (collapsingHeaderWithControls("Normalized Length (l_m_norm)")) {
-        if (ImPlot::BeginPlot("Normalized Muscle Length vs Joint Angle", ImVec2(-1, 400), plot_flags)) {
-            ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
-                angle_max * 180.0 / M_PI, ImGuiCond_Always);
-            ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+        if (ImPlot::BeginPlot(length_plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
+            ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
             ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
 
             for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
@@ -5788,21 +6116,23 @@ void PhysicalExam::renderMusclePlots() {
                         lm_norm_data.push_back(it->second);
                     }
                 }
-                
+
                 if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
                     ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                         lm_norm_data.data(), lm_norm_data.size());
                 }
             }
-            
+
             // Plot standard character data (dashed lines) - only if checkbox enabled
             if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
                 for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
+                    // Check visibility - skip if muscle is explicitly hidden
                     auto vis_it = mMuscleVisibility.find(muscle_name);
-                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                        continue;
+                    if (vis_it != mMuscleVisibility.end() && !vis_it->second) {
+                        continue;  // Skip non-visible muscles silently
                     }
-                    
+                    // If muscle not in visibility map, show it by default (might be std-only muscle)
+
                     // Build y_data for this muscle
                     std::vector<double> std_lm_norm_data;
                     std_lm_norm_data.reserve(mStdAngleSweepData.size());
@@ -5812,7 +6142,7 @@ void PhysicalExam::renderMusclePlots() {
                             std_lm_norm_data.push_back(it->second);
                         }
                     }
-                    
+
                     if (!std_lm_norm_data.empty() && std_lm_norm_data.size() == std_x_data.size()) {
                         std::string label = muscle_name + " (std)";
                         ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
@@ -5822,78 +6152,71 @@ void PhysicalExam::renderMusclePlots() {
                     }
                 }
             }
-            
+
             ImPlot::EndPlot();
         }
     }
 
-    // Total Passive Torque & Stiffness Plot
-    if (collapsingHeaderWithControls("Total Passive Torque")) {
-        // Build torque and stiffness data
-        std::vector<double> torque_data, stiffness_data;
-        torque_data.reserve(mAngleSweepData.size());
-        stiffness_data.reserve(mAngleSweepData.size());
-        for (const auto& pt : mAngleSweepData) {
-            torque_data.push_back(pt.passive_torque_total);
-            stiffness_data.push_back(pt.passive_torque_stiffness);
-        }
-        
-        if (torque_data.empty()) {
-            ImGui::TextDisabled("No total passive torque data available");
-        } else {
-            // Torque plot
-            if (ImPlot::BeginPlot("Total Passive Torque vs Joint Angle", ImVec2(-1, 300), plot_flags)) {
-                ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
-                    angle_max * 180.0 / M_PI, ImGuiCond_Always);
-                ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
-                ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
-                ImPlot::PlotLine("Total Torque", x_data.data(), torque_data.data(), torque_data.size());
-                
-                // Plot standard character data
-                if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-                    std::vector<double> std_torque_data;
-                    std_torque_data.reserve(mStdAngleSweepData.size());
-                    for (const auto& pt : mStdAngleSweepData) {
-                        std_torque_data.push_back(pt.passive_torque_total);
-                    }
-                    if (!std_torque_data.empty() && std_torque_data.size() == std_x_data.size()) {
-                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
-                        ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-                        ImPlot::PlotLine("Total Torque (std)", std_x_data.data(), 
-                            std_torque_data.data(), std_torque_data.size());
+    // Passive Forces Plot
+    if (collapsingHeaderWithControls("Passive Forces")) {
+        if (ImPlot::BeginPlot(passive_plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
+            ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
+            ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
+            ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
+
+            for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
+                auto vis_it = mMuscleVisibility.find(muscle_name);
+                if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                    continue;
+                }
+
+                // Build y_data for this muscle
+                std::vector<double> fp_data;
+                fp_data.reserve(mAngleSweepData.size());
+                for (const auto& pt : mAngleSweepData) {
+                    auto it = pt.muscle_fp.find(muscle_name);
+                    if (it != pt.muscle_fp.end()) {
+                        fp_data.push_back(it->second);
                     }
                 }
-                
-                ImPlot::EndPlot();
+
+                if (!fp_data.empty() && fp_data.size() == x_data.size()) {
+                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                        fp_data.data(), fp_data.size());
+                }
             }
 
-            // Stiffness plot
-            if (!stiffness_data.empty()) {
-                if (ImPlot::BeginPlot("Passive Stiffness (dτ/dθ) vs Joint Angle", ImVec2(-1, 300), plot_flags)) {
-                    ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
-                        angle_max * 180.0 / M_PI, ImGuiCond_Always);
-                    ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
-                    ImPlot::SetupAxis(ImAxis_Y1, "Stiffness (Nm/rad)");
-                    ImPlot::PlotLine("Stiffness", x_data.data(), stiffness_data.data(), stiffness_data.size());
-                    
-                    // Plot standard character data
-                    if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-                        std::vector<double> std_stiffness_data;
-                        std_stiffness_data.reserve(mStdAngleSweepData.size());
-                        for (const auto& pt : mStdAngleSweepData) {
-                            std_stiffness_data.push_back(pt.passive_torque_stiffness);
-                        }
-                        if (!std_stiffness_data.empty() && std_stiffness_data.size() == std_x_data.size()) {
-                            ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
-                            ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-                            ImPlot::PlotLine("Stiffness (std)", std_x_data.data(), 
-                                std_stiffness_data.data(), std_stiffness_data.size());
+            // Plot standard character data (dashed lines) - only if checkbox enabled
+            if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
+                    // Check visibility - skip if muscle is explicitly hidden
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it != mMuscleVisibility.end() && !vis_it->second) {
+                        continue;  // Skip non-visible muscles silently
+                    }
+                    // If muscle not in visibility map, show it by default (might be std-only muscle)
+
+                    // Build y_data for this muscle
+                    std::vector<double> std_fp_data;
+                    std_fp_data.reserve(mStdAngleSweepData.size());
+                    for (const auto& pt : mStdAngleSweepData) {
+                        auto it = pt.muscle_fp.find(muscle_name);
+                        if (it != pt.muscle_fp.end()) {
+                            std_fp_data.push_back(it->second);
                         }
                     }
-                    
-                    ImPlot::EndPlot();
+
+                    if (!std_fp_data.empty() && std_fp_data.size() == std_x_data.size()) {
+                        std::string label = muscle_name + " (std)";
+                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                        ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
+                        ImPlot::PlotLine(label.c_str(), std_x_data.data(),
+                            std_fp_data.data(), std_fp_data.size());
+                    }
                 }
             }
+
+            ImPlot::EndPlot();
         }
     }
 
@@ -5927,9 +6250,8 @@ void PhysicalExam::renderMusclePlots() {
             // Plot each muscle's contribution to this joint (magnitude across all DOFs)
             std::string plot_title = "Per-Muscle Passive Torque: " + joint_name;
             if (ImPlot::BeginPlot(plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
-                ImPlot::SetupAxisLimits(ImAxis_X1, angle_min * 180.0 / M_PI,
-                    angle_max * 180.0 / M_PI, ImGuiCond_Always);
-                ImPlot::SetupAxis(ImAxis_X1, "Joint Angle (deg)");
+                ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
+                ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
                 ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
 
                 for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
@@ -6167,10 +6489,12 @@ void PhysicalExam::drawRenderOptionsSection() {
         }
         
         ImGui::Separator();
-        
-        // Plot background color
+
+        // Plot background color and trial name display
         ImGui::Checkbox("White Plot", &mPlotWhiteBackground);
-        
+        ImGui::SameLine(200);
+        ImGui::Checkbox("Show Trial Name", &mShowTrialNameInPlots);
+
         ImGui::Separator();
         
         // Render Mode section
@@ -6897,7 +7221,7 @@ void PhysicalExam::drawMuscleInfoSection() {
                 ImGui::Columns(4, nullptr, false);
                 ImGui::Text("f0:"); ImGui::NextColumn(); ImGui::Text("%.3f N", selectedMuscle->f0); ImGui::NextColumn();
                 ImGui::Text("f0_base:"); ImGui::NextColumn(); ImGui::Text("%.3f N", selectedMuscle->f0_base); ImGui::NextColumn();
-                ImGui::Text("lm_opt:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lm_opt); ImGui::NextColumn();
+                ImGui::Text("lm_opt:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lm_contract); ImGui::NextColumn();
                 ImGui::Text("lt_rel:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lt_rel); ImGui::NextColumn();
                 ImGui::Text("lt_rel_base:"); ImGui::NextColumn(); ImGui::Text("%.4f", selectedMuscle->lt_rel_base); ImGui::NextColumn();
                 ImGui::Text("lmt_ref:"); ImGui::NextColumn(); ImGui::Text("%.4f m", selectedMuscle->lmt_ref); ImGui::NextColumn();

@@ -141,22 +141,45 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     // Create C3D Reader
     mC3DReader = new C3D_Reader(mFittingConfigPath, mMarkerConfigPath, mFreeCharacter.get(), mMotionCharacter.get());
 
+    // Initialize Resource Manager for PID-based access (use singleton)
+    // Must be done before scanC3DFiles() which uses mResourceManager
+    try {
+        mResourceManager = &rm::getManager();
+
+        // Initialize PID Navigator with C3D filter
+        mPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
+            mResourceManager,
+            std::make_unique<PIDNav::C3DFileFilter>()
+        );
+
+        // Register file selection callback
+        mPIDNavigator->setFileSelectionCallback(
+            [this](const std::string& path, const std::string& filename) {
+                onPIDFileSelected(path, filename);
+            }
+        );
+
+        // Register PID change callback for calibration checking
+        mPIDNavigator->setPIDChangeCallback(
+            [this](const std::string& pid) {
+                checkForPersonalizedCalibration();
+            }
+        );
+
+        // Initial PID scan
+        mPIDNavigator->scanPIDs();
+    } catch (const rm::RMError& e) {
+        LOG_WARN("[C3DProcessor] Resource manager init failed: " << e.what());
+    } catch (const std::exception& e) {
+        LOG_WARN("[C3DProcessor] Resource manager init failed: " << e.what());
+    }
+
     // Scan for C3D files and autoload first one (if enabled)
     scanC3DFiles();
     if (mAutoloadFirstC3D && !mMotionList.empty()) {
         mSelectedMotion = 0;
         loadC3DFile(mMotionList[0]);
         LOG_INFO("[C3DProcessor] Autoloaded first C3D file: " << mMotionList[0]);
-    }
-
-    // Initialize Resource Manager for PID-based access (use singleton)
-    try {
-        mResourceManager = &rm::getManager();
-        scanPIDList();
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[C3DProcessor] Resource manager init failed: " << e.what());
-    } catch (const std::exception& e) {
-        LOG_WARN("[C3DProcessor] Resource manager init failed: " << e.what());
     }
 
     mLastRealTime = glfwGetTime();
@@ -567,95 +590,26 @@ void C3DProcessorApp::drawSelectedBoneGizmo()
 
 void C3DProcessorApp::drawSkeleton()
 {
-    glEnable(GL_LIGHTING);
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glEnable(GL_COLOR_MATERIAL);
-
-    // Helper lambda to render a skeleton
-    auto renderSkeleton = [this](dart::dynamics::SkeletonPtr skel, const Eigen::Vector4d& baseColor) {
-        if (!skel) return;
-
-        for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
-            const BodyNode* bn = skel->getBodyNode(i);
-            if (!bn) continue;
-
-            glPushMatrix();
-            glMultMatrixd(bn->getTransform().data());
-
-            bn->eachShapeNodeWith<VisualAspect>([this, &baseColor](const ShapeNode* sn) {
-                if (!sn) return true;
-                const auto& va = sn->getVisualAspect();
-                if (!va || va->isHidden()) return true;
-
-                glPushMatrix();
-                Eigen::Affine3d tmp = sn->getRelativeTransform();
-                glMultMatrixd(tmp.data());
-
-                const auto* shape = sn->getShape().get();
-
-                // Render mesh (for Mesh mode)
-                if (mRenderMode == RenderMode::Mesh) {
-                    if (shape->is<MeshShape>()) {
-                        const auto* mesh = dynamic_cast<const MeshShape*>(shape);
-                        mShapeRenderer.renderMesh(mesh, false, 0.0, baseColor);
-                    }
-                }
-
-                // Render primitive shapes (for Primitive and Wireframe modes)
-                if (mRenderMode == RenderMode::Primitive || mRenderMode == RenderMode::Wireframe) {
-                    // For wireframe mode, render primitives as wireframe
-                    if (mRenderMode == RenderMode::Wireframe) {
-                        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                        glLineWidth(2.0f);
-                        glColor4f(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
-                    } else {
-                        glColor4f(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
-                    }
-
-                    if (shape->is<BoxShape>()) {
-                        GUI::DrawCube(static_cast<const BoxShape*>(shape)->getSize());
-                    } else if (shape->is<CapsuleShape>()) {
-                        auto* cap = static_cast<const CapsuleShape*>(shape);
-                        GUI::DrawCapsule(cap->getRadius(), cap->getHeight());
-                    } else if (shape->is<SphereShape>()) {
-                        GUI::DrawSphere(static_cast<const SphereShape*>(shape)->getRadius());
-                    } else if (shape->is<CylinderShape>()) {
-                        auto* cyl = static_cast<const CylinderShape*>(shape);
-                        GUI::DrawCylinder(cyl->getRadius(), cyl->getHeight());
-                    }
-
-                    // Restore fill mode and line width after wireframe
-                    if (mRenderMode == RenderMode::Wireframe) {
-                        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                        glLineWidth(1.0f);
-                    }
-                }
-
-                glPopMatrix();
-                return true;
-            });
-
-            glPopMatrix();
-        }
-    };
-
-    // Render mFreeCharacter (light gray, for bone-by-bone debugging)
+    // Render mFreeCharacter (white, for bone-by-bone debugging)
     if (mFreeCharacter && mRenderFreeCharacter) {
-        auto skel = mFreeCharacter->getSkeleton();
-        if (skel) renderSkeleton(skel, Eigen::Vector4d(0.8, 0.8, 0.8, 0.9));
+        GUI::DrawSkeleton(mFreeCharacter->getSkeleton(),
+                          Eigen::Vector4d(1.0, 1.0, 1.0, 0.9),
+                          mRenderMode,
+                          &mShapeRenderer);
     }
 
-    // Render mMotionCharacter (blue tint, for motion playback)
-    // Pose will be set externally via C3D_Reader in the future
+    // Render mMotionCharacter (green tint, for motion playback)
     if (mMotionCharacter && mRenderMotionCharacter) {
-        auto skel = mMotionCharacter->getSkeleton();
-        if (skel) {
-            // Apply offset transformation
-            glPushMatrix();
-            glTranslated(mMotionCharacterOffset.x(), mMotionCharacterOffset.y(), mMotionCharacterOffset.z());
-            renderSkeleton(skel, Eigen::Vector4d(0.0, 1.0, 0.0, 0.9));
-            glPopMatrix();
-        }
+        // Apply offset transformation
+        glPushMatrix();
+        glTranslated(mMotionCharacterOffset.x(), mMotionCharacterOffset.y(), mMotionCharacterOffset.z());
+
+        GUI::DrawSkeleton(mMotionCharacter->getSkeleton(),
+                          Eigen::Vector4d(0.0, 1.0, 0.0, 0.9),
+                          mRenderMode,
+                          &mShapeRenderer);
+
+        glPopMatrix();
     }
 }
 
@@ -979,10 +933,11 @@ void C3DProcessorApp::drawMarkerFittingSection()
         }
         ImGui::SameLine();
         if (ImGui::Button("Export##Static")) {
-            if (mStaticCalibResult.success && mResourceManager) {
-                if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
-                    std::string pid = mPIDList[mSelectedPID];
-                    std::string prePost = mPreOp ? "pre" : "post";
+            if (mStaticCalibResult.success && mResourceManager && mPIDNavigator) {
+                const auto& pidState = mPIDNavigator->getState();
+                if (pidState.selectedPID >= 0 && pidState.selectedPID < static_cast<int>(pidState.pidList.size())) {
+                    std::string pid = pidState.pidList[pidState.selectedPID];
+                    std::string prePost = pidState.preOp ? "pre" : "post";
                     std::string pattern = "@pid:" + pid + "/gait/" + prePost;
                     std::string outputDir = mResourceManager->resolveDir(pattern);
                     if (!outputDir.empty()) {
@@ -1043,7 +998,7 @@ void C3DProcessorApp::drawMarkerFittingSection()
         bool canExportHDF = mDynamicCalibResult.success
                          && !mDynamicCalibResult.motionPoses.empty()
                          && mResourceManager != nullptr
-                         && mSelectedPID >= 0;
+                         && mPIDNavigator && mPIDNavigator->getState().selectedPID >= 0;
 
         if (!canExportHDF) ImGui::BeginDisabled();
         if (ImGui::Button("Export HDF")) {
@@ -1056,8 +1011,9 @@ void C3DProcessorApp::drawMarkerFittingSection()
 
         // Check if destination file exists and show warning
         if (canExportHDF) {
-            std::string pid = mPIDList[mSelectedPID];
-            std::string prePost = mPreOp ? "pre" : "post";
+            const auto& pidState = mPIDNavigator->getState();
+            std::string pid = pidState.pidList[pidState.selectedPID];
+            std::string prePost = pidState.preOp ? "pre" : "post";
             std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
             std::string outputDir = mResourceManager->resolveDir(pattern);
             if (!outputDir.empty()) {
@@ -1288,8 +1244,9 @@ void C3DProcessorApp::drawSkeletonExportSection()
 void C3DProcessorApp::exportMotionToHDF5()
 {
     // 1. Resolve output path via PID URI
-    std::string pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
+    const auto& pidState = mPIDNavigator->getState();
+    std::string pid = pidState.pidList[pidState.selectedPID];
+    std::string prePost = pidState.preOp ? "pre" : "post";
     std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
     std::string outputDir = mResourceManager->resolveDirCreate(pattern);
 
@@ -2872,135 +2829,92 @@ void C3DProcessorApp::clearMotionAndZeroPose()
 
 void C3DProcessorApp::drawClinicalDataSection()
 {
-    if (!mResourceManager) return;
+    if (!collapsingHeaderWithControls("Clinical Data")) {
+        return;
+    }
 
-    if (collapsingHeaderWithControls("Clinical Data")) {
-        // PID Filter and Refresh
+    // PID Navigator UI
+    if (!mPIDNavigator) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "PID Navigator not initialized");
+        return;
+    }
+
+    mPIDNavigator->renderInlineSelector(150, 150);
+
+    // Calibration Status Section (render below navigator)
+    const auto& pidState = mPIDNavigator->getState();
+    if (pidState.selectedPID >= 0) {
+        ImGui::Separator();
+        ImGui::Text("Static Calibration:");
+
+        // Check for calibration availability
+        const std::string& pid = pidState.pidList[pidState.selectedPID];
+        std::string prePost = pidState.preOp ? "pre" : "post";
+        std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+
+        bool hasCalibration = false;
+        if (mResourceManager) {
+            try {
+                auto resolved1 = mResourceManager->resolve(pattern + "/static_calibrated_marker.xml");
+                auto resolved2 = mResourceManager->resolve(pattern + "/static_calibrated_body_scale.yaml");
+                hasCalibration = !resolved1.empty() && !resolved2.empty();
+            } catch (...) { hasCalibration = false; }
+        }
+
+        // Display calibration status with color coding
+        if (mPersonalizedCalibrationLoaded) {
+            ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded");
+        } else if (hasCalibration) {
+            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "Available");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Not Available");
+        }
+
+        // Load calibration button
+        ImGui::SameLine();
+        if (ImGui::Button("Load calibration")) {
+            if (hasCalibration && mResourceManager) {
+                try {
+                    auto resolved = mResourceManager->resolve(pattern);
+                    if (loadPersonalizedCalibration(resolved.string())) {
+                        mPersonalizedCalibrationLoaded = true;
+                    }
+                } catch (const rm::RMError& e) {
+                    LOG_ERROR("[C3DProcessor] Failed to load calibration: " << e.what());
+                }
+            }
+        }
+
+        // Export skeleton section
+        if (!mResourceManager) return;
+
         ImGui::SetNextItemWidth(150);
-        if (ImGui::InputText("##PIDFilter", mPIDFilter, sizeof(mPIDFilter))) {
-            // Filter applied on display
-        }
+        ImGui::InputText("##exportCalibName", mExportCalibrationName, sizeof(mExportCalibrationName));
         ImGui::SameLine();
-        if (ImGui::Button("Refresh##PID")) {
-            scanPIDList();
+
+        // Check if export file exists
+        std::string outputDir = mResourceManager->resolveDir(pattern);
+        std::string skelDir = outputDir + "/skeleton";
+        if (!std::filesystem::exists(skelDir)) {
+            std::filesystem::create_directories(skelDir);
         }
-        ImGui::SameLine();
-        ImGui::Text("%zu PIDs", mPIDList.size());
+        std::string skelPath = skelDir + "/" + mExportCalibrationName + ".yaml";
+        bool fileExists = std::filesystem::exists(skelPath);
 
-        // PID List
-        if (ImGui::BeginListBox("##PIDList", ImVec2(-1, 150))) {
-            for (int i = 0; i < static_cast<int>(mPIDList.size()); ++i) {
-                const auto& pid = mPIDList[i];
-                const std::string& name = (i < static_cast<int>(mPIDNames.size())) ? mPIDNames[i] : "";
-                const std::string& gmfcs = (i < static_cast<int>(mPIDGMFCS.size())) ? mPIDGMFCS[i] : "";
-
-                // Build display string: "12345678 (홍길동, II)" or "12345678 (홍길동)" or just "12345678"
-                std::string displayStr;
-                if (name.empty() && gmfcs.empty()) {
-                    displayStr = pid;
-                } else if (name.empty()) {
-                    displayStr = pid + " (" + gmfcs + ")";
-                } else if (gmfcs.empty()) {
-                    displayStr = pid + " (" + name + ")";
-                } else {
-                    displayStr = pid + " (" + name + ", " + gmfcs + ")";
-                }
-
-                // Apply filter (search in PID, name, and GMFCS)
-                if (mPIDFilter[0] != '\0' &&
-                    pid.find(mPIDFilter) == std::string::npos &&
-                    name.find(mPIDFilter) == std::string::npos &&
-                    gmfcs.find(mPIDFilter) == std::string::npos) {
-                    continue;
-                }
-
-                bool isSelected = (i == mSelectedPID);
-                if (ImGui::Selectable(displayStr.c_str(), isSelected)) {
-                    if (i != mSelectedPID) {
-                        mSelectedPID = i;
-                        scanPIDC3DFiles();
-                    }
-                }
-            }
-            ImGui::EndListBox();
-        }
-
-        // Pre/Post radio buttons
-        if (ImGui::RadioButton("Pre-op", mPreOp)) {
-            if (!mPreOp) {
-                mPreOp = true;
-                if (mSelectedPID >= 0) scanPIDC3DFiles();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Post-op", !mPreOp)) {
-            if (mPreOp) {
-                mPreOp = false;
-                if (mSelectedPID >= 0) scanPIDC3DFiles();
-            }
-        }
-
-        // Static Calibration Status (only if PID selected)
-        if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
-            ImGui::Separator();
-            ImGui::Text("Static Calibration:");
+        if (fileExists) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Overwrite");
             ImGui::SameLine();
-            if (mHasPersonalizedCalibration) {
-                if (mPersonalizedCalibrationLoaded) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "Loaded");
-                    ImGui::SameLine();
-                    ImGui::BeginDisabled();
-                    ImGui::Button("Load calibration");
-                    ImGui::EndDisabled();
-                } else {
-                    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Available");
-                    ImGui::SameLine();
-                    if (ImGui::Button("Load calibration")) {
-                        std::string pid = mPIDList[mSelectedPID];
-                        std::string prePost = mPreOp ? "pre" : "post";
-                        std::string pattern = "@pid:" + pid + "/gait/" + prePost;
-                        std::string inputDir = mResourceManager->resolveDir(pattern);
-                        if (loadPersonalizedCalibration(inputDir)) {
-                            mPersonalizedCalibrationLoaded = true;
-                            LOG_INFO("[C3DProcessor] Loaded personalized calibration for " << pid << " (" << prePost << ")");
-                        }
-                    }
-                }
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Not Available");
+        }
+        if (ImGui::Button("Export Skeleton")) {
+            if (mMotionCharacter) {
+                mMotionCharacter->exportSkeletonYAML(skelPath);
+                LOG_INFO("[C3DProcessor] Exported skeleton to: " << skelPath);
             }
+        }
 
-            // Export calibration
-            ImGui::SetNextItemWidth(150);
-            ImGui::InputText("##exportCalibName", mExportCalibrationName, sizeof(mExportCalibrationName));
-            ImGui::SameLine();
-
-            // Check if file exists and show warning
-            std::string pid = mPIDList[mSelectedPID];
-            std::string prePost = mPreOp ? "pre" : "post";
-            std::string pattern = "@pid:" + pid + "/gait/" + prePost;
-            std::string outputDir = mResourceManager->resolveDir(pattern);
-            std::string skelDir = outputDir + "/skeleton";
-            if (!std::filesystem::exists(skelDir)) {
-                std::filesystem::create_directories(skelDir);
-            }
-            std::string skelPath = skelDir + "/" + mExportCalibrationName + ".yaml";
-            bool fileExists = std::filesystem::exists(skelPath);
-
-            if (fileExists) {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Overwrite");
-                ImGui::SameLine();
-            }
-            if (ImGui::Button("Export Skeleton")) {
-                if (mMotionCharacter) {
-                    mMotionCharacter->exportSkeletonYAML(skelPath);
-                    LOG_INFO("[C3DProcessor] Exported skeleton to: " << skelPath);
-                    std::string skelURI = "@pid:" + pid + "/gait/" + prePost + "/skeleton/" + mExportCalibrationName + ".yaml";
-                    LOG_INFO("[C3DProcessor] URI: " << skelURI);
-                }
-            }
-
-            if (ImGui::Button("Reset calibration")) {
+        // Reset calibration button
+        if (mPersonalizedCalibrationLoaded) {
+            if (ImGui::Button("Reset Calibration")) {
                 // Reload initial markers and reset skeleton
                 if (mFreeCharacter) {
                     mFreeCharacter->loadMarkers(mInitialMarkerPath);
@@ -3015,152 +2929,7 @@ void C3DProcessorApp::drawClinicalDataSection()
                 mPersonalizedCalibrationLoaded = false;
                 LOG_INFO("[C3DProcessor] Reset calibration to initial state");
             }
-
         }
-
-        // C3D Files section (only if PID selected)
-        if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
-            ImGui::Separator();
-            ImGui::Text("C3D Files: (%zu files)", mPIDC3DFiles.size());
-
-            // C3D Filter
-            ImGui::SetNextItemWidth(100);
-            ImGui::InputText("##PIDC3DFilter", mPIDC3DFilter, sizeof(mPIDC3DFilter));
-            ImGui::SameLine();
-            if (ImGui::Button("Trim##C3DFilter")) {
-                strncpy(mPIDC3DFilter, "Trimmed_", sizeof(mPIDC3DFilter) - 1);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("X##C3DFilter")) {
-                mPIDC3DFilter[0] = '\0';
-            }
-
-            // C3D List
-            if (ImGui::BeginListBox("##PIDC3DList", ImVec2(-1, 150))) {
-                for (int i = 0; i < static_cast<int>(mPIDC3DFiles.size()); ++i) {
-                    const auto& filename = mPIDC3DFiles[i];
-
-                    // Apply filter
-                    if (mPIDC3DFilter[0] != '\0' && filename.find(mPIDC3DFilter) == std::string::npos) {
-                        continue;
-                    }
-
-                    bool isSelected = (i == mSelectedPIDC3D && mMotionSource == MotionSource::PID);
-                    if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                        if (i != mSelectedPIDC3D || mMotionSource != MotionSource::PID) {
-                            mSelectedPIDC3D = i;
-                            mMotionSource = MotionSource::PID;
-                            loadPIDC3DFile(filename);
-                        }
-                    }
-                }
-                ImGui::EndListBox();
-            }
-        }
-    }
-}
-
-void C3DProcessorApp::scanPIDList()
-{
-    mPIDList.clear();
-    mPIDNames.clear();
-    mPIDGMFCS.clear();
-    mSelectedPID = -1;
-    mPIDC3DFiles.clear();
-    mSelectedPIDC3D = -1;
-
-    if (!mResourceManager) return;
-
-    try {
-        // List all PIDs (directories under @pid:)
-        auto entries = mResourceManager->list("@pid:");
-        for (const auto& entry : entries) {
-            // Entry is the PID (directory name)
-            mPIDList.push_back(entry);
-        }
-        std::sort(mPIDList.begin(), mPIDList.end());
-
-        // Fetch patient names and GMFCS levels for each PID
-        mPIDNames.resize(mPIDList.size());
-        mPIDGMFCS.resize(mPIDList.size());
-        for (size_t i = 0; i < mPIDList.size(); ++i) {
-            try {
-                std::string nameUri = "@pid:" + mPIDList[i] + "/name";
-                auto handle = mResourceManager->fetch(nameUri);
-                mPIDNames[i] = handle.as_string();
-            } catch (const rm::RMError&) {
-                mPIDNames[i] = "";  // No name available
-            }
-            try {
-                std::string gmfcsUri = "@pid:" + mPIDList[i] + "/gmfcs";
-                auto handle = mResourceManager->fetch(gmfcsUri);
-                mPIDGMFCS[i] = handle.as_string();
-            } catch (const rm::RMError&) {
-                mPIDGMFCS[i] = "";  // No GMFCS available
-            }
-        }
-
-        LOG_INFO("[C3DProcessor] Found " << mPIDList.size() << " PIDs");
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[C3DProcessor] Failed to list PIDs: " << e.what());
-    }
-}
-
-void C3DProcessorApp::scanPIDC3DFiles()
-{
-    mPIDC3DFiles.clear();
-    mSelectedPIDC3D = -1;
-    mHasPersonalizedCalibration = false;
-
-    if (!mResourceManager || mSelectedPID < 0 || mSelectedPID >= static_cast<int>(mPIDList.size())) {
-        return;
-    }
-
-    const std::string& pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
-    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
-
-    try {
-        // Check for personalized calibration files
-        std::string dirPath = mResourceManager->resolveDir(pattern);
-        std::string markerPath = dirPath + "/static_calibrated_marker.xml";
-        std::string scalePath = dirPath + "/static_calibrated_body_scale.yaml";
-        mHasPersonalizedCalibration = std::filesystem::exists(markerPath) && std::filesystem::exists(scalePath);
-
-        auto files = mResourceManager->list(pattern);
-        for (const auto& file : files) {
-            // Filter for .c3d files only
-            std::string lower = file;
-            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-            if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".c3d") {
-                mPIDC3DFiles.push_back(file);
-            }
-        }
-        std::sort(mPIDC3DFiles.begin(), mPIDC3DFiles.end());
-        LOG_INFO("[C3DProcessor] Found " << mPIDC3DFiles.size() << " C3D files for PID " << pid << " (" << prePost << ")");
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[C3DProcessor] Failed to list C3D files: " << e.what());
-    }
-}
-
-void C3DProcessorApp::loadPIDC3DFile(const std::string& filename)
-{
-    if (!mResourceManager || mSelectedPID < 0) return;
-
-    const std::string& pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
-    std::string uri = "@pid:" + pid + "/gait/" + prePost + "/" + filename;
-
-    try {
-        auto handle = mResourceManager->fetch(uri);
-        std::filesystem::path localPath = handle.local_path();
-
-        // Use existing loadC3DFile with the local path
-        loadC3DFile(localPath.string());
-
-        LOG_INFO("[C3DProcessor] Loaded PID C3D: " << uri);
-    } catch (const rm::RMError& e) {
-        LOG_ERROR("[C3DProcessor] Failed to fetch C3D: " << e.what());
     }
 }
 
@@ -3214,6 +2983,40 @@ bool C3DProcessorApp::loadPersonalizedCalibration(const std::string& inputDir)
 
     LOG_INFO("[Load] Loaded personalized calibration from: " << inputDir);
     return true;
+}
+
+void C3DProcessorApp::onPIDFileSelected(const std::string& path,
+                                         const std::string& filename)
+{
+    // Set motion source tracking
+    mMotionSource = MotionSource::PID;
+
+    // Load the C3D file using existing loader
+    loadC3DFile(path);
+
+    LOG_INFO("[C3DProcessor] Loaded PID C3D file: " << filename);
+}
+
+void C3DProcessorApp::checkForPersonalizedCalibration()
+{
+    mHasPersonalizedCalibration = false;
+
+    if (!mPIDNavigator || !mResourceManager) return;
+
+    const auto& state = mPIDNavigator->getState();
+    if (state.selectedPID < 0) return;
+
+    const std::string& pid = state.pidList[state.selectedPID];
+    std::string prePost = state.preOp ? "pre" : "post";
+    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+
+    try {
+        auto resolved1 = mResourceManager->resolve(pattern + "/static_calibrated_marker.xml");
+        auto resolved2 = mResourceManager->resolve(pattern + "/static_calibrated_body_scale.yaml");
+        mHasPersonalizedCalibration = !resolved1.empty() && !resolved2.empty();
+    } catch (const rm::RMError&) {
+        mHasPersonalizedCalibration = false;
+    }
 }
 
 std::string C3DProcessorApp::getCurrentMotionPath() const

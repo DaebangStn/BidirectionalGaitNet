@@ -55,6 +55,29 @@ struct AngleSweepDataPoint {
     std::map<std::string, std::vector<double>> muscle_jtp; // Per-muscle joint torques
 };
 
+// ROM (Range of Motion) metrics computed from angle sweep data
+struct ROMMetrics {
+    double rom_deg;                    // Functional ROM (degrees) - range before hitting threshold
+    double rom_min_angle;              // Start angle of ROM (degrees)
+    double rom_max_angle;              // End angle of ROM (degrees)
+    double peak_stiffness;             // Peak absolute stiffness (Nm/rad)
+    double peak_torque;                // Peak absolute torque (Nm)
+    double angle_at_peak_stiffness;    // Angle where peak stiffness occurs (degrees)
+    double angle_at_peak_torque;       // Angle where peak torque occurs (degrees)
+};
+
+// ROM threshold configuration
+struct ROMThresholds {
+    float max_stiffness = 100.0f;      // Maximum acceptable stiffness
+    float max_torque = 50.0f;          // Maximum acceptable torque
+};
+
+// X-axis display mode for muscle plots
+enum class XAxisMode { RAW_ANGLE, NORMALIZED };
+
+// ROM metric selection - which metric determines ROM limit
+enum class ROMMetric { STIFFNESS, TORQUE, EITHER, BOTH };
+
 // Posture control target
 struct PostureTarget {
     std::string bodyNodeName;
@@ -160,6 +183,11 @@ public:
     void runAngleSweepTrial(const TrialConfig& trial);
     void collectAngleSweepData(double angle, int joint_index);
     void setupTrackedMusclesForAngleSweep(const std::string& joint_name);
+
+    // ROM analysis helpers
+    ROMMetrics computeROMMetrics(const std::vector<AngleSweepDataPoint>& data) const;
+    std::vector<double> normalizeXAxis(const std::vector<double>& x_data_deg,
+                                       double rom_min_deg, double rom_max_deg) const;
 
     // HDF5 exam export (all trials in single file)
     std::string extractPidFromPath(const std::string& path) const;
@@ -288,6 +316,8 @@ private:
     bool mRenderStdCharacter;
     bool mShowStdCharacterInPlots;  // Toggle for plot overlay
     bool mPlotWhiteBackground;  // Toggle for white plot background
+    bool mShowTrialNameInPlots;  // Toggle for showing trial name in plot titles
+    std::string mCurrentSweepName;  // Current sweep name (trial name or "GUI Sweep")
 
     // GLFW/ImGui
     GLFWwindow* mWindow;
@@ -295,6 +325,8 @@ private:
     int mWindowXPos, mWindowYPos;
     int mControlPanelWidth;
     int mPlotPanelWidth;
+    int mPhysicalExamControlPanelWidth;
+    int mPhysicalExamDataPanelWidth;
 
     // Camera
     Eigen::Vector3d mEye;
@@ -392,6 +424,11 @@ private:
     std::vector<AngleSweepDataPoint> mAngleSweepData;
     std::vector<std::string> mAngleSweepTrackedMuscles;
     int mAngleSweepJointIdx;  // Joint index for current angle sweep
+
+    // ROM analysis state
+    ROMThresholds mROMThresholds;              // User-configurable thresholds
+    XAxisMode mXAxisMode = XAxisMode::RAW_ANGLE;  // X-axis normalization mode
+    ROMMetric mROMMetric = ROMMetric::EITHER;     // Which metric determines ROM
 
     // HDF5 exam export
     std::string mOutputDir;        // Output directory (from command line)

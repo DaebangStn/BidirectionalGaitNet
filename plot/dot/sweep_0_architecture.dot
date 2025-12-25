@@ -1,0 +1,154 @@
+digraph SweepArchitecture {
+    rankdir=LR;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=1.2;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Arial",
+        fontsize=10
+    ];
+
+    edge [color="gray30", penwidth=1.2];
+
+    // ============================================================================
+    // INPUT SOURCES
+    // ============================================================================
+
+    subgraph cluster_inputs {
+        label=<<font point-size="9"><b>Input Sources</b></font>>;
+        style="rounded,filled";
+        fillcolor="gray95";
+        color="gray50";
+
+        yaml [label="YAML\nTrial Config", xlabel=<<font point-size="7">base.yaml</font>>];
+        gui [label="GUI\nControls", xlabel=<<font point-size="7">ImGui Panel</font>>];
+    }
+
+    // ============================================================================
+    // TRIAL-BASED EXECUTION PATH
+    // ============================================================================
+
+    subgraph cluster_trial {
+        label=<<font point-size="9"><b>Trial-Based Execution (Programmatic)</b></font>>;
+        style="rounded,filled";
+        fillcolor="#E3F2FD";
+        color="gray50";
+
+        loadTrial [label="Load Trial", xlabel=<<font point-size="7">loadAndRunTrial()</font>>];
+        runAngleSweep [label="Run Angle\nSweep", xlabel=<<font point-size="7">runAngleSweepTrial()</font>>];
+        kinematicLoop [label="Kinematic\nLoop", xlabel=<<font point-size="7">101 steps, no physics</font>>];
+        exportHDF5 [label="Export\nHDF5", xlabel=<<font point-size="7">appendTrialToHDF5()</font>>];
+
+        loadTrial -> runAngleSweep [penwidth=2.5, color=black];
+        runAngleSweep -> kinematicLoop [penwidth=2.5, color=black];
+        kinematicLoop -> exportHDF5 [penwidth=2.5, color=black];
+    }
+
+    // ============================================================================
+    // GUI-BASED EXECUTION PATH
+    // ============================================================================
+
+    subgraph cluster_gui {
+        label=<<font point-size="9"><b>GUI-Based Execution (Interactive)</b></font>>;
+        style="rounded,filled";
+        fillcolor="#F1F8E9";
+        color="gray50";
+
+        guiConfig [label="Configure\nSweep", xlabel=<<font point-size="7">Joint, range, steps</font>>];
+        runSweep [label="Start\nSweep", xlabel=<<font point-size="7">runSweep()</font>>];
+        mainLoop [label="Incremental\nExecution", xlabel=<<font point-size="7">mainLoop() per-frame</font>>];
+        renderPlots [label="Render\nPlots", xlabel=<<font point-size="7">renderMusclePlots()</font>>];
+
+        guiConfig -> runSweep [penwidth=2.5, color=black];
+        runSweep -> mainLoop [penwidth=2.5, color=black];
+        mainLoop -> renderPlots [penwidth=2.5, color=black];
+
+        // Feedback loop
+        mainLoop -> mainLoop [label=<<font point-size="7">per frame</font>>, penwidth=1.5, color="orange", style=dashed];
+    }
+
+    // ============================================================================
+    // SHARED INFRASTRUCTURE
+    // ============================================================================
+
+    subgraph cluster_shared {
+        label=<<font point-size="9"><b>Shared Components</b></font>>;
+        style="rounded,filled";
+        fillcolor="gray95";
+        color="gray50";
+
+        setupMuscles [label="Setup\nMuscles", xlabel=<<font point-size="7">setupTrackedMuscles...()</font>>];
+        collectData [label="Collect\nData", xlabel=<<font point-size="7">collectAngleSweepData()</font>>];
+        passiveTorque [label="Passive\nTorque", xlabel=<<font point-size="7">getPassiveTorqueJoint()</font>>];
+        muscleData [label="Muscle\nData", xlabel=<<font point-size="7">f_p, lm_norm, jtp</font>>];
+
+        setupMuscles -> collectData [penwidth=1.0, color="gray50"];
+        collectData -> passiveTorque [penwidth=1.0, color="gray50"];
+        collectData -> muscleData [penwidth=1.0, color="gray50"];
+    }
+
+    // ============================================================================
+    // OUTPUTS
+    // ============================================================================
+
+    subgraph cluster_outputs {
+        label=<<font point-size="9"><b>Output Destinations</b></font>>;
+        style="rounded,filled";
+        fillcolor="gray95";
+        color="gray50";
+
+        hdf5File [label="HDF5\nFile", xlabel=<<font point-size="7">base_PID.h5</font>>];
+        implot [label="ImPlot\nVisualizations", xlabel=<<font point-size="7">Real-time charts</font>>];
+    }
+
+    // ============================================================================
+    // CONNECTIONS: INPUT TO EXECUTION PATHS
+    // ============================================================================
+
+    yaml -> loadTrial [penwidth=2.5, color=black];
+    gui -> guiConfig [penwidth=2.5, color=black];
+
+    // ============================================================================
+    // CONNECTIONS: EXECUTION PATHS TO SHARED
+    // ============================================================================
+
+    runAngleSweep -> setupMuscles [penwidth=1.5, color="gray30"];
+    runSweep -> setupMuscles [penwidth=1.5, color="gray30"];
+
+    kinematicLoop -> collectData [penwidth=1.5, color="gray30"];
+    mainLoop -> collectData [penwidth=1.5, color="gray30"];
+
+    // ============================================================================
+    // CONNECTIONS: SHARED TO OUTPUTS
+    // ============================================================================
+
+    exportHDF5 -> hdf5File [penwidth=2.5, color=black];
+    renderPlots -> implot [penwidth=2.5, color=black];
+
+    // ============================================================================
+    // DUAL CHARACTER SYSTEM (supporting flow)
+    // ============================================================================
+
+    mainChar [label="Main\nCharacter", shape=ellipse, fillcolor="#E3F2FD", xlabel=<<font point-size="7">Patient-specific</font>>];
+    stdChar [label="Standard\nCharacter", shape=ellipse, fillcolor="#F1F8E9", xlabel=<<font point-size="7">Comparison</font>>];
+
+    collectData -> mainChar [penwidth=1.0, color="gray70", style=dotted];
+    collectData -> stdChar [penwidth=1.0, color="gray70", style=dotted];
+
+    mainChar -> hdf5File [label=<<font point-size="7">/main</font>>, penwidth=1.0, color="gray70", style=dotted];
+    stdChar -> hdf5File [label=<<font point-size="7">/std</font>>, penwidth=1.0, color="gray70", style=dotted];
+
+    // ============================================================================
+    // RANK ALIGNMENT
+    // ============================================================================
+
+    {rank=same; yaml; gui;}
+    {rank=same; loadTrial; guiConfig;}
+    {rank=same; setupMuscles; mainChar; stdChar;}
+    {rank=same; hdf5File; implot;}
+}

@@ -1,0 +1,192 @@
+digraph TrialAngleSweepFlow {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=0.8;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Arial",
+        fontsize=10
+    ];
+
+    edge [color="gray30", penwidth=1.2];
+
+    // ============================================================================
+    // ENTRY POINT
+    // ============================================================================
+
+    entry [label="runAngleSweepTrial(trial)",
+           fillcolor="#BBDEFB",
+           style="rounded,filled",
+           penwidth=2.0,
+           xlabel=<<font point-size="7">PhysicalExam.cpp:1292</font>>];
+
+    // ============================================================================
+    // INITIALIZATION PHASE
+    // ============================================================================
+
+    subgraph cluster_init {
+        label=<<font point-size="9"><b>Initialization Phase</b></font>>;
+        style="rounded,filled";
+        fillcolor="#E3F2FD";
+        color="gray50";
+
+        applyPose [label="Apply Pose\nPreset", xlabel=<<font point-size="7">applyPosePreset(trial.pose)</font>>];
+        getJoint [label="Get Target\nJoint", xlabel=<<font point-size="7">skeleton-&gt;getJoint()</font>>];
+        storeIdx [label="Store Joint\nIndex", xlabel=<<font point-size="7">mAngleSweepJointIdx = ...</font>>];
+        setupMuscles [label="Setup Tracked\nMuscles", xlabel=<<font point-size="7">setupTrackedMuscles...()</font>>];
+        clearData [label="Clear Previous\nData", xlabel=<<font point-size="7">mAngleSweepData.clear()</font>>];
+
+        applyPose -> getJoint [penwidth=2.5, color=black];
+        getJoint -> storeIdx [penwidth=2.5, color=black];
+        storeIdx -> setupMuscles [penwidth=2.5, color=black];
+        setupMuscles -> clearData [penwidth=2.5, color=black];
+    }
+
+    // ============================================================================
+    // MUSCLE SETUP DETAILS
+    // ============================================================================
+
+    subgraph cluster_muscle_setup {
+        label=<<font point-size="9"><b>setupTrackedMusclesForAngleSweep()</b></font>>;
+        style="rounded,filled";
+        fillcolor="#FFF8E1";
+        color="gray50";
+
+        findMainMuscles [label="Find Main\nCharacter Muscles", xlabel=<<font point-size="7">Iterate muscles, check GetRelatedJoints()</font>>];
+        populateMain [label="Populate\nmAngleSweepTrackedMuscles", xlabel=<<font point-size="7">vector&lt;string&gt;</font>>];
+        findStdMuscles [label="Find Standard\nCharacter Muscles", xlabel=<<font point-size="7">if mStdCharacter exists</font>>];
+        populateStd [label="Populate\nmStdAngleSweepTrackedMuscles", xlabel=<<font point-size="7">vector&lt;string&gt;</font>>];
+
+        findMainMuscles -> populateMain [penwidth=1.5, color="gray30"];
+        populateMain -> findStdMuscles [penwidth=1.5, color="gray30"];
+        findStdMuscles -> populateStd [penwidth=1.5, color="gray30"];
+    }
+
+    // ============================================================================
+    // KINEMATIC SWEEP LOOP
+    // ============================================================================
+
+    subgraph cluster_loop {
+        label=<<font point-size="9"><b>Kinematic Sweep Loop (0 to num_steps)</b></font>>;
+        style="rounded,filled";
+        fillcolor="#C8E6C9";
+        color="gray50";
+
+        calcAngle [label="Calculate\nTarget Angle", xlabel=<<font point-size="7">angle_min + (max-min) * step/num_steps</font>>];
+        setJointPos [label="Set Joint\nPosition", xlabel=<<font point-size="7">setCharacterPose(joint, angle)</font>>];
+        updateMuscleGeom [label="Update Muscle\nGeometry", xlabel=<<font point-size="7">character-&gt;getMuscleTuple()</font>>];
+        collectData [label="Collect\nData Point", xlabel=<<font point-size="7">collectAngleSweepData()</font>>];
+
+        calcAngle -> setJointPos [penwidth=2.5, color=black];
+        setJointPos -> updateMuscleGeom [penwidth=2.5, color=black];
+        updateMuscleGeom -> collectData [penwidth=2.5, color=black];
+
+        // Loop back
+        collectData -> calcAngle [label=<<font point-size="7">next step</font>>, penwidth=1.5, color="orange", style=dashed, constraint=false];
+
+        loopNote [label=<<font point-size="7"><i>101 iterations<br/>No physics stepping<br/>Kinematic only</i></font>>,
+                  shape=note, fillcolor="#FFFACD", color="gray50"];
+    }
+
+    // ============================================================================
+    // DATA COLLECTION DETAILS
+    // ============================================================================
+
+    subgraph cluster_collect {
+        label=<<font point-size="9"><b>collectAngleSweepData(angle, joint_idx)</b></font>>;
+        style="rounded,filled";
+        fillcolor="#FFF3CD";
+        color="gray50";
+
+        createDataPoint [label="Create\nDataPoint", xlabel=<<font point-size="7">AngleSweepDataPoint data</font>>];
+        getPassiveTorque [label="Get Passive\nTorque", xlabel=<<font point-size="7">getPassiveTorqueJoint()</font>>];
+        calcStiffness [label="Calculate\nStiffness", xlabel=<<font point-size="7">(torque - prev_torque) / (angle - prev_angle)</font>>];
+
+        subgraph cluster_per_muscle {
+            label=<<font point-size="8">For Each Tracked Muscle</font>>;
+            style="rounded";
+            fillcolor="white";
+
+            getMuscle [label="Get Muscle", xlabel=<<font point-size="7">getMuscleByName()</font>>];
+            getPassiveForce [label="Get f_p", xlabel=<<font point-size="7">muscle-&gt;Getf_p()</font>>];
+            getNormLength [label="Get lm_norm", xlabel=<<font point-size="7">muscle-&gt;lm_norm</font>>];
+            getJointTorque [label="Get JTP", xlabel=<<font point-size="7">muscle-&gt;GetRelatedJtp()</font>>];
+
+            getMuscle -> getPassiveForce [penwidth=1.0, color="gray50"];
+            getPassiveForce -> getNormLength [penwidth=1.0, color="gray50"];
+            getNormLength -> getJointTorque [penwidth=1.0, color="gray50"];
+        }
+
+        storeDataPoint [label="Store in\nmAngleSweepData", xlabel=<<font point-size="7">push_back(data)</font>>];
+        collectStd [label="Collect Standard\nCharacter Data", xlabel=<<font point-size="7">if mStdCharacter exists</font>>];
+
+        createDataPoint -> getPassiveTorque [penwidth=1.5, color="gray30"];
+        getPassiveTorque -> calcStiffness [penwidth=1.5, color="gray30"];
+        calcStiffness -> getMuscle [penwidth=1.5, color="gray30"];
+        getJointTorque -> storeDataPoint [penwidth=1.5, color="gray30"];
+        storeDataPoint -> collectStd [penwidth=1.0, color="gray70", style=dashed];
+    }
+
+    // ============================================================================
+    // EXPORT PHASE
+    // ============================================================================
+
+    subgraph cluster_export {
+        label=<<font point-size="9"><b>HDF5 Export Phase</b></font>>;
+        style="rounded,filled";
+        fillcolor="#E1BEE7";
+        color="gray50";
+
+        appendTrial [label="Append Trial\nto HDF5", xlabel=<<font point-size="7">appendTrialToHDF5(trial)</font>>];
+        createGroup [label="Create Trial\nGroup", xlabel=<<font point-size="7">/{trial.name}</font>>];
+        writeAngles [label="Write Angle\nSweep Data", xlabel=<<font point-size="7">writeAngleSweepData()</font>>];
+        writeMain [label="Write /main\nSubgroup", xlabel=<<font point-size="7">Main character data</font>>];
+        writeStd [label="Write /std\nSubgroup", xlabel=<<font point-size="7">Standard character data</font>>];
+
+        appendTrial -> createGroup [penwidth=2.5, color=black];
+        createGroup -> writeAngles [penwidth=2.5, color=black];
+        writeAngles -> writeMain [penwidth=2.5, color=black];
+        writeMain -> writeStd [penwidth=1.5, color="gray50"];
+    }
+
+    // ============================================================================
+    // EXIT
+    // ============================================================================
+
+    exit [label="Log Completion",
+          fillcolor="#C8E6C9",
+          style="rounded,filled",
+          penwidth=2.0,
+          xlabel=<<font point-size="7">Trial completed (N steps)</font>>];
+
+    // ============================================================================
+    // MAIN FLOW CONNECTIONS
+    // ============================================================================
+
+    entry -> applyPose [penwidth=2.5, color=black];
+    clearData -> calcAngle [penwidth=2.5, color=black];
+    collectData -> appendTrial [penwidth=2.5, color=black];
+    writeStd -> exit [penwidth=2.5, color=black];
+
+    // ============================================================================
+    // SUPPORTING CONNECTIONS
+    // ============================================================================
+
+    setupMuscles -> findMainMuscles [penwidth=1.0, color="gray70", style=dotted];
+    collectData -> createDataPoint [penwidth=1.0, color="gray70", style=dotted];
+
+    // ============================================================================
+    // ANNOTATIONS
+    // ============================================================================
+
+    note_kinematic [label=<<font point-size="8"><i>Kinematic-only sweep:</i><br/>• No physics stepping<br/>• Only muscle geometry updated<br/>• Fast, deterministic</font>>,
+                    shape=note, fillcolor="#E8F5E9", color="gray50", pos="1,1!"];
+
+    {rank=same; calcAngle; loopNote;}
+    {rank=same; writeMain; writeStd;}
+}

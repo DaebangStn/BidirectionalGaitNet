@@ -1,0 +1,25 @@
+# Trial: Knee angle sweep from seated position with 90 degree hip flexion
+# Kinematic-only sweep - records passive forces at each joint angle
+
+name: "FemAbdd_R"
+description: "abduction_ext / adduction angle sweep right"
+
+mode: "angle_sweep"
+
+# Seated pose: hips flexed 90 degrees, ankle neutral
+# Rotation values in degrees, translation (last 3 of Pelvis) in meters
+pose:
+  Pelvis: [-90, 0, 0, 0, 0.5, 0]  # [rotX, rotY, rotZ, transX, transY, transZ]
+  FemurR: [0, 0, 0]
+  FemurL: [0, 0, 0]  # 90 degree hip flexion
+  TibiaR: 0
+  TibiaL: 0
+  TalusR: [0, 0, 0]
+  TalusL: [0, 0, 0]
+
+angle_sweep:
+  joint: "FemurR"
+  dof_index: 2
+  angle_min: -90
+  angle_max: 90
+  num_steps: 100

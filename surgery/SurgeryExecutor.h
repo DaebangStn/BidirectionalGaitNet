@@ -62,6 +62,17 @@ public:
     // Muscle weakening
     virtual bool weakenMuscles(const std::vector<std::string>& muscles, double strength_ratio);
 
+    // Waypoint optimization using Ceres solver
+    // Optimizes muscle waypoint positions to preserve force directions and length-angle curves
+    virtual bool optimizeWaypoints(const std::vector<std::string>& muscle_names,
+                                   const std::string& reference_muscle,
+                                   const std::string& hdf_motion_path,
+                                   int max_iterations,
+                                   int num_sampling,
+                                   double lambda_shape,
+                                   double lambda_length_curve,
+                                   bool fix_origin_insertion);
+
     // Compute which anchors will be affected by rotation operation
     // Throws std::runtime_error if ref_anchor has multiple bodynodes
     std::vector<AnchorReference> computeAffectedAnchors(

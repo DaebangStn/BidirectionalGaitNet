@@ -41,3 +41,23 @@ cmake -G Ninja \
       -DDART_ENABLE_SIMD=true \
       ..
 ninja install
+popd
+
+git clone --depth 1 https://github.com/ceres-solver/ceres-solver ceres
+echo "==== Installing ceres at $ENVDIR ===="
+mkdir -p ceres/build
+pushd ceres/build
+cmake -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=$ENVDIR \
+      -DBUILD_TESTING=OFF \
+      -DBUILD_EXAMPLES=OFF \
+      -DBUILD_BENCHMARKS=OFF \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DUSE_CUDA=OFF \
+      ..
+ninja install
+popd
+
+popd
+echo "==== Installation complete ===="

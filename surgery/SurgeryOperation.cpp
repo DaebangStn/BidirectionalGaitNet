@@ -620,5 +620,54 @@ std::unique_ptr<SurgeryOperation> ApplyPosePresetOp::fromYAML(const YAML::Node& 
     return std::make_unique<ApplyPosePresetOp>(preset_name);
 }
 
+// ============================================================================
+// OptimizeWaypointsOp
+// ============================================================================
+
+bool OptimizeWaypointsOp::execute(SurgeryExecutor* executor) {
+    return executor->optimizeWaypoints(mMuscleNames, mReferenceMuscle, mHDFMotionPath,
+                                      mMaxIterations, mNumSampling, mLambdaShape,
+                                      mLambdaLengthCurve, mFixOriginInsertion);
+}
+
+YAML::Node OptimizeWaypointsOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "optimize_waypoints";
+    node["muscles"] = mMuscleNames;
+    node["reference_muscle"] = mReferenceMuscle;
+    node["hdf_motion_path"] = mHDFMotionPath;
+    node["max_iterations"] = mMaxIterations;
+    node["num_sampling"] = mNumSampling;
+    node["lambda_shape"] = mLambdaShape;
+    node["lambda_length_curve"] = mLambdaLengthCurve;
+    node["fix_origin_insertion"] = mFixOriginInsertion;
+    return node;
+}
+
+std::string OptimizeWaypointsOp::getDescription() const {
+    std::ostringstream oss;
+    oss << "Optimize waypoints for " << mMuscleNames.size() << " muscle(s) "
+        << "using reference '" << mReferenceMuscle << "' "
+        << "(motion: " << mHDFMotionPath << ", max_iter: " << mMaxIterations << ")";
+    return oss.str();
+}
+
+std::unique_ptr<SurgeryOperation> OptimizeWaypointsOp::fromYAML(const YAML::Node& node) {
+    std::vector<std::string> muscles = node["muscles"].as<std::vector<std::string>>();
+    std::string reference_muscle = node["reference_muscle"].as<std::string>();
+    std::string hdf_motion_path = node["hdf_motion_path"].as<std::string>();
+
+    // Optional parameters with defaults
+    int max_iterations = node["max_iterations"] ? node["max_iterations"].as<int>() : 10000;
+    int num_sampling = node["num_sampling"] ? node["num_sampling"].as<int>() : 10;
+    double lambda_shape = node["lambda_shape"] ? node["lambda_shape"].as<double>() : 0.1;
+    double lambda_length_curve = node["lambda_length_curve"] ? node["lambda_length_curve"].as<double>() : 0.1;
+    bool fix_origin_insertion = node["fix_origin_insertion"] ? node["fix_origin_insertion"].as<bool>() : true;
+
+    return std::make_unique<OptimizeWaypointsOp>(muscles, reference_muscle, hdf_motion_path,
+                                                  max_iterations, num_sampling, lambda_shape,
+                                                  lambda_length_curve, fix_origin_insertion);
+}
+
 } // namespace PMuscle
 

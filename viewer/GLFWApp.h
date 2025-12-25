@@ -19,6 +19,7 @@
 // C3D_Reader moved to c3d_processor
 #include "motion/MotionProcessor.h"
 #include "rm/rm.hpp"
+#include "common/PIDNavigator.h"
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
 #include "ImGuiFileDialog.h"
@@ -233,11 +234,8 @@ private:
     
     void drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr);
 
-    void drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &color);
     void drawFootStep();
     void drawPhase(double phase, double normalized_phase);
-
-    void drawShape(const dart::dynamics::Shape *shape, const Eigen::Vector4d &color);
 
     void drawAxis();
     void drawJointAxis(dart::dynamics::Joint* joint);
@@ -347,24 +345,12 @@ private:
     // Resource Manager for PID-based access (singleton reference)
     rm::ResourceManager* mResourceManager = nullptr;
 
-    // Clinical Data (PID) browser state
-    std::vector<std::string> mPIDList;
-    std::vector<std::string> mPIDNames;
-    std::vector<std::string> mPIDGMFCS;
-    int mSelectedPID = -1;
-    char mPIDFilter[64] = "";
-    bool mPreOp = true;
-
-    // HDF files for selected PID
-    std::vector<std::string> mPIDHDFFiles;
-    int mSelectedPIDHDF = -1;
-    char mPIDHDFFilter[64] = "";
+    // PID Navigator for clinical data browsing
+    std::unique_ptr<PIDNav::PIDNavigator> mPIDNavigator;
 
     // Clinical Data (PID-based HDF access) methods
     void drawClinicalDataSection();
-    void scanPIDList();
-    void scanPIDHDFFiles();
-    void loadPIDHDFFile(const std::string& filename);
+    void onPIDFileSelected(const std::string& path, const std::string& filename);
 
     // Motion Buffer
     std::vector<Eigen::VectorXd> mMotionBuffer;

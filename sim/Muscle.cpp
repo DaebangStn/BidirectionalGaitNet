@@ -25,14 +25,16 @@ Eigen::Vector3d Anchor::GetPoint() const
     return p;
 }
 
-Muscle::Muscle(std::string _name, double _f0, double _lm0, double _lt0, double _pen_angle, 
-    double _type1_fraction, bool useVelocityForce)
-    : selected(false), mUseVelocityForce(useVelocityForce), name(_name), 
-    f0_base(_f0), f0(_f0), pen_angle(_pen_angle), lm_opt(_lm0), lt_rel(_lt0), 
+/*
+- (Muscle force) / f0 = F_L(lm_norm) * activation + F_p(lm_norm)
+- lm_norm = ((lmt / lmt0) - lt_rel) / lm_contract
+*/
+Muscle::Muscle(std::string _name, double _f0, double _lm_contract, double _lt_rel)
+    : name(_name), f0_base(_f0), f0(_f0), lm_contract(_lm_contract), lt_rel(_lt_rel), lt_rel_base(_lt_rel), 
     v_m(0.0), lmt_ref(0.0), lmt_rel(1.0), activation(0.0), f_toe(0.33), k_toe(3.0), k_lin(51.878788), 
-    e_toe(0.02), e_t0(0.033), k_pe(5.5), e_mo(0.3), gamma(0.45), type1_fraction(_type1_fraction), l_ratio(1.0), f_ratio(1.0),
-    lt_rel_base(_lt0), lt_rel_ofs(0.0)
+    e_toe(0.02), e_t0(0.033), k_pe(5.5), e_mo(0.3), gamma(0.45), l_ratio(1.0), f_ratio(1.0), lt_rel_ofs(0.0)
 {
+    if (lm_contract < 0.01) LOG_ERROR("lm_contract is too small for muscle: " + name + " : " + std::to_string(lm_contract));
     lm_rel = lmt_rel - lt_rel;
 }
 
@@ -239,7 +241,7 @@ bool Muscle::UpdateGeometry()
     lmt_rel = lmt / lmt_ref;
     lm_rel = lmt_rel - lt_rel;
     if (mUseVelocityForce) UpdateVelocities();
-    lm_norm = lm_rel / (lm_opt + 1e-3);
+    lm_norm = lm_rel / lm_contract;
     return lm_norm < 1.5; // Return whether the joint angle is in ROM
 }
 
@@ -269,7 +271,7 @@ double Muscle::GetForce()
 }
 double Muscle::Getf_A()
 {
-    double f_a = F_L(lm_norm) * (mUseVelocityForce ? F_V(v_m * 0.1 / lmt_ref * lm_opt) : 1.0) * cos(pen_angle);
+    double f_a = F_L(lm_norm) * (mUseVelocityForce ? F_V(v_m * 0.1 / lmt_ref * lm_contract) : 1.0);
     // if (f_a > 3.0) LOG_WARN("[Muscle] " + name + " f_a: " + std::to_string(f_a) + " > 3.0");
     return f0 * f_a;
 }
@@ -277,7 +279,7 @@ double Muscle::Getf_p()
 {
     double lm_input = (mClipLmNorm > 0) ? std::min(lm_norm, mClipLmNorm) : lm_norm;
     // if (lm_norm > 1.4) LOG_WARN("[Muscle] " + name + " lm_norm: " + std::to_string(lm_norm) + " > 1.4");
-    double f_p = F_psv(lm_input) * cos(pen_angle);
+    double f_p = F_psv(lm_input);
     // if (f_p > 3.0) LOG_WARN("[Muscle] " + name + " f_p: " + std::to_string(f_p) + " > 3.0");
     return f0 * f_p;
 }
@@ -301,7 +303,7 @@ void Muscle::RelaxPassiveForce()
 void Muscle::SetLmNorm(double target_lm_norm)
 {
     double old_lt_rel_ofs = lt_rel_ofs;
-    double target_lt_rel = lmt_rel - target_lm_norm * lm_opt;
+    double target_lt_rel = lmt_rel - target_lm_norm * lm_contract;
     lt_rel_ofs = target_lt_rel - lt_rel_base;
 
     // Guard: ensure l_t0 doesn't go below minimum threshold
@@ -559,7 +561,7 @@ double Muscle::GetBHAR04_EnergyRate() // It assume that activation == excitation
     double f_a_u = 40 * type1_fraction * sin(M_PI * 0.5 * activation) + 133 * (1 - type1_fraction) * (1 - cos(M_PI * 0.5 * activation));
     double f_m_a = 74 * type1_fraction * sin(M_PI * 0.5 * activation) + 111 * (1 - type1_fraction) * (1 - cos(M_PI * 0.5 * activation));
     double g_l = 0.0;
-    double l_m_ratio = lm_rel / lm_opt;
+    double l_m_ratio = lm_rel / lm_contract;
 
     if (l_m_ratio < 0.5)
         g_l = 0.5;

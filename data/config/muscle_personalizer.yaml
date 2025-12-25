@@ -1,0 +1,41 @@
+# Muscle Personalizer Application Configuration
+# NOTE: Window geometry and default_open_panels are in render.yaml
+
+metadata:
+  version: "1.0"
+  description: "Muscle personalization tool configuration"
+
+# Default paths
+paths:
+  rom_config_dir: "@data/config/rom"
+  skeleton_default: "@data/skeleton/base.yaml"
+  muscle_default: "@data/muscle/base.yaml"
+  hdf_motions_dir: "@data/motions"
+
+# Weight scaling defaults
+weight_scaling:
+  reference_mass: 50.0    # kg
+  default_target: 50.0    # kg
+
+# Waypoint optimization defaults
+waypoint_optimization:
+  max_iterations: 100
+  num_sampling: 50
+  lambda_shape: 1.0
+  lambda_length_curve: 1.0
+  fix_origin_insertion: true
+
+# Contracture estimation defaults
+contracture_estimation:
+  max_iterations: 100
+  min_ratio: 0.7
+  max_ratio: 1.2
+  use_robust_loss: true
+  solver_verbose: false
+
+# Muscle visualization
+visualization:
+  color_by_contracture: true
+  contracture_colormap: "viridis"  # viridis, plasma, coolwarm
+  min_color_value: 0.7
+  max_color_value: 1.2

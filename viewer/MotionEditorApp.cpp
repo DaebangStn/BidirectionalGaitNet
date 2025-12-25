@@ -66,7 +66,30 @@ MotionEditorApp::MotionEditorApp(const std::string& configPath)
     // Initialize Resource Manager for PID-based access (use singleton)
     try {
         mResourceManager = &rm::getManager();
-        scanPIDList();
+
+        // Initialize PID Navigator with HDF file filter
+        mPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
+            mResourceManager,
+            std::make_unique<PIDNav::HDFFileFilter>()
+        );
+
+        // Register callback for when user selects an H5 file
+        mPIDNavigator->setFileSelectionCallback(
+            [this](const std::string& path, const std::string& filename) {
+                loadH5Motion(path);
+            }
+        );
+
+        // Register callback for when PID selection changes
+        mPIDNavigator->setPIDChangeCallback(
+            [this](const std::string& pid) {
+                scanSkeletonDirectory();
+                autoDetectSkeleton();
+            }
+        );
+
+        // Initial scan of available PIDs
+        mPIDNavigator->scanPIDs();
     } catch (const rm::RMError& e) {
         LOG_WARN("[MotionEditor] Resource manager init failed: " << e.what());
     } catch (const std::exception& e) {
@@ -437,125 +460,16 @@ void MotionEditorApp::drawRightPanel()
 
 void MotionEditorApp::drawPIDBrowserTab()
 {
-    if (!mResourceManager) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Resource Manager not initialized");
+    if (!mPIDNavigator) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "PID Navigator not initialized");
         return;
     }
 
-    // PID Filter and Refresh
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::InputText("##PIDFilter", mPIDFilter, sizeof(mPIDFilter))) {
-        // Filter applied on display
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Refresh##PID")) {
-        scanPIDList();
-    }
-    ImGui::SameLine();
-    ImGui::Text("%zu PIDs", mPIDList.size());
+    // Use the shared PIDNavigator component
+    mPIDNavigator->renderInlineSelector(120, 120);
 
-    // PID List
-    if (ImGui::BeginListBox("##PIDList", ImVec2(-1, 120))) {
-        for (int i = 0; i < static_cast<int>(mPIDList.size()); ++i) {
-            const auto& pid = mPIDList[i];
-            const std::string& name = (i < static_cast<int>(mPIDNames.size())) ? mPIDNames[i] : "";
-            const std::string& gmfcs = (i < static_cast<int>(mPIDGMFCS.size())) ? mPIDGMFCS[i] : "";
-
-            std::string displayStr;
-            if (name.empty() && gmfcs.empty()) {
-                displayStr = pid;
-            } else if (name.empty()) {
-                displayStr = pid + " (" + gmfcs + ")";
-            } else if (gmfcs.empty()) {
-                displayStr = pid + " (" + name + ")";
-            } else {
-                displayStr = pid + " (" + name + ", " + gmfcs + ")";
-            }
-
-            // Apply filter
-            if (mPIDFilter[0] != '\0' &&
-                pid.find(mPIDFilter) == std::string::npos &&
-                name.find(mPIDFilter) == std::string::npos &&
-                gmfcs.find(mPIDFilter) == std::string::npos) {
-                continue;
-            }
-
-            bool isSelected = (i == mSelectedPID);
-            if (ImGui::Selectable(displayStr.c_str(), isSelected)) {
-                if (i != mSelectedPID) {
-                    mSelectedPID = i;
-                    scanH5Files();
-                    scanSkeletonDirectory();
-                    autoDetectSkeleton();
-                }
-            }
-        }
-        ImGui::EndListBox();
-    }
-
-    // Pre/Post radio buttons
-    if (ImGui::RadioButton("Pre-op", mPreOp)) {
-        if (!mPreOp) {
-            mPreOp = true;
-            if (mSelectedPID >= 0) {
-                scanH5Files();
-                scanSkeletonDirectory();
-                autoDetectSkeleton();
-            }
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Post-op", !mPreOp)) {
-        if (mPreOp) {
-            mPreOp = false;
-            if (mSelectedPID >= 0) {
-                scanH5Files();
-                scanSkeletonDirectory();
-                autoDetectSkeleton();
-            }
-        }
-    }
-
-    // H5 Files section
-    if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
-        ImGui::Separator();
-        ImGui::Text("H5 Files: (%zu files)", mH5Files.size());
-
-        // H5 Filter
-        ImGui::SetNextItemWidth(100);
-        ImGui::InputText("##H5Filter", mH5Filter, sizeof(mH5Filter));
-        ImGui::SameLine();
-        if (ImGui::Button("X##H5Filter")) {
-            mH5Filter[0] = '\0';
-        }
-
-        // H5 List
-        if (ImGui::BeginListBox("##H5List", ImVec2(-1, 120))) {
-            for (int i = 0; i < static_cast<int>(mH5Files.size()); ++i) {
-                const auto& filename = mH5Files[i];
-
-                // Apply filter
-                if (mH5Filter[0] != '\0' && filename.find(mH5Filter) == std::string::npos) {
-                    continue;
-                }
-
-                bool isSelected = (i == mSelectedH5);
-                if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                    if (i != mSelectedH5) {
-                        mSelectedH5 = i;
-
-                        // Build full URI and load
-                        std::string pid = mPIDList[mSelectedPID];
-                        std::string prePost = mPreOp ? "pre" : "post";
-                        std::string uri = "@pid:" + pid + "/gait/" + prePost + "/h5/" + filename;
-                        std::string resolved = mResourceManager->resolve(uri).string();
-                        loadH5Motion(resolved);
-                    }
-                }
-            }
-            ImGui::EndListBox();
-        }
-    }
+    // OLD CODE (kept for comparison, will be removed after validation):
+    // ... (previous implementation with manual PID/H5 scanning and rendering)
 }
 
 void MotionEditorApp::drawDirectPathTab()
@@ -597,7 +511,8 @@ void MotionEditorApp::drawSkeletonSection()
             }
         } else {
             // PID skeleton directory browser
-            if (mSelectedPID >= 0) {
+            bool hasPIDSelected = mPIDNavigator && mPIDNavigator->getState().selectedPID >= 0;
+            if (hasPIDSelected) {
                 ImGui::Text("PID Skeleton Files:");
                 ImGui::SameLine();
                 if (ImGui::Button("Refresh##Skel")) {
@@ -1325,6 +1240,8 @@ void MotionEditorApp::drawROMViolationSection()
 // PID Scanner Methods
 // =============================================================================
 
+// OLD CODE - Replaced by PIDNavigator (will be removed after validation)
+/*
 void MotionEditorApp::scanPIDList()
 {
     mPIDList.clear();
@@ -1396,6 +1313,7 @@ void MotionEditorApp::scanH5Files()
         LOG_WARN("[MotionEditor] Failed to list H5 files: " << e.what());
     }
 }
+*/
 
 void MotionEditorApp::scanSkeletonDirectory()
 {
@@ -1403,12 +1321,17 @@ void MotionEditorApp::scanSkeletonDirectory()
     mSkeletonFileNames.clear();
     mSelectedSkeletonFile = -1;
 
-    if (!mResourceManager || mSelectedPID < 0 || mSelectedPID >= static_cast<int>(mPIDList.size())) {
+    if (!mResourceManager || !mPIDNavigator) {
         return;
     }
 
-    const std::string& pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
+    const auto& state = mPIDNavigator->getState();
+    if (state.selectedPID < 0 || state.selectedPID >= static_cast<int>(state.pidList.size())) {
+        return;
+    }
+
+    const std::string& pid = state.pidList[state.selectedPID];
+    std::string prePost = state.preOp ? "pre" : "post";
     std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/skeleton";
     mSkeletonDirectory = pattern;
 
@@ -1504,12 +1427,17 @@ void MotionEditorApp::autoDetectSkeleton()
 {
     mAutoDetectedSkeletonPath.clear();
 
-    if (!mResourceManager || mSelectedPID < 0 || mSelectedPID >= static_cast<int>(mPIDList.size())) {
+    if (!mResourceManager || !mPIDNavigator) {
         return;
     }
 
-    const std::string& pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
+    const auto& state = mPIDNavigator->getState();
+    if (state.selectedPID < 0 || state.selectedPID >= static_cast<int>(state.pidList.size())) {
+        return;
+    }
+
+    const std::string& pid = state.pidList[state.selectedPID];
+    std::string prePost = state.preOp ? "pre" : "post";
     std::string uri = "@pid:" + pid + "/gait/" + prePost + "/skeleton/dynamic.yaml";
 
     try {
@@ -1662,10 +1590,15 @@ void MotionEditorApp::exportMotion()
         mLastExportMessageTime = glfwGetTime();
 
         // Build PID-style URI if PID is selected
-        if (mSelectedPID >= 0 && mSelectedPID < static_cast<int>(mPIDList.size())) {
-            std::string pid = mPIDList[mSelectedPID];
-            std::string prePost = mPreOp ? "pre" : "post";
-            mLastExportURI = "@pid:" + pid + "/gait/" + prePost + "/h5/" + outputPath.filename().string();
+        if (mPIDNavigator) {
+            const auto& state = mPIDNavigator->getState();
+            if (state.selectedPID >= 0 && state.selectedPID < static_cast<int>(state.pidList.size())) {
+                std::string pid = state.pidList[state.selectedPID];
+                std::string prePost = state.preOp ? "pre" : "post";
+                mLastExportURI = "@pid:" + pid + "/gait/" + prePost + "/h5/" + outputPath.filename().string();
+            } else {
+                mLastExportURI = outputPath.string();
+            }
         } else {
             mLastExportURI = outputPath.string();
         }

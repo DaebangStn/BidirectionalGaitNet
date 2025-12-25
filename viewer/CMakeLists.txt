@@ -2,6 +2,7 @@ add_compile_options(-fvisibility=hidden)
 
 link_directories(../sim/)
 include_directories(../sim/)
+include_directories(../surgery/)
 include_directories(../libs/imgui)
 include_directories(../libs/ascii)
 
@@ -10,6 +11,17 @@ find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS gui)
 find_package(ezc3d CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
+
+# Common viewer library for shared components
+add_library(viewer_common STATIC
+    common/PIDNavigator.h
+    common/PIDNavigator.cpp
+    common/PIDFileFilter.h
+    common/imgui_common.h
+    common/imgui_common.cpp
+)
+target_link_libraries(viewer_common PUBLIC rm dart imgui)
+target_include_directories(viewer_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Viewer sources
 set(VIEWER_SOURCES
@@ -37,11 +49,6 @@ set(VIEWER_SOURCES
     "motion/MotionProcessor.cpp"
 )
 
-# Conditionally add Ceres optimizer
-if(USE_CERES)
-    list(APPEND VIEWER_SOURCES "CeresOptimizer.h" "CeresOptimizer.cpp")
-endif()
-
 add_executable(viewer ${VIEWER_SOURCES})
 
 target_link_libraries(viewer
@@ -54,13 +61,9 @@ target_link_libraries(viewer
         ezc3d
         Boost::program_options
         rm
+        viewer_common
+        surgery_optimizer
 )
-
-# Conditionally link Ceres and add compile definition
-if(USE_CERES)
-    target_compile_definitions(viewer PRIVATE USE_CERES)
-    target_link_libraries(viewer ceres)
-endif()
 
 # Marker Editor - Standalone application for editing marker positions
 add_executable(marker_editor
@@ -99,11 +102,6 @@ set(C3D_PROCESSOR_SOURCES
     "PlotUtils.cpp"
 )
 
-# Conditionally add Ceres optimizer
-if(USE_CERES)
-    list(APPEND C3D_PROCESSOR_SOURCES "CeresOptimizer.h" "CeresOptimizer.cpp")
-endif()
-
 add_executable(c3d_processor ${C3D_PROCESSOR_SOURCES})
 
 target_link_libraries(c3d_processor
@@ -114,13 +112,9 @@ target_link_libraries(c3d_processor
     ezc3d
     Boost::program_options
     rm
+    viewer_common
+    surgery_optimizer
 )
-
-# Conditionally link Ceres and add compile definition
-if(USE_CERES)
-    target_compile_definitions(c3d_processor PRIVATE USE_CERES)
-    target_link_libraries(c3d_processor ceres)
-endif()
 
 # Motion Editor - Standalone H5 motion editing/trimming application
 add_executable(motion_editor
@@ -142,16 +136,32 @@ target_link_libraries(motion_editor
     ${HDF5_CXX_LIBRARIES}
     Boost::program_options
     rm
+    viewer_common
 )
 
-# Test for marker save cyclic consistency
-add_executable(test_marker_save
-    "test_marker_save.cpp"
+# Muscle Personalizer - Interactive muscle configuration tool
+set(MUSCLE_PERSONALIZER_SOURCES
+    "muscle_personalizer_main.cpp"
+    "MusclePersonalizerApp.h"
+    "MusclePersonalizerApp.cpp"
     "RenderCharacter.h"
     "RenderCharacter.cpp"
+    "ShapeRenderer.h"
+    "ShapeRenderer.cpp"
+    "GLfunctions.h"
+    "GLfunctions.cpp"
 )
-target_link_libraries(test_marker_save
+
+add_executable(muscle_personalizer ${MUSCLE_PERSONALIZER_SOURCES})
+
+target_link_libraries(muscle_personalizer
     tinyxml2::tinyxml2
+    GL GLU glut glad glfw imgui
     sim
+    surgery              # Surgery library
+    surgery_optimizer    # For ContractureOptimizer
     dart-gui
+    ${HDF5_CXX_LIBRARIES}
+    Boost::program_options
+    rm
 )

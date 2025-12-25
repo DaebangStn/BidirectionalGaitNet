@@ -5,9 +5,7 @@
 #include <tinyxml2.h>
 #include <ezc3d/ezc3d_all.h>
 #include "C3D_Reader.h"
-#ifdef USE_CERES
-#include "CeresOptimizer.h"
-#endif
+#include "BoneOptimizer.h"
 #include "C3D.h"
 #include "rm/rm.hpp"
 
@@ -590,22 +588,8 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
         }
     }
 
-#ifdef USE_CERES
-    // ============ STAGE 2b: Ceres-based bones (2+ markers with regularization) ============
-    runCeresBoneFitting(mFittingConfig, boneToMarkers, mCurrentC3D->getAllMarkers(),
-                        mCharacter, mSkelInfos, mBoneR_frames, mBoneT_frames);
-    for (const auto& boneName : mFittingConfig.targetCeres) {
-        // Only add to mBoneOrder if transforms were successfully stored
-        if (mBoneR_frames.count(boneName) && mBoneT_frames.count(boneName)) {
-            mBoneOrder.push_back(boneName);
-        } else {
-            LOG_WARN("[Fitting] Failed to store transforms for Ceres bone: " << boneName);
-        }
-    }
-#else
-    // ============ STAGE 2b Fallback: Marker-distance scaling for arms ============
-    scaleArmsFallback();
-#endif
+    // ============ STAGE 2b: Marker-distance scaling for arms ============
+    scaleArmsByMarkerDistance();
 
     // ============ STAGE 2b-2: Copy dependent scales ============
     // Hand = ForeArm, Neck = Head (if Head in target_svd)
@@ -1100,8 +1084,7 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
     return out;
 }
 
-// Note: optimizeBoneScaleCeres has been moved to CeresOptimizer.cpp
-// It is only available when USE_CERES is defined
+// Note: optimizeBoneScaleCeres is in surgery/optimizer/BoneOptimizer.cpp
 
 // ============================================================================
 // SECTION 8: buildFramePose - Build skeleton pose for one frame
@@ -1626,10 +1609,8 @@ void C3D_Reader::updateUpperBodyFromMarkers(
         return;
     }
 
-#ifdef USE_CERES
     // ========== Arm rotation from Ceres optimizer ==========
     applyCeresArmRotations(mFittingConfig, mBoneR_frames, mBoneT_frames, fitFrameIdx, skel, pos);
-#endif
 }
 
 // ============================================================================
@@ -1931,10 +1912,10 @@ void C3D_Reader::initializeSkeletonForIK(const std::vector<Eigen::Vector3d>& fir
 }
 
 // ============================================================================
-// SECTION 12: Fallback Scaling for USE_CERES=OFF
+// SECTION 12: Marker-distance based arm scaling
 // ============================================================================
 
-void C3D_Reader::scaleArmsFallback()
+void C3D_Reader::scaleArmsByMarkerDistance()
 {
     const auto& allMarkers = mCurrentC3D->getAllMarkers();
 

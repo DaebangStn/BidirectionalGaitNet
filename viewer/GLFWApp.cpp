@@ -450,7 +450,22 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Initialize Resource Manager for PID-based access (use singleton)
     try {
         mResourceManager = &rm::getManager();
-        scanPIDList();
+
+        // Initialize PID Navigator with HDF filter
+        mPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
+            mResourceManager,
+            std::make_unique<PIDNav::HDFFileFilter>()
+        );
+
+        // Register file selection callback
+        mPIDNavigator->setFileSelectionCallback(
+            [this](const std::string& path, const std::string& filename) {
+                onPIDFileSelected(path, filename);
+            }
+        );
+
+        // Initial PID scan
+        mPIDNavigator->scanPIDs();
     } catch (const rm::RMError& e) {
         LOG_WARN("[GLFWApp] Resource manager init failed: " << e.what());
     } catch (...) {
@@ -1370,44 +1385,6 @@ void GLFWApp::drawJointAxis(dart::dynamics::Joint* joint)
 
     // Re-enable depth test
     glEnable(GL_DEPTH_TEST);
-}
-
-void GLFWApp::drawSingleBodyNode(const BodyNode *bn, const Eigen::Vector4d &color)
-{
-    if (!bn) return;
-
-    // Set wireframe mode if enabled
-    if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Wireframe) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glLineWidth(2.0f);
-    }
-
-    glPushMatrix();
-    glMultMatrixd(bn->getTransform().data());
-
-    bn->eachShapeNodeWith<VisualAspect>([this, &color](const dart::dynamics::ShapeNode* sn) {
-        if (!sn) return true;
-
-        const auto &va = sn->getVisualAspect();
-
-        if (!va || va->isHidden()) return true;
-
-        glPushMatrix();
-        Eigen::Affine3d tmp = sn->getRelativeTransform();
-        glMultMatrixd(tmp.data());
-        Eigen::Vector4d c = va->getRGBA();
-
-        drawShape(sn->getShape().get(), color);
-
-        glPopMatrix();
-        return true;
-    });
-    glPopMatrix();
-
-    // Restore solid mode
-    if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Wireframe) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    }
 }
 
 void GLFWApp::drawKinematicsControlPanelContent()
@@ -5214,57 +5191,19 @@ void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &co
 
     skel->setPositions(pos);
 
+    // Convert SkeletonRenderMode to RenderMode
+    RenderMode mode = RenderMode::Primitive;  // default to Solid/Primitive
+    if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Mesh) {
+        mode = RenderMode::Mesh;
+    } else if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Wireframe) {
+        mode = RenderMode::Wireframe;
+    }
+
     // glDepthMask(GL_FALSE);
-    for (const auto bn : skel->getBodyNodes()) drawSingleBodyNode(bn, color);
+    GUI::DrawSkeleton(skel, color, mode, &mShapeRenderer);
     // glDepthMask(GL_TRUE);
 }
 
-void GLFWApp::drawShape(const Shape *shape, const Eigen::Vector4d &color)
-{
-    if (!shape) return;
-
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glEnable(GL_COLOR_MATERIAL);
-    glEnable(GL_DEPTH_TEST);
-    glColor4d(color[0], color[1], color[2], color[3]);
-
-    // Determine whether to use mesh or primitive rendering
-    // Mesh mode uses obj meshes, Solid/Wireframe use primitives
-    bool useMesh = (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Mesh);
-    if (!useMesh)
-    {
-
-        // glColor4dv(color.data());
-        if (shape->is<SphereShape>())
-        {
-            const auto *sphere = dynamic_cast<const SphereShape *>(shape);
-            GUI::DrawSphere(sphere->getRadius());
-        }
-        else if (shape->is<BoxShape>()) 
-        {
-            const auto *box = dynamic_cast<const BoxShape *>(shape);
-            GUI::DrawCube(box->getSize());
-        }
-        else if (shape->is<CapsuleShape>()) 
-        {
-            const auto *capsule = dynamic_cast<const CapsuleShape *>(shape);
-            GUI::DrawCapsule(capsule->getRadius(), capsule->getHeight());
-        }
-        else if (shape->is<CylinderShape>()) 
-        {
-            const auto *cylinder = dynamic_cast<const CylinderShape *>(shape);
-            GUI::DrawCylinder(cylinder->getRadius(), cylinder->getHeight());
-        }
-    }
-    else
-    {
-        if (shape->is<MeshShape>()) 
-        {
-            const auto &mesh = dynamic_cast<const MeshShape *>(shape);
-            mShapeRenderer.renderMesh(mesh, false, 0.0, color);
-        }
-    }
-}
 
 void GLFWApp::setCamera()
 {
@@ -5971,6 +5910,15 @@ void GLFWApp::scanMotionFiles()
     LOG_INFO("[Motion] Scanned " << mMotionList.size() << " motion files (HDF only, C3D moved to c3d_processor)");
 }
 
+void GLFWApp::onPIDFileSelected(const std::string& path,
+                                 const std::string& filename)
+{
+    // Load the HDF motion file using existing unified loader
+    loadMotionFile(path);
+
+    LOG_INFO("[GLFWApp] Loaded PID HDF file: " << filename);
+}
+
 void GLFWApp::loadMotionFile(const std::string& path)
 {
     namespace fs = std::filesystem;
@@ -6021,165 +5969,15 @@ void GLFWApp::loadMotionFile(const std::string& path)
 // Clinical Data (PID-based HDF access) Methods
 // =============================================================================
 
-void GLFWApp::scanPIDList()
-{
-    mPIDList.clear();
-    mPIDNames.clear();
-    mPIDGMFCS.clear();
-    mSelectedPID = -1;
-    mPIDHDFFiles.clear();
-    mSelectedPIDHDF = -1;
-
-    if (!mResourceManager) return;
-
-    try {
-        auto entries = mResourceManager->list("@pid:");
-        for (const auto& entry : entries) {
-            mPIDList.push_back(entry);
-        }
-        std::sort(mPIDList.begin(), mPIDList.end());
-
-        mPIDNames.resize(mPIDList.size());
-        mPIDGMFCS.resize(mPIDList.size());
-        for (size_t i = 0; i < mPIDList.size(); ++i) {
-            try {
-                auto h = mResourceManager->fetch("@pid:" + mPIDList[i] + "/name");
-                mPIDNames[i] = h.as_string();
-            } catch (...) { mPIDNames[i] = ""; }
-            try {
-                auto h = mResourceManager->fetch("@pid:" + mPIDList[i] + "/gmfcs");
-                mPIDGMFCS[i] = h.as_string();
-            } catch (...) { mPIDGMFCS[i] = ""; }
-        }
-        LOG_VERBOSE("[GLFWApp] Found " << mPIDList.size() << " PIDs");
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[GLFWApp] Failed to list PIDs: " << e.what());
-    }
-}
-
-void GLFWApp::scanPIDHDFFiles()
-{
-    mPIDHDFFiles.clear();
-    mSelectedPIDHDF = -1;
-
-    if (!mResourceManager || mSelectedPID < 0 ||
-        mSelectedPID >= static_cast<int>(mPIDList.size())) return;
-
-    const std::string& pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
-    std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
-
-    try {
-        auto files = mResourceManager->list(pattern);
-        for (const auto& file : files) {
-            std::string lower = file;
-            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-            if ((lower.size() > 3 && lower.substr(lower.size() - 3) == ".h5") ||
-                (lower.size() > 5 && lower.substr(lower.size() - 5) == ".hdf5")) {
-                // Extract just the filename (list() returns filenames, not paths)
-                std::filesystem::path p(file);
-                mPIDHDFFiles.push_back(p.filename().string());
-            }
-        }
-        std::sort(mPIDHDFFiles.begin(), mPIDHDFFiles.end());
-        LOG_INFO("[GLFWApp] Found " << mPIDHDFFiles.size() << " HDF files for PID " << pid);
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[GLFWApp] Failed to list HDF files: " << e.what());
-    }
-}
-
-void GLFWApp::loadPIDHDFFile(const std::string& filename)
-{
-    if (!mResourceManager || mSelectedPID < 0) return;
-
-    const std::string& pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
-    std::string uri = "@pid:" + pid + "/gait/" + prePost + "/h5/" + filename;
-
-    try {
-        auto handle = mResourceManager->fetch(uri);
-        std::filesystem::path localPath = handle.local_path();
-        loadMotionFile(localPath.string());
-        LOG_INFO("[GLFWApp] Loaded PID HDF: " << uri);
-    } catch (const rm::RMError& e) {
-        LOG_ERROR("[GLFWApp] Failed to fetch HDF: " << e.what());
-    }
-}
-
 void GLFWApp::drawClinicalDataSection()
 {
-    if (!mResourceManager) return;
-
-    if (ImGui::CollapsingHeader("Clinical Data")) {
-        // PID Filter + Refresh
-        ImGui::SetNextItemWidth(150);
-        ImGui::InputText("##PIDFilter", mPIDFilter, sizeof(mPIDFilter));
-        ImGui::SameLine();
-        if (ImGui::Button("Refresh##PID")) scanPIDList();
-        ImGui::SameLine();
-        ImGui::Text("%zu PIDs", mPIDList.size());
-
-        // PID ListBox
-        if (ImGui::BeginListBox("##PIDList", ImVec2(-1, 150))) {
-            for (int i = 0; i < static_cast<int>(mPIDList.size()); ++i) {
-                const auto& pid = mPIDList[i];
-                const std::string& name = mPIDNames[i];
-                const std::string& gmfcs = mPIDGMFCS[i];
-
-                std::string displayStr = pid;
-                if (!name.empty() && !gmfcs.empty())
-                    displayStr = pid + " (" + name + ", " + gmfcs + ")";
-                else if (!name.empty())
-                    displayStr = pid + " (" + name + ")";
-                else if (!gmfcs.empty())
-                    displayStr = pid + " (" + gmfcs + ")";
-
-                // Filter
-                if (mPIDFilter[0] && pid.find(mPIDFilter) == std::string::npos &&
-                    name.find(mPIDFilter) == std::string::npos &&
-                    gmfcs.find(mPIDFilter) == std::string::npos) continue;
-
-                if (ImGui::Selectable(displayStr.c_str(), i == mSelectedPID)) {
-                    if (i != mSelectedPID) {
-                        mSelectedPID = i;
-                        scanPIDHDFFiles();
-                    }
-                }
-            }
-            ImGui::EndListBox();
-        }
-
-        // Pre/Post toggle
-        if (ImGui::RadioButton("Pre-op", mPreOp)) {
-            if (!mPreOp) { mPreOp = true; if (mSelectedPID >= 0) scanPIDHDFFiles(); }
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Post-op", !mPreOp)) {
-            if (mPreOp) { mPreOp = false; if (mSelectedPID >= 0) scanPIDHDFFiles(); }
-        }
-
-        // HDF Files section
-        if (mSelectedPID >= 0) {
-            ImGui::Separator();
-            ImGui::Text("HDF Files: %zu", mPIDHDFFiles.size());
-
-            ImGui::SetNextItemWidth(100);
-            ImGui::InputText("##HDFFilter", mPIDHDFFilter, sizeof(mPIDHDFFilter));
-            ImGui::SameLine();
-            if (ImGui::Button("X##HDFClear")) mPIDHDFFilter[0] = '\0';
-
-            if (ImGui::BeginListBox("##HDFList", ImVec2(-1, 150))) {
-                for (int i = 0; i < static_cast<int>(mPIDHDFFiles.size()); ++i) {
-                    const auto& f = mPIDHDFFiles[i];
-                    if (mPIDHDFFilter[0] && f.find(mPIDHDFFilter) == std::string::npos) continue;
-
-                    if (ImGui::Selectable(f.c_str(), i == mSelectedPIDHDF)) {
-                        mSelectedPIDHDF = i;
-                        loadPIDHDFFile(f);
-                    }
-                }
-                ImGui::EndListBox();
-            }
+    // Render PID Navigator UI with collapsing header
+    if (mPIDNavigator) {
+        mPIDNavigator->renderUI("Clinical Data", 150.0f, 150.0f, false);
+    } else {
+        if (ImGui::CollapsingHeader("Clinical Data", 0)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                             "PID Navigator not initialized");
         }
     }
 }
