@@ -40,7 +40,19 @@ static void drawOutlinedText(ImDrawList* drawList, ImFont* font, float fontSize,
 
 C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath,
                                  const std::string& configPath)
-    : ViewerAppBase("C3D Processor", 1280, 720)
+    : mWindow(nullptr)
+    , mWidth(1280)
+    , mHeight(720)
+    , mWindowXPos(0)
+    , mWindowYPos(0)
+    , mZoom(1.0)
+    , mPersp(45.0)
+    , mFocus(0)
+    , mMouseDown(false)
+    , mRotate(false)
+    , mTranslate(false)
+    , mMouseX(0)
+    , mMouseY(0)
     , mSkeletonPath(skeletonPath)
     , mMarkerConfigPath(markerPath)
     , mInitialMarkerPath(markerPath)
@@ -66,19 +78,54 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     mGraphData = new CBufferData<double>();
     mGraphData->register_key("marker_error_mean", 1000);
 
-    // C3D COM init
+    // Camera defaults
+    mEye = Eigen::Vector3d(0.0, 0.0, 2.5);
+    mUp = Eigen::Vector3d(0.0, 1.0, 0.0);
+    mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
     mC3DCOM = Eigen::Vector3d::Zero();
 
-    // Load config first to get window size/position
+    // Load config
     loadRenderConfig();
 
-    // Set window position if specified in config
-    if (mWindowXPos != 0 || mWindowYPos != 0) {
-        glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
+    // Initialize GLFW
+    if (!glfwInit()) {
+        LOG_ERROR("[C3DProcessor] Failed to initialize GLFW");
+        exit(1);
     }
 
-    // Initialize ImPlot for this app
-    ImPlot::CreateContext();
+    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+    glfwWindowHintString(GLFW_X11_CLASS_NAME,    "C3Dprocessor");
+    glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "C3Dprocessor"); 
+    mWindow = glfwCreateWindow(mWidth, mHeight, "C3Dprocessor", nullptr, nullptr);
+    if (!mWindow) {
+        LOG_ERROR("[C3DProcessor] Failed to create GLFW window");
+        glfwTerminate();
+        exit(1);
+    }
+
+    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
+    glfwMakeContextCurrent(mWindow);
+    glfwSwapInterval(1);
+
+    // Initialize GLAD
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        LOG_ERROR("[C3DProcessor] Failed to initialize GLAD");
+        exit(1);
+    }
+
+    // Set up callbacks
+    glfwSetWindowUserPointer(mWindow, this);
+    glfwSetFramebufferSizeCallback(mWindow, framebufferSizeCallback);
+    glfwSetMouseButtonCallback(mWindow, mouseButtonCallback);
+    glfwSetCursorPosCallback(mWindow, cursorPosCallback);
+    glfwSetScrollCallback(mWindow, scrollCallback);
+    glfwSetKeyCallback(mWindow, keyCallback);
+
+    // Initialize ImGui
+    GUI::InitImGui(mWindow, true);
 
     // Load skeleton and create character
     // SKEL_FREE_JOINTS: All joints are FreeJoint (6 DOF) for debugging bone poses independently
@@ -170,29 +217,46 @@ C3DProcessorApp::~C3DProcessorApp()
     }
 
     ImPlot::DestroyContext();
-    // Base class handles GLFW/ImGui cleanup
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    glfwDestroyWindow(mWindow);
+    glfwTerminate();
 }
 
 // =============================================================================
-// ViewerAppBase Overrides
+// Main Loop
 // =============================================================================
 
-void C3DProcessorApp::onInitialize()
+void C3DProcessorApp::startLoop()
 {
-    // Additional initialization after base class setup (if needed)
-}
+    while (!glfwWindowShouldClose(mWindow)) {
+        glfwPollEvents();
 
-void C3DProcessorApp::onFrameStart()
-{
-    // Update playback timing
-    double currentTime = glfwGetTime();
-    double dt = currentTime - mLastRealTime;
-    mLastRealTime = currentTime;
+        // Update time
+        double currentTime = glfwGetTime();
+        double dt = currentTime - mLastRealTime;
+        mLastRealTime = currentTime;
 
-    if (mIsPlaying) {
-        updateViewerTime(dt * mViewerPlaybackSpeed);
-    } else {
-        updateViewerTime(0.0);
+        if (mIsPlaying) updateViewerTime(dt * mViewerPlaybackSpeed);
+        else updateViewerTime(0.0);
+
+        // Start ImGui frame (needed for marker label rendering in drawFrame)
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        // OpenGL rendering
+        drawFrame();
+
+        // ImGui panels
+        drawLeftPanel();
+        drawRightPanel();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        glfwSwapBuffers(mWindow);
     }
 }
 
@@ -202,9 +266,10 @@ void C3DProcessorApp::onFrameStart()
 
 void C3DProcessorApp::updateCamera()
 {
-    // Camera follow character (update mCamera.trans before setCamera applies it)
-    if (mCamera.focus == 1 && mMotion != nullptr && mFreeCharacter) {
+    // Camera follow character (update mTrans before setCamera applies it)
+    if (mFocus == 1 && mMotion != nullptr && mFreeCharacter) {
         // Calculate current position based on cycle accumulation
+        double phase = mViewerPhase;
         Motion* current_motion = mMotion;
         C3DViewerState& state = mMotionState;
 
@@ -228,13 +293,33 @@ void C3DProcessorApp::updateCamera()
         Eigen::VectorXd current_pos = current_frame;
 
         // Follow root position with cycle accumulation and display offset
-        mCamera.trans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
-        mCamera.trans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
-        mCamera.trans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
+        mTrans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
+        mTrans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
+        mTrans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
     }
 }
 
-// setCamera() removed - handled by ViewerAppBase::setCamera()
+void C3DProcessorApp::setCamera()
+{
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glViewport(0, 0, mWidth, mHeight);
+    gluPerspective(mPersp, (double)mWidth / (double)mHeight, 0.1, 100.0);
+    gluLookAt(mEye[0], mEye[1], mEye[2], 0.0, 0.0, 0.0, mUp[0], mUp[1], mUp[2]);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
+    mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
+    mTrackball.applyGLRotation();
+
+    glScalef(mZoom, mZoom, mZoom);
+
+    // Apply combined translation: automatic focus tracking + user manual offset
+    Eigen::Vector3d totalTrans = mTrans + mRelTrans;
+    glTranslatef(totalTrans[0], totalTrans[1], totalTrans[2]);
+}
 
 void C3DProcessorApp::loadRenderConfig()
 {
@@ -321,8 +406,15 @@ bool C3DProcessorApp::isPanelDefaultOpen(const std::string& panelName) const
 // Rendering
 // =============================================================================
 
-void C3DProcessorApp::drawContent()
+void C3DProcessorApp::drawFrame()
 {
+    GUI::InitGL();
+    GUI::InitLighting();
+
+    updateCamera();
+    setCamera();
+    GUI::DrawGroundGrid(mGroundMode);
+
     // Draw debug axes
     if (mRenderWorldAxis) drawAxis(Eigen::Isometry3d::Identity(), mAxisLength, "World");
     if (mRenderSkeletonAxis && mFreeCharacter) {
@@ -334,15 +426,9 @@ void C3DProcessorApp::drawContent()
 
     drawSkeleton();
     drawMarkers();
-    if (mMouseDown) GUI::DrawOriginAxisGizmo(-mCamera.trans);
+    if (mCameraMoving) GUI::DrawOriginAxisGizmo(-mTrans);
     drawSelectedJointGizmo();
     drawSelectedBoneGizmo();
-}
-
-void C3DProcessorApp::drawUI()
-{
-    drawLeftPanel();
-    drawRightPanel();
 }
 
 void C3DProcessorApp::drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label)
@@ -757,9 +843,9 @@ void C3DProcessorApp::drawPlaybackSection()
             mMotionState.lastFrameIdx = 0;
             mMotionState.cycleAccumulation.setZero();
             // Reset camera pose
-            mCamera.trans = Eigen::Vector3d(0.0, -0.8, 0.0);
-            mCamera.zoom = 1.0;
-            mCamera.trackball.setQuaternion(Eigen::Quaterniond::Identity());
+            mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
+            mZoom = 1.0;
+            mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
         }
 
         // Playback speed
@@ -1355,16 +1441,16 @@ void C3DProcessorApp::drawRightPanel()
     // Camera Information
     if (ImGui::CollapsingHeader("Camera Info")) {
         ImGui::Text("Position:");
-        ImGui::Text("  X: %.3f", mCamera.trans[0]);
-        ImGui::Text("  Y: %.3f", mCamera.trans[1]);
-        ImGui::Text("  Z: %.3f", mCamera.trans[2]);
+        ImGui::Text("  X: %.3f", mTrans[0]);
+        ImGui::Text("  Y: %.3f", mTrans[1]);
+        ImGui::Text("  Z: %.3f", mTrans[2]);
         ImGui::Separator();
-        ImGui::Text("Zoom: %.3f", mCamera.zoom);
-        ImGui::Text("Perspective: %.1f deg", mCamera.persp);
+        ImGui::Text("Zoom: %.3f", mZoom);
+        ImGui::Text("Perspective: %.1f deg", mPersp);
         ImGui::Separator();
-        ImGui::Text("Follow Mode: %s", mCamera.focus == 1 ? "ON" : "OFF");
+        ImGui::Text("Follow Mode: %s", mFocus == 1 ? "ON" : "OFF");
         ImGui::Text("Trackball Rotation:");
-        Eigen::Matrix3d rotMat = mCamera.trackball.getRotationMatrix();
+        Eigen::Matrix3d rotMat = mTrackball.getRotationMatrix();
         Eigen::Vector3d euler = rotMat.eulerAngles(2, 1, 0) * 180.0 / M_PI;
         ImGui::Text("  Yaw:   %.1f deg", euler[0]);
         ImGui::Text("  Pitch: %.1f deg", euler[1]);
@@ -2453,8 +2539,99 @@ void C3DProcessorApp::computeViewerMetric()
 
 
 // =============================================================================
-// Input Handling (keyPress only - callbacks handled by ViewerAppBase)
+// Input Handling
 // =============================================================================
+
+void C3DProcessorApp::framebufferSizeCallback(GLFWwindow* window, int width, int height)
+{
+    auto* app = static_cast<C3DProcessorApp*>(glfwGetWindowUserPointer(window));
+    app->resize(width, height);
+}
+
+void C3DProcessorApp::mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
+{
+    auto* app = static_cast<C3DProcessorApp*>(glfwGetWindowUserPointer(window));
+    app->mousePress(button, action, mods);
+}
+
+void C3DProcessorApp::cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    auto* app = static_cast<C3DProcessorApp*>(glfwGetWindowUserPointer(window));
+    app->mouseMove(xpos, ypos);
+}
+
+void C3DProcessorApp::scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    auto* app = static_cast<C3DProcessorApp*>(glfwGetWindowUserPointer(window));
+    app->mouseScroll(xoffset, yoffset);
+}
+
+void C3DProcessorApp::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    auto* app = static_cast<C3DProcessorApp*>(glfwGetWindowUserPointer(window));
+    app->keyPress(key, scancode, action, mods);
+}
+
+void C3DProcessorApp::resize(int width, int height)
+{
+    mWidth = width;
+    mHeight = height;
+    glViewport(0, 0, width, height);
+}
+
+void C3DProcessorApp::mousePress(int button, int action, int mods)
+{
+    if (ImGui::GetIO().WantCaptureMouse) return;
+
+    if (action == GLFW_PRESS) {
+        mMouseDown = true;
+        mCameraMoving = true;
+        if (button == GLFW_MOUSE_BUTTON_LEFT) {
+            mRotate = true;
+            mTrackball.startBall(mMouseX, mHeight - mMouseY);
+        } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+            mTranslate = true;
+        }
+    } else if (action == GLFW_RELEASE) {
+        mMouseDown = false;
+        mRotate = false;
+        mTranslate = false;
+        mCameraMoving = false;
+    }
+}
+
+void C3DProcessorApp::mouseMove(double x, double y)
+{
+    double dx = x - mMouseX;
+    double dy = y - mMouseY;
+    mMouseX = x;
+    mMouseY = y;
+
+    if (ImGui::GetIO().WantCaptureMouse) return;
+
+    if (mRotate) {
+        mTrackball.updateBall(x, mHeight - y);
+    }
+    if (mTranslate) {
+        double scale = 0.005 / mZoom;  // Scale with zoom level
+        Eigen::Matrix3d rot = mTrackball.getRotationMatrix();
+        Eigen::Vector3d delta = rot.transpose() * Eigen::Vector3d(dx * scale, -dy * scale, 0.0);
+        if (mFocus == 1) {
+            // When following character, update relative offset
+            mRelTrans += delta;
+        } else {
+            mTrans += delta;
+        }
+    }
+}
+
+void C3DProcessorApp::mouseScroll(double xoff, double yoff)
+{
+    if (ImGui::GetIO().WantCaptureMouse) return;
+
+    mZoom *= (1.0 + yoff * 0.1);
+    mZoom = std::max(0.1, std::min(50.0, mZoom));
+}
 
 void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
 {
@@ -2464,7 +2641,7 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
         switch (key) {
             case GLFW_KEY_SPACE:
                 mIsPlaying = !mIsPlaying;
-                return;  // Handled
+                break;
             case GLFW_KEY_S:
                 // Step single frame forward
                 if (mMotion) {
@@ -2472,35 +2649,44 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                     double frameTime = mMotion->getFrameTime();
                     updateViewerTime(frameTime);
                 }
-                return;  // Handled
+                break;
             case GLFW_KEY_R:
-                resetPlaybackAndState();
-                return;  // Handled
+                reset();
+                break;
             case GLFW_KEY_1:
             case GLFW_KEY_KP_1:
-                alignCameraToPlaneQuat(1);  // XY plane
-                return;  // Handled
+                alignCameraToPlane(1);  // XY plane
+                break;
             case GLFW_KEY_2:
             case GLFW_KEY_KP_2:
-                alignCameraToPlaneQuat(2);  // YZ plane
-                return;  // Handled
+                alignCameraToPlane(2);  // YZ plane
+                break;
             case GLFW_KEY_3:
             case GLFW_KEY_KP_3:
-                alignCameraToPlaneQuat(3);  // ZX plane
-                return;  // Handled
+                alignCameraToPlane(3);  // ZX plane
+                break;
             case GLFW_KEY_C:
                 // Reload current motion with calibration
                 reloadCurrentMotion(true);
-                return;  // Handled
+                break;
+            case GLFW_KEY_F:
+                // Toggle camera follow
+                mFocus = (mFocus == 1) ? 0 : 1;
+                if (mFocus == 1) {
+                    LOG_INFO("[C3DProcessor] Camera follow enabled");
+                } else {
+                    LOG_INFO("[C3DProcessor] Camera follow disabled");
+                }
+                break;
             case GLFW_KEY_L:
                 mRenderMarkerIndices = !mRenderMarkerIndices;
-                return;  // Handled
+                break;
             case GLFW_KEY_O:
                 mRenderMode = static_cast<RenderMode>((static_cast<int>(mRenderMode) + 1) % 3);
-                return;  // Handled
+                break;
             case GLFW_KEY_V:
                 hideVirtualMarkers();
-                return;  // Handled
+                break;
             case GLFW_KEY_M:
                 // Toggle all marker rendering
                 {
@@ -2511,15 +2697,19 @@ void C3DProcessorApp::keyPress(int key, int scancode, int action, int mods)
                     mRenderExpectedMarkers = newState;
                     mRenderMotionCharMarkers = newState;
                 }
-                return;  // Handled
+                break;
+            case GLFW_KEY_G:
+                mGroundMode = (mGroundMode == GroundMode::Wireframe)
+                    ? GroundMode::Solid : GroundMode::Wireframe;
+                break;
+            case GLFW_KEY_ESCAPE:
+                glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
+                break;
         }
     }
-
-    // Delegate common keys (F, G, ESC) to base class
-    ViewerAppBase::keyPress(key, scancode, action, mods);
 }
 
-void C3DProcessorApp::alignCameraToPlaneQuat(int plane)
+void C3DProcessorApp::alignCameraToPlane(int plane)
 {
     Eigen::Quaterniond quat;
     switch (plane) {
@@ -2533,10 +2723,10 @@ void C3DProcessorApp::alignCameraToPlaneQuat(int plane)
             quat = Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitX());
             break;
     }
-    mCamera.trackball.setQuaternion(quat);
+    mTrackball.setQuaternion(quat);
 }
 
-void C3DProcessorApp::resetPlaybackAndState()
+void C3DProcessorApp::reset()
 {
     // Reset playback state
     mViewerTime = 0.0;
@@ -2550,11 +2740,11 @@ void C3DProcessorApp::resetPlaybackAndState()
     MarkerPlaybackContext context = computeMarkerPlayback();
     evaluateMarkerPlayback(context);
 
-    // Reset camera position (use base class camera struct)
-    mCamera.zoom = 1.0;
-    mCamera.trans = Eigen::Vector3d(0.0, -0.8, 0.0);
-    mCamera.relTrans.setZero();
-    mCamera.trackball = dart::gui::Trackball();
+    // Reset camera position
+    mZoom = 1.0;
+    mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
+    mRelTrans.setZero();
+    mTrackball = dart::gui::Trackball();
 
     // Reset skeleton to zero pose
     RenderCharacter* characters[2] = { mFreeCharacter.get(), mMotionCharacter.get() };
@@ -2685,8 +2875,7 @@ void C3DProcessorApp::drawClinicalDataSection()
         if (ImGui::Button("Load calibration")) {
             if (hasCalibration && mResourceManager) {
                 try {
-                    // Use resolveDir for directory path (not resolve which is for files)
-                    auto resolved = mResourceManager->resolveDir(pattern);
+                    auto resolved = mResourceManager->resolve(pattern);
                     if (loadPersonalizedCalibration(resolved.string())) {
                         mPersonalizedCalibrationLoaded = true;
                     }

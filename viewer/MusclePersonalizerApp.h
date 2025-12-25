@@ -1,18 +1,11 @@
 #ifndef MUSCLE_PERSONALIZER_APP_H
 #define MUSCLE_PERSONALIZER_APP_H
 
-#include "dart/gui/Trackball.hpp"
+#include "common/ViewerAppBase.h"
 #include "RenderCharacter.h"
-#include "GLfunctions.h"
 #include "ShapeRenderer.h"
 #include "rm/rm.hpp"
 #include "SurgeryExecutor.h"
-#include <glad/glad.h>
-#include <GL/glu.h>
-#include <GLFW/glfw3.h>
-#include <imgui.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_opengl3.h>
 #include "common/imgui_common.h"
 #include <memory>
 #include <string>
@@ -22,42 +15,31 @@
 /**
  * @brief Muscle Personalizer Application
  *
+ * Inherits from ViewerAppBase for common window/camera/input handling.
+ *
  * Features:
  * - Weight application (f0 scaling based on target body mass)
  * - Waypoint optimization (muscle path optimization from HDF motions)
  * - Contracture estimation (Ceres-based lm_contract parameter fitting from ROM data)
  */
-class MusclePersonalizerApp
+class MusclePersonalizerApp : public ViewerAppBase
 {
 public:
     MusclePersonalizerApp(const std::string& configPath = "@data/config/muscle_personalizer.yaml");
-    ~MusclePersonalizerApp();
+    ~MusclePersonalizerApp() override = default;
 
-    void startLoop();
+protected:
+    // ViewerAppBase overrides
+    void onInitialize() override;
+    void drawContent() override;
+    void drawUI() override;
 
 private:
     // ============================================================
-    // GLFW Window
+    // Window position (from config)
     // ============================================================
-    GLFWwindow* mWindow;
-    int mWidth, mHeight;
-    int mWindowXPos, mWindowYPos;
-
-    // ============================================================
-    // Camera
-    // ============================================================
-    Eigen::Vector3d mEye;
-    Eigen::Vector3d mUp;
-    Eigen::Vector3d mTrans;
-    double mZoom;
-    double mPersp;
-    dart::gui::Trackball mTrackball;
-
-    // Mouse state
-    bool mMouseDown;
-    bool mRotate;
-    bool mTranslate;
-    double mMouseX, mMouseY;
+    int mWindowXPos = 0;
+    int mWindowYPos = 0;
 
     // ============================================================
     // Rendering
@@ -65,8 +47,6 @@ private:
     ShapeRenderer mShapeRenderer;
     std::string mSkeletonPath;
     std::string mMusclePath;
-    RenderMode mRenderMode = RenderMode::Wireframe;
-    GroundMode mGroundMode = GroundMode::Wireframe;
 
     // ============================================================
     // Surgery Executor (handles all muscle operations)
@@ -133,7 +113,6 @@ private:
     // Rendering Flags
     // ============================================================
     bool mRenderMuscles = true;
-    bool mRenderGround = true;
     bool mColorByContracture = false;
     float mMuscleLabelFontSize = 14.0f;
 
@@ -144,8 +123,6 @@ private:
     // ============================================================
     // Initialization
     // ============================================================
-    void initCamera();
-    void setCamera();
     void loadConfig();
     void loadCharacter();
     void initializeSurgeryExecutor();
@@ -153,7 +130,6 @@ private:
     // ============================================================
     // Rendering
     // ============================================================
-    void drawFrame();
     void drawSkeleton();
     void drawMuscles();
 
@@ -168,7 +144,6 @@ private:
     void drawRenderTab();
 
     void drawRightPanel();
-    void drawViewSection();
     void drawResultsSection();
 
     // ============================================================
@@ -186,22 +161,6 @@ private:
     // Helper for collapsing header
     bool collapsingHeaderWithControls(const std::string& title);
     bool isPanelDefaultOpen(const std::string& panelName) const;
-
-    // ============================================================
-    // Input callbacks
-    // ============================================================
-    static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
-    static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
-    static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos);
-    static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
-    static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-
-    void resize(int width, int height);
-    void mousePress(int button, int action, int mods);
-    void mouseMove(double x, double y);
-    void mouseScroll(double xoff, double yoff);
-    void keyPress(int key, int scancode, int action, int mods);
-    void reset();
 };
 
 #endif // MUSCLE_PERSONALIZER_APP_H

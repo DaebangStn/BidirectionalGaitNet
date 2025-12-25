@@ -10,7 +10,7 @@ static char s_muscleFilterBuffer[256] = "";
 
 bool MuscleSelector(
     const char* label,
-    const std::vector<std::shared_ptr<Muscle>>& muscles,
+    const std::vector<Muscle*>& muscles,
     std::vector<bool>& selectionStates,
     char* filterBuffer,
     size_t filterBufferSize,
@@ -91,7 +91,7 @@ bool MuscleSelector(
 
 bool MuscleSelector(
     const char* label,
-    const std::vector<std::shared_ptr<Muscle>>& muscles,
+    const std::vector<Muscle*>& muscles,
     std::vector<bool>& selectionStates,
     float listHeight)
 {
@@ -258,6 +258,214 @@ void ColorBarLegend(
     ImGui::Text("%.2f %s", minVal, minLabel);
     ImGui::SameLine(width - ImGui::CalcTextSize(maxLabel).x - 50);
     ImGui::Text("%.2f %s", maxVal, maxLabel);
+}
+
+// ============================================================
+// Slider Helpers
+// ============================================================
+
+bool SliderFloatFullWidth(const char* label, float* v, float min, float max,
+                          const char* format)
+{
+    ImGui::PushItemWidth(-1);
+    bool changed = ImGui::SliderFloat(label, v, min, max, format);
+    ImGui::PopItemWidth();
+    return changed;
+}
+
+bool SliderIntFullWidth(const char* label, int* v, int min, int max)
+{
+    ImGui::PushItemWidth(-1);
+    bool changed = ImGui::SliderInt(label, v, min, max);
+    ImGui::PopItemWidth();
+    return changed;
+}
+
+bool DragFloatFullWidth(const char* label, float* v, float speed,
+                        float min, float max, const char* format)
+{
+    ImGui::PushItemWidth(-1);
+    bool changed = ImGui::DragFloat(label, v, speed, min, max, format);
+    ImGui::PopItemWidth();
+    return changed;
+}
+
+// ============================================================
+// Radio Button Group
+// ============================================================
+
+bool RadioButtonGroup(const char* id, const std::vector<std::string>& labels,
+                      int* selected, bool horizontal)
+{
+    bool changed = false;
+    ImGui::PushID(id);
+
+    for (size_t i = 0; i < labels.size(); i++) {
+        if (i > 0 && horizontal) {
+            ImGui::SameLine();
+        }
+        if (ImGui::RadioButton(labels[i].c_str(), *selected == static_cast<int>(i))) {
+            *selected = static_cast<int>(i);
+            changed = true;
+        }
+    }
+
+    ImGui::PopID();
+    return changed;
+}
+
+// ============================================================
+// Button Row
+// ============================================================
+
+int ButtonRow(const char* id, const std::vector<ButtonDef>& buttons)
+{
+    int clicked = -1;
+    ImGui::PushID(id);
+
+    for (size_t i = 0; i < buttons.size(); i++) {
+        if (i > 0) {
+            ImGui::SameLine();
+        }
+
+        if (!buttons[i].enabled) {
+            ImGui::BeginDisabled();
+        }
+
+        if (ImGui::Button(buttons[i].label.c_str())) {
+            clicked = static_cast<int>(i);
+        }
+
+        if (!buttons[i].enabled) {
+            ImGui::EndDisabled();
+        }
+    }
+
+    ImGui::PopID();
+    return clicked;
+}
+
+// ============================================================
+// Status Text
+// ============================================================
+
+void StatusText(const char* text, StatusType type)
+{
+    ImVec4 color;
+    switch (type) {
+        case StatusType::Info:
+            color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);  // Light gray
+            break;
+        case StatusType::Success:
+            color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green
+            break;
+        case StatusType::Warning:
+            color = ImVec4(1.0f, 0.7f, 0.2f, 1.0f);  // Orange
+            break;
+        case StatusType::Error:
+            color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Red
+            break;
+        case StatusType::Disabled:
+            color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);  // Dark gray
+            break;
+    }
+    ImGui::TextColored(color, "%s", text);
+}
+
+// ============================================================
+// Input Text with Button
+// ============================================================
+
+bool InputTextWithButton(const char* id, char* buf, size_t size,
+                         const char* buttonLabel, float buttonWidth)
+{
+    ImGui::PushID(id);
+
+    // Calculate input width to leave space for button
+    float inputWidth = ImGui::GetContentRegionAvail().x - buttonWidth - ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetNextItemWidth(inputWidth);
+    ImGui::InputText("##input", buf, size);
+
+    ImGui::SameLine();
+    bool clicked = ImGui::Button(buttonLabel, ImVec2(buttonWidth, 0));
+
+    ImGui::PopID();
+    return clicked;
+}
+
+// ============================================================
+// Drag Float 3 Labeled
+// ============================================================
+
+bool DragFloat3Labeled(const char* label, float v[3], float speed,
+                       float min, float max, const char* format)
+{
+    bool changed = false;
+    ImGui::PushID(label);
+
+    ImGui::Text("%s", label);
+
+    float width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3.0f;
+
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::DragFloat("##X", &v[0], speed, min, max, format)) changed = true;
+    ImGui::SameLine();
+
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::DragFloat("##Y", &v[1], speed, min, max, format)) changed = true;
+    ImGui::SameLine();
+
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::DragFloat("##Z", &v[2], speed, min, max, format)) changed = true;
+
+    ImGui::PopID();
+    return changed;
+}
+
+// ============================================================
+// Scrollable List Box
+// ============================================================
+
+bool ScrollableListBox(const char* label, const std::vector<std::string>& items,
+                       int* selectedIdx, float height, const char* filterText)
+{
+    bool changed = false;
+
+    // Build filter string if provided
+    std::string filterStr;
+    if (filterText != nullptr && filterText[0] != '\0') {
+        filterStr = filterText;
+        std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+    }
+
+    ImGui::BeginChild(label, ImVec2(0, height), true);
+
+    for (size_t i = 0; i < items.size(); i++) {
+        // Apply filter if provided
+        if (!filterStr.empty()) {
+            std::string itemLower = items[i];
+            std::transform(itemLower.begin(), itemLower.end(), itemLower.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            if (itemLower.find(filterStr) == std::string::npos) {
+                continue;  // Skip non-matching items
+            }
+        }
+
+        bool isSelected = (*selectedIdx == static_cast<int>(i));
+        if (ImGui::Selectable(items[i].c_str(), isSelected)) {
+            *selectedIdx = static_cast<int>(i);
+            changed = true;
+        }
+
+        // Set initial focus when opening
+        if (isSelected) {
+            ImGui::SetItemDefaultFocus();
+        }
+    }
+
+    ImGui::EndChild();
+    return changed;
 }
 
 } // namespace ImGuiCommon

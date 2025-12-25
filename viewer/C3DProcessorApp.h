@@ -1,9 +1,8 @@
 #ifndef C3D_PROCESSOR_APP_H
 #define C3D_PROCESSOR_APP_H
 
-#include "dart/gui/Trackball.hpp"
+#include "common/ViewerAppBase.h"
 #include "RenderCharacter.h"
-#include "GLfunctions.h"
 #include "ShapeRenderer.h"
 #include "C3D_Reader.h"
 #include "C3D.h"
@@ -11,13 +10,7 @@
 #include "CBufferData.h"
 #include "rm/rm.hpp"
 #include "common/PIDNavigator.h"
-#include <glad/glad.h>
-#include <GL/glu.h>
-#include <GLFW/glfw3.h>
-#include <imgui.h>
 #include <implot.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_opengl3.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -63,6 +56,8 @@ struct C3DViewerState
 /**
  * @brief Standalone C3D processor application
  *
+ * Inherits from ViewerAppBase for common window/camera/input handling.
+ *
  * Features:
  * - Load and play C3D motion files (no HDF support)
  * - Render C3D markers and skeleton markers
@@ -70,42 +65,31 @@ struct C3DViewerState
  * - Skeleton fitting/calibration from C3D data
  * - MarkerDiff plots for fitting quality
  */
-class C3DProcessorApp
+class C3DProcessorApp : public ViewerAppBase
 {
 public:
     C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath,
                     const std::string& configPath = "@data/config/skeleton_fitting.yaml");
-    ~C3DProcessorApp();
+    ~C3DProcessorApp() override;
 
-    void startLoop();
     void loadC3DFile(const std::string& path);
 
+protected:
+    // ViewerAppBase overrides
+    void onInitialize() override;
+    void onFrameStart() override;
+    void updateCamera() override;
+    void drawContent() override;
+    void drawUI() override;
+    void keyPress(int key, int scancode, int action, int mods) override;
+
 private:
-    // GLFW window
-    GLFWwindow* mWindow;
-    int mWidth, mHeight;
-    int mWindowXPos, mWindowYPos;
-
-    // Camera
-    Eigen::Vector3d mEye;
-    Eigen::Vector3d mUp;
-    Eigen::Vector3d mTrans;
-    Eigen::Vector3d mRelTrans = Eigen::Vector3d::Zero();  // User drag offset relative to focus target
-    double mZoom;
-    double mPersp;
-    dart::gui::Trackball mTrackball;
-    int mFocus;  // Camera follow mode (0=free, 1=follow skeleton COM)
-
-    // Mouse state
-    bool mMouseDown;
-    bool mRotate;
-    bool mTranslate;
-    double mMouseX, mMouseY;
+    // === Window position (from config) ===
+    int mWindowXPos = 0, mWindowYPos = 0;
 
     // Character and rendering
     std::unique_ptr<RenderCharacter> mFreeCharacter;   // Free joints skeleton for bone-by-bone debugging
     std::unique_ptr<RenderCharacter> mMotionCharacter; // Normal skeleton for motion playback
-    ShapeRenderer mShapeRenderer;
     std::string mSkeletonPath;
     std::string mMarkerConfigPath;
     std::string mInitialMarkerPath;  // Store initial marker path for reset
@@ -145,12 +129,7 @@ private:
     // Axis rendering flags
     bool mRenderWorldAxis = false;
     bool mRenderSkeletonAxis = false;
-    bool mCameraMoving = false;  // True while camera is being manipulated
     float mAxisLength = 0.3f;
-
-    // Skeleton render mode
-    RenderMode mRenderMode = RenderMode::Wireframe;
-    GroundMode mGroundMode = GroundMode::Wireframe;
 
     // Free character rendering
     bool mRenderFreeCharacter = true;
@@ -236,20 +215,17 @@ private:
     std::set<std::string> mDefaultOpenPanels;
     int mControlPanelWidth;
 
-    // Initialization
-    void setCamera();
-    void updateCamera();
+    // === Initialization ===
     void loadRenderConfig();
 
-    // Rendering
-    void drawFrame();
+    // === Rendering ===
     void drawSkeleton();
     void drawMarkers();
     void drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label);
     void drawSelectedJointGizmo();
     void drawSelectedBoneGizmo();
 
-    // UI panels
+    // === UI panels ===
     void drawLeftPanel();
     void drawMotionListSection();
     void drawPlaybackSection();
@@ -265,23 +241,23 @@ private:
     void drawJointOffsetSection();
     void drawClinicalDataSection();
 
-    // HDF export
+    // === HDF export ===
     void exportMotionToHDF5();
 
-    // PID Navigator callbacks
+    // === PID Navigator callbacks ===
     void onPIDFileSelected(const std::string& path, const std::string& filename);
     void checkForPersonalizedCalibration();
     bool loadPersonalizedCalibration(const std::string& inputDir);
 
-    // Motion source helper
+    // === Motion source helper ===
     std::string getCurrentMotionPath() const;
     void reloadCurrentMotion(bool withCalibration);
 
-    // Helper for collapsing header
+    // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);
     bool isPanelDefaultOpen(const std::string& panelName) const;
 
-    // C3D processing
+    // === C3D processing ===
     void scanC3DFiles();
     Eigen::Vector3d computeMarkerCycleDistance(C3D* markerData);
     MarkerPlaybackContext computeMarkerPlayback();
@@ -290,21 +266,9 @@ private:
     void updateViewerTime(double dt);
     void computeViewerMetric();
 
-
-    // Input callbacks
-    static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
-    static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
-    static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos);
-    static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
-    static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-
-    void resize(int width, int height);
-    void mousePress(int button, int action, int mods);
-    void mouseMove(double x, double y);
-    void mouseScroll(double xoff, double yoff);
-    void keyPress(int key, int scancode, int action, int mods);
-    void alignCameraToPlane(int plane);
-    void reset();
+    // === App-specific helpers ===
+    void alignCameraToPlaneQuat(int plane);  // Quaternion-based camera alignment
+    void resetPlaybackAndState();            // Reset playback, graph data, and skeleton state
     void hideVirtualMarkers();
     void clearMotionAndZeroPose();
 };

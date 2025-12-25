@@ -11,45 +11,16 @@
 using namespace dart::dynamics;
 
 // =============================================================================
-// Constructor / Destructor
+// Constructor
 // =============================================================================
 
 MarkerEditorApp::MarkerEditorApp(int argc, char** argv)
-    : mWindow(nullptr)
-    , mWidth(1280)
-    , mHeight(720)
-    , mWindowXPos(0)
-    , mWindowYPos(0)
-    , mZoom(1.0)
-    , mPersp(45.0)
-    , mMouseDown(false)
-    , mRotate(false)
-    , mTranslate(false)
-    , mMouseX(0)
-    , mMouseY(0)
-    , mSelectedMarkerIndex(-1)
-    , mReferenceMarkerIndex(-1)
-    , mShowLabels(true)
-    , mShowPlaneXY(false)
-    , mShowPlaneYZ(false)
-    , mShowPlaneZX(false)
-    , mPlaneOpacity(0.5f)
-    , mRenderMode(RenderMode::Mesh)
-    , mNewMarkerBoneIndex(0)
+    : ViewerAppBase("Marker Editor", 1280, 720)
 {
-    // Initialize buffers
-    std::memset(mSearchFilter, 0, sizeof(mSearchFilter));
-    std::memset(mNewMarkerName, 0, sizeof(mNewMarkerName));
-    std::memset(mBodyNodeFilter, 0, sizeof(mBodyNodeFilter));
-    std::memset(mExportSkeletonPath, 0, sizeof(mExportSkeletonPath));
-    std::strcpy(mNewMarkerName, "NewMarker");
-    std::strcpy(mExportSkeletonPath, "data/skeleton/edited.yaml");
-    mSelectedBodyNodeIndex = -1;
-
     // Default paths
     mSkeletonPath = "@data/skeleton/base.xml";
     mMarkerPath = "@data/marker/default.xml";
-    mExportPath = "test";  // Just the stem, will be prefixed with data/marker/ and suffixed with .xml
+    mExportPath = "test";
 
     // Parse command line arguments
     auto printHelp = [&]() {
@@ -86,161 +57,60 @@ MarkerEditorApp::MarkerEditorApp(int argc, char** argv)
         }
     }
 
-    // Camera defaults
-    mEye = Eigen::Vector3d(0.0, 0.0, 2.5);
-    mUp = Eigen::Vector3d(0.0, 1.0, 0.0);
-    mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
-
     // Load window config from render.yaml
     loadRenderConfig();
 
-    // Initialize GLFW
-    if (!glfwInit()) {
-        LOG_ERROR("[MarkerEditor] Failed to initialize GLFW");
-        exit(1);
-    }
+    // Disable ground for marker editor
+    mRenderGround = false;
 
-    glfwWindowHint(GLFW_SAMPLES, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+    LOG_INFO("[MarkerEditor] Initialized with skeleton: " << mSkeletonPath);
+}
 
-    mWindow = glfwCreateWindow(mWidth, mHeight, "Marker Editor", nullptr, nullptr);
-    if (!mWindow) {
-        LOG_ERROR("[MarkerEditor] Failed to create GLFW window");
-        glfwTerminate();
-        exit(1);
-    }
+// =============================================================================
+// ViewerAppBase Overrides
+// =============================================================================
 
-    // Set window position from render.yaml
-    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-
-    glfwMakeContextCurrent(mWindow);
-    glfwSwapInterval(1);
-
-    // Initialize GLAD
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        LOG_ERROR("[MarkerEditor] Failed to initialize GLAD");
-        exit(1);
-    }
-
-    // Set up callbacks
-    glfwSetWindowUserPointer(mWindow, this);
-    glfwSetFramebufferSizeCallback(mWindow, framebufferSizeCallback);
-    glfwSetMouseButtonCallback(mWindow, mouseButtonCallback);
-    glfwSetCursorPosCallback(mWindow, cursorPosCallback);
-    glfwSetScrollCallback(mWindow, scrollCallback);
-    glfwSetKeyCallback(mWindow, keyCallback);
-
-    // Initialize ImGui
-    initImGui();
-
+void MarkerEditorApp::onInitialize()
+{
     // Load skeleton and markers
     loadSkeleton(mSkeletonPath);
     if (mCharacter) {
         loadMarkers(mMarkerPath);
         updateBodyNodeNames();
     }
-
-    LOG_INFO("[MarkerEditor] Initialized with skeleton: " << mSkeletonPath);
 }
 
-MarkerEditorApp::~MarkerEditorApp()
+void MarkerEditorApp::drawContent()
 {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    glfwDestroyWindow(mWindow);
-    glfwTerminate();
+    drawSkeleton();
+    drawMarkers();
 }
 
-// =============================================================================
-// Main Loop
-// =============================================================================
-
-void MarkerEditorApp::startLoop()
+void MarkerEditorApp::drawUI()
 {
-    while (!glfwWindowShouldClose(mWindow)) {
-        glfwPollEvents();
+    drawMarkerLabels();
+    drawEditorPanel();
+}
 
-        // OpenGL rendering
-        initGL();
-        initLighting();
-        setCamera();
-        drawSkeleton();
-        drawMarkers();
+void MarkerEditorApp::keyPress(int key, int scancode, int action, int mods)
+{
+    // Call base class for common shortcuts (1/2/3, R, ESC, etc.)
+    ViewerAppBase::keyPress(key, scancode, action, mods);
 
-        // ImGui rendering
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        drawMarkerLabels();  // Must be after NewFrame (uses ImGui draw list)
-        drawEditorPanel();
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    // Skip if ImGui wants keyboard
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
 
-        glfwSwapBuffers(mWindow);
+    if (action == GLFW_PRESS) {
+        switch (key) {
+            case GLFW_KEY_L:
+                mShowLabels = !mShowLabels;
+                break;
+            case GLFW_KEY_O:
+                // Cycle render mode: Primitive -> Mesh -> Wireframe -> Primitive
+                mRenderMode = static_cast<RenderMode>((static_cast<int>(mRenderMode) + 1) % 3);
+                break;
+        }
     }
-}
-
-// =============================================================================
-// Initialization
-// =============================================================================
-
-void MarkerEditorApp::initGL()
-{
-    glClearColor(0.15f, 0.15f, 0.18f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-}
-
-void MarkerEditorApp::initImGui()
-{
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 150");
-}
-
-void MarkerEditorApp::initLighting()
-{
-    glEnable(GL_LIGHTING);
-    glEnable(GL_LIGHT0);
-
-    GLfloat light_position[] = {1.0f, 2.0f, 1.5f, 0.0f};
-    GLfloat light_ambient[] = {0.3f, 0.3f, 0.3f, 1.0f};
-    GLfloat light_diffuse[] = {0.7f, 0.7f, 0.7f, 1.0f};
-
-    glLightfv(GL_LIGHT0, GL_POSITION, light_position);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, light_ambient);
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
-}
-
-void MarkerEditorApp::setCamera()
-{
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glViewport(0, 0, mWidth, mHeight);
-    gluPerspective(mPersp, (double)mWidth / (double)mHeight, 0.1, 100.0);
-    gluLookAt(mEye[0], mEye[1], mEye[2], 0.0, 0.0, 0.0, mUp[0], mUp[1], mUp[2]);
-
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    // Trackball rotation
-    mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-    mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-    mTrackball.applyGLRotation();
-
-    // Zoom and translation
-    glScalef(mZoom, mZoom, mZoom);
-    glTranslatef(mTrans[0], mTrans[1], mTrans[2]);
 }
 
 // =============================================================================
@@ -469,16 +339,6 @@ void MarkerEditorApp::drawEditorPanel()
             std::string fullPath = "data/marker/" + mExportPath + ".xml";
             exportMarkers(fullPath);
         }
-
-        // // Export skeleton path input
-        // ImGui::SetNextItemWidth(250);
-        // if (ImGui::InputText("Skeleton", mExportSkeletonPath, sizeof(mExportSkeletonPath))) {
-        //     // path updated in buffer
-        // }
-        // ImGui::SameLine();
-        // if (ImGui::Button("Save##Skeleton")) {
-        //     exportSkeleton(std::string(mExportSkeletonPath));
-        // }
     }
 
     // Options
@@ -929,133 +789,6 @@ void MarkerEditorApp::drawAddMarkerPopup()
 }
 
 // =============================================================================
-// Input Callbacks
-// =============================================================================
-
-void MarkerEditorApp::framebufferSizeCallback(GLFWwindow* window, int width, int height)
-{
-    auto* app = static_cast<MarkerEditorApp*>(glfwGetWindowUserPointer(window));
-    app->resize(width, height);
-}
-
-void MarkerEditorApp::mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
-{
-    auto* app = static_cast<MarkerEditorApp*>(glfwGetWindowUserPointer(window));
-    app->mousePress(button, action, mods);
-}
-
-void MarkerEditorApp::cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
-{
-    auto* app = static_cast<MarkerEditorApp*>(glfwGetWindowUserPointer(window));
-    app->mouseMove(xpos, ypos);
-}
-
-void MarkerEditorApp::scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    auto* app = static_cast<MarkerEditorApp*>(glfwGetWindowUserPointer(window));
-    app->mouseScroll(xoffset, yoffset);
-}
-
-void MarkerEditorApp::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
-    auto* app = static_cast<MarkerEditorApp*>(glfwGetWindowUserPointer(window));
-    app->keyPress(key, scancode, action, mods);
-}
-
-void MarkerEditorApp::resize(int width, int height)
-{
-    mWidth = width;
-    mHeight = height;
-    glViewport(0, 0, width, height);
-}
-
-void MarkerEditorApp::mousePress(int button, int action, int mods)
-{
-    // Don't handle camera if ImGui wants mouse
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    if (action == GLFW_PRESS) {
-        mMouseDown = true;
-        if (button == GLFW_MOUSE_BUTTON_LEFT) {
-            mRotate = true;
-            mTrackball.startBall(mMouseX, mHeight - mMouseY);
-        } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            mTranslate = true;
-        }
-    } else if (action == GLFW_RELEASE) {
-        mMouseDown = false;
-        mRotate = false;
-        mTranslate = false;
-    }
-}
-
-void MarkerEditorApp::mouseMove(double x, double y)
-{
-    double dx = x - mMouseX;
-    double dy = y - mMouseY;
-    mMouseX = x;
-    mMouseY = y;
-
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    if (mRotate) {
-        mTrackball.updateBall(x, mHeight - y);
-    }
-    if (mTranslate) {
-        double scale = 0.005 / mZoom;  // Scale with zoom level
-        Eigen::Matrix3d rot = mTrackball.getRotationMatrix();
-        Eigen::Vector3d delta = rot.transpose() * Eigen::Vector3d(dx * scale, -dy * scale, 0.0);
-        mTrans += delta;
-    }
-}
-
-void MarkerEditorApp::mouseScroll(double xoff, double yoff)
-{
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    mZoom *= (1.0 + yoff * 0.1);
-    mZoom = std::max(0.1, std::min(10.0, mZoom));
-}
-
-void MarkerEditorApp::keyPress(int key, int scancode, int action, int mods)
-{
-    if (ImGui::GetIO().WantCaptureKeyboard) return;
-
-    if (action == GLFW_PRESS) {
-        switch (key) {
-            case GLFW_KEY_ESCAPE:
-                glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
-                break;
-            case GLFW_KEY_L:
-                mShowLabels = !mShowLabels;
-                break;
-            case GLFW_KEY_O:
-                // Cycle render mode: Primitive -> Mesh -> Wireframe -> Primitive
-                mRenderMode = static_cast<RenderMode>((static_cast<int>(mRenderMode) + 1) % 3);
-                break;
-            case GLFW_KEY_R:
-                // Reset camera
-                mZoom = 1.0;
-                mTrans = Eigen::Vector3d(0.0, -0.8, 0.0);
-                mTrackball = dart::gui::Trackball();
-                break;
-            case GLFW_KEY_1:
-            case GLFW_KEY_KP_1:
-                alignCameraToPlane(1);  // XY plane
-                break;
-            case GLFW_KEY_2:
-            case GLFW_KEY_KP_2:
-                alignCameraToPlane(2);  // YZ plane
-                break;
-            case GLFW_KEY_3:
-            case GLFW_KEY_KP_3:
-                alignCameraToPlane(3);  // ZX plane
-                break;
-        }
-    }
-}
-
-// =============================================================================
 // File Operations
 // =============================================================================
 
@@ -1459,9 +1192,9 @@ void MarkerEditorApp::mirrorMarkerAxis(int axis)
     Eigen::Vector3d currentGlobalPos = marker.getGlobalPos();
 
     // Mirror: only negate the specified axis coordinate
-    // axis=0: YZ plane → sel_x = -ref_x (keep sel_y, sel_z)
-    // axis=1: ZX plane → sel_y = -ref_y (keep sel_x, sel_z)
-    // axis=2: XY plane → sel_z = -ref_z (keep sel_x, sel_y)
+    // axis=0: YZ plane -> sel_x = -ref_x (keep sel_y, sel_z)
+    // axis=1: ZX plane -> sel_y = -ref_y (keep sel_x, sel_z)
+    // axis=2: XY plane -> sel_z = -ref_z (keep sel_x, sel_y)
     currentGlobalPos[axis] = -refGlobalPos[axis];
 
     // Recompute offset for the new global position
@@ -1480,39 +1213,4 @@ void MarkerEditorApp::mirrorMarkerAxis(int axis)
             }
         }
     }
-}
-
-void MarkerEditorApp::alignCameraToPlane(int plane)
-{
-    // Align camera to view a specific plane
-    // 1 = XY plane (view from +Z, looking at -Z, up is +Y)
-    // 2 = YZ plane (view from +X, looking at -X, up is +Y)
-    // 3 = ZX plane (view from +Y, looking at -Y, up is +Z)
-
-    Eigen::Quaterniond quat;
-    const char* planeName = "";
-
-    switch (plane) {
-        case 1: // XY plane - view from +Z axis
-            // Looking along -Z, up is +Y → identity rotation (default OpenGL view)
-            quat = Eigen::Quaterniond::Identity();
-            planeName = "XY";
-            break;
-        case 2: // YZ plane - view from +X axis
-            // Rotate -90° around Y axis to look along -X
-            quat = Eigen::AngleAxisd(-M_PI / 2.0, Eigen::Vector3d::UnitY());
-            planeName = "YZ";
-            break;
-        case 3: // ZX plane - view from +Y axis (top-down)
-            // Rotate +90° around X axis to look along -Y
-            quat = Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitX());
-            planeName = "ZX";
-            break;
-        default:
-            LOG_WARN("[MarkerEditor] Invalid plane index: " << plane);
-            return;
-    }
-
-    mTrackball.setQuaternion(quat);
-    LOG_INFO("[MarkerEditor] Camera aligned to " << planeName << " plane");
 }

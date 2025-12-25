@@ -17,51 +17,16 @@ namespace fs = std::filesystem;
 // =============================================================================
 
 MotionEditorApp::MotionEditorApp(const std::string& configPath)
-    : mWindow(nullptr)
+    : ViewerAppBase("Motion Editor", 1280, 720)
     , mConfigPath(configPath.empty() ? "data/rm_config.yaml" : configPath)
 {
-    // Load config
+    // Load config first to get window size
     loadRenderConfig();
 
-    // Initialize GLFW
-    if (!glfwInit()) {
-        LOG_ERROR("[MotionEditor] Failed to initialize GLFW");
-        exit(1);
+    // Set window position if specified in config
+    if (mWindowXPos != 0 || mWindowYPos != 0) {
+        glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
     }
-
-    glfwWindowHint(GLFW_SAMPLES, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
-    glfwWindowHintString(GLFW_X11_CLASS_NAME, "MotionEditor");
-    glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "MotionEditor");
-    mWindow = glfwCreateWindow(mWidth, mHeight, "Motion Editor", nullptr, nullptr);
-    if (!mWindow) {
-        LOG_ERROR("[MotionEditor] Failed to create GLFW window");
-        glfwTerminate();
-        exit(1);
-    }
-
-    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-    glfwMakeContextCurrent(mWindow);
-    glfwSwapInterval(1);
-
-    // Initialize GLAD
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        LOG_ERROR("[MotionEditor] Failed to initialize GLAD");
-        exit(1);
-    }
-
-    // Set up callbacks
-    glfwSetWindowUserPointer(mWindow, this);
-    glfwSetFramebufferSizeCallback(mWindow, framebufferSizeCallback);
-    glfwSetMouseButtonCallback(mWindow, mouseButtonCallback);
-    glfwSetCursorPosCallback(mWindow, cursorPosCallback);
-    glfwSetScrollCallback(mWindow, scrollCallback);
-    glfwSetKeyCallback(mWindow, keyCallback);
-
-    // Initialize ImGui
-    GUI::InitImGui(mWindow, false);
 
     // Initialize Resource Manager for PID-based access (use singleton)
     try {
@@ -107,59 +72,34 @@ MotionEditorApp::~MotionEditorApp()
         delete mMotion;
         mMotion = nullptr;
     }
-
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    glfwDestroyWindow(mWindow);
-    glfwTerminate();
+    // Base class handles GLFW/ImGui cleanup
 }
 
 // =============================================================================
-// Main Loop
+// ViewerAppBase Overrides
 // =============================================================================
 
-void MotionEditorApp::startLoop()
+void MotionEditorApp::onInitialize()
 {
-    while (!glfwWindowShouldClose(mWindow)) {
-        glfwPollEvents();
+    // Additional initialization after base class setup (if needed)
+}
 
-        // Update time
-        double currentTime = glfwGetTime();
-        double dt = currentTime - mLastRealTime;
-        mLastRealTime = currentTime;
+void MotionEditorApp::onFrameStart()
+{
+    // Update playback timing
+    double currentTime = glfwGetTime();
+    double dt = currentTime - mLastRealTime;
+    mLastRealTime = currentTime;
 
-        if (mIsPlaying) {
-            updateViewerTime(dt * mPlaybackSpeed);
-        }
-
-        // Start ImGui frame
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-        // OpenGL rendering
-        drawFrame();
-
-        // ImGui panels
-        drawLeftPanel();
-        drawRightPanel();
-
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-        glfwSwapBuffers(mWindow);
+    if (mIsPlaying) {
+        updateViewerTime(dt * mPlaybackSpeed);
     }
 }
-
-// =============================================================================
-// Initialization
-// =============================================================================
 
 void MotionEditorApp::updateCamera()
 {
     // Camera follow character
-    if (mFocus == 1 && mMotion != nullptr && mCharacter) {
+    if (mCamera.focus == 1 && mMotion != nullptr && mCharacter) {
         int currentFrameIdx = mMotionState.manualFrameIndex;
         if (mMotionState.navigationMode == ME_SYNC) {
             double frameFloat = (mViewerTime / mCycleDuration) * mMotion->getTotalTimesteps();
@@ -168,31 +108,127 @@ void MotionEditorApp::updateCamera()
 
         Eigen::VectorXd pose = mMotion->getPose(currentFrameIdx);
         if (pose.size() >= 6) {
-            mTrans[0] = -(pose[3] + mMotionState.cycleAccumulation[0] + mMotionState.displayOffset[0]);
-            mTrans[1] = -(pose[4] + mMotionState.displayOffset[1]) - 1;
-            mTrans[2] = -(pose[5] + mMotionState.cycleAccumulation[2] + mMotionState.displayOffset[2]);
+            mCamera.trans[0] = -(pose[3] + mMotionState.cycleAccumulation[0] + mMotionState.displayOffset[0]);
+            mCamera.trans[1] = -(pose[4] + mMotionState.displayOffset[1]) - 1;
+            mCamera.trans[2] = -(pose[5] + mMotionState.cycleAccumulation[2] + mMotionState.displayOffset[2]);
         }
     }
 }
 
-void MotionEditorApp::setCamera()
+void MotionEditorApp::drawContent()
 {
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glViewport(0, 0, mWidth, mHeight);
-    gluPerspective(mPersp, (double)mWidth / (double)mHeight, 0.1, 100.0);
-    gluLookAt(mEye[0], mEye[1], mEye[2], 0.0, 0.0, 0.0, mUp[0], mUp[1], mUp[2]);
+    if (mCharacter && mMotion) {
+        // Draw original skeleton (blue)
+        drawSkeleton(false);
 
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
+        // Draw preview skeleton (orange) if transformations pending
+        bool hasRotationPreview = std::abs(mPendingRotationAngle) > 0.001f;
+        bool hasHeightPreview = mHeightOffsetComputed && std::abs(mComputedHeightOffset) > 0.001;
+        bool hasROMPreview = mPreviewClampedPose && !mROMViolations.empty();
 
-    mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-    mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-    mTrackball.applyGLRotation();
+        if (hasRotationPreview || hasHeightPreview || hasROMPreview) {
+            drawSkeleton(true);
+        }
 
-    glScalef(mZoom, mZoom, mZoom);
-    glTranslatef(mTrans[0], mTrans[1], mTrans[2]);
+        // Draw rotation axis arrow at origin when rotating
+        if (hasRotationPreview) {
+            GUI::DrawArrow3D(
+                Eigen::Vector3d::Zero(),              // origin
+                Eigen::Vector3d(0, 1, 0),             // Y-axis direction
+                1.0,                                  // length
+                0.02,                                 // thickness
+                Eigen::Vector4d(0.2, 0.8, 0.2, 1.0)   // green color
+            );
+        }
+    }
+
+    // Draw origin axis gizmo when camera is moving
+    if (mMouseDown) {
+        Eigen::Vector3d center = -mCamera.trans;
+        GUI::DrawOriginAxisGizmo(center);
+    }
 }
+
+void MotionEditorApp::drawUI()
+{
+    drawLeftPanel();
+    drawRightPanel();
+}
+
+void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
+{
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
+
+    if (action == GLFW_PRESS) {
+        switch (key) {
+            case GLFW_KEY_SPACE:
+                mIsPlaying = !mIsPlaying;
+                return;
+            case GLFW_KEY_S:
+                // Step frame(s) forward: Ctrl+S = 5 frames, S = 1 frame
+                if (mMotion) {
+                    mIsPlaying = false;
+                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
+                    mMotionState.manualFrameIndex = std::min(
+                        mMotionState.manualFrameIndex + step,
+                        mMotion->getNumFrames() - 1);
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                }
+                return;
+            case GLFW_KEY_A:
+                // Step frame(s) backward: Ctrl+A = 5 frames, A = 1 frame
+                if (mMotion) {
+                    mIsPlaying = false;
+                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
+                    mMotionState.manualFrameIndex = std::max(
+                        mMotionState.manualFrameIndex - step, 0);
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                }
+                return;
+            case GLFW_KEY_R:
+                // Reset playback state (not camera - that's handled by base class)
+                resetPlayback();
+                return;
+            case GLFW_KEY_1:
+            case GLFW_KEY_KP_1:
+                alignCameraToPlaneQuat(1);  // XY plane
+                return;
+            case GLFW_KEY_2:
+            case GLFW_KEY_KP_2:
+                alignCameraToPlaneQuat(2);  // YZ plane
+                return;
+            case GLFW_KEY_3:
+            case GLFW_KEY_KP_3:
+                alignCameraToPlaneQuat(3);  // ZX plane
+                return;
+            case GLFW_KEY_LEFT_BRACKET:  // [
+                // Set trim start to current frame
+                if (mMotion) {
+                    mTrimStart = mMotionState.manualFrameIndex;
+                    LOG_INFO("[MotionEditor] Trim start set to frame " << mTrimStart);
+                }
+                return;
+            case GLFW_KEY_RIGHT_BRACKET:  // ]
+                // Set trim end to current frame
+                if (mMotion) {
+                    mTrimEnd = mMotionState.manualFrameIndex;
+                    LOG_INFO("[MotionEditor] Trim end set to frame " << mTrimEnd);
+                }
+                return;
+            case GLFW_KEY_O:
+                mAppRenderMode = static_cast<MotionEditorRenderMode>(
+                    (static_cast<int>(mAppRenderMode) + 1) % 2);
+                return;
+        }
+    }
+
+    // Call base class for common keys (F, G, ESC)
+    ViewerAppBase::keyPress(key, scancode, action, mods);
+}
+
+// =============================================================================
+// Initialization
+// =============================================================================
 
 void MotionEditorApp::loadRenderConfig()
 {
@@ -245,47 +281,6 @@ bool MotionEditorApp::isPanelDefaultOpen(const std::string& panelName) const
 // =============================================================================
 // Rendering
 // =============================================================================
-
-void MotionEditorApp::drawFrame()
-{
-    GUI::InitGL();
-    GUI::InitLighting();
-
-    updateCamera();
-    setCamera();
-    GUI::DrawGroundGrid(mGroundMode);
-
-    if (mCharacter && mMotion) {
-        // Draw original skeleton (blue)
-        drawSkeleton(false);
-
-        // Draw preview skeleton (orange) if transformations pending
-        bool hasRotationPreview = std::abs(mPendingRotationAngle) > 0.001f;
-        bool hasHeightPreview = mHeightOffsetComputed && std::abs(mComputedHeightOffset) > 0.001;
-        bool hasROMPreview = mPreviewClampedPose && !mROMViolations.empty();
-
-        if (hasRotationPreview || hasHeightPreview || hasROMPreview) {
-            drawSkeleton(true);
-        }
-
-        // Draw rotation axis arrow at origin when rotating
-        if (hasRotationPreview) {
-            GUI::DrawArrow3D(
-                Eigen::Vector3d::Zero(),              // origin
-                Eigen::Vector3d(0, 1, 0),             // Y-axis direction
-                1.0,                                  // length
-                0.02,                                 // thickness
-                Eigen::Vector4d(0.2, 0.8, 0.2, 1.0)   // green color
-            );
-        }
-    }
-
-    // Draw origin axis gizmo when camera is moving
-    if (mCameraMoving) {
-        Eigen::Vector3d center = -mTrans;
-        GUI::DrawOriginAxisGizmo(center);
-    }
-}
 
 void MotionEditorApp::drawSkeleton(bool isPreview)
 {
@@ -365,7 +360,7 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
             const auto* shape = sn->getShape().get();
 
             // Render primitive shapes (Primitive or Wireframe mode)
-            if (mRenderMode == MotionEditorRenderMode::Wireframe) {
+            if (mAppRenderMode == MotionEditorRenderMode::Wireframe) {
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
                 glLineWidth(2.0f);
             }
@@ -384,7 +379,7 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
             }
 
             // Restore fill mode and line width after wireframe
-            if (mRenderMode == MotionEditorRenderMode::Wireframe) {
+            if (mAppRenderMode == MotionEditorRenderMode::Wireframe) {
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
                 glLineWidth(1.0f);
             }
@@ -409,7 +404,7 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
 void MotionEditorApp::drawLeftPanel()
 {
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Data Loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     // Tab bar for PID Browser / Direct Path
@@ -435,7 +430,7 @@ void MotionEditorApp::drawLeftPanel()
 
 void MotionEditorApp::drawRightPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(mRightPanelWidth, mHeight), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(mRightPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Data loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
@@ -467,9 +462,6 @@ void MotionEditorApp::drawPIDBrowserTab()
 
     // Use the shared PIDNavigator component
     mPIDNavigator->renderInlineSelector(120, 120);
-
-    // OLD CODE (kept for comparison, will be removed after validation):
-    // ... (previous implementation with manual PID/H5 scanning and rendering)
 }
 
 void MotionEditorApp::drawDirectPathTab()
@@ -569,10 +561,10 @@ void MotionEditorApp::drawSkeletonSection()
         // Render mode
         ImGui::Separator();
         ImGui::Text("Render Mode:");
-        int renderModeInt = static_cast<int>(mRenderMode);
-        if (ImGui::RadioButton("Primitive", renderModeInt == 0)) mRenderMode = MotionEditorRenderMode::Primitive;
+        int renderModeInt = static_cast<int>(mAppRenderMode);
+        if (ImGui::RadioButton("Primitive", renderModeInt == 0)) mAppRenderMode = MotionEditorRenderMode::Primitive;
         ImGui::SameLine();
-        if (ImGui::RadioButton("Wire", renderModeInt == 1)) mRenderMode = MotionEditorRenderMode::Wireframe;
+        if (ImGui::RadioButton("Wire", renderModeInt == 1)) mAppRenderMode = MotionEditorRenderMode::Wireframe;
     }
 }
 
@@ -587,7 +579,7 @@ void MotionEditorApp::drawPlaybackSection()
         }
         ImGui::SameLine();
         if (ImGui::Button("Reset")) {
-            reset();
+            resetPlayback();
         }
 
         // Speed control
@@ -614,9 +606,9 @@ void MotionEditorApp::drawPlaybackSection()
         }
 
         // Camera follow
-        bool follow = (mFocus == 1);
+        bool follow = (mCamera.focus == 1);
         if (ImGui::Checkbox("Camera Follow", &follow)) {
-            mFocus = follow ? 1 : 0;
+            mCamera.focus = follow ? 1 : 0;
         }
     }
 }
@@ -815,7 +807,6 @@ void MotionEditorApp::drawHeightSection()
         }
 
         // Apply button (only enabled if computed)
-        // Store state at start to avoid Begin/End mismatch when applyHeightOffset changes mHeightOffsetComputed
         bool applyDisabled = !mHeightOffsetComputed;
         if (applyDisabled) {
             ImGui::BeginDisabled();
@@ -1237,83 +1228,8 @@ void MotionEditorApp::drawROMViolationSection()
 }
 
 // =============================================================================
-// PID Scanner Methods
+// Data Loading
 // =============================================================================
-
-// OLD CODE - Replaced by PIDNavigator (will be removed after validation)
-/*
-void MotionEditorApp::scanPIDList()
-{
-    mPIDList.clear();
-    mPIDNames.clear();
-    mPIDGMFCS.clear();
-    mSelectedPID = -1;
-    mH5Files.clear();
-    mSelectedH5 = -1;
-
-    if (!mResourceManager) return;
-
-    try {
-        auto entries = mResourceManager->list("@pid:");
-        for (const auto& entry : entries) {
-            mPIDList.push_back(entry);
-        }
-        std::sort(mPIDList.begin(), mPIDList.end());
-
-        // Fetch patient names and GMFCS levels
-        mPIDNames.resize(mPIDList.size());
-        mPIDGMFCS.resize(mPIDList.size());
-        for (size_t i = 0; i < mPIDList.size(); ++i) {
-            try {
-                std::string nameUri = "@pid:" + mPIDList[i] + "/name";
-                auto handle = mResourceManager->fetch(nameUri);
-                mPIDNames[i] = handle.as_string();
-            } catch (const rm::RMError&) {
-                mPIDNames[i] = "";
-            }
-            try {
-                std::string gmfcsUri = "@pid:" + mPIDList[i] + "/gmfcs";
-                auto handle = mResourceManager->fetch(gmfcsUri);
-                mPIDGMFCS[i] = handle.as_string();
-            } catch (const rm::RMError&) {
-                mPIDGMFCS[i] = "";
-            }
-        }
-
-        LOG_INFO("[MotionEditor] Found " << mPIDList.size() << " PIDs");
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[MotionEditor] Failed to list PIDs: " << e.what());
-    }
-}
-
-void MotionEditorApp::scanH5Files()
-{
-    mH5Files.clear();
-    mSelectedH5 = -1;
-
-    if (!mResourceManager || mSelectedPID < 0 || mSelectedPID >= static_cast<int>(mPIDList.size())) {
-        return;
-    }
-
-    const std::string& pid = mPIDList[mSelectedPID];
-    std::string prePost = mPreOp ? "pre" : "post";
-    std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
-
-    try {
-        auto files = mResourceManager->list(pattern);
-        for (const auto& file : files) {
-            // Only include .h5 files
-            if (file.size() > 3 && file.substr(file.size() - 3) == ".h5") {
-                mH5Files.push_back(file);
-            }
-        }
-        std::sort(mH5Files.begin(), mH5Files.end());
-        LOG_INFO("[MotionEditor] Found " << mH5Files.size() << " H5 files for PID " << pid);
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[MotionEditor] Failed to list H5 files: " << e.what());
-    }
-}
-*/
 
 void MotionEditorApp::scanSkeletonDirectory()
 {
@@ -1413,9 +1329,6 @@ void MotionEditorApp::loadH5Motion(const std::string& path)
             loadSkeleton(skelPath);
         }
 
-        // Note: setRefMotion is not called since RenderCharacter doesn't inherit from Character
-        // The motion editor doesn't need height calibration - it just plays back raw frames
-
         LOG_INFO("[MotionEditor] Loaded motion: " << path << " (" << mMotion->getNumFrames() << " frames)");
     } catch (const std::exception& e) {
         LOG_ERROR("[MotionEditor] Failed to load motion: " << e.what());
@@ -1461,9 +1374,6 @@ void MotionEditorApp::loadSkeleton(const std::string& path)
     try {
         mCharacter = std::make_unique<RenderCharacter>(path, SKEL_COLLIDE_ALL);
         mCurrentSkeletonPath = path;
-
-        // Note: setRefMotion is not called since RenderCharacter doesn't inherit from Character
-        // The motion editor doesn't need height calibration - it just plays back raw frames
 
         LOG_INFO("[MotionEditor] Loaded skeleton: " << path);
     } catch (const std::exception& e) {
@@ -1734,7 +1644,6 @@ void MotionEditorApp::computeGroundLevel()
             Eigen::Vector3d size = getBodyNodeSize(bn);
 
             // Compute lowest Y point (assuming Y is up, shape centered at origin)
-            // For most shapes, bottom is at pos[1] - size[1]/2
             double bottomY = pos[1] - size[1] / 2.0;
 
             if (bottomY < frameMinY) {
@@ -1801,173 +1710,10 @@ void MotionEditorApp::applyHeightOffset()
 }
 
 // =============================================================================
-// Input Handling
+// App-specific Helpers
 // =============================================================================
 
-void MotionEditorApp::framebufferSizeCallback(GLFWwindow* window, int width, int height)
-{
-    auto* app = static_cast<MotionEditorApp*>(glfwGetWindowUserPointer(window));
-    app->resize(width, height);
-}
-
-void MotionEditorApp::mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
-{
-    auto* app = static_cast<MotionEditorApp*>(glfwGetWindowUserPointer(window));
-    app->mousePress(button, action, mods);
-}
-
-void MotionEditorApp::cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
-{
-    auto* app = static_cast<MotionEditorApp*>(glfwGetWindowUserPointer(window));
-    app->mouseMove(xpos, ypos);
-}
-
-void MotionEditorApp::scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    auto* app = static_cast<MotionEditorApp*>(glfwGetWindowUserPointer(window));
-    app->mouseScroll(xoffset, yoffset);
-}
-
-void MotionEditorApp::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
-    auto* app = static_cast<MotionEditorApp*>(glfwGetWindowUserPointer(window));
-    app->keyPress(key, scancode, action, mods);
-}
-
-void MotionEditorApp::resize(int width, int height)
-{
-    mWidth = width;
-    mHeight = height;
-    glViewport(0, 0, width, height);
-}
-
-void MotionEditorApp::mousePress(int button, int action, int mods)
-{
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    if (action == GLFW_PRESS) {
-        mMouseDown = true;
-        mCameraMoving = true;
-        if (button == GLFW_MOUSE_BUTTON_LEFT) {
-            mRotate = true;
-            mTrackball.startBall(mMouseX, mHeight - mMouseY);
-        } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            mTranslate = true;
-        }
-    } else if (action == GLFW_RELEASE) {
-        mMouseDown = false;
-        mRotate = false;
-        mTranslate = false;
-        mCameraMoving = false;
-    }
-}
-
-void MotionEditorApp::mouseMove(double x, double y)
-{
-    double dx = x - mMouseX;
-    double dy = y - mMouseY;
-    mMouseX = x;
-    mMouseY = y;
-
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    if (mRotate) {
-        mTrackball.updateBall(x, mHeight - y);
-    }
-    if (mTranslate) {
-        double scale = 0.005 / mZoom;
-        Eigen::Matrix3d rot = mTrackball.getRotationMatrix();
-        Eigen::Vector3d delta = rot.transpose() * Eigen::Vector3d(dx * scale, -dy * scale, 0.0);
-        mTrans += delta;
-    }
-}
-
-void MotionEditorApp::mouseScroll(double xoff, double yoff)
-{
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    mZoom *= (1.0 + yoff * 0.1);
-    mZoom = std::max(0.1, std::min(50.0, mZoom));
-}
-
-void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
-{
-    if (ImGui::GetIO().WantCaptureKeyboard) return;
-
-    if (action == GLFW_PRESS) {
-        switch (key) {
-            case GLFW_KEY_SPACE:
-                mIsPlaying = !mIsPlaying;
-                break;
-            case GLFW_KEY_S:
-                // Step frame(s) forward: Ctrl+S = 5 frames, S = 1 frame
-                if (mMotion) {
-                    mIsPlaying = false;
-                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
-                    mMotionState.manualFrameIndex = std::min(
-                        mMotionState.manualFrameIndex + step,
-                        mMotion->getNumFrames() - 1);
-                    mMotionState.navigationMode = ME_MANUAL_FRAME;
-                }
-                break;
-            case GLFW_KEY_A:
-                // Step frame(s) backward: Ctrl+A = 5 frames, A = 1 frame
-                if (mMotion) {
-                    mIsPlaying = false;
-                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
-                    mMotionState.manualFrameIndex = std::max(
-                        mMotionState.manualFrameIndex - step, 0);
-                    mMotionState.navigationMode = ME_MANUAL_FRAME;
-                }
-                break;
-            case GLFW_KEY_R:
-                reset();
-                break;
-            case GLFW_KEY_1:
-            case GLFW_KEY_KP_1:
-                alignCameraToPlane(1);  // XY plane
-                break;
-            case GLFW_KEY_2:
-            case GLFW_KEY_KP_2:
-                alignCameraToPlane(2);  // YZ plane
-                break;
-            case GLFW_KEY_3:
-            case GLFW_KEY_KP_3:
-                alignCameraToPlane(3);  // ZX plane
-                break;
-            case GLFW_KEY_F:
-                mFocus = (mFocus == 1) ? 0 : 1;
-                break;
-            case GLFW_KEY_LEFT_BRACKET:  // [
-                // Set trim start to current frame
-                if (mMotion) {
-                    mTrimStart = mMotionState.manualFrameIndex;
-                    LOG_INFO("[MotionEditor] Trim start set to frame " << mTrimStart);
-                }
-                break;
-            case GLFW_KEY_RIGHT_BRACKET:  // ]
-                // Set trim end to current frame
-                if (mMotion) {
-                    mTrimEnd = mMotionState.manualFrameIndex;
-                    LOG_INFO("[MotionEditor] Trim end set to frame " << mTrimEnd);
-                }
-                break;
-            case GLFW_KEY_O:
-                mRenderMode = static_cast<MotionEditorRenderMode>(
-                    (static_cast<int>(mRenderMode) + 1) % 2);
-                break;
-            case GLFW_KEY_G:
-                mGroundMode = (mGroundMode == GroundMode::Wireframe)
-                    ? GroundMode::Solid : GroundMode::Wireframe;
-                break;
-            case GLFW_KEY_ESCAPE:
-                glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
-                break;
-        }
-    }
-}
-
-void MotionEditorApp::alignCameraToPlane(int plane)
+void MotionEditorApp::alignCameraToPlaneQuat(int plane)
 {
     Eigen::Quaterniond quat;
     switch (plane) {
@@ -1981,10 +1727,10 @@ void MotionEditorApp::alignCameraToPlane(int plane)
             quat = Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitX());
             break;
     }
-    mTrackball.setQuaternion(quat);
+    mCamera.trackball.setQuaternion(quat);
 }
 
-void MotionEditorApp::reset()
+void MotionEditorApp::resetPlayback()
 {
     mViewerTime = 0.0;
     mViewerPhase = 0.0;

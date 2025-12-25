@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <cfloat>  // For FLT_MAX
 #include "imgui.h"
 
 class Muscle;
@@ -14,7 +15,7 @@ namespace ImGuiCommon {
 // Returns true if any selection changed
 bool MuscleSelector(
     const char* label,
-    const std::vector<std::shared_ptr<Muscle>>& muscles,
+    const std::vector<Muscle*>& muscles,
     std::vector<bool>& selectionStates,
     char* filterBuffer,
     size_t filterBufferSize,
@@ -24,7 +25,7 @@ bool MuscleSelector(
 // Simplified version that manages its own filter buffer
 bool MuscleSelector(
     const char* label,
-    const std::vector<std::shared_ptr<Muscle>>& muscles,
+    const std::vector<Muscle*>& muscles,
     std::vector<bool>& selectionStates,
     float listHeight = 250.0f
 );
@@ -55,6 +56,76 @@ void ColorBarLegend(
     float minVal, float maxVal,
     const char* minLabel, const char* maxLabel
 );
+
+// ============================================================
+// Slider Helpers - Full width with consistent styling
+// ============================================================
+
+// Full-width float slider
+bool SliderFloatFullWidth(const char* label, float* v, float min, float max,
+                          const char* format = "%.2f");
+
+// Full-width int slider
+bool SliderIntFullWidth(const char* label, int* v, int min, int max);
+
+// Full-width drag float
+bool DragFloatFullWidth(const char* label, float* v, float speed = 0.1f,
+                        float min = 0.0f, float max = 0.0f,
+                        const char* format = "%.2f");
+
+// ============================================================
+// Radio Button Group - Horizontal or vertical layout
+// ============================================================
+
+// Returns true if selection changed
+bool RadioButtonGroup(const char* id, const std::vector<std::string>& labels,
+                      int* selected, bool horizontal = true);
+
+// ============================================================
+// Button Row - Multiple buttons in a row
+// ============================================================
+
+struct ButtonDef {
+    std::string label;
+    bool enabled = true;
+};
+
+// Returns index of clicked button, or -1 if none clicked
+int ButtonRow(const char* id, const std::vector<ButtonDef>& buttons);
+
+// ============================================================
+// Status Text - Color-coded status messages
+// ============================================================
+
+enum class StatusType { Info, Success, Warning, Error, Disabled };
+
+void StatusText(const char* text, StatusType type = StatusType::Info);
+
+// ============================================================
+// Input Text with Button - Common pattern for file paths
+// ============================================================
+
+// Returns true if button clicked
+bool InputTextWithButton(const char* id, char* buf, size_t size,
+                         const char* buttonLabel, float buttonWidth = 60.0f);
+
+// ============================================================
+// Drag Float 3 - XYZ triplet editor
+// ============================================================
+
+// Returns true if any value changed
+bool DragFloat3Labeled(const char* label, float v[3], float speed = 0.01f,
+                       float min = -FLT_MAX, float max = FLT_MAX,
+                       const char* format = "%.3f");
+
+// ============================================================
+// Scrollable List Box - With optional filtering
+// ============================================================
+
+// Returns true if selection changed
+bool ScrollableListBox(const char* label, const std::vector<std::string>& items,
+                       int* selectedIdx, float height = 200.0f,
+                       const char* filterText = nullptr);
 
 } // namespace ImGuiCommon
 

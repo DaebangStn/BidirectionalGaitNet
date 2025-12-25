@@ -1,28 +1,21 @@
 #ifndef MOTION_EDITOR_APP_H
 #define MOTION_EDITOR_APP_H
 
-#include "dart/gui/Trackball.hpp"
+#include "common/ViewerAppBase.h"
 #include "RenderCharacter.h"
-#include "GLfunctions.h"
 #include "ShapeRenderer.h"
 #include "Motion.h"
 #include "HDF.h"
 #include "rm/rm.hpp"
 #include "motion/PlaybackController.h"
 #include "common/PIDNavigator.h"
-#include <glad/glad.h>
-#include <GL/glu.h>
-#include <GLFW/glfw3.h>
-#include <imgui.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_opengl3.h>
 #include <memory>
 #include <string>
 #include <vector>
 #include <set>
 
 /**
- * @brief Skeleton render mode
+ * @brief Skeleton render mode (app-specific)
  */
 enum class MotionEditorRenderMode { Primitive, Wireframe };
 
@@ -79,6 +72,8 @@ struct ROMViolation {
 /**
  * @brief Motion Editor Application
  *
+ * Inherits from ViewerAppBase for common window/camera/input handling.
+ *
  * Features:
  * - Load H5 motion files via PID browser or direct path
  * - Auto-detect skeleton from PID folder
@@ -86,35 +81,24 @@ struct ROMViolation {
  * - Trim motion by setting start/end frames
  * - Export trimmed motion to new H5 file
  */
-class MotionEditorApp
+class MotionEditorApp : public ViewerAppBase
 {
 public:
     MotionEditorApp(const std::string& configPath = "");
-    ~MotionEditorApp();
+    ~MotionEditorApp() override;
 
-    void startLoop();
+protected:
+    // ViewerAppBase overrides
+    void onInitialize() override;
+    void onFrameStart() override;
+    void updateCamera() override;
+    void drawContent() override;
+    void drawUI() override;
+    void keyPress(int key, int scancode, int action, int mods) override;
 
 private:
-    // === Window & GL ===
-    GLFWwindow* mWindow;
-    int mWidth = 1280, mHeight = 720;
+    // === Window position (from config) ===
     int mWindowXPos = 0, mWindowYPos = 0;
-
-    // === Camera ===
-    Eigen::Vector3d mEye{0, 0, 2.5};
-    Eigen::Vector3d mUp{0, 1, 0};
-    Eigen::Vector3d mTrans{0, -0.8, 0};
-    double mZoom = 1.0;
-    double mPersp = 45.0;
-    dart::gui::Trackball mTrackball;
-    int mFocus = 0;  // 0=fixed, 1=follow skeleton
-
-    // === Input State ===
-    bool mMouseDown = false;
-    bool mRotate = false;
-    bool mTranslate = false;
-    bool mCameraMoving = false;
-    double mMouseX = 0, mMouseY = 0;
 
     // === Resource Manager (singleton reference) ===
     rm::ResourceManager* mResourceManager = nullptr;
@@ -122,17 +106,6 @@ private:
 
     // === PID Browser (using shared PIDNavigator) ===
     std::unique_ptr<PIDNav::PIDNavigator> mPIDNavigator;
-
-    // OLD CODE (kept for comparison, will be removed after validation):
-    // std::vector<std::string> mPIDList;
-    // std::vector<std::string> mPIDNames;
-    // std::vector<std::string> mPIDGMFCS;
-    // int mSelectedPID = -1;
-    // char mPIDFilter[128] = {0};
-    // bool mPreOp = true;
-    // std::vector<std::string> mH5Files;
-    // int mSelectedH5 = -1;
-    // char mH5Filter[64] = {0};
 
     // === Motion Data ===
     Motion* mMotion = nullptr;
@@ -171,8 +144,7 @@ private:
 
     // === Rendering ===
     ShapeRenderer mShapeRenderer;
-    MotionEditorRenderMode mRenderMode = MotionEditorRenderMode::Wireframe;
-    GroundMode mGroundMode = GroundMode::Wireframe;
+    MotionEditorRenderMode mAppRenderMode = MotionEditorRenderMode::Wireframe;
     float mControlPanelWidth = 350.0f;
     float mRightPanelWidth = 300.0f;
 
@@ -204,12 +176,9 @@ private:
     bool mPreviewClampedPose = true;
 
     // === Initialization ===
-    void setCamera();
-    void updateCamera();
     void loadRenderConfig();
 
     // === Rendering ===
-    void drawFrame();
     void drawSkeleton(bool isPreview = false);
 
     // === UI Panels ===
@@ -235,10 +204,7 @@ private:
     bool collapsingHeaderWithControls(const std::string& title);
     bool isPanelDefaultOpen(const std::string& panelName) const;
 
-    // === PID Scanner Methods ===
-    // OLD CODE (will be removed after validation):
-    // void scanPIDList();
-    // void scanH5Files();
+    // === Data Loading ===
     void scanSkeletonDirectory();
     void loadH5Motion(const std::string& path);
     void autoDetectSkeleton();
@@ -265,21 +231,9 @@ private:
     Eigen::Vector4d getRenderColor(const dart::dynamics::BodyNode* bn,
                                     const Eigen::Vector4d& defaultColor) const;
 
-    // === Static Callbacks ===
-    static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
-    static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
-    static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos);
-    static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
-    static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-
-    // === Input Handlers ===
-    void resize(int width, int height);
-    void mousePress(int button, int action, int mods);
-    void mouseMove(double x, double y);
-    void mouseScroll(double xoff, double yoff);
-    void keyPress(int key, int scancode, int action, int mods);
-    void alignCameraToPlane(int plane);
-    void reset();
+    // === App-specific helpers ===
+    void alignCameraToPlaneQuat(int plane);  // Quaternion-based camera alignment
+    void resetPlayback();                     // Reset playback state
 };
 
 #endif // MOTION_EDITOR_APP_H

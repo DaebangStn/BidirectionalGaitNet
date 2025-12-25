@@ -19,8 +19,25 @@ add_library(viewer_common STATIC
     common/PIDFileFilter.h
     common/imgui_common.h
     common/imgui_common.cpp
+    common/ViewerAppBase.h
+    common/ViewerAppBase.cpp
+    # Shared rendering components
+    ShapeRenderer.h
+    ShapeRenderer.cpp
+    GLfunctions.h
+    GLfunctions.cpp
 )
-target_link_libraries(viewer_common PUBLIC rm dart imgui)
+target_link_libraries(viewer_common PUBLIC
+    rm
+    dart
+    dart-gui
+    imgui
+    glad
+    glfw
+    GL
+    GLU
+    glut
+)
 target_include_directories(viewer_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Viewer sources
@@ -72,16 +89,12 @@ add_executable(marker_editor
     "MarkerEditorApp.cpp"
     "RenderCharacter.h"
     "RenderCharacter.cpp"
-    "ShapeRenderer.h"
-    "ShapeRenderer.cpp"
-    "GLfunctions.h"
-    "GLfunctions.cpp"
 )
 target_link_libraries(marker_editor
     tinyxml2::tinyxml2
-    GL GLU glut glad glfw imgui
     sim
     dart-gui
+    viewer_common
 )
 
 # C3D Processor - Standalone C3D processing application
@@ -117,51 +130,49 @@ target_link_libraries(c3d_processor
 )
 
 # Motion Editor - Standalone H5 motion editing/trimming application
+# Inherits from ViewerAppBase for common GLFW/ImGui/camera handling
 add_executable(motion_editor
     "motion_editor_main.cpp"
     "MotionEditorApp.h"
     "MotionEditorApp.cpp"
     "RenderCharacter.h"
     "RenderCharacter.cpp"
-    "ShapeRenderer.h"
-    "ShapeRenderer.cpp"
-    "GLfunctions.h"
-    "GLfunctions.cpp"
 )
 target_link_libraries(motion_editor
     tinyxml2::tinyxml2
-    GL GLU glut glad glfw imgui
     sim
     dart-gui
     ${HDF5_CXX_LIBRARIES}
     Boost::program_options
-    rm
     viewer_common
 )
 
 # Muscle Personalizer - Interactive muscle configuration tool
-set(MUSCLE_PERSONALIZER_SOURCES
+# Inherits from ViewerAppBase for common GLFW/ImGui/camera handling
+add_executable(muscle_personalizer
     "muscle_personalizer_main.cpp"
     "MusclePersonalizerApp.h"
     "MusclePersonalizerApp.cpp"
     "RenderCharacter.h"
     "RenderCharacter.cpp"
-    "ShapeRenderer.h"
-    "ShapeRenderer.cpp"
-    "GLfunctions.h"
-    "GLfunctions.cpp"
 )
-
-add_executable(muscle_personalizer ${MUSCLE_PERSONALIZER_SOURCES})
 
 target_link_libraries(muscle_personalizer
     tinyxml2::tinyxml2
-    GL GLU glut glad glfw imgui
     sim
     surgery              # Surgery library
     surgery_optimizer    # For ContractureOptimizer
     dart-gui
     ${HDF5_CXX_LIBRARIES}
     Boost::program_options
-    rm
+    viewer_common        # Provides ViewerAppBase, ShapeRenderer, GLfunctions, ImGuiCommon
+)
+
+# Test ViewerAppBase - Minimal test application for base class
+add_executable(test_viewer_base
+    "test_viewer_base_main.cpp"
+)
+target_link_libraries(test_viewer_base
+    viewer_common
+    dart-gui
 )

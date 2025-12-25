@@ -8,84 +8,36 @@
 namespace fs = std::filesystem;
 
 // ============================================================
-// Constructor / Destructor
+// Constructor
 // ============================================================
 
 MusclePersonalizerApp::MusclePersonalizerApp(const std::string& configPath)
-    : mConfigPath(configPath),
-      mWindow(nullptr),
-      mWidth(1920),
-      mHeight(1080),
-      mWindowXPos(0),
-      mWindowYPos(0),
-      mZoom(1.0),
-      mPersp(45.0),
-      mMouseDown(false),
-      mRotate(false),
-      mTranslate(false),
-      mMouseX(0.0),
-      mMouseY(0.0),
+    : ViewerAppBase("Muscle Personalizer", 1920, 1080),
+      mConfigPath(configPath),
       mControlPanelWidth(450),
       mResultsPanelWidth(450)
 {
-    // Load configuration
+    // Load configuration (sets paths, parameters, and panel widths)
     loadConfig();
 
-    // Initialize GLFW
-    if (!glfwInit()) {
-        std::cerr << "[MusclePersonalizer] Failed to initialize GLFW" << std::endl;
-        exit(EXIT_FAILURE);
+    // Set window position if configured
+    if (mWindowXPos != 0 || mWindowYPos != 0) {
+        glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
     }
 
-    // OpenGL 3.3 Compatibility Profile (needed for legacy GL functions)
-    glfwWindowHint(GLFW_SAMPLES, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+    // Adjust camera for muscle personalizer (slightly different defaults)
+    mCamera.eye = Eigen::Vector3d(0.0, 0.0, 3.0);
+    mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
 
-    // Create window
-    mWindow = glfwCreateWindow(mWidth, mHeight, "Muscle Personalizer", nullptr, nullptr);
-    if (!mWindow) {
-        std::cerr << "[MusclePersonalizer] Failed to create GLFW window" << std::endl;
-        glfwTerminate();
-        exit(EXIT_FAILURE);
-    }
+    std::cout << "[MusclePersonalizer] Constructor complete" << std::endl;
+}
 
-    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-    glfwMakeContextCurrent(mWindow);
-    glfwSwapInterval(1); // Enable vsync
+// ============================================================
+// ViewerAppBase Overrides
+// ============================================================
 
-    // Load OpenGL
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        std::cerr << "[MusclePersonalizer] Failed to initialize GLAD" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-
-    // Setup ImGui
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-    // Setup ImGui style
-    ImGui::StyleColorsDark();
-
-    // Set callbacks BEFORE ImGui so ImGui can chain them
-    glfwSetWindowUserPointer(mWindow, this);
-    glfwSetFramebufferSizeCallback(mWindow, framebufferSizeCallback);
-    glfwSetMouseButtonCallback(mWindow, mouseButtonCallback);
-    glfwSetCursorPosCallback(mWindow, cursorPosCallback);
-    glfwSetScrollCallback(mWindow, scrollCallback);
-    glfwSetKeyCallback(mWindow, keyCallback);
-
-    // Setup Platform/Renderer backends
-    // true = install callbacks (ImGui chains to our callbacks set above)
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 330");
-
-    // Initialize camera
-    initCamera();
-
+void MusclePersonalizerApp::onInitialize()
+{
     // Create surgery executor
     mExecutor = std::make_unique<PMuscle::SurgeryExecutor>("MusclePersonalizer");
     std::cout << "[MusclePersonalizer] Surgery executor created" << std::endl;
@@ -99,16 +51,21 @@ MusclePersonalizerApp::MusclePersonalizerApp(const std::string& configPath)
     std::cout << "[MusclePersonalizer] Initialization complete" << std::endl;
 }
 
-MusclePersonalizerApp::~MusclePersonalizerApp()
+void MusclePersonalizerApp::drawContent()
 {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    drawSkeleton();
+    drawMuscles();
 
-    if (mWindow) {
-        glfwDestroyWindow(mWindow);
+    // Draw origin gizmo when camera is moving
+    if (mRotate || mTranslate) {
+        GUI::DrawOriginAxisGizmo(-mCamera.trans);
     }
-    glfwTerminate();
+}
+
+void MusclePersonalizerApp::drawUI()
+{
+    drawLeftPanel();
+    drawRightPanel();
 }
 
 // ============================================================
@@ -226,98 +183,13 @@ void MusclePersonalizerApp::loadCharacter()
 
 void MusclePersonalizerApp::initializeSurgeryExecutor()
 {
-    // No longer needed - SurgeryExecutor is created in constructor
+    // No longer needed - SurgeryExecutor is created in onInitialize
     // Kept for compatibility but does nothing
-}
-
-void MusclePersonalizerApp::initCamera()
-{
-    mEye = Eigen::Vector3d(0.0, 0.0, 3.0);
-    mUp = Eigen::Vector3d(0.0, 1.0, 0.0);
-    mTrans = Eigen::Vector3d(0.0, -0.5, 0.0);
-    mZoom = 1.0;
-    mPersp = 45.0;
-    mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-    mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-}
-
-void MusclePersonalizerApp::setCamera()
-{
-    // Projection matrix
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glViewport(0, 0, mWidth, mHeight);
-    gluPerspective(mPersp, (double)mWidth / (double)mHeight, 0.1, 100.0);
-    gluLookAt(mEye[0], mEye[1], mEye[2], 0.0, 0.0, 0.0, mUp[0], mUp[1], mUp[2]);
-
-    // Modelview matrix
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    // Update trackball center/radius
-    mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-    mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-
-    // Apply trackball rotation
-    mTrackball.applyGLRotation();
-
-    // Apply zoom and translation
-    glScalef(mZoom, mZoom, mZoom);
-    glTranslatef(mTrans[0], mTrans[1], mTrans[2]);
-}
-
-// ============================================================
-// Main Loop
-// ============================================================
-
-void MusclePersonalizerApp::startLoop()
-{
-    while (!glfwWindowShouldClose(mWindow)) {
-        glfwPollEvents();
-
-        // Start ImGui frame
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-        // Render 3D scene FIRST
-        drawFrame();
-
-        // Draw UI panels
-        drawLeftPanel();
-        drawRightPanel();
-
-        // Render ImGui
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-        glfwSwapBuffers(mWindow);
-    }
 }
 
 // ============================================================
 // Rendering
 // ============================================================
-
-void MusclePersonalizerApp::drawFrame()
-{
-    GUI::InitGL();
-    GUI::InitLighting();
-    setCamera();
-
-    // Draw ground grid
-    if (mRenderGround) {
-        GUI::DrawGroundGrid(mGroundMode);
-    }
-
-    drawSkeleton();
-    drawMuscles();
-
-    // Draw origin gizmo when camera is moving
-    if (mRotate || mTranslate) {
-        GUI::DrawOriginAxisGizmo(-mTrans);
-    }
-}
 
 void MusclePersonalizerApp::drawSkeleton()
 {
@@ -392,10 +264,9 @@ void MusclePersonalizerApp::drawMuscles()
 void MusclePersonalizerApp::drawLeftPanel()
 {
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
 
-    ImGui::Begin("Control Panel", nullptr,
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Control##Panel", nullptr,ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     if (ImGui::BeginTabBar("ControlTabs")) {
         if (ImGui::BeginTabItem("Control")) {
@@ -418,22 +289,12 @@ void MusclePersonalizerApp::drawLeftPanel()
 void MusclePersonalizerApp::drawRightPanel()
 {
     ImGui::SetNextWindowPos(ImVec2(mWidth - mResultsPanelWidth, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(mResultsPanelWidth, mHeight), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(mResultsPanelWidth, mHeight), ImGuiCond_Once);
 
-    ImGui::Begin("Results & View", nullptr,
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Data##Panel", nullptr,ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
-    if (ImGui::BeginTabBar("ResultsTabs")) {
-        if (ImGui::BeginTabItem("View")) {
-            drawViewSection();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Results")) {
-            drawResultsSection();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
+    // Results section only (View controls moved to left panel Render tab)
+    drawResultsSection();
 
     ImGui::End();
 }
@@ -525,9 +386,9 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
 
         // Reference muscle selection
         if (!mAvailableMuscles.empty()) {
-            if (ImGui::BeginCombo("Reference Muscle", 
-                    mReferenceMuscleIdx >= 0 && mReferenceMuscleIdx < static_cast<int>(mAvailableMuscles.size()) 
-                    ? mAvailableMuscles[mReferenceMuscleIdx].c_str() 
+            if (ImGui::BeginCombo("Reference Muscle",
+                    mReferenceMuscleIdx >= 0 && mReferenceMuscleIdx < static_cast<int>(mAvailableMuscles.size())
+                    ? mAvailableMuscles[mReferenceMuscleIdx].c_str()
                     : "Select...")) {
                 for (size_t i = 0; i < mAvailableMuscles.size(); ++i) {
                     bool isSelected = (mReferenceMuscleIdx == static_cast<int>(i));
@@ -662,68 +523,47 @@ void MusclePersonalizerApp::drawRenderTab()
 
     // Camera
     if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
-        float zoom = static_cast<float>(mZoom);
+        float zoom = static_cast<float>(mCamera.zoom);
         if (ImGui::SliderFloat("Zoom", &zoom, 0.1f, 5.0f)) {
-            mZoom = zoom;
+            mCamera.zoom = zoom;
         }
-        float persp = static_cast<float>(mPersp);
+        float persp = static_cast<float>(mCamera.persp);
         if (ImGui::SliderFloat("FOV", &persp, 20.0f, 90.0f)) {
-            mPersp = persp;
+            mCamera.persp = persp;
         }
 
         ImGui::Separator();
         if (ImGui::Button("Reset Camera")) {
-            initCamera();
+            resetCamera();
+            // Apply MusclePersonalizer-specific camera defaults
+            mCamera.eye = Eigen::Vector3d(0.0, 0.0, 3.0);
+            mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
         }
         ImGui::SameLine();
         if (ImGui::Button("Front View")) {
-            mTrackball = dart::gui::Trackball();
-            mTrans = Eigen::Vector3d(0.0, -0.5, 0.0);
-            mZoom = 1.0;
+            mCamera.trackball = dart::gui::Trackball();
+            mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
+            mCamera.zoom = 1.0;
         }
         if (ImGui::Button("Side View")) {
-            mTrackball = dart::gui::Trackball();
-            mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-            mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-            mTrackball.startBall(mWidth / 2, mHeight / 2);
-            mTrackball.updateBall(mWidth / 2 + mWidth * 0.25, mHeight / 2);
-            mTrans = Eigen::Vector3d(0.0, -0.5, 0.0);
-            mZoom = 1.0;
+            mCamera.trackball = dart::gui::Trackball();
+            mCamera.trackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
+            mCamera.trackball.setRadius(std::min(mWidth, mHeight) * 0.4);
+            mCamera.trackball.startBall(mWidth / 2, mHeight / 2);
+            mCamera.trackball.updateBall(mWidth / 2 + mWidth * 0.25, mHeight / 2);
+            mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
+            mCamera.zoom = 1.0;
         }
         ImGui::SameLine();
         if (ImGui::Button("Top View")) {
-            mTrackball = dart::gui::Trackball();
-            mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-            mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-            mTrackball.startBall(mWidth / 2, mHeight / 2);
-            mTrackball.updateBall(mWidth / 2, mHeight / 2 - mHeight * 0.25);
-            mTrans = Eigen::Vector3d(0.0, 0.0, 0.0);
-            mZoom = 1.0;
+            mCamera.trackball = dart::gui::Trackball();
+            mCamera.trackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
+            mCamera.trackball.setRadius(std::min(mWidth, mHeight) * 0.4);
+            mCamera.trackball.startBall(mWidth / 2, mHeight / 2);
+            mCamera.trackball.updateBall(mWidth / 2, mHeight / 2 - mHeight * 0.25);
+            mCamera.trans = Eigen::Vector3d(0.0, 0.0, 0.0);
+            mCamera.zoom = 1.0;
         }
-    }
-}
-
-void MusclePersonalizerApp::drawViewSection()
-{
-    ImGui::Text("Render Options:");
-    ImGui::Checkbox("Render Muscles", &mRenderMuscles);
-    ImGui::Checkbox("Color by Contracture", &mColorByContracture);
-
-    ImGui::Separator();
-    ImGui::Text("Render Mode:");
-    if (ImGui::RadioButton("Wireframe", mRenderMode == RenderMode::Wireframe)) {
-        mRenderMode = RenderMode::Wireframe;
-    }
-    if (ImGui::RadioButton("Primitive", mRenderMode == RenderMode::Primitive)) {
-        mRenderMode = RenderMode::Primitive;
-    }
-    if (ImGui::RadioButton("Mesh", mRenderMode == RenderMode::Mesh)) {
-        mRenderMode = RenderMode::Mesh;
-    }
-
-    ImGui::Separator();
-    if (ImGui::Button("Reset Camera")) {
-        reset();
     }
 }
 
@@ -1009,116 +849,4 @@ bool MusclePersonalizerApp::collapsingHeaderWithControls(const std::string& titl
 bool MusclePersonalizerApp::isPanelDefaultOpen(const std::string& panelName) const
 {
     return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
-}
-
-// ============================================================
-// Input Callbacks
-// ============================================================
-
-void MusclePersonalizerApp::framebufferSizeCallback(GLFWwindow* window, int width, int height)
-{
-    auto* app = static_cast<MusclePersonalizerApp*>(glfwGetWindowUserPointer(window));
-    app->resize(width, height);
-}
-
-void MusclePersonalizerApp::mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
-{
-    auto* app = static_cast<MusclePersonalizerApp*>(glfwGetWindowUserPointer(window));
-    app->mousePress(button, action, mods);
-}
-
-void MusclePersonalizerApp::cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
-{
-    auto* app = static_cast<MusclePersonalizerApp*>(glfwGetWindowUserPointer(window));
-    app->mouseMove(xpos, ypos);
-}
-
-void MusclePersonalizerApp::scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    auto* app = static_cast<MusclePersonalizerApp*>(glfwGetWindowUserPointer(window));
-    app->mouseScroll(xoffset, yoffset);
-}
-
-void MusclePersonalizerApp::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
-    auto* app = static_cast<MusclePersonalizerApp*>(glfwGetWindowUserPointer(window));
-    app->keyPress(key, scancode, action, mods);
-}
-
-void MusclePersonalizerApp::resize(int width, int height)
-{
-    mWidth = width;
-    mHeight = height;
-    // glViewport is called in setCamera() every frame
-}
-
-void MusclePersonalizerApp::mousePress(int button, int action, int mods)
-{
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    if (action == GLFW_PRESS) {
-        mMouseDown = true;
-        double x, y;
-        glfwGetCursorPos(mWindow, &x, &y);
-        mMouseX = x;
-        mMouseY = y;
-
-        if (button == GLFW_MOUSE_BUTTON_LEFT) {
-            mRotate = true;
-            mTrackball.startBall(mMouseX, mHeight - mMouseY);
-        } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            mTranslate = true;
-        }
-    } else if (action == GLFW_RELEASE) {
-        mMouseDown = false;
-        mRotate = false;
-        mTranslate = false;
-    }
-}
-
-void MusclePersonalizerApp::mouseMove(double x, double y)
-{
-    double dx = x - mMouseX;
-    double dy = y - mMouseY;
-    mMouseX = x;
-    mMouseY = y;
-
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    if (mRotate) {
-        mTrackball.updateBall(x, mHeight - y);
-    }
-    if (mTranslate) {
-        double scale = 0.005 / mZoom;
-        Eigen::Matrix3d rot = mTrackball.getRotationMatrix();
-        Eigen::Vector3d delta = rot.transpose() * Eigen::Vector3d(dx * scale, -dy * scale, 0.0);
-        mTrans += delta;
-    }
-}
-
-void MusclePersonalizerApp::mouseScroll(double xoff, double yoff)
-{
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse) return;
-
-    mZoom = std::max(0.1, mZoom + yoff * 0.1);
-}
-
-void MusclePersonalizerApp::keyPress(int key, int scancode, int action, int mods)
-{
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard) return;
-
-    if (action == GLFW_PRESS) {
-        if (key == GLFW_KEY_R) {
-            reset();
-        } else if (key == GLFW_KEY_ESCAPE) {
-            glfwSetWindowShouldClose(mWindow, true);
-        }
-    }
-}
-
-void MusclePersonalizerApp::reset()
-{
-    initCamera();
 }
