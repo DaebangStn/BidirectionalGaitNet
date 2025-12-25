@@ -17,9 +17,6 @@
 #include <cfloat>
 #include <assimp/scene.h>
 
-// Rendering mode for skeleton visualization
-enum class RenderMode { Primitive, Mesh, Overlay, Wireframe };
-
 // Undo state for fit operations
 struct FitUndoState {
     size_t bodyNodeIndex;
@@ -116,7 +113,6 @@ private:
     void drawSkeleton();
     void drawMarkers();
     void drawMarkerLabels();  // Draw labels after ImGui::NewFrame
-    void drawSingleBodyNode(const dart::dynamics::BodyNode* bn);
 
     // ImGui UI
     void drawEditorPanel();

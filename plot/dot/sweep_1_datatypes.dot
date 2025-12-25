@@ -1,0 +1,199 @@
+digraph SweepDataTypes {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.6;
+    ranksep=1.0;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Arial",
+        fontsize=10
+    ];
+
+    edge [color="gray30", penwidth=1.2];
+
+    // ============================================================================
+    // CONFIGURATION STRUCTURES
+    // ============================================================================
+
+    subgraph cluster_config {
+        label=<<font point-size="10"><b>Configuration Structures</b></font>>;
+        style="rounded,filled";
+        fillcolor="#FFF8E1";
+        color="gray50";
+
+        // TrialConfig
+        TrialConfig [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+            <tr><td bgcolor="#FFF3CD" colspan="2"><b>TrialConfig</b></td></tr>
+            <tr><td align="left">name</td><td align="left">string</td></tr>
+            <tr><td align="left">description</td><td align="left">string</td></tr>
+            <tr><td align="left">pose</td><td align="left">map&lt;string, VectorXd&gt;</td></tr>
+            <tr><td align="left" bgcolor="#FFFACD">mode</td><td align="left">TrialMode</td></tr>
+            <tr><td align="left">force_body_node</td><td align="left">string</td></tr>
+            <tr><td align="left">force_offset</td><td align="left">Vector3d</td></tr>
+            <tr><td align="left">force_direction</td><td align="left">Vector3d</td></tr>
+            <tr><td align="left">force_min, force_max</td><td align="left">double</td></tr>
+            <tr><td align="left">force_steps</td><td align="left">int</td></tr>
+            <tr><td align="left" bgcolor="#FFFACD">angle_sweep</td><td align="left">AngleSweepTrialConfig</td></tr>
+            <tr><td align="left">record_joints</td><td align="left">vector&lt;string&gt;</td></tr>
+        </table>>, shape=plaintext];
+
+        // AngleSweepTrialConfig
+        AngleSweepTrialConfig [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+            <tr><td bgcolor="#FFF3CD" colspan="2"><b>AngleSweepTrialConfig</b></td></tr>
+            <tr><td align="left">joint_name</td><td align="left">string</td></tr>
+            <tr><td align="left">dof_index</td><td align="left">int</td></tr>
+            <tr><td align="left">angle_min</td><td align="left">double (radians)</td></tr>
+            <tr><td align="left">angle_max</td><td align="left">double (radians)</td></tr>
+            <tr><td align="left">num_steps</td><td align="left">int</td></tr>
+        </table>>, shape=plaintext];
+
+        // JointSweepConfig
+        JointSweepConfig [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+            <tr><td bgcolor="#FFF3CD" colspan="2"><b>JointSweepConfig</b><br/><font point-size="7">(GUI State)</font></td></tr>
+            <tr><td align="left">joint_index</td><td align="left">int</td></tr>
+            <tr><td align="left">dof_index</td><td align="left">int</td></tr>
+            <tr><td align="left">angle_min</td><td align="left">double</td></tr>
+            <tr><td align="left">angle_max</td><td align="left">double</td></tr>
+            <tr><td align="left">num_steps</td><td align="left">int</td></tr>
+        </table>>, shape=plaintext];
+
+        TrialConfig -> AngleSweepTrialConfig [label=<<font point-size="7">contains</font>>];
+    }
+
+    // ============================================================================
+    // DATA POINT STRUCTURES
+    // ============================================================================
+
+    subgraph cluster_data {
+        label=<<font point-size="10"><b>Data Point Structures</b></font>>;
+        style="rounded,filled";
+        fillcolor="#E3F2FD";
+        color="gray50";
+
+        // AngleSweepDataPoint
+        AngleSweepDataPoint [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+            <tr><td bgcolor="#BBDEFB" colspan="2"><b>AngleSweepDataPoint</b></td></tr>
+            <tr><td align="left">joint_angle</td><td align="left">double (radians)</td></tr>
+            <tr><td align="left">passive_torque_total</td><td align="left">double (Nm)</td></tr>
+            <tr><td align="left">passive_torque_stiffness</td><td align="left">double (Nm/rad)</td></tr>
+            <tr><td align="left" bgcolor="#C5E1FB">muscle_fp</td><td align="left">map&lt;string, double&gt;</td></tr>
+            <tr><td align="left" bgcolor="#C5E1FB">muscle_lm_norm</td><td align="left">map&lt;string, double&gt;</td></tr>
+            <tr><td align="left" bgcolor="#C5E1FB">muscle_jtp</td><td align="left">map&lt;string, vector&lt;double&gt;&gt;</td></tr>
+        </table>>, shape=plaintext];
+
+        ForceSweepDataPoint [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+            <tr><td bgcolor="#BBDEFB" colspan="2"><b>ForceSweepDataPoint</b></td></tr>
+            <tr><td align="left">force_magnitude</td><td align="left">double (N)</td></tr>
+            <tr><td align="left">passive_force_total</td><td align="left">double (N)</td></tr>
+            <tr><td align="left">joint_angles</td><td align="left">map&lt;string, VectorXd&gt;</td></tr>
+        </table>>, shape=plaintext];
+    }
+
+    // ============================================================================
+    // RUNTIME STATE (MEMBER VARIABLES)
+    // ============================================================================
+
+    subgraph cluster_state {
+        label=<<font point-size="10"><b>Runtime State (Member Variables)</b></font>>;
+        style="rounded,filled";
+        fillcolor="#F1F8E9";
+        color="gray50";
+
+        // Main character state
+        subgraph cluster_main_state {
+            label=<<font point-size="8">Main Character State</font>>;
+            style="rounded";
+            fillcolor="white";
+
+            mAngleSweepData [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mAngleSweepData</b></td></tr>
+                <tr><td align="left">vector&lt;AngleSweepDataPoint&gt;</td></tr>
+            </table>>, shape=plaintext];
+
+            mAngleSweepTrackedMuscles [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mAngleSweepTrackedMuscles</b></td></tr>
+                <tr><td align="left">vector&lt;string&gt;</td></tr>
+            </table>>, shape=plaintext];
+
+            mAngleSweepJointIdx [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mAngleSweepJointIdx</b></td></tr>
+                <tr><td align="left">int</td></tr>
+            </table>>, shape=plaintext];
+        }
+
+        // Standard character state
+        subgraph cluster_std_state {
+            label=<<font point-size="8">Standard Character State</font>>;
+            style="rounded";
+            fillcolor="white";
+
+            mStdAngleSweepData [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mStdAngleSweepData</b></td></tr>
+                <tr><td align="left">vector&lt;AngleSweepDataPoint&gt;</td></tr>
+            </table>>, shape=plaintext];
+
+            mStdAngleSweepTrackedMuscles [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mStdAngleSweepTrackedMuscles</b></td></tr>
+                <tr><td align="left">vector&lt;string&gt;</td></tr>
+            </table>>, shape=plaintext];
+        }
+
+        // GUI-specific state
+        subgraph cluster_gui_state {
+            label=<<font point-size="8">GUI-Specific State</font>>;
+            style="rounded";
+            fillcolor="white";
+
+            mSweepConfig [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mSweepConfig</b></td></tr>
+                <tr><td align="left">JointSweepConfig</td></tr>
+            </table>>, shape=plaintext];
+
+            mSweepRunning [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mSweepRunning</b></td></tr>
+                <tr><td align="left">bool</td></tr>
+            </table>>, shape=plaintext];
+
+            mSweepCurrentStep [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mSweepCurrentStep</b></td></tr>
+                <tr><td align="left">int</td></tr>
+            </table>>, shape=plaintext];
+
+            mMuscleVisibility [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td bgcolor="#C8E6C9"><b>mMuscleVisibility</b></td></tr>
+                <tr><td align="left">map&lt;string, bool&gt;</td></tr>
+            </table>>, shape=plaintext];
+        }
+    }
+
+    // ============================================================================
+    // RELATIONSHIPS
+    // ============================================================================
+
+    // Config to Data
+    AngleSweepTrialConfig -> AngleSweepDataPoint [label=<<font point-size="7">defines sweep\nfor collection</font>>, penwidth=1.5, color="gray30", style=dashed];
+    JointSweepConfig -> AngleSweepDataPoint [label=<<font point-size="7">GUI sweep\ncollection</font>>, penwidth=1.5, color="gray30", style=dashed];
+
+    // Data to State
+    AngleSweepDataPoint -> mAngleSweepData [label=<<font point-size="7">stored in</font>>, penwidth=1.5, color="gray50"];
+    AngleSweepDataPoint -> mStdAngleSweepData [label=<<font point-size="7">stored in</font>>, penwidth=1.5, color="gray50"];
+
+    // Config to GUI State
+    JointSweepConfig -> mSweepConfig [label=<<font point-size="7">runtime copy</font>>, penwidth=1.0, color="gray70", style=dotted];
+
+    // ============================================================================
+    // ANNOTATIONS
+    // ============================================================================
+
+    note_mode [label=<<font point-size="8"><i>TrialMode enum:</i><br/>FORCE_SWEEP | ANGLE_SWEEP</font>>,
+               shape=note, fillcolor="#FFFACD", color="gray50"];
+    note_muscle [label=<<font point-size="8"><i>Per-muscle data:</i><br/>f_p = passive force<br/>lm_norm = normalized length<br/>jtp = joint torque (per-DOF)</font>>,
+                 shape=note, fillcolor="#E3F2FD", color="gray50"];
+
+    {rank=same; TrialConfig; note_mode;}
+    {rank=same; AngleSweepDataPoint; note_muscle;}
+}

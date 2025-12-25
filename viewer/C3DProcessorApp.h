@@ -10,6 +10,7 @@
 #include "Motion.h"
 #include "CBufferData.h"
 #include "rm/rm.hpp"
+#include "common/PIDNavigator.h"
 #include <glad/glad.h>
 #include <GL/glu.h>
 #include <GLFW/glfw3.h>
@@ -21,11 +22,6 @@
 #include <string>
 #include <vector>
 #include <set>
-
-/**
- * @brief Skeleton render mode
- */
-enum class RenderMode { Primitive, Mesh, Wireframe };
 
 /**
  * @brief Playback navigation mode for C3D marker data
@@ -135,18 +131,8 @@ private:
     // Resource Manager for PID-based access (singleton reference)
     rm::ResourceManager* mResourceManager = nullptr;
 
-    // PID browser state
-    std::vector<std::string> mPIDList;          // List of available PIDs
-    std::vector<std::string> mPIDNames;         // Patient names (parallel to mPIDList)
-    std::vector<std::string> mPIDGMFCS;         // GMFCS levels (parallel to mPIDList)
-    int mSelectedPID = -1;                       // Selected PID index
-    char mPIDFilter[64] = "";                    // Filter text for PIDs
-    bool mPreOp = true;                          // true=pre, false=post
-
-    // PID C3D files
-    std::vector<std::string> mPIDC3DFiles;      // C3D filenames for selected PID
-    int mSelectedPIDC3D = -1;                   // Selected C3D index
-    char mPIDC3DFilter[64] = "";                // Filter text for C3D files (default: Trimmed_)
+    // PID Navigator for clinical data browsing
+    std::unique_ptr<PIDNav::PIDNavigator> mPIDNavigator;
 
     // Marker rendering flags
     bool mRenderC3DMarkers;
@@ -282,10 +268,9 @@ private:
     // HDF export
     void exportMotionToHDF5();
 
-    // PID scanner methods
-    void scanPIDList();
-    void scanPIDC3DFiles();
-    void loadPIDC3DFile(const std::string& filename);
+    // PID Navigator callbacks
+    void onPIDFileSelected(const std::string& path, const std::string& filename);
+    void checkForPersonalizedCalibration();
     bool loadPersonalizedCalibration(const std::string& inputDir);
 
     // Motion source helper

@@ -126,20 +126,16 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
     {
         // Check LBS Weight Setting
         bool meshLbsWeight = false;
-        bool useVelocityForce = false;
 
         if (doc.FirstChildElement("meshLbsWeight") != NULL)
             meshLbsWeight = doc.FirstChildElement("meshLbsWeight")->BoolText();
-
-        if (doc.FirstChildElement("useVelocityForce") != NULL)
-            useVelocityForce = doc.FirstChildElement("useVelocityForce")->BoolText();
 
         if (doc.FirstChildElement("useJointState") != NULL)
             mUseJointState = doc.FirstChildElement("useJointState")->BoolText();
 
         std::string muscle_path = Trim(std::string(doc.FirstChildElement("muscle")->GetText()));
         std::string resolvedMusclePath = rm::resolve(muscle_path);
-        mCharacter->setMuscles(resolvedMusclePath, useVelocityForce, meshLbsWeight);
+        mCharacter->setMuscles(resolvedMusclePath, meshLbsWeight);
         mUseMuscle = true;
     }
     
@@ -580,11 +576,10 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         auto muscle = env["muscle"];
 
         bool meshLbs = muscle["mesh_lbs_weight"].as<bool>(false);
-        bool useVelForce = muscle["use_velocity_force"].as<bool>(false);
 
         std::string musclePath = muscle["file"].as<std::string>();
         std::string resolved = rm::resolve(musclePath);
-        mCharacter->setMuscles(resolved, useVelForce, meshLbs);
+        mCharacter->setMuscles(resolved, meshLbs);
         mUseMuscle = true;
 
         // Clip lm_norm for passive force calculation

@@ -332,8 +332,7 @@ class C3D_Reader
             const std::vector<std::vector<Eigen::Vector3d>>& globalP,  // Measured markers [K frames][N markers] in WORLD coords
             bool optimizeScale = true);
 
-        // Note: Ceres-based optimizer (optimizeBoneScaleCeres) is in CeresOptimizer.h/cpp
-        // and is only available when USE_CERES is defined
+        // Note: Ceres-based optimizer (optimizeBoneScaleCeres) is in surgery/optimizer/BoneOptimizer.h
 
         Eigen::Vector3d getMarkerLocalPos(int markerIdx);
 
@@ -411,8 +410,8 @@ class C3D_Reader
             const std::vector<Eigen::Vector3d>& markers,
             const std::vector<Eigen::Vector3d>& refMarkers);
 
-        // Fallback scaling for USE_CERES=OFF
-        void scaleArmsFallback();
+        // Marker-distance based arm scaling
+        void scaleArmsByMarkerDistance();
         void copyDependentScales();
 
         RenderCharacter *mFreeCharacter;

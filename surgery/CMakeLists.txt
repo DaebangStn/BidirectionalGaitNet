@@ -23,13 +23,19 @@ target_include_directories(surgery PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/implot
 )
 
+# Ceres-based optimizers (always available via pre-built Ceres)
+add_subdirectory(optimizer)
+
 target_link_libraries(surgery
+    PUBLIC
     tinyxml2::tinyxml2
     sim
     dart
     dart-gui
     yaml-cpp
     imgui
+    PRIVATE
+    surgery_optimizer
 )
 
 # Surgery Tool executable (CLI-only)
@@ -77,6 +83,7 @@ target_link_libraries(physical_exam
     tinyxml2::tinyxml2
     GL GLU glut glad pybind11::embed glfw imgui
     sim
+    surgery_optimizer
     dart-gui
     yaml-cpp
     Boost::program_options

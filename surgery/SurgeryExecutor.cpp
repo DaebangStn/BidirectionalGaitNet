@@ -9,6 +9,8 @@
 #include <iomanip>
 #include <algorithm>
 
+#include "optimizer/WaypointOptimizer.h"
+
 namespace PMuscle {
 
 SurgeryExecutor::SurgeryExecutor(const std::string& generator_context)
@@ -684,15 +686,13 @@ void SurgeryExecutor::exportMusclesXML(const std::string& path) {
     for (auto m : muscles) {
         std::string name = m->name;
         double f0 = m->f0;
-        double l_m0 = m->lm_opt;
+        double l_m0 = m->lm_contract;
         double l_t0 = m->lt_rel;
-        double pen_angle = m->pen_angle;
 
         mfs << "    <Unit name=\"" << name
             << "\" f0=\"" << f0
             << "\" lm=\"" << l_m0
             << "\" lt=\"" << l_t0
-            << "\" pen_angle=\"" << pen_angle
             << "\">" << std::endl;
 
         for (auto anchor : m->GetAnchors()) {
@@ -836,7 +836,7 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
     for (auto m : sorted_muscles) {
         std::string name = m->name;
         double f0 = m->f0;
-        double lm = m->lm_opt;
+        double lm = m->lm_contract;
         double lt = m->lt_rel;
 
         // Start muscle entry with properties
@@ -1993,6 +1993,91 @@ bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, dou
     std::string action = (strength_ratio < 1.0) ? "Weakened" : (strength_ratio > 1.0) ? "Strengthened" : "Scaled";
     LOG_INFO("[Surgery] " << action << " " << modifiedCount << " muscle(s) to "
              << (strength_ratio * 100) << "% strength");
+
+    return true;
+}
+
+bool SurgeryExecutor::optimizeWaypoints(const std::vector<std::string>& muscle_names,
+                                        const std::string& reference_muscle,
+                                        const std::string& hdf_motion_path,
+                                        int max_iterations,
+                                        int num_sampling,
+                                        double lambda_shape,
+                                        double lambda_length_curve,
+                                        bool fix_origin_insertion) {
+    if (!mCharacter) {
+        LOG_ERROR("[Surgery] Error: No character loaded!");
+        return false;
+    }
+
+    // Get skeleton
+    auto skeleton = mCharacter->getSkeleton();
+    if (!skeleton) {
+        LOG_ERROR("[Surgery] Error: No skeleton available!");
+        return false;
+    }
+
+    // Get reference muscle
+    Muscle* ref_muscle = nullptr;
+    auto all_muscles = mCharacter->getMuscles();
+    for (auto m : all_muscles) {
+        if (m->name == reference_muscle) {
+            ref_muscle = m;
+            break;
+        }
+    }
+
+    if (!ref_muscle) {
+        LOG_ERROR("[Surgery] Error: Reference muscle '" << reference_muscle << "' not found!");
+        return false;
+    }
+
+    // Create optimizer
+    WaypointOptimizer optimizer;
+    WaypointOptimizer::Config config;
+    config.maxIterations = max_iterations;
+    config.numSampling = num_sampling;
+    config.lambdaShape = lambda_shape;
+    config.lambdaLengthCurve = lambda_length_curve;
+    config.fixOriginInsertion = fix_origin_insertion;
+    config.verbose = false;  // Set to true for detailed Ceres output
+
+    // Optimize each muscle
+    int optimizedCount = 0;
+    for (const auto& muscle_name : muscle_names) {
+        Muscle* muscle = nullptr;
+        for (auto m : all_muscles) {
+            if (m->name == muscle_name) {
+                muscle = m;
+                break;
+            }
+        }
+
+        if (!muscle) {
+            LOG_WARN("[Surgery] Warning: Muscle '" << muscle_name << "' not found, skipping");
+            continue;
+        }
+
+        LOG_INFO("[Surgery] Optimizing waypoints for muscle: " << muscle_name);
+
+        bool success = optimizer.optimizeMuscle(muscle, ref_muscle, hdf_motion_path,
+                                               skeleton, config);
+
+        if (success) {
+            optimizedCount++;
+            LOG_INFO("[Surgery] Successfully optimized muscle: " << muscle_name);
+        } else {
+            LOG_WARN("[Surgery] Optimization failed for muscle: " << muscle_name);
+        }
+    }
+
+    if (optimizedCount == 0) {
+        LOG_ERROR("[Surgery] Error: No muscles were successfully optimized");
+        return false;
+    }
+
+    LOG_INFO("[Surgery] Waypoint optimization completed for " << optimizedCount
+             << " out of " << muscle_names.size() << " muscle(s)");
 
     return true;
 }

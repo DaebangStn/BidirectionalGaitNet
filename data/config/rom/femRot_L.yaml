@@ -1,0 +1,34 @@
+# ROM examination pose with observed passive torques
+# Femoral Rotation test - Left hip rotation ROM
+
+name: "femRot_L"
+description: "Left hip rotation ROM test (internal/external)"
+mode: "angle_sweep"
+
+# Base pose for this ROM test
+pose:
+  Pelvis: [-90, 0, 0, 0, 0.5, 0]  # Seated or prone
+  FemurL: [-90, 0, 0]
+  TibiaL: -90
+  TalusL: [0, 0, 0]
+
+# Joint to sweep for ROM measurement
+angle_sweep:
+  joint: "FemurL"
+  dof_index: 1      # Rotation DOF
+  angle_min: -40    # degrees (external rotation)
+  angle_max: 40     # degrees (internal rotation)
+  num_steps: 100
+
+# CRITICAL: Observed passive torques from clinical measurement
+observed_torques:
+  - angle: -30.0    # degrees
+    torque: -4.2    # Nm (negative for external rotation resistance)
+  - angle: -15.0
+    torque: -1.5
+  - angle: 0.0
+    torque: 0.0
+  - angle: 15.0
+    torque: 1.8
+  - angle: 30.0
+    torque: 4.5

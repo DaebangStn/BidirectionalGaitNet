@@ -34,7 +34,7 @@ MarkerEditorApp::MarkerEditorApp(int argc, char** argv)
     , mShowPlaneYZ(false)
     , mShowPlaneZX(false)
     , mPlaneOpacity(0.5f)
-    , mRenderMode(RenderMode::Overlay)
+    , mRenderMode(RenderMode::Mesh)
     , mNewMarkerBoneIndex(0)
 {
     // Initialize buffers
@@ -65,7 +65,7 @@ MarkerEditorApp::MarkerEditorApp(int argc, char** argv)
                   << "  Click marker list      Select marker\n"
                   << "  Shift+Click            Set reference marker (for align/mirror)\n"
                   << "  1/2/3                  Align camera to XY/YZ/ZX plane\n"
-                  << "  O                      Cycle render mode (Primitive/Mesh/Overlay/Wireframe)\n"
+                  << "  O                      Cycle render mode (Primitive/Mesh/Wireframe)\n"
                   << "  L                      Toggle marker labels\n"
                   << std::endl;
     };
@@ -253,85 +253,26 @@ void MarkerEditorApp::drawSkeleton()
 
     auto skel = mCharacter->getSkeleton();
 
-    glEnable(GL_LIGHTING);
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glEnable(GL_COLOR_MATERIAL);
-    glColor4f(0.7f, 0.7f, 0.8f, 0.9f);
+    // Setup GL state - disable lighting for wireframe to show pure colors
+    if (mRenderMode == RenderMode::Wireframe) {
+        glDisable(GL_LIGHTING);
+        glDisable(GL_COLOR_MATERIAL);
+    } else {
+        glEnable(GL_LIGHTING);
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+        glEnable(GL_COLOR_MATERIAL);
+    }
 
     for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
         // Check visibility (skip if hidden)
         if (i < mBodyNodeVisible.size() && !mBodyNodeVisible[i]) {
             continue;
         }
-        drawSingleBodyNode(skel->getBodyNode(i));
+        GUI::DrawBodyNode(skel->getBodyNode(i),
+                          Eigen::Vector4d(0.7, 0.7, 0.8, 0.9),
+                          mRenderMode,
+                          &mShapeRenderer);
     }
-}
-
-void MarkerEditorApp::drawSingleBodyNode(const BodyNode* bn)
-{
-    if (!bn) return;
-
-    glPushMatrix();
-    glMultMatrixd(bn->getTransform().data());
-
-    bn->eachShapeNodeWith<VisualAspect>([this](const ShapeNode* sn) {
-        if (!sn) return true;
-
-        const auto& va = sn->getVisualAspect();
-        if (!va || va->isHidden()) return true;
-
-        glPushMatrix();
-        Eigen::Affine3d tmp = sn->getRelativeTransform();
-        glMultMatrixd(tmp.data());
-
-        const auto* shape = sn->getShape().get();
-        Eigen::Vector4d color(0.6, 0.6, 0.7, 1.0);
-
-        // Render mesh (for Mesh and Overlay modes)
-        if (mRenderMode == RenderMode::Mesh || mRenderMode == RenderMode::Overlay) {
-            if (shape->is<MeshShape>()) {
-                const auto* mesh = dynamic_cast<const MeshShape*>(shape);
-                mShapeRenderer.renderMesh(mesh, false, 0.0, color);
-            }
-        }
-
-        // Render primitive shapes (for Primitive, Overlay, and Wireframe modes)
-        if (mRenderMode == RenderMode::Primitive || mRenderMode == RenderMode::Overlay || mRenderMode == RenderMode::Wireframe) {
-            // For overlay and wireframe modes, render primitives as wireframe
-            if (mRenderMode == RenderMode::Overlay || mRenderMode == RenderMode::Wireframe) {
-                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                glLineWidth(2.0f);
-                if (mRenderMode == RenderMode::Wireframe) {
-                    glColor4f(0.8f, 0.8f, 0.8f, 1.0f);  // Light gray wireframe
-                } else {
-                    glColor4f(0.2f, 0.8f, 0.2f, 1.0f);  // Green wireframe for overlay
-                }
-            }
-
-            if (shape->is<BoxShape>()) {
-                GUI::DrawCube(static_cast<const BoxShape*>(shape)->getSize());
-            } else if (shape->is<CapsuleShape>()) {
-                auto* cap = static_cast<const CapsuleShape*>(shape);
-                GUI::DrawCapsule(cap->getRadius(), cap->getHeight());
-            } else if (shape->is<SphereShape>()) {
-                GUI::DrawSphere(static_cast<const SphereShape*>(shape)->getRadius());
-            } else if (shape->is<CylinderShape>()) {
-                auto* cyl = static_cast<const CylinderShape*>(shape);
-                GUI::DrawCylinder(cyl->getRadius(), cyl->getHeight());
-            }
-
-            // Restore fill mode and line width after wireframe
-            if (mRenderMode == RenderMode::Overlay || mRenderMode == RenderMode::Wireframe) {
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-                glLineWidth(1.0f);
-            }
-        }
-
-        glPopMatrix();
-        return true;
-    });
-
-    glPopMatrix();
 }
 
 void MarkerEditorApp::drawMarkers()
@@ -562,9 +503,7 @@ void MarkerEditorApp::drawEditorPanel()
         ImGui::SameLine();
         if (ImGui::RadioButton("Mesh", &mode, 1)) mRenderMode = RenderMode::Mesh;
         ImGui::SameLine();
-        if (ImGui::RadioButton("Overlay", &mode, 2)) mRenderMode = RenderMode::Overlay;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Wire", &mode, 3)) mRenderMode = RenderMode::Wireframe;
+        if (ImGui::RadioButton("Wire", &mode, 2)) mRenderMode = RenderMode::Wireframe;
     }
 
     // Body nodes visibility
@@ -1091,8 +1030,8 @@ void MarkerEditorApp::keyPress(int key, int scancode, int action, int mods)
                 mShowLabels = !mShowLabels;
                 break;
             case GLFW_KEY_O:
-                // Cycle render mode: Primitive -> Mesh -> Overlay -> Wireframe -> Primitive
-                mRenderMode = static_cast<RenderMode>((static_cast<int>(mRenderMode) + 1) % 4);
+                // Cycle render mode: Primitive -> Mesh -> Wireframe -> Primitive
+                mRenderMode = static_cast<RenderMode>((static_cast<int>(mRenderMode) + 1) % 3);
                 break;
             case GLFW_KEY_R:
                 // Reset camera

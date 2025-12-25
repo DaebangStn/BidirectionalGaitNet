@@ -342,5 +342,44 @@ private:
     std::string mPresetName;  // "supine", "standing", "prone", etc.
 };
 
+// Optimize muscle waypoint positions using Ceres solver
+// Preserves force directions and length-angle curve characteristics
+class OptimizeWaypointsOp : public SurgeryOperation {
+public:
+    OptimizeWaypointsOp(const std::vector<std::string>& muscle_names,
+                        const std::string& reference_muscle,
+                        const std::string& hdf_motion_path,
+                        int max_iterations = 10000,
+                        int num_sampling = 10,
+                        double lambda_shape = 0.1,
+                        double lambda_length_curve = 0.1,
+                        bool fix_origin_insertion = true)
+        : mMuscleNames(muscle_names),
+          mReferenceMuscle(reference_muscle),
+          mHDFMotionPath(hdf_motion_path),
+          mMaxIterations(max_iterations),
+          mNumSampling(num_sampling),
+          mLambdaShape(lambda_shape),
+          mLambdaLengthCurve(lambda_length_curve),
+          mFixOriginInsertion(fix_origin_insertion) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "optimize_waypoints"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::vector<std::string> mMuscleNames;     // Muscles to optimize
+    std::string mReferenceMuscle;              // Reference muscle for comparison
+    std::string mHDFMotionPath;                // Path to HDF motion file
+    int mMaxIterations;                        // Maximum Ceres iterations
+    int mNumSampling;                          // Number of pose samples from motion
+    double mLambdaShape;                       // Weight for force direction preservation
+    double mLambdaLengthCurve;                 // Weight for length curve preservation
+    bool mFixOriginInsertion;                  // Fix first and last anchors
+};
+
 } // namespace PMuscle
 

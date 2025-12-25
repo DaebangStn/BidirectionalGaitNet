@@ -1,0 +1,203 @@
+digraph GUIAngleSweepFlow {
+    rankdir=LR;
+    splines=ortho;
+    nodesep=0.6;
+    ranksep=1.5;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="white",
+        color="gray30",
+        fontname="Arial",
+        fontsize=10
+    ];
+
+    edge [color="gray30", penwidth=1.2];
+
+    // ============================================================================
+    // USER INTERACTION
+    // ============================================================================
+
+    subgraph cluster_gui_panel {
+        label=<<font point-size="9"><b>ImGui Control Panel</b></font>>;
+        style="rounded,filled";
+        fillcolor="#F1F8E9";
+        color="gray50";
+
+        selectJoint [label="Select\nJoint", xlabel=<<font point-size="7">Joint index + DOF</font>>];
+        setRange [label="Set Angle\nRange", xlabel=<<font point-size="7">Min, Max (degrees)</font>>];
+        setSteps [label="Set Number\nof Steps", xlabel=<<font point-size="7">5-200 steps</font>>];
+        btnRunSweep [label="Click\n'Run Sweep'", fillcolor="#C8E6C9", style="rounded,filled", penwidth=1.5];
+
+        selectJoint -> setRange [penwidth=1.0, color="gray70", style=dotted];
+        setRange -> setSteps [penwidth=1.0, color="gray70", style=dotted];
+        setSteps -> btnRunSweep [penwidth=2.5, color=black];
+    }
+
+    // ============================================================================
+    // INITIALIZATION
+    // ============================================================================
+
+    subgraph cluster_init {
+        label=<<font point-size="9"><b>runSweep() Initialization</b></font>>;
+        style="rounded,filled";
+        fillcolor="#E3F2FD";
+        color="gray50";
+
+        clearSweep [label="Clear Sweep\nData", xlabel=<<font point-size="7">clearSweepData()</font>>];
+        setupSweepMuscles [label="Setup Sweep\nMuscles", xlabel=<<font point-size="7">setupSweepMuscles()</font>>];
+        storeOriginal [label="Store Original\nPosition", xlabel=<<font point-size="7">mSweepOriginalPos</font>>];
+        setSweepRunning [label="Set Sweep\nRunning", xlabel=<<font point-size="7">mSweepRunning = true<br/>mSweepCurrentStep = 0</font>>];
+
+        clearSweep -> setupSweepMuscles [penwidth=2.5, color=black];
+        setupSweepMuscles -> storeOriginal [penwidth=2.5, color=black];
+        storeOriginal -> setSweepRunning [penwidth=2.5, color=black];
+
+        notePreserve [label=<<font point-size="7"><i>Preserves mMuscleVisibility<br/>from previous sweeps</i></font>>,
+                      shape=note, fillcolor="#FFFACD", color="gray50"];
+    }
+
+    // ============================================================================
+    // SETUP MUSCLES DETAILS
+    // ============================================================================
+
+    subgraph cluster_setup_muscles {
+        label=<<font point-size="9"><b>setupSweepMuscles() Details</b></font>>;
+        style="rounded,filled";
+        fillcolor="#FFF8E1";
+        color="gray50";
+
+        preserveVis [label="Preserve Old\nVisibility", xlabel=<<font point-size="7">oldVisibility = copy</font>>];
+        findMuscles [label="Find Muscles\nCrossing Joint", xlabel=<<font point-size="7">Check GetRelatedJoints()</font>>];
+        initVisibility [label="Initialize\nVisibility Map", xlabel=<<font point-size="7">New: visible if no commons<br/>Old: preserve state</font>>];
+        setupStdMuscles [label="Setup Standard\nCharacter", xlabel=<<font point-size="7">if mStdCharacter exists</font>>];
+
+        preserveVis -> findMuscles [penwidth=1.5, color="gray30"];
+        findMuscles -> initVisibility [penwidth=1.5, color="gray30"];
+        initVisibility -> setupStdMuscles [penwidth=1.5, color="gray30"];
+    }
+
+    // ============================================================================
+    // MAIN LOOP EXECUTION
+    // ============================================================================
+
+    subgraph cluster_mainloop {
+        label=<<font point-size="9"><b>mainLoop() Incremental Execution</b></font>>;
+        style="rounded,filled";
+        fillcolor="#C8E6C9";
+        color="gray50";
+
+        checkRunning [label="Check Sweep\nRunning?", shape=diamond, fillcolor="#FFFACD"];
+        checkStep [label="Step ≤\nnum_steps?", shape=diamond, fillcolor="#FFFACD"];
+
+        // Execution path
+        calcCurrentAngle [label="Calculate\nCurrent Angle", xlabel=<<font point-size="7">Based on mSweepCurrentStep</font>>];
+        setJointPosition [label="Set Joint\nPosition", xlabel=<<font point-size="7">For selected DOF</font>>];
+        updateMuscleTuple [label="Update Muscle\nGeometry", xlabel=<<font point-size="7">getMuscleTuple()</font>>];
+        collectSweepData [label="Collect\nData Point", xlabel=<<font point-size="7">collectAngleSweepData()</font>>];
+        incrementStep [label="Increment\nStep Counter", xlabel=<<font point-size="7">mSweepCurrentStep++</font>>];
+
+        // Completion path
+        restorePos [label="Restore\nPosition?", shape=diamond, fillcolor="#FFFACD"];
+        doRestore [label="Restore to\nOriginal", xlabel=<<font point-size="7">if mSweepRestorePosition</font>>];
+        stopSweep [label="Stop Sweep", xlabel=<<font point-size="7">mSweepRunning = false</font>>];
+        logComplete [label="Log\nCompletion", xlabel=<<font point-size="7">Collected N points</font>>];
+
+        checkRunning -> checkStep [label=" yes ", penwidth=2.5, color=black];
+        checkStep -> calcCurrentAngle [label=" yes ", penwidth=2.5, color=black];
+        calcCurrentAngle -> setJointPosition [penwidth=2.5, color=black];
+        setJointPosition -> updateMuscleTuple [penwidth=2.5, color=black];
+        updateMuscleTuple -> collectSweepData [penwidth=2.5, color=black];
+        collectSweepData -> incrementStep [penwidth=2.5, color=black];
+        incrementStep -> checkRunning [label=<<font point-size="7">next frame</font>>, penwidth=1.5, color="orange", style=dashed];
+
+        checkStep -> restorePos [label=" no ", penwidth=2.0, color="gray50"];
+        restorePos -> doRestore [label=" yes ", penwidth=1.5, color="gray50"];
+        restorePos -> stopSweep [label=" no ", penwidth=1.5, color="gray50"];
+        doRestore -> stopSweep [penwidth=1.5, color="gray50"];
+        stopSweep -> logComplete [penwidth=2.0, color="gray50"];
+
+        notePerFrame [label=<<font point-size="7"><i>Executes one step per frame<br/>Non-blocking<br/>Interruptible with ESC</i></font>>,
+                      shape=note, fillcolor="#E8F5E9", color="gray50"];
+    }
+
+    // ============================================================================
+    // INTERRUPT HANDLING
+    // ============================================================================
+
+    subgraph cluster_interrupt {
+        label=<<font point-size="9"><b>ESC Key Interrupt</b></font>>;
+        style="rounded,filled";
+        fillcolor="#FFE0B2";
+        color="gray50";
+
+        escPressed [label="ESC Key\nPressed", fillcolor="#FFCC80", style="rounded,filled"];
+        escRestore [label="Restore\nPosition?", shape=diamond, fillcolor="#FFFACD"];
+        escDoRestore [label="Restore to\nOriginal", xlabel=<<font point-size="7">if mSweepRestorePosition</font>>];
+        escStop [label="Stop Sweep", xlabel=<<font point-size="7">mSweepRunning = false</font>>];
+        escLog [label="Log\nInterruption", xlabel=<<font point-size="7">Sweep interrupted</font>>];
+
+        escPressed -> escRestore [penwidth=2.0, color="red"];
+        escRestore -> escDoRestore [label=" yes ", penwidth=1.5, color="red"];
+        escRestore -> escStop [label=" no ", penwidth=1.5, color="red"];
+        escDoRestore -> escStop [penwidth=1.5, color="red"];
+        escStop -> escLog [penwidth=2.0, color="red"];
+    }
+
+    // ============================================================================
+    // VISUALIZATION
+    // ============================================================================
+
+    subgraph cluster_visualization {
+        label=<<font point-size="9"><b>Real-Time Visualization</b></font>>;
+        style="rounded,filled";
+        fillcolor="#E1BEE7";
+        color="gray50";
+
+        renderPlots [label="Render Muscle\nPlots", xlabel=<<font point-size="7">renderMusclePlots()</font>>];
+        plotPassiveForce [label="Passive Force\nvs Angle", xlabel=<<font point-size="7">Per-muscle lines</font>>];
+        plotStiffness [label="Torque Stiffness\nvs Angle", xlabel=<<font point-size="7">dtau/dtheta</font>>];
+        plotLength [label="Muscle Length\nvs Angle", xlabel=<<font point-size="7">Normalized lm</font>>];
+        plotJointTorque [label="Joint Torque\nvs Angle", xlabel=<<font point-size="7">Per-muscle contribution</font>>];
+        toggleMuscles [label="Toggle Muscle\nVisibility", xlabel=<<font point-size="7">mMuscleVisibility map</font>>];
+        overlayStd [label="Overlay Standard\nCharacter", xlabel=<<font point-size="7">Dashed lines</font>>];
+
+        renderPlots -> plotPassiveForce [penwidth=1.0, color="gray50"];
+        renderPlots -> plotStiffness [penwidth=1.0, color="gray50"];
+        renderPlots -> plotLength [penwidth=1.0, color="gray50"];
+        renderPlots -> plotJointTorque [penwidth=1.0, color="gray50"];
+        toggleMuscles -> renderPlots [penwidth=1.0, color="gray70", style=dotted];
+        overlayStd -> renderPlots [penwidth=1.0, color="gray70", style=dotted];
+    }
+
+    // ============================================================================
+    // MAIN FLOW CONNECTIONS
+    // ============================================================================
+
+    btnRunSweep -> clearSweep [penwidth=2.5, color=black];
+    setSweepRunning -> checkRunning [penwidth=2.5, color=black];
+
+    // Visualization updates (parallel)
+    collectSweepData -> renderPlots [penwidth=1.5, color="purple", style=dashed, constraint=false];
+
+    // Interrupt path
+    checkRunning -> escPressed [penwidth=1.0, color="gray70", style=dotted, constraint=false];
+
+    // ============================================================================
+    // SUPPORTING CONNECTIONS
+    // ============================================================================
+
+    setupSweepMuscles -> preserveVis [penwidth=1.0, color="gray70", style=dotted];
+    clearSweep -> notePreserve [penwidth=0, style=invis];
+
+    // ============================================================================
+    // RANK ALIGNMENT
+    // ============================================================================
+
+    {rank=same; selectJoint; clearSweep;}
+    {rank=same; notePreserve; preserveVis;}
+    {rank=same; checkRunning; renderPlots;}
+    {rank=same; checkStep; escPressed;}
+    {rank=same; calcCurrentAngle; notePerFrame;}
+}

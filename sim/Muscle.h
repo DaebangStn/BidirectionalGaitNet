@@ -29,7 +29,7 @@ struct AnchorReference
 class Muscle
 {
 public:
-	Muscle(std::string _name, double f0, double lm0, double lt0, double pen_angle, double type1_fraction, bool useVelocityForce = false);
+	Muscle(std::string _name, double f0, double lm_contract, double lt_rel);
 	void AddAnchor(const dart::dynamics::SkeletonPtr &skel, dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos, int num_related_bodies, bool meshLbsWeight);
 	void AddAnchor(dart::dynamics::BodyNode *bn, const Eigen::Vector3d &glob_pos);
 	const std::vector<Anchor *> &GetAnchors() { return mAnchors; }
@@ -94,7 +94,7 @@ public:
 	void setClipLmNorm(double clip) { mClipLmNorm = clip; }
 	double getClipLmNorm() const { return mClipLmNorm; }
 
-	bool mUseVelocityForce;
+	bool mUseVelocityForce = false;
 	double F_L(double _l_m);
 	double F_V(double _l_m);
 	double F_psv(double _l_m);
@@ -109,15 +109,13 @@ public:
 	
 	double lmt, lmt_ref; // actual length of MTU and reference pose MTU length
 	double lmt_rel, lm_rel, lt_rel; // MTU, muscle, tendon length relative to reference MTU length
-	double lm_opt; // normalizer for FLV curve
+	double lm_contract; // normalizer for FLV curve
 	double lm_norm; // input for the FLV curve
 	double mClipLmNorm = -1.0; // clip lm_norm for passive force (-1 = no clip)
 
 	double f_toe, e_toe, k_toe, k_lin, e_t0; // For g_t
 	double k_pe, e_mo;						 // For g_pl
 	double gamma;							 // For g_al
-	bool selected;
-	double pen_angle;
 
 	Eigen::VectorXd related_vec;
 	Eigen::VectorXd GetRelatedVec() { return related_vec; }
@@ -125,7 +123,7 @@ public:
 
 	double GetMass();
 	double GetBHAR04_EnergyRate();
-	double type1_fraction;
+	double type1_fraction = 0.5;
 
 	double GetType1_Fraction() { return type1_fraction; }
 	double Getdl_velocity();
