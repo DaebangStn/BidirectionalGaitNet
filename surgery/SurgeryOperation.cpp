@@ -625,16 +625,27 @@ std::unique_ptr<SurgeryOperation> ApplyPosePresetOp::fromYAML(const YAML::Node& 
 // ============================================================================
 
 bool OptimizeWaypointsOp::execute(SurgeryExecutor* executor) {
-    return executor->optimizeWaypoints(mMuscleNames, mReferenceMuscle, mHDFMotionPath,
-                                      mMaxIterations, mNumSampling, mLambdaShape,
-                                      mLambdaLengthCurve, mFixOriginInsertion);
+    // Load reference character from default paths
+    // Note: This uses the same character as subject for reference (backward compatibility)
+    // For proper reference character, use MusclePersonalizerApp which loads a separate reference
+    Character* subject = executor->getCharacter();
+
+    // Build Config from operation parameters
+    WaypointOptimizer::Config config;
+    config.maxIterations = mMaxIterations;
+    config.numSampling = mNumSampling;
+    config.lambdaShape = mLambdaShape;
+    config.lambdaLengthCurve = mLambdaLengthCurve;
+    config.fixOriginInsertion = mFixOriginInsertion;
+    // Other params use defaults
+
+    return executor->optimizeWaypoints(mMuscleNames, mHDFMotionPath, config, subject);
 }
 
 YAML::Node OptimizeWaypointsOp::toYAML() const {
     YAML::Node node;
     node["type"] = "optimize_waypoints";
     node["muscles"] = mMuscleNames;
-    node["reference_muscle"] = mReferenceMuscle;
     node["hdf_motion_path"] = mHDFMotionPath;
     node["max_iterations"] = mMaxIterations;
     node["num_sampling"] = mNumSampling;
@@ -647,14 +658,12 @@ YAML::Node OptimizeWaypointsOp::toYAML() const {
 std::string OptimizeWaypointsOp::getDescription() const {
     std::ostringstream oss;
     oss << "Optimize waypoints for " << mMuscleNames.size() << " muscle(s) "
-        << "using reference '" << mReferenceMuscle << "' "
         << "(motion: " << mHDFMotionPath << ", max_iter: " << mMaxIterations << ")";
     return oss.str();
 }
 
 std::unique_ptr<SurgeryOperation> OptimizeWaypointsOp::fromYAML(const YAML::Node& node) {
     std::vector<std::string> muscles = node["muscles"].as<std::vector<std::string>>();
-    std::string reference_muscle = node["reference_muscle"].as<std::string>();
     std::string hdf_motion_path = node["hdf_motion_path"].as<std::string>();
 
     // Optional parameters with defaults
@@ -664,7 +673,7 @@ std::unique_ptr<SurgeryOperation> OptimizeWaypointsOp::fromYAML(const YAML::Node
     double lambda_length_curve = node["lambda_length_curve"] ? node["lambda_length_curve"].as<double>() : 0.1;
     bool fix_origin_insertion = node["fix_origin_insertion"] ? node["fix_origin_insertion"].as<bool>() : true;
 
-    return std::make_unique<OptimizeWaypointsOp>(muscles, reference_muscle, hdf_motion_path,
+    return std::make_unique<OptimizeWaypointsOp>(muscles, hdf_motion_path,
                                                   max_iterations, num_sampling, lambda_shape,
                                                   lambda_length_curve, fix_origin_insertion);
 }

@@ -1,0 +1,375 @@
+digraph WaypointOptimizeCallStack {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+
+    // Title
+    labelloc="t";
+    label="WaypointOptimizer::optimizeMuscle() Call Stack\n(Function Call Hierarchy)";
+
+    // Styling
+    node [shape=box, style="rounded,filled"];
+
+    // Color scheme
+    // Entry: lightblue
+    // Curve computation: lightgreen
+    // Analysis: lightyellow
+    // Ceres: lavender
+    // Cost functions: coral
+    // Gradient: lightsalmon
+    // Apply/Result: palegreen
+
+    // =====================================================
+    // MAIN ENTRY POINT
+    // =====================================================
+    optimizeMuscle [
+        label="optimizeMuscle()\n[Line 899]\n\nsubject_muscle, reference_muscle,\nref_skeleton, subj_skeleton, config",
+        shape=doubleoctagon,
+        fillcolor="#87CEEB",
+        style="filled,bold"
+    ];
+
+    // =====================================================
+    // CURVE COMPUTATION CLUSTER
+    // =====================================================
+    subgraph cluster_curve_compute {
+        label="Curve Computation (DOF Sweep)";
+        style=rounded;
+        bgcolor="#E8F5E9";
+
+        computeMuscleLengthCurve [
+            label="computeMuscleLengthCurve()\n[Line 200]\n\nmuscle, skeleton, numSampling\n\nReturns: vector<(length, phase)>",
+            fillcolor="#98FB98"
+        ];
+
+        findBestDOF [
+            label="findBestDOF()\n[Line 126]\n\nmuscle, skeleton\n\nFinds DOF with max Jacobian magnitude\nReturns: (dof_index, lower, upper)",
+            fillcolor="#90EE90"
+        ];
+
+        computeMuscleLengthCurveWithDOF [
+            label="computeMuscleLengthCurveWithDOF()\n[Line 167]\n\nmuscle, skeleton, dof_index,\nlower_limit, upper_limit, numSampling\n\nSweeps DOF from lower→upper\nReturns: vector<(length, phase)>",
+            fillcolor="#98FB98"
+        ];
+
+        computeMuscleLengthCurve -> findBestDOF [label="1. find sweep DOF"];
+        computeMuscleLengthCurve -> computeMuscleLengthCurveWithDOF [label="2. sweep with DOF"];
+    }
+
+    // =====================================================
+    // ANALYSIS CLUSTER
+    // =====================================================
+    subgraph cluster_analysis {
+        label="Curve Analysis";
+        style=rounded;
+        bgcolor="#FFFDE7";
+
+        analyzeLengthCurve [
+            label="analyzeLengthCurve()\n[Line 247]\n\nlength_curve\n\nComputes:\n- phase_min (min length phase)\n- phase_max (max length phase)\n- delta = (max - min)\nReturns: LengthCurveAnalysis",
+            fillcolor="#FFFACD"
+        ];
+
+        computePerPhaseShapeEnergy [
+            label="computePerPhaseShapeEnergy()\n[Line 428]\n\nref_muscle, subject_muscle,\nref_skel, subj_skel, dof_config\n\nFor each phase sample:\n- sweepDOF()\n- compute shape energy\nReturns: vector<(phase, energy)>",
+            fillcolor="#FFFACD"
+        ];
+    }
+
+    // =====================================================
+    // DOF SWEEP HELPER
+    // =====================================================
+    subgraph cluster_dof_sweep {
+        label="DOF Sweep";
+        style=rounded;
+        bgcolor="#F3E5F5";
+
+        sweepDOF [
+            label="sweepDOF()\n[Line 372]\n\nskeleton, dof_index, phase,\nlower, upper, original_pose\n\nSets DOF = lower + phase * (upper - lower)\nCalls skeleton->computeForwardKinematics()",
+            fillcolor="#E1BEE7"
+        ];
+    }
+
+    // =====================================================
+    // CERES SETUP CLUSTER
+    // =====================================================
+    subgraph cluster_ceres_setup {
+        label="Ceres Solver Setup";
+        style=rounded;
+        bgcolor="#EDE7F6";
+
+        OptimizationContext_create [
+            label="OptimizationContext::create()\n[Static Factory]\n\nDOFSweepConfig, ref_chars\n\nCreates shared context for\nall cost functions",
+            fillcolor="#D1C4E9"
+        ];
+
+        WaypointParameters_ctor [
+            label="WaypointParameters()\n[Line 863]\n\nmuscle, numAnchors\n\nRAII wrapper:\nCopies anchor local_positions\nto double[n_anchors][3]",
+            fillcolor="#D1C4E9"
+        ];
+
+        WaypointParameters_applyTo [
+            label="WaypointParameters::applyTo()\n[Line 880]\n\nmuscle\n\nCopies optimized positions\nback to anchor local_positions",
+            fillcolor="#C5CAE9"
+        ];
+
+        ceres_Problem [
+            label="ceres::Problem\n\nAddParameterBlock()\n- for each anchor's double[3]\nSetParameterBlockConstant()\n- for origin & insertion (if fix)",
+            fillcolor="#B39DDB"
+        ];
+
+        ceres_Solve [
+            label="ceres::Solve()\n[Line 1084]\n\nLM solver with DENSE_QR\nAnalytical Jacobians\n\nmax_iterations from config\nfunction_tolerance = 1e-8\ngradient_tolerance = 1e-10",
+            fillcolor="#9575CD",
+            style="filled,bold"
+        ];
+    }
+
+    // =====================================================
+    // COST FUNCTIONS CLUSTER
+    // =====================================================
+    subgraph cluster_cost_functions {
+        label="Cost Functions (Ceres Residual Blocks)";
+        style=rounded;
+        bgcolor="#FFEBEE";
+
+        WaypointCostFunction [
+            label="WaypointCostFunction\n[Base Class, Line 760]\n\nEvaluate(parameters, residuals, jacobians)\n1. updateAnchorPosition(params)\n2. computeEnergy() [pure virtual]\n3. computeGradient() [pure virtual]\n4. residual = weight * sqrt(energy)",
+            fillcolor="#FFCDD2"
+        ];
+
+        ShapeCostFunction [
+            label="ShapeCostFunction\n[Line 812]\n\nlambdaShape, context\n\nMatches force direction:\ncross(subj_dir, ref_dir).norm()",
+            fillcolor="#EF9A9A"
+        ];
+
+        LengthCurveCostFunction [
+            label="LengthCurveCostFunction\n[Line 838]\n\nlambdaLengthCurve, context,\nref_curve, weightPhase, weightDelta\n\nMatches length curve:\nphase_diff + delta_diff",
+            fillcolor="#EF9A9A"
+        ];
+    }
+
+    // =====================================================
+    // ENERGY COMPUTATION CLUSTER
+    // =====================================================
+    subgraph cluster_energy {
+        label="Energy Computation";
+        style=rounded;
+        bgcolor="#FFF3E0";
+
+        computeShapeEnergy [
+            label="computeShapeEnergy()\n[Line 518]\n\nref_muscle, subject_muscle,\nref_skel, subj_skel, phase, dof_config\n\nE = sum over segments:\ncross(subj_dir, ref_dir).squaredNorm()",
+            fillcolor="#FFCC80"
+        ];
+
+        computeLengthCurveEnergy [
+            label="computeLengthCurveEnergy()\n[Line 566]\n\nsubj_curve_analysis, ref_curve_analysis,\nweightPhase, weightDelta\n\nE = w_phase * (phase_diff)^2\n  + w_delta * (delta_diff)^2",
+            fillcolor="#FFCC80"
+        ];
+    }
+
+    // =====================================================
+    // GRADIENT COMPUTATION CLUSTER
+    // =====================================================
+    subgraph cluster_gradient {
+        label="Gradient Computation (Analytical Jacobians)";
+        style=rounded;
+        bgcolor="#FFECB3";
+
+        computeShapeGradient [
+            label="computeShapeGradient()\n[Line 620]\n\nref_muscle, subject_muscle,\nref_skel, subj_skel, phase,\nnum_params, gradient_out\n\nFor each anchor:\n  ∂E/∂p = R^T * (∂E/∂segment)",
+            fillcolor="#FFE082"
+        ];
+
+        computeSegmentShapeGradient [
+            label="computeSegmentShapeGradient()\n[Line 593]\n\nref_dir, subj_dir, segment_length\n\n∂d/∂p = ±(I - d*d^T) / len\n∂cross/∂d = skew matrix",
+            fillcolor="#FFD54F"
+        ];
+
+        computeLengthCurveGradient [
+            label="computeLengthCurveGradient()\n[Line 710]\n\nsubj_muscle, subj_skel,\nref_curve_analysis, weightPhase,\nweightDelta, num_params, gradient_out\n\nFor each anchor:\n  ∂L/∂p[i] = direction to neighbors\n  ∂E/∂p[i] = R^T * ∂L/∂p * chain_rule",
+            fillcolor="#FFE082"
+        ];
+
+        computeShapeGradient -> computeSegmentShapeGradient [label="per segment"];
+    }
+
+    // =====================================================
+    // FINAL STEPS
+    // =====================================================
+    subgraph cluster_finalize {
+        label="Finalization";
+        style=rounded;
+        bgcolor="#E8F5E9";
+
+        muscle_SetMuscle [
+            label="muscle->SetMuscle()\n\nRecompute muscle geometry\nafter anchor changes",
+            fillcolor="#A5D6A7"
+        ];
+
+        return_result [
+            label="Return WaypointOptResult\n{\n  muscle_name,\n  ref_curve, before_curve, after_curve,\n  phases, phase_min, phase_max,\n  success\n}",
+            shape=ellipse,
+            fillcolor="#81C784"
+        ];
+    }
+
+    // =====================================================
+    // CALL EDGES (Main Flow)
+    // =====================================================
+
+    // Step 1: Reference curve
+    optimizeMuscle -> computeMuscleLengthCurve [
+        label="1. ref_curve\n(line 934)",
+        color="darkgreen",
+        style=bold
+    ];
+
+    optimizeMuscle -> analyzeLengthCurve [
+        label="2. ref_analysis\n(line 962)",
+        color="darkgoldenrod"
+    ];
+
+    // Step 2: Subject before curve
+    optimizeMuscle -> computeMuscleLengthCurve [
+        label="3. before_curve\n(line 964)",
+        color="darkgreen"
+    ];
+
+    optimizeMuscle -> analyzeLengthCurve [
+        label="4. before_analysis\n(line 971)",
+        color="darkgoldenrod"
+    ];
+
+    // Step 3: Find best DOF
+    optimizeMuscle -> findBestDOF [
+        label="5. sweep_dof\n(line 981)",
+        color="green"
+    ];
+
+    // Step 4: Per-phase shape energy
+    optimizeMuscle -> computePerPhaseShapeEnergy [
+        label="6. per_phase_shape\n(line 991)",
+        color="darkgoldenrod"
+    ];
+
+    // Step 5: Ceres setup
+    optimizeMuscle -> OptimizationContext_create [
+        label="7. create context\n(line 1034)",
+        color="purple"
+    ];
+
+    optimizeMuscle -> WaypointParameters_ctor [
+        label="8. copy params\n(line 998)",
+        color="purple"
+    ];
+
+    optimizeMuscle -> ceres_Problem [
+        label="9. setup problem\n(line 1040)",
+        color="purple"
+    ];
+
+    // Step 6: Cost functions
+    ceres_Problem -> ShapeCostFunction [
+        label="AddResidualBlock\n(line 1046)",
+        color="red"
+    ];
+
+    ceres_Problem -> LengthCurveCostFunction [
+        label="AddResidualBlock\n(line 1051)",
+        color="red"
+    ];
+
+    // Cost function internal calls
+    ShapeCostFunction -> WaypointCostFunction [label="inherits", style=dashed];
+    LengthCurveCostFunction -> WaypointCostFunction [label="inherits", style=dashed];
+
+    WaypointCostFunction -> computeShapeEnergy [label="virtual", style=dashed, color="orange"];
+    WaypointCostFunction -> computeShapeGradient [label="virtual", style=dashed, color="goldenrod"];
+    WaypointCostFunction -> computeLengthCurveEnergy [label="virtual", style=dashed, color="orange"];
+    WaypointCostFunction -> computeLengthCurveGradient [label="virtual", style=dashed, color="goldenrod"];
+
+    // Energy -> sweep
+    computeShapeEnergy -> sweepDOF [label="sweep DOF", color="purple", style=dotted];
+    computePerPhaseShapeEnergy -> sweepDOF [label="sweep DOF", color="purple", style=dotted];
+    computePerPhaseShapeEnergy -> computeShapeEnergy [label="per phase", color="orange", style=dotted];
+
+    // Step 7: Solve
+    optimizeMuscle -> ceres_Solve [
+        label="10. solve\n(line 1084)",
+        color="purple",
+        style=bold
+    ];
+
+    // Step 8: Apply results
+    optimizeMuscle -> WaypointParameters_applyTo [
+        label="11. apply\n(line 1121)",
+        color="indigo"
+    ];
+
+    optimizeMuscle -> muscle_SetMuscle [
+        label="12. recompute\n(line 1124)",
+        color="green"
+    ];
+
+    // Step 9: After curve
+    optimizeMuscle -> computeMuscleLengthCurve [
+        label="13. after_curve\n(line 1134)",
+        color="darkgreen"
+    ];
+
+    optimizeMuscle -> analyzeLengthCurve [
+        label="14. after_analysis\n(line 1136)",
+        color="darkgoldenrod"
+    ];
+
+    optimizeMuscle -> computePerPhaseShapeEnergy [
+        label="15. after_shape\n(line 1139)",
+        color="darkgoldenrod"
+    ];
+
+    // Step 10: Return
+    optimizeMuscle -> return_result [
+        label="16. return",
+        color="darkgreen",
+        style=bold
+    ];
+
+    // =====================================================
+    // LEGEND
+    // =====================================================
+    subgraph cluster_legend {
+        label="Legend";
+        rank=sink;
+        style=rounded;
+        bgcolor="white";
+
+        leg_entry [label="Entry Point", fillcolor="#87CEEB"];
+        leg_curve [label="Curve Computation", fillcolor="#98FB98"];
+        leg_analysis [label="Analysis", fillcolor="#FFFACD"];
+        leg_ceres [label="Ceres Setup", fillcolor="#D1C4E9"];
+        leg_cost [label="Cost Function", fillcolor="#EF9A9A"];
+        leg_energy [label="Energy", fillcolor="#FFCC80"];
+        leg_grad [label="Gradient", fillcolor="#FFE082"];
+        leg_final [label="Finalize", fillcolor="#A5D6A7"];
+
+        leg_entry -> leg_curve -> leg_analysis -> leg_ceres [style=invis];
+        leg_cost -> leg_energy -> leg_grad -> leg_final [style=invis];
+    }
+
+    // =====================================================
+    // CALL FREQUENCY NOTE
+    // =====================================================
+    subgraph cluster_notes {
+        label="Call Frequency Notes";
+        rank=sink;
+        style=rounded;
+        bgcolor="#F5F5F5";
+
+        notes [
+            label="During Optimization:\n\n- Ceres calls Evaluate() many times\n- Each Evaluate() calls:\n  - updateAnchorPosition()\n  - computeEnergy()\n  - computeGradient() [if jacobians != nullptr]\n\nTypical iteration:\n  100-10000 function evaluations",
+            shape=note,
+            fillcolor="#FAFAFA"
+        ];
+    }
+}

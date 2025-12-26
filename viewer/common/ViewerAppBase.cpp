@@ -1,7 +1,10 @@
 #include "ViewerAppBase.h"
+#include <rm/global.hpp>
+#include <yaml-cpp/yaml.h>
 #include <iostream>
 #include <cmath>
 #include <filesystem>
+#include <implot.h>
 
 // ============================================================
 // Constructor / Destructor
@@ -12,6 +15,7 @@ ViewerAppBase::ViewerAppBase(const std::string& windowTitle, int width, int heig
     , mHeight(height)
     , mWindowTitle(windowTitle)
 {
+    loadRenderConfig();  // Load window geometry from render.yaml
     initGLFW();
     initImGui();
 
@@ -43,6 +47,7 @@ void ViewerAppBase::initGLFW()
 
     // Create window
     mWindow = glfwCreateWindow(mWidth, mHeight, mWindowTitle.c_str(), nullptr, nullptr);
+    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
     if (!mWindow) {
         std::cerr << "[ViewerAppBase] Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -78,6 +83,7 @@ void ViewerAppBase::initImGui()
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -107,6 +113,7 @@ void ViewerAppBase::cleanup()
 {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
 
     if (mWindow) {
@@ -117,11 +124,52 @@ void ViewerAppBase::cleanup()
 }
 
 // ============================================================
+// Render Config (window geometry from render.yaml)
+// ============================================================
+
+void ViewerAppBase::loadRenderConfig()
+{
+    try {
+        std::string resolved_path = rm::resolve("render.yaml");
+        YAML::Node config = YAML::LoadFile(resolved_path);
+
+        // Parse geometry section
+        if (config["geometry"]) {
+            auto geom = config["geometry"];
+            if (geom["window"]) {
+                auto window = geom["window"];
+                if (window["width"]) mWidth = window["width"].as<int>();
+                if (window["height"]) mHeight = window["height"].as<int>();
+                if (window["xpos"]) mWindowXPos = window["xpos"].as<int>();
+                if (window["ypos"]) mWindowYPos = window["ypos"].as<int>();
+            }
+            if (geom["control"]) mControlPanelWidth = geom["control"].as<int>();
+            if (geom["plot"]) mPlotPanelWidth = geom["plot"].as<int>();
+        }
+
+        // Parse default_open_panels
+        if (config["default_open_panels"]) {
+            for (const auto& panel : config["default_open_panels"]) {
+                mDefaultOpenPanels.insert(panel.as<std::string>());
+            }
+        }
+
+        std::cout << "[ViewerAppBase] Loaded render.yaml: " << mWidth << "x" << mHeight
+                  << " at (" << mWindowXPos << "," << mWindowYPos << ")" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[ViewerAppBase] Could not load render.yaml: " << e.what() << std::endl;
+    }
+}
+
+// ============================================================
 // Main Loop
 // ============================================================
 
 void ViewerAppBase::startLoop()
 {
+    // Load app-specific render config (derived class hook)
+    loadRenderConfigImpl();
+
     // Call initialization hook
     onInitialize();
 
@@ -325,6 +373,10 @@ void ViewerAppBase::keyPress(int key, int scancode, int action, int mods)
             case GLFW_KEY_G:
                 mGroundMode = (mGroundMode == GroundMode::Wireframe)
                     ? GroundMode::Solid : GroundMode::Wireframe;
+                break;
+            case GLFW_KEY_O:
+                // Cycle render mode: Primitive -> Mesh -> Wireframe -> Primitive
+                mRenderMode = static_cast<RenderMode>((static_cast<int>(mRenderMode) + 1) % 3);
                 break;
             case GLFW_KEY_ESCAPE:
                 glfwSetWindowShouldClose(mWindow, GLFW_TRUE);

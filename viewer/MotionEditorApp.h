@@ -147,9 +147,7 @@ private:
     MotionEditorRenderMode mAppRenderMode = MotionEditorRenderMode::Wireframe;
     float mControlPanelWidth = 350.0f;
     float mRightPanelWidth = 300.0f;
-
-    // === Configuration ===
-    std::set<std::string> mDefaultOpenPanels;
+    // mDefaultOpenPanels inherited from ViewerAppBase
 
     // === Rotation Processing ===
     float mPendingRotationAngle = 0.0f;     // degrees (preview always shown when != 0)
@@ -176,7 +174,7 @@ private:
     bool mPreviewClampedPose = true;
 
     // === Initialization ===
-    void loadRenderConfig();
+    void loadRenderConfigImpl() override;
 
     // === Rendering ===
     void drawSkeleton(bool isPreview = false);
@@ -202,7 +200,7 @@ private:
 
     // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);
-    bool isPanelDefaultOpen(const std::string& panelName) const;
+    // isPanelDefaultOpen() inherited from ViewerAppBase
 
     // === Data Loading ===
     void scanSkeletonDirectory();

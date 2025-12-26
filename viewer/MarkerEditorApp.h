@@ -103,7 +103,6 @@ private:
 
     // Helpers
     void updateBodyNodeNames();
-    void loadRenderConfig();
 
     // Geometry editing
     Eigen::Vector3d computeMeshAABB(const dart::dynamics::BodyNode* bn);

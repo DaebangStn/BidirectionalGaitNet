@@ -54,33 +54,6 @@ def viewer():
         sys.exit(0)
 
 
-def physical_exam():
-    """
-    Run the physical_exam binary with config path
-    Usage: uv run physical_exam [config_path]
-    Default: @data/config/base.yaml
-    """
-    project_root = get_project_root()
-    binary_path = project_root / "build/release/surgery/physical_exam"
-
-    if not binary_path.exists():
-        print(f"Error: Binary not found at {binary_path}", file=sys.stderr)
-        print("Please build the project first with: ninja -C build/release", file=sys.stderr)
-        sys.exit(1)
-
-    # Run the binary with micromamba environment (required for pybind11 dependencies)
-    # Pass through all arguments - binary handles defaults via boost::program_options
-    micromamba = get_micromamba_path()
-    cmd = [micromamba, "run", "-n", "bidir", str(binary_path)] + sys.argv[1:]
-    try:
-        subprocess.run(cmd, cwd=project_root, check=True)
-    except subprocess.CalledProcessError as e:
-        sys.exit(e.returncode)
-    except KeyboardInterrupt:
-        print("\nInterrupted by user")
-        sys.exit(0)
-
-
 def train_fgn():
     """Quick Forward GaitNet training."""
     sys.argv = ["train.py", "--config", "data/config/fgn_default.yaml"]

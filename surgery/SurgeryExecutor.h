@@ -3,11 +3,19 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <functional>
 #include <Eigen/Core>
 #include "Character.h"
 #include "DARTHelper.h"
+#include "optimizer/WaypointOptimizer.h"
 
 namespace PMuscle {
+
+// Progress callback for waypoint optimization: (current, total, muscleName)
+using WaypointProgressCallback = std::function<void(int, int, const std::string&)>;
+
+// Result callback for waypoint optimization: (current, total, muscleName, result)
+using WaypointResultCallback = std::function<void(int, int, const std::string&, const WaypointOptResult&)>;
 
 /**
  * @brief Base class for surgery operations execution
@@ -64,14 +72,25 @@ public:
 
     // Waypoint optimization using Ceres solver
     // Optimizes muscle waypoint positions to preserve force directions and length-angle curves
+    // reference_character: Character with reference muscles (ideal behavior from standard character)
+    // progressCallback: optional callback (current, total, muscleName) for progress updates
     virtual bool optimizeWaypoints(const std::vector<std::string>& muscle_names,
-                                   const std::string& reference_muscle,
                                    const std::string& hdf_motion_path,
-                                   int max_iterations,
-                                   int num_sampling,
-                                   double lambda_shape,
-                                   double lambda_length_curve,
-                                   bool fix_origin_insertion);
+                                   const WaypointOptimizer::Config& config,
+                                   Character* reference_character,
+                                   WaypointProgressCallback progressCallback = nullptr);
+
+    // Waypoint optimization with results - returns curve data for visualization
+    // reference_character: Character with reference muscles (ideal behavior from standard character)
+    // characterMutex: optional mutex to lock during skeleton/muscle access (for thread safety)
+    // resultCallback: callback (current, total, muscleName, result) for progress + result updates
+    virtual std::vector<WaypointOptResult> optimizeWaypointsWithResults(
+                                   const std::vector<std::string>& muscle_names,
+                                   const std::string& hdf_motion_path,
+                                   const WaypointOptimizer::Config& config,
+                                   Character* reference_character,
+                                   std::mutex* characterMutex = nullptr,
+                                   WaypointResultCallback resultCallback = nullptr);
 
     // Compute which anchors will be affected by rotation operation
     // Throws std::runtime_error if ref_anchor has multiple bodynodes

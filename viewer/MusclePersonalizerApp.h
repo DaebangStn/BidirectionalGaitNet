@@ -2,6 +2,7 @@
 #define MUSCLE_PERSONALIZER_APP_H
 
 #include "common/ViewerAppBase.h"
+#include "common/PIDNavigator.h"
 #include "RenderCharacter.h"
 #include "ShapeRenderer.h"
 #include "rm/rm.hpp"
@@ -11,6 +12,11 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <map>
+#include <optional>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 /**
  * @brief Muscle Personalizer Application
@@ -26,7 +32,7 @@ class MusclePersonalizerApp : public ViewerAppBase
 {
 public:
     MusclePersonalizerApp(const std::string& configPath = "@data/config/muscle_personalizer.yaml");
-    ~MusclePersonalizerApp() override = default;
+    ~MusclePersonalizerApp() override;
 
 protected:
     // ViewerAppBase overrides
@@ -35,12 +41,6 @@ protected:
     void drawUI() override;
 
 private:
-    // ============================================================
-    // Window position (from config)
-    // ============================================================
-    int mWindowXPos = 0;
-    int mWindowYPos = 0;
-
     // ============================================================
     // Rendering
     // ============================================================
@@ -54,45 +54,107 @@ private:
     std::unique_ptr<PMuscle::SurgeryExecutor> mExecutor;
 
     // ============================================================
+    // Reference Character (standard/ideal muscle behavior)
+    // ============================================================
+    Character* mReferenceCharacter = nullptr;  // Standard reference character
+    std::string mReferenceSkeletonPath;        // Default skeleton path (from config)
+    std::string mReferenceMusclePath;          // Default muscle path (from config)
+
+    // ============================================================
     // Configuration
     // ============================================================
     std::string mConfigPath;
-    std::set<std::string> mDefaultOpenPanels;
-    int mControlPanelWidth;
+    // mDefaultOpenPanels and mControlPanelWidth inherited from ViewerAppBase
     int mResultsPanelWidth;
+
+    // ============================================================
+    // Resource Manager and PID Navigator
+    // ============================================================
+    rm::ResourceManager* mResourceManager = nullptr;
+    std::unique_ptr<PIDNav::PIDNavigator> mPIDNavigator;
 
     // ============================================================
     // Tool 1: Weight Application
     // ============================================================
+    enum class WeightSource { ClinicalData, UserInput };
+    WeightSource mWeightSource = WeightSource::ClinicalData;
     float mTargetMass = 50.0f;      // kg
     float mReferenceMass = 50.0f;   // kg (from character)
     float mCurrentMass = 50.0f;     // kg (current scaled mass)
     float mAppliedRatio = 1.0f;     // Last applied scaling ratio
+    float mClinicalWeight = 0.0f;   // kg (from clinical data)
+    bool mClinicalWeightAvailable = false;
 
     // ============================================================
     // Tool 2: Waypoint Optimization
     // ============================================================
     char mHDFPath[256] = "";
+    std::vector<std::string> mMotionCandidates;
+    std::map<std::string, int> mMotionDOFMap;  // filename -> DOF count (-1 if unknown)
     std::vector<std::string> mAvailableMuscles;
     std::vector<bool> mSelectedMuscles;
     char mMuscleFilter[64] = "";
-    int mReferenceMuscleIdx = -1;
 
     // Optimization parameters
-    int mWaypointMaxIterations = 100;
+    int mWaypointMaxIterations = 10;
     int mWaypointNumSampling = 50;
     float mWaypointLambdaShape = 1.0f;
     float mWaypointLambdaLengthCurve = 1.0f;
     bool mWaypointFixOriginInsertion = true;
+    bool mWaypointAnalyticalGradient = true;
+    bool mWaypointVerbose = false;
+    float mWaypointWeightPhase = 1.0f;
+    float mWaypointWeightDelta = 50.0f;
+    float mWaypointWeightSamples = 1.0f;
+    int mWaypointNumPhaseSamples = 3;
+    int mWaypointLossPower = 2;  // 2=squared, 3=cube, etc.
+    int mWaypointNumParallel = 1;  // Number of parallel threads (1 = sequential)
+    bool mWaypointUseNormalizedLength = false;  // false = lmt (MTU), true = lm_norm (normalized)
+
+    // Waypoint optimization progress (thread-safe)
+    std::atomic<bool> mWaypointOptRunning{false};
+    std::atomic<int> mWaypointOptCurrent{0};
+    std::atomic<int> mWaypointOptTotal{0};
+    std::mutex mWaypointOptMutex;
+    std::mutex mCharacterMutex;  // Protects skeleton/muscle access during async optimization
+    std::string mWaypointOptMuscleName;
+    std::unique_ptr<std::thread> mWaypointOptThread;
+
+    // Waypoint optimization results (for curve visualization)
+    std::vector<PMuscle::WaypointOptResult> mWaypointOptResults;
+    std::mutex mWaypointResultsMutex;
+    int mWaypointResultSelectedIdx = -1;  // Single selection index
+    char mWaypointResultFilter[64] = "";
 
     // ============================================================
     // Tool 3: Contracture Estimation
     // ============================================================
     std::string mROMConfigDir;
-    std::vector<std::string> mROMConfigPaths;        // Full paths
-    std::vector<std::string> mROMConfigNames;        // Display names
-    std::vector<bool> mSelectedROMs;
+
+    // ROM Trial Info (parsed from TC YAML files)
+    struct ROMTrialInfo {
+        std::string name;
+        std::string description;
+        std::string filePath;
+        std::string joint;      // e.g., "TibiaL"
+        int dof_index = 0;      // e.g., 0
+        float torque = 15.0f;   // Nm at ROM limit
+        // clinical_data link
+        std::string cd_side;    // "left" or "right"
+        std::string cd_joint;   // "hip", "knee", "ankle"
+        std::string cd_field;   // field name in rom.yaml
+        // resolved CD value (angle in degrees)
+        std::optional<float> cd_value;
+        // selection state
+        bool selected = false;
+    };
+    std::vector<ROMTrialInfo> mROMTrials;
     char mROMFilter[64] = "";
+
+    // Patient ROM data (from @pid:{pid}/rom.yaml)
+    std::map<std::string, std::optional<float>> mPatientROMValues;  // "side.joint.field" -> value
+    std::string mCurrentROMPID;  // PID for which ROM is loaded
+    bool mCurrentROMPreOp = true;
 
     // Optimization parameters
     int mContractureMaxIterations = 100;
@@ -114,17 +176,41 @@ private:
     // ============================================================
     bool mRenderMuscles = true;
     bool mColorByContracture = false;
+    bool mRenderReferenceCharacter = false;  // Toggle between subject and reference
     float mMuscleLabelFontSize = 14.0f;
+    float mPlotHeight = 400.0f;  // Height of length curve plots
 
     // Muscle selection
     std::vector<bool> mMuscleSelectionStates;
     char mMuscleFilterText[256] = "";
 
     // ============================================================
+    // Character File Browser
+    // ============================================================
+    enum class CharacterDataSource { DefaultData, PatientData };
+
+    // Independent source selection for skeleton and muscle
+    CharacterDataSource mSkeletonDataSource = CharacterDataSource::DefaultData;
+    CharacterDataSource mMuscleDataSource = CharacterDataSource::DefaultData;
+    bool mSkeletonPreOp = true;   // true = pre, false = post
+    bool mMusclePreOp = true;     // true = pre, false = post
+    std::string mCharacterPID;    // PID from navigator (shared)
+
+    std::vector<std::string> mSkeletonCandidates;
+    std::vector<std::string> mMuscleCandidates;
+
+    // ============================================================
+    // Export Config
+    // ============================================================
+    char mExportSkeletonName[64] = "personalized";
+    char mExportMuscleName[64] = "personalized";
+
+    // ============================================================
     // Initialization
     // ============================================================
-    void loadConfig();
+    void loadRenderConfigImpl() override;
     void loadCharacter();
+    void loadReferenceCharacter();  // Load standard reference character for waypoint optimization
     void initializeSurgeryExecutor();
 
     // ============================================================
@@ -137,6 +223,7 @@ private:
     // UI Panels
     // ============================================================
     void drawLeftPanel();
+    void drawClinicalDataSection();
     void drawCharacterLoadSection();
     void drawWeightApplicationSection();
     void drawWaypointOptimizationSection();
@@ -145,22 +232,34 @@ private:
 
     void drawRightPanel();
     void drawResultsSection();
+    void drawWaypointCurvesTab();
 
     // ============================================================
     // Tool Operations (delegate to SurgeryExecutor)
     // ============================================================
     void applyWeightScaling();
     void runWaypointOptimization();
+    void runWaypointOptimizationAsync();  // Background thread wrapper
     void runContractureEstimation();
+
+    // Progress overlay for async operations
+    void drawProgressOverlay();
 
     // Helper methods
     void scanROMConfigs();
+    void loadPatientROM(const std::string& pid, bool preOp);
+    void loadClinicalWeight(const std::string& pid, bool preOp);
+    void updateROMTrialCDValues();
     void refreshMuscleList();
     void exportMuscleConfig();
+    void scanSkeletonFiles();  // Scans based on mCharacterDataSource
+    void scanMuscleFiles();    // Scans based on mCharacterDataSource
+    void scanMotionFiles();
+    void rescanCharacterFiles();  // Re-scan skeleton/muscle based on current source
 
     // Helper for collapsing header
     bool collapsingHeaderWithControls(const std::string& title);
-    bool isPanelDefaultOpen(const std::string& panelName) const;
+    // isPanelDefaultOpen() inherited from ViewerAppBase
 };
 
 #endif // MUSCLE_PERSONALIZER_APP_H

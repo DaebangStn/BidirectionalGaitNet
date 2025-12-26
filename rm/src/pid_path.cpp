@@ -138,7 +138,117 @@ std::string PidPathResolver::transform_gait_path(const GaitPathComponents& compo
     return result;
 }
 
+std::optional<PidPathResolver::SkeletonPathComponents> PidPathResolver::parse_skeleton_path(const std::string& path) {
+    // Pattern: {patient_id}/skeleton/{pre|post}[/{filename}]
+    // Maps to: {pid}/gait/{pre|post}/skeleton/
+    // Examples:
+    //   "12964246/skeleton/pre" -> list all skeleton files
+    //   "12964246/skeleton/post/base.xml" -> specific file
+
+    auto parts = split_path(path);
+
+    // Need at least 3 parts: {pid}/skeleton/{pre|post}
+    if (parts.size() < 3) {
+        return std::nullopt;
+    }
+
+    // Check for skeleton path pattern
+    if (parts[1] != "skeleton") {
+        return std::nullopt;
+    }
+
+    if (parts[2] != "pre" && parts[2] != "post") {
+        return std::nullopt;
+    }
+
+    SkeletonPathComponents components;
+    components.patient_id = parts[0];
+    components.timepoint = parts[2];
+
+    // If there are 4+ parts, the rest is the filename
+    if (parts.size() >= 4) {
+        std::string filename;
+        for (size_t i = 3; i < parts.size(); ++i) {
+            if (!filename.empty()) filename += "/";
+            filename += parts[i];
+        }
+        components.filename = filename;
+    }
+
+    return components;
+}
+
+std::optional<PidPathResolver::MusclePathComponents> PidPathResolver::parse_muscle_path(const std::string& path) {
+    // Pattern: {patient_id}/muscle/{pre|post}[/{filename}]
+    // Maps to: {pid}/gait/{pre|post}/muscle/
+    // Examples:
+    //   "12964246/muscle/pre" -> list all muscle files
+    //   "12964246/muscle/post/lower.xml" -> specific file
+
+    auto parts = split_path(path);
+
+    // Need at least 3 parts: {pid}/muscle/{pre|post}
+    if (parts.size() < 3) {
+        return std::nullopt;
+    }
+
+    // Check for muscle path pattern
+    if (parts[1] != "muscle") {
+        return std::nullopt;
+    }
+
+    if (parts[2] != "pre" && parts[2] != "post") {
+        return std::nullopt;
+    }
+
+    MusclePathComponents components;
+    components.patient_id = parts[0];
+    components.timepoint = parts[2];
+
+    // If there are 4+ parts, the rest is the filename
+    if (parts.size() >= 4) {
+        std::string filename;
+        for (size_t i = 3; i < parts.size(); ++i) {
+            if (!filename.empty()) filename += "/";
+            filename += parts[i];
+        }
+        components.filename = filename;
+    }
+
+    return components;
+}
+
+std::string PidPathResolver::transform_skeleton_path(const SkeletonPathComponents& components) {
+    // Transform: {pid}/skeleton/{pre|post}/{file} -> {pid}/gait/{pre|post}/skeleton/{file}
+    std::string result = components.patient_id + "/gait/" + components.timepoint + "/skeleton";
+    if (!components.filename.empty()) {
+        result += "/" + components.filename;
+    }
+    return result;
+}
+
+std::string PidPathResolver::transform_muscle_path(const MusclePathComponents& components) {
+    // Transform: {pid}/muscle/{pre|post}/{file} -> {pid}/gait/{pre|post}/muscle/{file}
+    std::string result = components.patient_id + "/gait/" + components.timepoint + "/muscle";
+    if (!components.filename.empty()) {
+        result += "/" + components.filename;
+    }
+    return result;
+}
+
 std::string PidPathResolver::transform_path(const std::string& path) {
+    // Check if this is a skeleton path that needs transformation
+    auto skeleton_components = parse_skeleton_path(path);
+    if (skeleton_components) {
+        return transform_skeleton_path(*skeleton_components);
+    }
+
+    // Check if this is a muscle path that needs transformation
+    auto muscle_components = parse_muscle_path(path);
+    if (muscle_components) {
+        return transform_muscle_path(*muscle_components);
+    }
+
     // Check if this is an h5 path that needs transformation
     auto h5_components = parse_h5_path(path);
     if (h5_components) {

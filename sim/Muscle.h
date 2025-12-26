@@ -47,6 +47,7 @@ public:
 	std::vector<std::vector<double>> GetGraphData();
 
 	void SetMuscle();
+	void updateLmtRef();  // Update lmt_ref without recomputing related_dof_indices
 	const std::vector<Anchor *> &GetAnchors() const { return mAnchors; }
 
 	Eigen::MatrixXd GetJacobianTranspose();
@@ -67,6 +68,9 @@ public:
 	double GetLengthRatio() { return lmt / lmt_ref; };
 	double GetLmNorm() const { return lm_norm; }
 	std::string GetName() { return name; }
+
+	// Clone muscle attached to a different skeleton (body nodes mapped by name)
+	Muscle* clone(dart::dynamics::SkeletonPtr target_skeleton) const;
 
 public:
 	std::string name;

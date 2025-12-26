@@ -57,9 +57,6 @@ MarkerEditorApp::MarkerEditorApp(int argc, char** argv)
         }
     }
 
-    // Load window config from render.yaml
-    loadRenderConfig();
-
     // Disable ground for marker editor
     mRenderGround = false;
 
@@ -835,32 +832,6 @@ void MarkerEditorApp::updateBodyNodeNames()
     // Initialize all body nodes as visible
     mBodyNodeVisible.resize(mBodyNodeNames.size(), true);
     std::fill(mBodyNodeVisible.begin(), mBodyNodeVisible.end(), true);
-}
-
-void MarkerEditorApp::loadRenderConfig()
-{
-    try {
-        std::string resolved_path = rm::resolve("render.yaml");
-        YAML::Node config = YAML::LoadFile(resolved_path);
-
-        if (config["geometry"] && config["geometry"]["window"]) {
-            auto window = config["geometry"]["window"];
-            if (window["width"])
-                mWidth = window["width"].as<int>();
-            if (window["height"])
-                mHeight = window["height"].as<int>();
-            if (window["xpos"])
-                mWindowXPos = window["xpos"].as<int>();
-            if (window["ypos"])
-                mWindowYPos = window["ypos"].as<int>();
-        }
-
-        LOG_INFO("[MarkerEditor] Loaded render config: " << mWidth << "x" << mHeight
-                 << " at (" << mWindowXPos << ", " << mWindowYPos << ")");
-    } catch (const std::exception& e) {
-        LOG_WARN("[MarkerEditor] Could not load render.yaml: " << e.what()
-                 << " - using default window size");
-    }
 }
 
 // =============================================================================

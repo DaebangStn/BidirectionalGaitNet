@@ -12,7 +12,7 @@ namespace rm {
 
 // Known metadata fields that can be accessed via @pid:{id}/{field}
 static const std::unordered_set<std::string> METADATA_FIELDS = {
-    "name", "pid", "gmfcs", "ser_no"
+    "name", "pid", "gmfcs", "ser_no", "weight"
 };
 
 PidBackend::PidBackend(std::filesystem::path root)

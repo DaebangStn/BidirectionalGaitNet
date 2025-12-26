@@ -239,8 +239,8 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
         }
     }
 
-    // Files section
-    if (pImpl->state.selectedPID >= 0) {
+    // Files section (only if fileListHeight > 0)
+    if (fileListHeight > 0 && pImpl->state.selectedPID >= 0) {
         ImGui::Separator();
         ImGui::Text("Files: %zu", pImpl->files.size());
 

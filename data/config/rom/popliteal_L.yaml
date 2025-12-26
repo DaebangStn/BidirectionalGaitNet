@@ -1,35 +1,22 @@
-# ROM examination pose with observed passive torques
-# Popliteal angle test - Left knee extension ROM with hip flexed 90 degrees
-
 name: "Popliteal_L"
 description: "Left knee passive extension ROM with hip flexed 90 degrees"
-mode: "angle_sweep"
 
-# Base pose for this ROM test
+# 1. Base pose
 pose:
-  Pelvis: [-90, 0, 0, 0, 0.5, 0]  # Seated position
-  FemurL: [-90, 0, 0]             # Hip flexed 90 degrees
+  Pelvis: [-90, 0, 0, 0, 0.5, 0]
+  FemurL: [-90, 0, 0]
   TibiaL: 0
   TalusL: [0, 0, 0]
 
-# Joint to sweep for ROM measurement
-angle_sweep:
-  joint: "TibiaL"
-  dof_index: 0
-  angle_min: -5      # degrees (knee extended)
-  angle_max: 130     # degrees (knee flexed)
-  num_steps: 100
+# 2. Moving joint and DOF
+joint: "TibiaL"
+dof_index: 0
 
-# CRITICAL: Observed passive torques from clinical measurement
-# These are the target values for optimization
-observed_torques:
-  - angle: 0.0      # degrees
-    torque: 2.5     # Nm (passive torque at swept joint)
-  - angle: 30.0
-    torque: 5.8
-  - angle: 60.0
-    torque: 12.3
-  - angle: 90.0
-    torque: 25.6
-  - angle: 120.0
-    torque: 45.2
+# 3. Torque at ROM limit (Nm) - dummy value for now
+torque: 15.0
+
+# 4. Clinical data reference (ROM angle only)
+clinical_data:
+  side: left
+  joint: knee
+  field: popliteal_bilateral

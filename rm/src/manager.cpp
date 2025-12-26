@@ -415,4 +415,33 @@ std::vector<std::string> ResourceManager::resolve_backend_names(const std::strin
     return names;
 }
 
+std::filesystem::path ResourceManager::getPidRoot() const {
+    // Find the first PID backend in the @pid route
+    auto it = routes_.find("@pid");
+    if (it == routes_.end() || it->second.empty()) {
+        return {};
+    }
+
+    // Get the first backend name in the route
+    const std::string& backend_name = it->second[0];
+    auto backend_it = named_backends_.find(backend_name);
+    if (backend_it == named_backends_.end()) {
+        return {};
+    }
+
+    // Check if it's a PidBackend and return its root
+    auto* pid_backend = dynamic_cast<PidBackend*>(backend_it->second.get());
+    if (pid_backend) {
+        return pid_backend->root();
+    }
+
+    // If it's a LocalBackend, return its root
+    auto* local_backend = dynamic_cast<LocalBackend*>(backend_it->second.get());
+    if (local_backend) {
+        return local_backend->root();
+    }
+
+    return {};
+}
+
 } // namespace rm

@@ -13,6 +13,14 @@
 namespace PMuscle {
 
 /**
+ * @brief Type of muscle length to use for curve fitting
+ */
+enum class LengthCurveType {
+    MTU_LENGTH,    // lmt - raw muscle-tendon unit length
+    NORMALIZED     // lm_norm - normalized muscle fiber length
+};
+
+/**
  * @brief Muscle length curve characteristics for optimization
  */
 struct LengthCurveCharacteristics {
@@ -21,6 +29,53 @@ struct LengthCurveCharacteristics {
     double delta;          // Range: max_length - min_length
     double min_length;     // Actual minimum length
     double max_length;     // Actual maximum length
+    std::vector<double> phase_samples;  // Length values at evenly-spaced phases
+};
+
+/**
+ * @brief Result of waypoint optimization for a single muscle
+ */
+struct WaypointOptResult {
+    std::string muscle_name;
+    bool success;
+
+    // DOF sweep info (for display)
+    std::string dof_name;
+    int dof_idx = -1;
+
+    // Reference character's curve (target to match)
+    std::vector<double> reference_lengths;
+    LengthCurveCharacteristics reference_chars;
+
+    // Subject character's curve BEFORE optimization
+    std::vector<double> subject_before_lengths;
+    LengthCurveCharacteristics subject_before_chars;
+
+    // Subject character's curve AFTER optimization
+    std::vector<double> subject_after_lengths;
+    LengthCurveCharacteristics subject_after_chars;
+
+    // Phase data (x-axis for plotting)
+    std::vector<double> phases;  // 0.0 to 1.0
+
+    // Per-phase shape energy (direction misalignment in degrees)
+    std::vector<double> shape_energy_before;  // ref vs subject_before per phase
+    std::vector<double> shape_energy_after;   // ref vs subject_after per phase
+
+    // Energy tracking
+    double initial_shape_energy = 0.0;
+    double initial_length_energy = 0.0;
+    double initial_total_cost = 0.0;
+    double final_shape_energy = 0.0;
+    double final_length_energy = 0.0;
+    double final_total_cost = 0.0;
+
+    // Optimized waypoint positions (for deferred sync in parallel execution)
+    // anchor_index -> local_position for each bodynode in anchor
+    std::vector<std::vector<Eigen::Vector3d>> optimized_anchor_positions;
+
+    // Which length type was used (for plot labeling)
+    LengthCurveType length_type = LengthCurveType::MTU_LENGTH;
 };
 
 /**
@@ -45,57 +100,84 @@ public:
         double lambdaLengthCurve;
         bool fixOriginInsertion;
         bool verbose;
+        bool analyticalGradient;  // true = analytical, false = numeric
+        double weightPhase;       // weight for phase matching in length curve energy
+        double weightDelta;       // weight for delta matching in length curve energy
+        double weightSamples;     // weight for sample matching loss
+        int numPhaseSamples;      // number of phase sample points (e.g., 3 → 0, 0.5, 1.0)
+        int lossPower;            // Power exponent (2=squared, 3=cube, etc.)
+
+        LengthCurveType lengthType;  // Which length metric to use for curve fitting
+        int numParallel;             // Number of parallel threads (1 = sequential)
 
         Config() : maxIterations(10000), numSampling(10), lambdaShape(0.1),
-                   lambdaLengthCurve(0.1), fixOriginInsertion(true), verbose(false) {}
+                   lambdaLengthCurve(0.1), fixOriginInsertion(true), verbose(false),
+                   analyticalGradient(true), weightPhase(1.0), weightDelta(50.0),
+                   weightSamples(1.0), numPhaseSamples(3), lossPower(2),
+                   lengthType(LengthCurveType::MTU_LENGTH), numParallel(1) {}
     };
 
     WaypointOptimizer() = default;
     ~WaypointOptimizer() = default;
 
     /**
-     * @brief Optimize waypoint positions for a single muscle
+     * @brief Optimize waypoint positions
      *
-     * @param muscle Muscle to optimize (will be modified)
-     * @param reference_muscle Reference muscle for comparison (standard/ideal behavior)
-     * @param hdf_motion_path Path to HDF motion file for sampling
-     * @param skeleton Skeleton for pose setting
+     * Caller is responsible for saving/restoring skeleton poses.
+     *
+     * @param subject_muscle Subject's muscle to optimize (will be modified)
+     * @param reference_muscle Reference muscle for comparison
+     * @param reference_skeleton Reference character's skeleton
+     * @param subject_skeleton Subject character's skeleton
      * @param config Optimization configuration
-     * @return true if optimization converged, false otherwise
+     * @return WaypointOptResult containing reference/subject curves and success status
      */
-    bool optimizeMuscle(
-        Muscle* muscle,
+    WaypointOptResult optimizeMuscle(
+        Muscle* subject_muscle,
         Muscle* reference_muscle,
-        const std::string& hdf_motion_path,
-        dart::dynamics::SkeletonPtr skeleton,
+        dart::dynamics::SkeletonPtr reference_skeleton,
+        dart::dynamics::SkeletonPtr subject_skeleton,
         const Config& config = Config()
     );
 
     /**
-     * @brief Compute muscle length curve from HDF motion
+     * @brief Compute muscle length curve by sweeping most relevant DOF
      *
-     * @param muscle Muscle to analyze
-     * @param skeleton Skeleton for pose setting
-     * @param hdf_motion_path Path to HDF motion file
-     * @param num_samples Number of samples across motion
-     * @return Vector of muscle lengths at sampled phases
+     * Finds the DOF with largest Jacobian and sweeps it across joint limits.
+     * Caller manages pose save/restore.
+     *
+     * @param muscle Muscle to analyze (uses related_dof_indices, mCachedJs)
+     * @param skeleton Skeleton for joint limits and pose
+     * @param num_samples Number of samples across DOF range
+     * @param length_type Which length metric to use (MTU_LENGTH or NORMALIZED)
+     * @return Vector of muscle lengths at sampled DOF positions
      */
-    static std::vector<double> computeMuscleLengthCurveFromHDF(
+    static std::vector<double> computeMuscleLengthCurve(
         Muscle* muscle,
         dart::dynamics::SkeletonPtr skeleton,
-        const std::string& hdf_motion_path,
-        int num_samples = 10
+        int num_samples = 10,
+        LengthCurveType length_type = LengthCurveType::MTU_LENGTH
     );
 
     /**
      * @brief Analyze muscle length curve characteristics
      *
      * @param lengths Muscle lengths at different phases
-     * @return Length curve characteristics (min/max phases, delta)
+     * @param numPhaseSamples Number of evenly-spaced phase samples to extract (0 = none)
+     * @return Length curve characteristics (min/max phases, delta, phase_samples)
      */
     static LengthCurveCharacteristics analyzeLengthCurve(
-        const std::vector<double>& lengths
+        const std::vector<double>& lengths,
+        int numPhaseSamples = 0
     );
+
+    /**
+     * @brief Get DOF count from HDF motion file
+     *
+     * @param hdf_filepath Path to HDF motion file
+     * @return DOF count, or -1 on error
+     */
+    static int getMotionDOF(const std::string& hdf_filepath);
 
 private:
     // Ceres cost functors defined in WaypointOptimizer.cpp

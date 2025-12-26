@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     po::options_description desc("Physical Exam Options");
     desc.add_options()
         ("help,h", "Show help message")
-        ("config,c", po::value<std::string>(&config_path)->default_value("@data/config/base.yaml"),
+        ("config,c", po::value<std::string>(&config_path)->default_value("@data/config/phys_exam.yaml"),
          "Exam setting config file")
         ("output-dir,o", po::value<std::string>(&output_dir)->default_value("./results"),
          "Output directory for HDF5 results")
@@ -44,9 +44,9 @@ int main(int argc, char** argv) {
         std::cout << desc << std::endl;
         std::cout << "\nExamples:\n";
         std::cout << "  " << argv[0] << "                                    # Uses default config\n";
-        std::cout << "  " << argv[0] << " @data/config/angle_sweep_test.yaml\n";
-        std::cout << "  " << argv[0] << " @data/config/angle_sweep_test.yaml -o ./my_results\n";
-        std::cout << "  " << argv[0] << " --headless @data/config/angle_sweep_test.yaml\n";
+        std::cout << "  " << argv[0] << " @data/config/phys_exam.yaml\n";
+        std::cout << "  " << argv[0] << " @data/config/phys_exam.yaml -o ./my_results\n";
+        std::cout << "  " << argv[0] << " --headless @data/config/phys_exam.yaml\n";
         return 0;
     }
 
@@ -55,9 +55,8 @@ int main(int argc, char** argv) {
     pybind11::module sys = pybind11::module::import("sys");
     py::module_::import("numpy");
 
-    // Create and initialize physical examination
+    // Create physical examination (ViewerAppBase handles GLFW/ImGui init)
     PMuscle::PhysicalExam exam(1920, 1080);
-    exam.initialize();
 
     LOG_INFO("Loading exam setting from config: " << config_path);
     LOG_INFO("Output directory: " << output_dir);
@@ -73,7 +72,7 @@ int main(int argc, char** argv) {
         } else {
             LOG_INFO("Exam setting loaded. Starting in paused state.");
             LOG_INFO("Use 'Start Next Trial' button to begin trials.");
-            exam.mainLoop();
+            exam.startLoop();  // ViewerAppBase handles main loop
         }
     } catch (const std::exception& e) {
         LOG_ERROR("Error loading exam setting: " << e.what());

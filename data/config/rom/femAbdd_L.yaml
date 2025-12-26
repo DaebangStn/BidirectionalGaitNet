@@ -1,34 +1,22 @@
-# ROM examination pose with observed passive torques
-# Femoral Abduction test - Left hip abduction ROM
-
 name: "femAbdd_L"
 description: "Left hip abduction ROM test"
-mode: "angle_sweep"
 
-# Base pose for this ROM test
+# 1. Base pose
 pose:
   Pelvis: [0, 0, 0, 0, 0.5, 0]
   FemurL: [0, 0, 0]
   TibiaL: 0
   TalusL: [0, 0, 0]
 
-# Joint to sweep for ROM measurement
-angle_sweep:
-  joint: "FemurL"
-  dof_index: 2      # Abduction/adduction DOF
-  angle_min: -30    # degrees (adduction)
-  angle_max: 60     # degrees (abduction)
-  num_steps: 100
+# 2. Moving joint and DOF
+joint: "FemurL"
+dof_index: 2
 
-# CRITICAL: Observed passive torques from clinical measurement
-observed_torques:
-  - angle: 0.0      # degrees (neutral)
-    torque: 0.5     # Nm
-  - angle: 15.0
-    torque: 1.2
-  - angle: 30.0
-    torque: 3.5
-  - angle: 45.0
-    torque: 8.2
-  - angle: 60.0
-    torque: 15.6
+# 3. Torque at ROM limit (Nm) - dummy value for now
+torque: 15.0
+
+# 4. Clinical data reference (ROM angle only)
+clinical_data:
+  side: left
+  joint: hip
+  field: abduction_ext_r2

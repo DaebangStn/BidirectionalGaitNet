@@ -3,6 +3,7 @@
 #include "Environment.h"
 #include "dart/dynamics/FreeJoint.hpp"
 #include "Log.h"
+#include "rm/global.hpp"
 #include <iostream>
 #include <algorithm>
 #include <sstream>
@@ -20,9 +21,12 @@ HDF::HDF(const std::string& filepath)
 
 void HDF::loadFromFile(const std::string& filepath)
 {
+    // Resolve path alias (e.g., @data/motion/...) to actual filesystem path
+    std::string resolved_path = rm::resolve(filepath);
+
     try {
         // Open HDF5 file
-        H5::H5File file(filepath, H5F_ACC_RDONLY);
+        H5::H5File file(resolved_path, H5F_ACC_RDONLY);
 
         // Check for flat structure (extracted single-cycle files only)
         if (!H5Lexists(file.getId(), "/motions", H5P_DEFAULT)) {
@@ -179,15 +183,15 @@ void HDF::loadFromFile(const std::string& filepath)
             mCycleDistance[2] = (lastFrame[5] - firstFrame[5]) * correction;  // Z
         }
 
-        LOG_VERBOSE("[HDF] Loaded " << filepath
+        LOG_VERBOSE("[HDF] Loaded " << resolved_path
                      << " with " << mNumFrames << " frames (" << mDofPerFrame << " DOF/frame, "
                      << mFrameTime << " s/frame)");
 
     } catch (const H5::Exception& e) {
-        std::cerr << "[HDF] HDF5 error loading " << filepath << ": " << e.getDetailMsg() << std::endl;
+        std::cerr << "[HDF] HDF5 error loading " << resolved_path << ": " << e.getDetailMsg() << std::endl;
         throw;
     } catch (const std::exception& e) {
-        std::cerr << "[HDF] Error loading " << filepath << ": " << e.what() << std::endl;
+        std::cerr << "[HDF] Error loading " << resolved_path << ": " << e.what() << std::endl;
         throw;
     }
 }
@@ -236,6 +240,10 @@ Eigen::VectorXd HDF::interpolatePose(int frame1, int frame2, double t) const
     Eigen::VectorXd pose1 = mMotionData.row(frame1);
     Eigen::VectorXd pose2 = mMotionData.row(frame2);
 
+    if (!mCharacter) {
+        throw std::runtime_error("HDF::interpolatePose: mCharacter is null. Call setRefMotion() before using getPose(phase)");
+    }
+
     // Use Character's skeleton-aware interpolation
     return mCharacter->interpolatePose(pose1, pose2, t, false);
 }
@@ -257,6 +265,15 @@ void HDF::setRefMotion(Character* character, dart::simulation::WorldPtr world)
     if (mNumFrames == 0) {
         LOG_WARN("[HDF] Warning: No frames loaded");
         return;
+    }
+
+    // Validate DOF count matches skeleton
+    int skeleton_dof = character->getSkeleton()->getNumDofs();
+    if (mDofPerFrame != skeleton_dof) {
+        LOG_ERROR("[HDF] DOF mismatch: motion has " << mDofPerFrame
+                  << " DOF but skeleton has " << skeleton_dof << " DOF");
+        throw std::runtime_error("HDF motion DOF (" + std::to_string(mDofPerFrame) +
+                                 ") does not match skeleton DOF (" + std::to_string(skeleton_dof) + ")");
     }
 
     // Apply height calibration (always enabled)

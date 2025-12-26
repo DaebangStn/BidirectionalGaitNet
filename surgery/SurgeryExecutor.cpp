@@ -8,8 +8,12 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <thread>
+#include <atomic>
+#include <unordered_map>
 
 #include "optimizer/WaypointOptimizer.h"
+#include "HDF.h"
 
 namespace PMuscle {
 
@@ -842,8 +846,8 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
         // Start muscle entry with properties
         mfs << "  - {name: " << name
             << ", f0: " << std::fixed << std::setprecision(2) << f0
-            << ", lm: " << std::fixed << std::setprecision(2) << lm
-            << ", lt: " << std::fixed << std::setprecision(2) << lt << "," << std::endl;
+            << ", lm_contract: " << std::fixed << std::setprecision(2) << lm
+            << ", lt_rel: " << std::fixed << std::setprecision(2) << lt << "," << std::endl;
 
         // Waypoints array (flow style)
         mfs << "     waypoints: [" << std::endl;
@@ -1998,77 +2002,83 @@ bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, dou
 }
 
 bool SurgeryExecutor::optimizeWaypoints(const std::vector<std::string>& muscle_names,
-                                        const std::string& reference_muscle,
-                                        const std::string& hdf_motion_path,
-                                        int max_iterations,
-                                        int num_sampling,
-                                        double lambda_shape,
-                                        double lambda_length_curve,
-                                        bool fix_origin_insertion) {
+                                        const std::string& /* hdf_motion_path - deprecated */,
+                                        const WaypointOptimizer::Config& config,
+                                        Character* reference_character,
+                                        WaypointProgressCallback progressCallback) {
     if (!mCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
 
-    // Get skeleton
-    auto skeleton = mCharacter->getSkeleton();
-    if (!skeleton) {
+    if (!reference_character) {
+        LOG_ERROR("[Surgery] Error: No reference character provided!");
+        return false;
+    }
+
+    // Get skeletons
+    auto subject_skeleton = mCharacter->getSkeleton();
+    auto reference_skeleton = reference_character->getSkeleton();
+    if (!subject_skeleton || !reference_skeleton) {
         LOG_ERROR("[Surgery] Error: No skeleton available!");
         return false;
     }
 
-    // Get reference muscle
-    Muscle* ref_muscle = nullptr;
-    auto all_muscles = mCharacter->getMuscles();
-    for (auto m : all_muscles) {
-        if (m->name == reference_muscle) {
-            ref_muscle = m;
-            break;
-        }
-    }
-
-    if (!ref_muscle) {
-        LOG_ERROR("[Surgery] Error: Reference muscle '" << reference_muscle << "' not found!");
-        return false;
-    }
+    // Save original poses (restore after all muscles processed)
+    Eigen::VectorXd subject_original_pose = subject_skeleton->getPositions();
+    Eigen::VectorXd reference_original_pose = reference_skeleton->getPositions();
 
     // Create optimizer
     WaypointOptimizer optimizer;
-    WaypointOptimizer::Config config;
-    config.maxIterations = max_iterations;
-    config.numSampling = num_sampling;
-    config.lambdaShape = lambda_shape;
-    config.lambdaLengthCurve = lambda_length_curve;
-    config.fixOriginInsertion = fix_origin_insertion;
-    config.verbose = false;  // Set to true for detailed Ceres output
 
-    // Optimize each muscle
+    // Optimize each muscle using reference character's muscles
     int optimizedCount = 0;
+    int muscleIndex = 0;
+    int totalMuscles = static_cast<int>(muscle_names.size());
+
     for (const auto& muscle_name : muscle_names) {
-        Muscle* muscle = nullptr;
-        for (auto m : all_muscles) {
-            if (m->name == muscle_name) {
-                muscle = m;
-                break;
-            }
+        // Call progress callback before processing this muscle
+        if (progressCallback) {
+            progressCallback(muscleIndex, totalMuscles, muscle_name);
         }
 
-        if (!muscle) {
-            LOG_WARN("[Surgery] Warning: Muscle '" << muscle_name << "' not found, skipping");
+        // Find subject muscle
+        Muscle* subject_muscle = mCharacter->getMuscleByName(muscle_name);
+        if (!subject_muscle) {
+            LOG_WARN("[Surgery] Warning: Subject muscle '" << muscle_name << "' not found, skipping");
+            muscleIndex++;
             continue;
         }
 
-        LOG_INFO("[Surgery] Optimizing waypoints for muscle: " << muscle_name);
+        // Find reference muscle from reference character
+        Muscle* reference_muscle = reference_character->getMuscleByName(muscle_name);
+        if (!reference_muscle) {
+            LOG_WARN("[Surgery] Warning: Reference muscle '" << muscle_name << "' not found, skipping");
+            muscleIndex++;
+            continue;
+        }
 
-        bool success = optimizer.optimizeMuscle(muscle, ref_muscle, hdf_motion_path,
-                                               skeleton, config);
+        // Optimize by sweeping most relevant DOF
+        WaypointOptResult result = optimizer.optimizeMuscle(
+            subject_muscle, reference_muscle,
+            reference_skeleton, subject_skeleton, config);
 
-        if (success) {
+        if (result.success) {
             optimizedCount++;
-            LOG_INFO("[Surgery] Successfully optimized muscle: " << muscle_name);
         } else {
             LOG_WARN("[Surgery] Optimization failed for muscle: " << muscle_name);
         }
+
+        muscleIndex++;
+    }
+
+    // Restore original poses
+    subject_skeleton->setPositions(subject_original_pose);
+    reference_skeleton->setPositions(reference_original_pose);
+
+    // Final progress callback
+    if (progressCallback) {
+        progressCallback(totalMuscles, totalMuscles, "Complete");
     }
 
     if (optimizedCount == 0) {
@@ -2080,6 +2090,218 @@ bool SurgeryExecutor::optimizeWaypoints(const std::vector<std::string>& muscle_n
              << " out of " << muscle_names.size() << " muscle(s)");
 
     return true;
+}
+
+
+std::vector<WaypointOptResult> SurgeryExecutor::optimizeWaypointsWithResults(
+                                        const std::vector<std::string>& muscle_names,
+                                        const std::string& hdf_motion_path,
+                                        const WaypointOptimizer::Config& config,
+                                        Character* reference_character,
+                                        std::mutex* characterMutex,
+                                        WaypointResultCallback resultCallback) {
+    std::vector<WaypointOptResult> results;
+
+    if (!mCharacter) {
+        LOG_ERROR("[Surgery] Error: No character loaded!");
+        return results;
+    }
+
+    if (!reference_character) {
+        LOG_ERROR("[Surgery] Error: No reference character provided!");
+        return results;
+    }
+
+    // Get skeletons
+    auto subject_skeleton = mCharacter->getSkeleton();
+    auto reference_skeleton = reference_character->getSkeleton();
+    if (!subject_skeleton || !reference_skeleton) {
+        LOG_ERROR("[Surgery] Error: No skeleton available!");
+        return results;
+    }
+
+    // Save original poses (restore after all muscles processed)
+    Eigen::VectorXd subject_original_pose = subject_skeleton->getPositions();
+    Eigen::VectorXd reference_original_pose = reference_skeleton->getPositions();
+
+    // Load HDF and set both characters to first frame pose
+    if (!hdf_motion_path.empty()) {
+        try {
+            HDF hdf(hdf_motion_path);
+            Eigen::VectorXd first_frame_pose = hdf.getPose(0);
+
+            // Set both skeletons to first frame pose
+            if (first_frame_pose.size() == subject_skeleton->getNumDofs()) {
+                subject_skeleton->setPositions(first_frame_pose);
+                LOG_VERBOSE("[Surgery] Subject skeleton set to HDF first frame pose");
+            } else {
+                LOG_WARN("[Surgery] HDF DOF mismatch for subject: " << first_frame_pose.size()
+                         << " vs " << subject_skeleton->getNumDofs());
+            }
+
+            if (first_frame_pose.size() == reference_skeleton->getNumDofs()) {
+                reference_skeleton->setPositions(first_frame_pose);
+                LOG_VERBOSE("[Surgery] Reference skeleton set to HDF first frame pose");
+            } else {
+                LOG_WARN("[Surgery] HDF DOF mismatch for reference: " << first_frame_pose.size()
+                         << " vs " << reference_skeleton->getNumDofs());
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("[Surgery] Failed to load HDF motion: " << e.what());
+            LOG_WARN("[Surgery] Continuing with current skeleton poses");
+        }
+    }
+
+    int totalMuscles = static_cast<int>(muscle_names.size());
+
+    // Pre-sized results vector
+    results.resize(totalMuscles);
+    std::atomic<int> next_work{0};
+    std::atomic<int> completed_count{0};
+
+    // Mutex to protect skeleton/muscle cloning (DART's cloneSkeleton is NOT thread-safe)
+    std::mutex cloneMutex;
+
+    // Worker function - clones once per thread, processes multiple muscles
+    auto worker_func = [&]() {
+        dart::dynamics::SkeletonPtr worker_subject_skel;
+        dart::dynamics::SkeletonPtr worker_ref_skel;
+        Eigen::VectorXd subject_pose, ref_pose;
+
+        // Clone skeletons ONCE per worker (protected by mutex - DART not thread-safe)
+        {
+            std::lock_guard<std::mutex> lock(cloneMutex);
+            worker_subject_skel = subject_skeleton->cloneSkeleton();
+            worker_ref_skel = reference_skeleton->cloneSkeleton();
+            subject_pose = subject_skeleton->getPositions();
+            ref_pose = reference_skeleton->getPositions();
+        }
+        worker_subject_skel->setPositions(subject_pose);
+        worker_ref_skel->setPositions(ref_pose);
+
+        // Clone ALL muscles ONCE per worker (map by name)
+        std::unordered_map<std::string, Muscle*> worker_subject_muscles;
+        std::unordered_map<std::string, Muscle*> worker_ref_muscles;
+
+        // Muscle cloning also protected (reads from shared Character's muscles/bodynodes)
+        {
+            std::lock_guard<std::mutex> lock(cloneMutex);
+            for (const auto& name : muscle_names) {
+                Muscle* orig_subj = mCharacter->getMuscleByName(name);
+                Muscle* orig_ref = reference_character->getMuscleByName(name);
+                if (orig_subj && orig_ref) {
+                    worker_subject_muscles[name] = orig_subj->clone(worker_subject_skel);
+                    worker_ref_muscles[name] = orig_ref->clone(worker_ref_skel);
+                }
+            }
+        }
+
+        // Process work items
+        WaypointOptimizer optimizer;
+        while (true) {
+            int work_idx = next_work.fetch_add(1);
+            if (work_idx >= totalMuscles) break;
+
+            const std::string& muscle_name = muscle_names[work_idx];
+            Muscle* subj_muscle = worker_subject_muscles[muscle_name];
+            Muscle* ref_muscle = worker_ref_muscles[muscle_name];
+
+            if (!subj_muscle || !ref_muscle) {
+                results[work_idx].muscle_name = muscle_name;
+                results[work_idx].success = false;
+                LOG_WARN("[Surgery] Warning: Muscle '" << muscle_name << "' not found, skipping");
+            } else {
+                results[work_idx] = optimizer.optimizeMuscle(
+                    subj_muscle, ref_muscle,
+                    worker_ref_skel, worker_subject_skel, config);
+
+                // Store optimized positions in result (NO sync during work)
+                if (results[work_idx].success) {
+                    auto& anchors = subj_muscle->GetAnchors();
+                    results[work_idx].optimized_anchor_positions.resize(anchors.size());
+                    for (size_t i = 0; i < anchors.size(); ++i) {
+                        results[work_idx].optimized_anchor_positions[i] =
+                            anchors[i]->local_positions;
+                    }
+                }
+            }
+
+            int completed = ++completed_count;
+            if (resultCallback) {
+                resultCallback(completed, totalMuscles, muscle_name, results[work_idx]);
+            }
+
+            if (results[work_idx].success) {
+                LOG_VERBOSE("[Surgery] Successfully optimized muscle: " << muscle_name);
+            } else {
+                LOG_WARN("[Surgery] Optimization failed for muscle: " << muscle_name);
+            }
+        }
+
+        // Cleanup worker's cloned muscles
+        for (auto& [name, muscle] : worker_subject_muscles) delete muscle;
+        for (auto& [name, muscle] : worker_ref_muscles) delete muscle;
+    };
+
+    // Execute with numParallel threads
+    if (config.numParallel > 1 && totalMuscles > 1) {
+        std::vector<std::thread> threads;
+        int num_threads = std::min(config.numParallel, totalMuscles);
+        LOG_VERBOSE("[Surgery] Running waypoint optimization with " << num_threads << " threads");
+        for (int i = 0; i < num_threads; ++i) {
+            threads.emplace_back(worker_func);
+        }
+        for (auto& t : threads) {
+            t.join();
+        }
+    } else {
+        // Sequential execution (same worker logic, just single-threaded)
+        worker_func();
+    }
+
+    // Batch sync optimized positions back to original muscles (AFTER all workers done)
+    if (characterMutex) {
+        std::lock_guard<std::mutex> lock(*characterMutex);
+        for (size_t i = 0; i < results.size(); ++i) {
+            if (results[i].success && !results[i].optimized_anchor_positions.empty()) {
+                Muscle* orig = mCharacter->getMuscleByName(results[i].muscle_name);
+                if (orig) {
+                    auto& anchors = orig->GetAnchors();
+                    for (size_t a = 0; a < anchors.size(); ++a) {
+                        if (a < results[i].optimized_anchor_positions.size()) {
+                            anchors[a]->local_positions = results[i].optimized_anchor_positions[a];
+                        }
+                    }
+                    orig->UpdateGeometry();
+                }
+            }
+        }
+    } else {
+        // No mutex provided, still do the sync
+        for (size_t i = 0; i < results.size(); ++i) {
+            if (results[i].success && !results[i].optimized_anchor_positions.empty()) {
+                Muscle* orig = mCharacter->getMuscleByName(results[i].muscle_name);
+                if (orig) {
+                    auto& anchors = orig->GetAnchors();
+                    for (size_t a = 0; a < anchors.size(); ++a) {
+                        if (a < results[i].optimized_anchor_positions.size()) {
+                            anchors[a]->local_positions = results[i].optimized_anchor_positions[a];
+                        }
+                    }
+                    orig->UpdateGeometry();
+                }
+            }
+        }
+    }
+
+    // Restore original poses
+    subject_skeleton->setPositions(subject_original_pose);
+    reference_skeleton->setPositions(reference_original_pose);
+
+    LOG_INFO("[Surgery] Waypoint optimization with results completed for " << results.size()
+             << " muscle(s)");
+
+    return results;
 }
 
 // ============================================================================

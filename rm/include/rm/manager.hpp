@@ -89,6 +89,10 @@ public:
     // Get backend names for a URI (based on prefix routing)
     std::vector<std::string> resolve_backend_names(const std::string& uri_str);
 
+    // Get PID backend root directory (for direct filesystem access)
+    // Returns empty path if PID backend not configured
+    std::filesystem::path getPidRoot() const;
+
 private:
     void load_config(const std::string& config_path);
 

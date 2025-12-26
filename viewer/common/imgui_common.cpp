@@ -18,7 +18,7 @@ bool MuscleSelector(
 {
     bool changed = false;
 
-    // Initialize selection states if needed
+    // Resize if needed (caller should pre-initialize with desired defaults)
     if (selectionStates.size() != muscles.size()) {
         selectionStates.resize(muscles.size(), true);
         changed = true;
@@ -96,7 +96,8 @@ bool MuscleSelector(
     float listHeight)
 {
     return MuscleSelector(label, muscles, selectionStates,
-                          s_muscleFilterBuffer, sizeof(s_muscleFilterBuffer), listHeight);
+                          s_muscleFilterBuffer, sizeof(s_muscleFilterBuffer),
+                          listHeight);
 }
 
 bool FilterableChecklist(
@@ -171,6 +172,59 @@ bool FilterableChecklist(
         if (ImGui::Checkbox(items[idx].c_str(), &selected)) {
             selectionStates[idx] = selected;
             changed = true;
+        }
+    }
+    ImGui::EndChild();
+
+    return changed;
+}
+
+bool FilterableRadioList(
+    const char* label,
+    const std::vector<std::string>& items,
+    int* selectedIdx,
+    char* filterBuffer,
+    size_t filterBufferSize,
+    float listHeight,
+    std::function<ImVec4(int idx)> colorFunc)
+{
+    bool changed = false;
+
+    // Filter input
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##filter", "Filter...", filterBuffer, filterBufferSize);
+
+    // Build filter string (lowercase)
+    std::string filterStr(filterBuffer);
+    std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    // Scrollable radio button list
+    ImGui::BeginChild(label, ImVec2(-1, listHeight), true);
+    for (size_t i = 0; i < items.size(); ++i) {
+        // Apply filter
+        if (!filterStr.empty()) {
+            std::string itemLower = items[i];
+            std::transform(itemLower.begin(), itemLower.end(), itemLower.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            if (itemLower.find(filterStr) == std::string::npos) {
+                continue;
+            }
+        }
+
+        // Apply custom color if provided
+        bool hasColor = (colorFunc != nullptr);
+        if (hasColor) {
+            ImGui::PushStyleColor(ImGuiCol_Text, colorFunc(static_cast<int>(i)));
+        }
+
+        if (ImGui::RadioButton(items[i].c_str(), *selectedIdx == static_cast<int>(i))) {
+            *selectedIdx = static_cast<int>(i);
+            changed = true;
+        }
+
+        if (hasColor) {
+            ImGui::PopStyleColor();
         }
     }
     ImGui::EndChild();

@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <functional>
 #include <cfloat>  // For FLT_MAX
 #include "imgui.h"
 
@@ -13,6 +14,7 @@ namespace ImGuiCommon {
 
 // Muscle selection widget with filter, select/deselect all, and scrollable list
 // Returns true if any selection changed
+// Note: selectionStates must be pre-initialized by caller
 bool MuscleSelector(
     const char* label,
     const std::vector<Muscle*>& muscles,
@@ -30,7 +32,7 @@ bool MuscleSelector(
     float listHeight = 250.0f
 );
 
-// Generic filterable checklist widget
+// Generic filterable checklist widget (multi-selection)
 // Returns true if any selection changed
 bool FilterableChecklist(
     const char* label,
@@ -39,6 +41,19 @@ bool FilterableChecklist(
     char* filterBuffer,
     size_t filterBufferSize,
     float listHeight = 200.0f
+);
+
+// Generic filterable radio list widget (single-selection)
+// Returns true if selection changed
+// Optional colorFunc: returns color for each item (nullptr for default)
+bool FilterableRadioList(
+    const char* label,
+    const std::vector<std::string>& items,
+    int* selectedIdx,
+    char* filterBuffer,
+    size_t filterBufferSize,
+    float listHeight = 200.0f,
+    std::function<ImVec4(int idx)> colorFunc = nullptr
 );
 
 // Collapsing header with consistent styling

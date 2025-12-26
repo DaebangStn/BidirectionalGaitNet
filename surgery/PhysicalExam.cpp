@@ -33,22 +33,12 @@ constexpr double BED_LENGTH = 2.5;     // Length (Z-axis): 2.5m
 constexpr double BED_POSITION_Y = 0.60; // Elevation above ground: 0.60m
 
 PhysicalExam::PhysicalExam(int width, int height)
-    : SurgeryExecutor("physical_exam")
-    , mWindow(nullptr)
-    , mWidth(width)
-    , mHeight(height)
-    , mWindowXPos(0)
-    , mWindowYPos(0)
+    : ViewerAppBase("MuscleSurgery", width, height)  // Base class handles GLFW/ImGui
+    , SurgeryExecutor("physical_exam")
     , mControlPanelWidth(250)
     , mPlotPanelWidth(350)
     , mPhysicalExamControlPanelWidth(400)
     , mPhysicalExamDataPanelWidth(400)
-    , mMouseDown(false)
-    , mRotate(false)
-    , mTranslate(false)
-    , mMouseX(0)
-    , mMouseY(0)
-    , mZoom(1.0)
     , mForceMagnitude(0.0)
     , mForceX(0.0f)
     , mForceY(1.0f)
@@ -87,14 +77,13 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mJointKp(500.0)               // Proportional gain
     , mJointKi(50.0)                // Integral gain
     , mInterpolationThreshold(0.01)   // 0.01 radians threshold
-    , mShowSurgeryPanel(false)      // Surgery panel hidden by default
     , mSavingMuscle(false)          // Not currently saving
     , mSweepRestorePosition(false)   // Restore position after sweep by default
     , mRecordingSurgery(false)       // Not recording by default
     , mRecordingScriptPath("")       // Will be constructed from buffer
     , mLoadScriptPath("")            // Will be constructed from buffer
     , mShowScriptPreview(false)     // Script preview hidden by default
-    , mRenderMode(RenderMode::Wireframe)  // Default render mode
+    // mRenderMode inherited from ViewerAppBase (defaults to Wireframe)
     , mStdCharacter(nullptr)  // Initialize to nullptr
     , mRenderMainCharacter(true)  // Default to rendering main character
     , mRenderStdCharacter(false)  // Default to not rendering std character
@@ -175,9 +164,11 @@ PhysicalExam::PhysicalExam(int width, int height)
     mSweepCurrentStep = 0;
     mSelectedPlotJointIndex = 0;  // Will be set to sweep joint when sweep starts
 
-    // Load render config from YAML (geometry section only, skip glfwapp)
-    loadRenderConfig();
-    
+    // Create DART world early (needed for loadExamSetting which is called before startLoop)
+    mWorld = dart::simulation::World::create();
+    mWorld->setGravity(Eigen::Vector3d(0.0, -9.81, 0.0));
+    mWorld->setTimeStep(1.0 / mSimulationHz);
+
     // Scan trial files from directory
     scanTrialFiles();
 }
@@ -197,43 +188,15 @@ PhysicalExam::~PhysicalExam() {
         mGraphData = nullptr;
     }
 
-    if (mWindow) {
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImPlot::DestroyContext();
-        ImGui::DestroyContext();
-        glfwDestroyWindow(mWindow);
-        glfwTerminate();
-    }
+    // GLFW/ImGui cleanup handled by ViewerAppBase destructor
 }
 
-void PhysicalExam::loadRenderConfig() {
+void PhysicalExam::loadRenderConfigImpl() {
+    // Load physical_exam section from render.yaml (Template Method hook)
+    // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
     try {
         std::string resolved_path = rm::resolve("render.yaml");
-
-        LOG_INFO("[Config] Loading render config from: " << resolved_path);
-
         YAML::Node config = YAML::LoadFile(resolved_path);
-
-        // Load geometry settings ONLY (skip glfwapp section)
-        if (config["geometry"]) {
-            if (config["geometry"]["window"]) {
-                if (config["geometry"]["window"]["width"])
-                    mWidth = config["geometry"]["window"]["width"].as<int>();
-                if (config["geometry"]["window"]["height"])
-                    mHeight = config["geometry"]["window"]["height"].as<int>();
-                if (config["geometry"]["window"]["xpos"])
-                    mWindowXPos = config["geometry"]["window"]["xpos"].as<int>();
-                if (config["geometry"]["window"]["ypos"])
-                    mWindowYPos = config["geometry"]["window"]["ypos"].as<int>();
-            }
-
-            if (config["geometry"]["control"])
-                mControlPanelWidth = config["geometry"]["control"].as<int>();
-
-            if (config["geometry"]["plot"])
-                mPlotPanelWidth = config["geometry"]["plot"].as<int>();
-        }
 
         // Load physical_exam panel widths
         if (config["physical_exam"]) {
@@ -241,127 +204,32 @@ void PhysicalExam::loadRenderConfig() {
                 mPhysicalExamControlPanelWidth = config["physical_exam"]["control_panel_width"].as<int>();
             if (config["physical_exam"]["data_panel_width"])
                 mPhysicalExamDataPanelWidth = config["physical_exam"]["data_panel_width"].as<int>();
+
+            LOG_INFO("[PhysicalExam] Loaded config - Control: " << mPhysicalExamControlPanelWidth
+                     << ", Data: " << mPhysicalExamDataPanelWidth);
         }
-
-        LOG_INFO("[Config] Loaded - Window: " << mWidth << "x" << mHeight
-                  << " at (" << mWindowXPos << "," << mWindowYPos << ")"
-                  << ", Control: " << mControlPanelWidth
-                  << ", Plot: " << mPlotPanelWidth
-                  << ", PhysExam Control: " << mPhysicalExamControlPanelWidth
-                  << ", PhysExam Data: " << mPhysicalExamDataPanelWidth);
-
-        // Load default open panels
-        if (config["default_open_panels"]) {
-            mDefaultOpenPanels.clear();
-            for (const auto& panel : config["default_open_panels"]) {
-                mDefaultOpenPanels.insert(panel.as<std::string>());
-            }
-        }
-
     } catch (const std::exception& e) {
-        LOG_ERROR("[Config] Warning: Could not load render.yaml: " << e.what());
-        LOG_ERROR("[Config] Using default values.");
+        LOG_WARN("[PhysicalExam] Could not load render.yaml: " << e.what());
     }
 }
 
-void PhysicalExam::initialize() {
-    // Initialize GLFW
-    if (!glfwInit()) {
-        LOG_ERROR("Failed to initialize GLFW");
-        exit(EXIT_FAILURE);
-    }
-
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
-    glfwWindowHintString(GLFW_X11_CLASS_NAME, "MuscleSurgery");
-    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
-    mWindow = glfwCreateWindow(mWidth, mHeight, "MuscleSurgery", nullptr, nullptr);
-    if (!mWindow) {
-        LOG_ERROR("Failed to create GLFW window");
-        glfwTerminate();
-        exit(EXIT_FAILURE);
-    }
-
-    // Set window position from config
-    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-    glfwMakeContextCurrent(mWindow);
-    glfwSwapInterval(1);
-
-    // Initialize GLAD
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        LOG_ERROR("Failed to initialize GLAD");
-        exit(EXIT_FAILURE);
-    }
+void PhysicalExam::onInitialize() {
+    // GLFW/ImGui already initialized by ViewerAppBase constructor
 
     // Initialize GLUT (needed for glutSolidCube/glutSolidSphere in rendering)
     int argc = 1;
     char* argv[1] = {(char*)"physical_exam"};
     glutInit(&argc, argv);
 
-    // Set up GLFW callbacks for mouse and keyboard
-    glfwSetWindowUserPointer(mWindow, this);
+    // Set window position from config
+    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
 
-    auto keyCallback = [](GLFWwindow* window, int key, int scancode, int action, int mods) {
-        auto& io = ImGui::GetIO();
-        if (!io.WantCaptureKeyboard) {
-            PhysicalExam* app = static_cast<PhysicalExam*>(glfwGetWindowUserPointer(window));
-            app->keyboardPress(key, scancode, action, mods);
-        }
-    };
-    glfwSetKeyCallback(mWindow, keyCallback);
-
-    auto cursorPosCallback = [](GLFWwindow* window, double xpos, double ypos) {
-        auto& io = ImGui::GetIO();
-        if (!io.WantCaptureMouse) {
-            PhysicalExam* app = static_cast<PhysicalExam*>(glfwGetWindowUserPointer(window));
-            app->mouseMove(xpos, ypos);
-        }
-    };
-    glfwSetCursorPosCallback(mWindow, cursorPosCallback);
-
-    auto mouseButtonCallback = [](GLFWwindow* window, int button, int action, int mods) {
-        auto& io = ImGui::GetIO();
-        if (!io.WantCaptureMouse) {
-            PhysicalExam* app = static_cast<PhysicalExam*>(glfwGetWindowUserPointer(window));
-            app->mousePress(button, action, mods);
-        }
-    };
-    glfwSetMouseButtonCallback(mWindow, mouseButtonCallback);
-
-    auto scrollCallback = [](GLFWwindow* window, double xoffset, double yoffset) {
-        auto& io = ImGui::GetIO();
-        if (!io.WantCaptureMouse) {
-            PhysicalExam* app = static_cast<PhysicalExam*>(glfwGetWindowUserPointer(window));
-            app->mouseScroll(xoffset, yoffset);
-        }
-    };
-    glfwSetScrollCallback(mWindow, scrollCallback);
-
-    auto framebufferSizeCallback = [](GLFWwindow* window, int width, int height) {
-        PhysicalExam* app = static_cast<PhysicalExam*>(glfwGetWindowUserPointer(window));
-        app->windowResize(width, height);
-    };
-    glfwSetFramebufferSizeCallback(mWindow, framebufferSizeCallback);
-
-    // Initialize ImGui
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImPlot::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 330");
-
-    // Initialize trackball
-    mTrackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
-    mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
+    // Initialize trackball (using inherited mCamera)
+    mCamera.trackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
+    mCamera.trackball.setQuaternion(Eigen::Quaterniond::Identity());
     loadCameraPreset(0);
 
-    // Initialize DART world
-    mWorld = dart::simulation::World::create();
-    mWorld->setGravity(Eigen::Vector3d(0.0, -9.81, 0.0));
-    mWorld->setTimeStep(1.0 / mSimulationHz);
+    // mWorld already created in constructor (needed for loadExamSetting)
 
     // Create ground and examination table
     createGround();
@@ -420,7 +288,112 @@ void PhysicalExam::initialize() {
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, mat_specular);
     glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, mat_shininess);
 
+    // Initialize PIDNavigator for patient data browsing
+    rm::ResourceManager* resourceManager = &rm::getManager();
+    if (resourceManager) {
+        mPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
+            resourceManager,
+            nullptr  // No file filter - just for PID selection
+        );
+        mPIDNavigator->scanPIDs();
+    }
+
+    // Initialize skeleton/muscle browse lists
+    scanSkeletonFilesForBrowse();
+    scanMuscleFilesForBrowse();
+
     LOG_INFO("Physical Examination initialized");
+}
+
+void PhysicalExam::onFrameStart() {
+    // Execute one sweep step if sweep is running
+    if (mSweepRunning && mCharacter) {
+        auto skel = mCharacter->getSkeleton();
+        auto joint = skel->getJoint(mSweepConfig.joint_index);
+
+        if (mSweepCurrentStep <= mSweepConfig.num_steps) {
+            double angle = mSweepConfig.angle_min +
+                (mSweepConfig.angle_max - mSweepConfig.angle_min) *
+                mSweepCurrentStep / (double)mSweepConfig.num_steps;
+
+            Eigen::VectorXd pos = joint->getPositions();
+            pos[mSweepConfig.dof_index] = angle;
+            setCharacterPose(joint->getName(), pos);
+
+            if (!mCharacter->getMuscles().empty()) {
+                mCharacter->getMuscleTuple();
+            }
+            if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+                mStdCharacter->getMuscleTuple();
+            }
+
+            collectAngleSweepData(angle, mSweepConfig.joint_index);
+            mSweepCurrentStep++;
+        } else {
+            if (mSweepRestorePosition) {
+                setCharacterPose(joint->getName(), mSweepOriginalPos);
+            }
+            mSweepRunning = false;
+            LOG_INFO("Sweep completed. Collected " << mAngleSweepData.size() << " data points");
+        }
+
+        if (glfwGetKey(mWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            if (mSweepRestorePosition) {
+                setCharacterPose(joint->getName(), mSweepOriginalPos);
+            }
+            mSweepRunning = false;
+            LOG_INFO("Sweep interrupted by user");
+        }
+    }
+
+    // Simulation stepping
+    for (int step = 0; step < 5; step++) {
+        if (mCharacter) mCharacter->step();
+
+        bool shouldStep = !mSimulationPaused || mSingleStep;
+        if (shouldStep) {
+            if (mEnableInterpolation && mCharacter) {
+                auto skel = mCharacter->getSkeleton();
+                Eigen::VectorXd currentPos = skel->getPositions();
+                Eigen::VectorXd currentForces = skel->getForces();
+                double dt = mWorld->getTimeStep();
+
+                for (size_t i = 0; i < mMarkedJointTargets.size(); ++i) {
+                    if (!mMarkedJointTargets[i].has_value()) continue;
+
+                    double targetAngle = mMarkedJointTargets[i].value();
+                    double error = targetAngle - currentPos[i];
+
+                    if (std::abs(error) > mInterpolationThreshold) {
+                        mJointIntegralError[i] += error * dt;
+                        double torque = mJointKp * error + mJointKi * mJointIntegralError[i];
+                        currentForces[i] += torque;
+                    } else {
+                        mMarkedJointTargets[i] = std::nullopt;
+                        mJointIntegralError[i] = 0.0;
+                    }
+                }
+                skel->setForces(currentForces);
+            }
+
+            if (mApplyingForce && mForceMagnitude > 0.0) {
+                Eigen::Vector3d offset(mOffsetX, mOffsetY, mOffsetZ);
+                Eigen::Vector3d direction(mForceX, mForceY, mForceZ);
+                applyForce(mForceBodyNode, offset, direction, mForceMagnitude);
+            }
+            if (mApplyConfinementForce) applyConfinementForces(500.0);
+            if (mApplyPostureControl) applyPostureControl();
+            mWorld->step();
+            mSingleStep = false;
+        }
+        if (mCharacter) mCharacter->setZeroForces();
+    }
+}
+
+void PhysicalExam::drawUI() {
+    drawLeftPanel();
+    drawRightPanel();
+    showScriptPreview();
 }
 
 void PhysicalExam::createGround() {
@@ -509,7 +482,7 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     setPoseSupine();
 
     // Setup posture control targets (must be called after character is loaded)
-    setupPostureTargets();
+    // setupPostureTargets();
 
     // Initialize marked joint targets and PI controller state (all unmarked initially)
     auto skel = mCharacter->getSkeleton();
@@ -1811,172 +1784,48 @@ void PhysicalExam::runAllTrials() {
 
     LOG_INFO("All trials complete. Results saved to: " << mExamOutputPath);
 }
-
-void PhysicalExam::setCamera() {
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    gluPerspective(45.0, (double)mWidth / mHeight, 0.1, 100.0);
-
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    Eigen::Vector3d eye = mEye * mZoom;
-    gluLookAt(eye[0], eye[1], eye[2],
-              0.0, 0.0, 0.0,
-              mUp[0], mUp[1], mUp[2]);
-
-    mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-    mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-    mTrackball.applyGLRotation();
-
-    glTranslatef(mTrans[0], mTrans[1], mTrans[2]);
-}
-
-void PhysicalExam::render() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glClearColor(0.95f, 0.95f, 0.95f, 1.0f);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    setCamera();
-    drawSimFrame();
-
-    // ImGui UI
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-    drawLeftPanel();
-    drawRightPanel();
-    
-    if (mShowSurgeryPanel) drawSurgeryPanel();
-    showScriptPreview();  // Show script preview popup if active
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-    glfwSwapBuffers(mWindow);
-    glfwPollEvents();
-}
-
-void PhysicalExam::mainLoop() {
-    while (!glfwWindowShouldClose(mWindow)) {
-        // Execute one sweep step if sweep is running
-        if (mSweepRunning && mCharacter) {
-            auto skel = mCharacter->getSkeleton();
-            auto joint = skel->getJoint(mSweepConfig.joint_index);
-
-            if (mSweepCurrentStep <= mSweepConfig.num_steps) {
-                // Calculate current angle
-                double angle = mSweepConfig.angle_min +
-                    (mSweepConfig.angle_max - mSweepConfig.angle_min) *
-                    mSweepCurrentStep / (double)mSweepConfig.num_steps;
-
-                // Set joint position for selected DOF
-                Eigen::VectorXd pos = joint->getPositions();
-                pos[mSweepConfig.dof_index] = angle;
-                setCharacterPose(joint->getName(), pos);
-
-                // Update muscle state (recalculate muscle lengths and forces)
-                if (!mCharacter->getMuscles().empty()) {
-                    mCharacter->getMuscleTuple();
-                }
-                if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
-                    mStdCharacter->getMuscleTuple();
-                }
-
-                // Collect muscle data at this angle
-                collectAngleSweepData(angle, mSweepConfig.joint_index);
-
-                mSweepCurrentStep++;
-            } else {
-                // Sweep complete - restore original position if enabled
-                if (mSweepRestorePosition) {
-                    setCharacterPose(joint->getName(), mSweepOriginalPos);
-                }
-                mSweepRunning = false;
-                LOG_INFO("Sweep completed. Collected " << mAngleSweepData.size()
-                          << " data points");
-            }
-
-            // Check for user interruption (ESC key)
-            if (glfwGetKey(mWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-                if (mSweepRestorePosition) {
-                    setCharacterPose(joint->getName(), mSweepOriginalPos);
-                }
-                mSweepRunning = false;
-                LOG_INFO("Sweep interrupted by user");
-            }
-        }
-
-        // Apply force if enabled
-        for (int step=0; step<5; step++) {
-            // Step simulation
-            if (mCharacter) mCharacter->step();
-
-            // Check if simulation should advance
-            bool shouldStep = !mSimulationPaused || mSingleStep;
-            if (shouldStep) {
-                // Apply PI controller for marked joints (only when simulation is running)
-                if (mEnableInterpolation && mCharacter) {
-                    auto skel = mCharacter->getSkeleton();
-                    Eigen::VectorXd currentPos = skel->getPositions();
-                    Eigen::VectorXd currentForces = skel->getForces();
-                    double dt = mWorld->getTimeStep();
-
-                    // Apply PI controller to marked joints (those with target angles)
-                    for (int i = 0; i < mMarkedJointTargets.size(); ++i) {
-                        if (!mMarkedJointTargets[i].has_value()) continue;  // Skip unmarked joints
-
-                        double targetAngle = mMarkedJointTargets[i].value();
-                        double error = targetAngle - currentPos[i];
-
-                        if (std::abs(error) > mInterpolationThreshold) {
-                            // Update integral error
-                            mJointIntegralError[i] += error * dt;
-
-                            // PI control: torque = Kp * error + Ki * integral_error
-                            double torque = mJointKp * error + mJointKi * mJointIntegralError[i];
-
-                            // Apply torque to joint
-                            currentForces[i] += torque;
-                        } else {
-                            // Target reached - unmark the joint and reset integral error
-                            mMarkedJointTargets[i] = std::nullopt;
-                            mJointIntegralError[i] = 0.0;
-                        }
-                    }
-                    skel->setForces(currentForces);
-                }
-
-                if (mApplyingForce && mForceMagnitude > 0.0) {
-                    Eigen::Vector3d offset(mOffsetX, mOffsetY, mOffsetZ);
-                    Eigen::Vector3d direction(mForceX, mForceY, mForceZ);
-                    applyForce(mForceBodyNode, offset, direction, mForceMagnitude);
-                }
-                if (mApplyConfinementForce) applyConfinementForces(500.0);
-                if (mApplyPostureControl) applyPostureControl();
-                mWorld->step();
-                mSingleStep = false;
-            }
-            mCharacter->setZeroForces();
-        }
-        render();
-    }
-}
+// setCamera(), render(), mainLoop() removed - handled by ViewerAppBase::startLoop()
 
 void PhysicalExam::drawLeftPanel() {
     // Left panel - matches GLFWApp layout
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(mPhysicalExamControlPanelWidth, mHeight), ImGuiCond_Once);
-    ImGui::Begin("Controls##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    ImGui::Begin("Controls##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
-    drawPosePresetsSection();
-    drawForceApplicationSection();
-    drawPrintInfoSection();
-    drawRecordingSection();
-    drawRenderOptionsSection();
-    drawJointControlSection();
-    drawJointAngleSweepSection();
-    drawTrialManagementSection();
+    if (ImGui::BeginTabBar("LeftPanelTabs")) {
+        if (ImGui::BeginTabItem("Patient")) {
+            ImGui::BeginChild("PatientScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            drawClinicalDataSection();
+            drawCharacterLoadSection();
+            drawPosePresetsSection();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Exam")) {
+            ImGui::BeginChild("ExamScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            drawForceApplicationSection();
+            drawJointControlSection();
+            drawJointAngleSweepSection();
+            drawTrialManagementSection();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Render")) {
+            ImGui::BeginChild("ViewScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            drawRenderOptionsSection();
+            drawPrintInfoSection();
+            drawRecordingSection();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Surgery")) {
+            ImGui::BeginChild("SurgeryScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            drawSurgeryTabContent();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
 
     ImGui::End();
 }
@@ -2020,9 +1869,8 @@ void PhysicalExam::drawBasicTabContent() {
 
         if (!mSkeletonPath.empty()) {
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Skeleton:");
-            ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-            ImGui::TextWrapped("%s", mSkeletonPath.c_str());
-            ImGui::PopTextWrapPos();
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::Text("%s", mSkeletonPath.c_str());
         } else {
             ImGui::TextDisabled("Skeleton: Not loaded");
         }
@@ -2031,9 +1879,28 @@ void PhysicalExam::drawBasicTabContent() {
 
         if (!mMusclePath.empty()) {
             ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Muscle:");
-            ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-            ImGui::TextWrapped("%s", mMusclePath.c_str());
-            ImGui::PopTextWrapPos();
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::Text("%s", mMusclePath.c_str());
+        } else {
+            ImGui::TextDisabled("Muscle: Not loaded");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Reference Character:");
+
+        if (!mStdSkeletonPath.empty()) {
+            ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.8f, 1.0f), "Skeleton:");
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::Text("%s", mStdSkeletonPath.c_str());
+        } else {
+            ImGui::TextDisabled("Skeleton: Not loaded");
+        }
+
+        if (!mStdMusclePath.empty()) {
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "Muscle:");
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::Text("%s", mStdMusclePath.c_str());
         } else {
             ImGui::TextDisabled("Muscle: Not loaded");
         }
@@ -2155,12 +2022,7 @@ void PhysicalExam::drawEtcTabContent() {
 // ============================================================================
 // SURGERY PANEL
 // ============================================================================
-void PhysicalExam::drawSurgeryPanel() {
-    // Floating panel in center-top area
-    ImGui::SetNextWindowSize(ImVec2(450, mHeight - 100), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(450, 10), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Surgery Operations", &mShowSurgeryPanel);
-    
+void PhysicalExam::drawSurgeryTabContent() {
     // 1. Reset Muscle Button (not a header, just a button)
     if (ImGui::Button("Reset Muscles")) {
         // Warn and stop recording if currently recording
@@ -2341,8 +2203,6 @@ void PhysicalExam::drawSurgeryPanel() {
         drawSaveMuscleConfigSection();
     }
     ImGui::Spacing();
-
-    ImGui::End();
 }
 
 // ============================================================================
@@ -4116,7 +3976,7 @@ bool PhysicalExam::rotateAnchorPoints(const std::string& muscle_name, int ref_an
     return success;
 }
 
-void PhysicalExam::drawSimFrame() {
+void PhysicalExam::drawContent() {
     glEnable(GL_LIGHTING);
 
     drawGround();
@@ -4183,7 +4043,7 @@ void PhysicalExam::drawSimFrame() {
 
     // Draw origin axis gizmo when camera is moving
     if (mCameraMoving) {
-        Eigen::Vector3d center = -mTrans;
+        Eigen::Vector3d center = -mCamera.trans;
         GUI::DrawOriginAxisGizmo(center);
     }
 }
@@ -4710,7 +4570,7 @@ void PhysicalExam::drawJointPassiveForces() {
                     glLoadMatrixf(modelview);
 
                     // Apply zoom-responsive scaling to both background and text
-                    float scale = base_font_scale * mZoom;
+                    float scale = base_font_scale * mCamera.zoom;
                     glScalef(scale, scale, scale);
 
                     // Background quad with darker semi-transparent color
@@ -4747,62 +4607,16 @@ void PhysicalExam::drawJointPassiveForces() {
     glEnable(GL_LIGHTING);
 }
 
-void PhysicalExam::mouseMove(double xpos, double ypos) {
-    double deltaX = xpos - mMouseX;
-    double deltaY = ypos - mMouseY;
+// mouseMove, mousePress, mouseScroll removed - handled by ViewerAppBase
 
-    mMouseX = xpos;
-    mMouseY = ypos;
-
-    if (mRotate) {
-        if (deltaX != 0 || deltaY != 0) {
-            mTrackball.updateBall(xpos, mHeight - ypos);
-            mCurrentCameraPreset = -1;  // Mark as custom view
-        }
-    }
-
-    if (mTranslate) {
-        Eigen::Matrix3d rot = mTrackball.getRotationMatrix();
-        // Scale translation by window size to make it reasonable (0.001 factor for smoothness)
-        double scale = 0.001 / mZoom;
-        mTrans += scale * rot.transpose() * Eigen::Vector3d(deltaX, -deltaY, 0.0);
-        mCurrentCameraPreset = -1;  // Mark as custom view
-    }
-}
-
-void PhysicalExam::mousePress(int button, int action, int mods) {
-    if (action == GLFW_PRESS) {
-        mMouseDown = true;
-        mCameraMoving = true;
-        if (button == GLFW_MOUSE_BUTTON_LEFT) {
-            mRotate = true;
-            mTrackball.startBall(mMouseX, mHeight - mMouseY);
-        } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            mTranslate = true;
-        }
-    } else if (action == GLFW_RELEASE) {
-        mMouseDown = false;
-        mCameraMoving = false;
-        if (button == GLFW_MOUSE_BUTTON_LEFT) {
-            mRotate = false;
-        } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            mTranslate = false;
-        }
-    }
-}
-
-void PhysicalExam::mouseScroll(double xoffset, double yoffset) {
-    if (yoffset < 0) {
-        mEye *= 1.05;
-        mCurrentCameraPreset = -1;  // Mark as custom view
-    } else if (yoffset > 0 && mEye.norm() > 0.005) {
-        mEye *= 0.95;
-        mCurrentCameraPreset = -1;  // Mark as custom view
-    }
-}
-
-void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
+void PhysicalExam::keyPress(int key, int scancode, int action, int mods) {
     if (action != GLFW_PRESS) return;
+
+    // Ctrl+1/2/3 for camera planes (delegate to base)
+    if ((mods & GLFW_MOD_CONTROL) && key >= GLFW_KEY_1 && key <= GLFW_KEY_3) {
+        alignCameraToPlane(key - GLFW_KEY_1 + 1);
+        return;
+    }
 
     if (key == GLFW_KEY_ESCAPE) {
         glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
@@ -4869,9 +4683,6 @@ void PhysicalExam::keyboardPress(int key, int scancode, int action, int mods) {
     else if (key == GLFW_KEY_0) {
         loadCameraPreset(0);  // Top view
     }
-    else if (key == GLFW_KEY_G) {
-        mShowSurgeryPanel = !mShowSurgeryPanel;  // Toggle surgery panel
-    }
 }
 
 void PhysicalExam::windowResize(int width, int height) {
@@ -4883,18 +4694,14 @@ void PhysicalExam::windowResize(int width, int height) {
 void PhysicalExam::reset() {
     // Reset camera to preset 0
     if (mCameraPresets[0].isSet) {
-        mEye = mCameraPresets[0].eye;
-        mUp = mCameraPresets[0].up;
-        mTrans = mCameraPresets[0].trans;
-        mZoom = mCameraPresets[0].zoom;
-        mTrackball.setQuaternion(mCameraPresets[0].quat);
+        mCamera = mCameraPresets[0].state;  // Copy entire camera state
         mCurrentCameraPreset = 0;
     } else {
-        mEye << 0.0, 1.0, 3.0;
-        mUp << 0.0, 1.0, 0.0;
-        mTrans << 0.0, -0.5, 0.0;
-        mZoom = 1.0;
-        mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
+        mCamera.eye << 0.0, 1.0, 3.0;
+        mCamera.up << 0.0, 1.0, 0.0;
+        mCamera.trans << 0.0, -0.5, 0.0;
+        mCamera.zoom = 1.0;
+        mCamera.trackball.setQuaternion(Eigen::Quaterniond::Identity());
         mCurrentCameraPreset = 0;
     }
 
@@ -5098,17 +4905,17 @@ void PhysicalExam::setPoseSupineKneeFlexed(double knee_angle) {
 }
 
 void PhysicalExam::printCameraInfo() {
-    Eigen::Quaterniond quat = mTrackball.getCurrQuat();
-    
+    Eigen::Quaterniond quat = mCamera.trackball.getCurrQuat();
+
     LOG_INFO("\n======================================");
     LOG_INFO("Copy and paste below to CAMERA_PRESET_DEFINITIONS:");
     LOG_INFO("======================================");
-    LOG_INFO("PRESET|[Add description]|" 
-              << mEye[0] << "," << mEye[1] << "," << mEye[2] << "|"
-              << mUp[0] << "," << mUp[1] << "," << mUp[2] << "|"
-              << mTrans[0] << "," << mTrans[1] << "," << mTrans[2] << "|"
-              << mZoom << "|"
-              << quat.w() << "," << quat.x() << "," << quat.y() << "," << quat.z() 
+    LOG_INFO("PRESET|[Add description]|"
+              << mCamera.eye[0] << "," << mCamera.eye[1] << "," << mCamera.eye[2] << "|"
+              << mCamera.up[0] << "," << mCamera.up[1] << "," << mCamera.up[2] << "|"
+              << mCamera.trans[0] << "," << mCamera.trans[1] << "," << mCamera.trans[2] << "|"
+              << mCamera.zoom << "|"
+              << quat.w() << "," << quat.x() << "," << quat.y() << "," << quat.z()
              );
     LOG_INFO("======================================\n");
 }
@@ -5548,18 +5355,14 @@ void PhysicalExam::loadCameraPreset(int index) {
         LOG_ERROR("Invalid camera preset index: " << index);
         return;
     }
-    
+
     if (!mCameraPresets[index].isSet) {
         LOG_INFO("Camera preset " << (index + 1) << " is not set yet");
         return;
     }
-    
-    mEye = mCameraPresets[index].eye;
-    mUp = mCameraPresets[index].up;
-    mTrans = mCameraPresets[index].trans;
-    mZoom = mCameraPresets[index].zoom;
-    mTrackball.setQuaternion(mCameraPresets[index].quat);
-    mCurrentCameraPreset = index;    
+
+    mCamera = mCameraPresets[index].state;  // Copy entire camera state
+    mCurrentCameraPreset = index;
 }
 
 // ============================================================================
@@ -5621,16 +5424,16 @@ void PhysicalExam::initializeCameraPresets() {
                 quatVals.push_back(std::stod(token));
             }
             
-            // Set the preset
-            if (eyeVals.size() == 3 && upVals.size() == 3 && 
+            // Set the preset (using CameraState)
+            if (eyeVals.size() == 3 && upVals.size() == 3 &&
                 transVals.size() == 3 && quatVals.size() == 4) {
                 mCameraPresets[i].description = tokens[1];
-                mCameraPresets[i].eye << eyeVals[0], eyeVals[1], eyeVals[2];
-                mCameraPresets[i].up << upVals[0], upVals[1], upVals[2];
-                mCameraPresets[i].trans << transVals[0], transVals[1], transVals[2];
-                mCameraPresets[i].zoom = zoom;
-                mCameraPresets[i].quat = Eigen::Quaterniond(quatVals[0], quatVals[1], 
-                                                            quatVals[2], quatVals[3]);
+                mCameraPresets[i].state.eye << eyeVals[0], eyeVals[1], eyeVals[2];
+                mCameraPresets[i].state.up << upVals[0], upVals[1], upVals[2];
+                mCameraPresets[i].state.trans << transVals[0], transVals[1], transVals[2];
+                mCameraPresets[i].state.zoom = zoom;
+                mCameraPresets[i].state.trackball.setQuaternion(
+                    Eigen::Quaterniond(quatVals[0], quatVals[1], quatVals[2], quatVals[3]));
                 mCameraPresets[i].isSet = true;
             }
         }
@@ -6125,13 +5928,25 @@ void PhysicalExam::renderMusclePlots() {
 
             // Plot standard character data (dashed lines) - only if checkbox enabled
             if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                // Prepare filter for case-insensitive matching
+                std::string filter_lower(mMuscleFilterBuffer);
+                std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+
                 for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
-                    // Check visibility - skip if muscle is explicitly hidden
-                    auto vis_it = mMuscleVisibility.find(muscle_name);
-                    if (vis_it != mMuscleVisibility.end() && !vis_it->second) {
-                        continue;  // Skip non-visible muscles silently
+                    // Apply text filter (case-insensitive)
+                    if (!filter_lower.empty()) {
+                        std::string muscle_lower = muscle_name;
+                        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
+                        if (muscle_lower.find(filter_lower) == std::string::npos) {
+                            continue;
+                        }
                     }
-                    // If muscle not in visibility map, show it by default (might be std-only muscle)
+
+                    // Check visibility - same logic as main muscles (hide if not in map or unchecked)
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                        continue;
+                    }
 
                     // Build y_data for this muscle
                     std::vector<double> std_lm_norm_data;
@@ -6188,13 +6003,25 @@ void PhysicalExam::renderMusclePlots() {
 
             // Plot standard character data (dashed lines) - only if checkbox enabled
             if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+                // Prepare filter for case-insensitive matching
+                std::string filter_lower(mMuscleFilterBuffer);
+                std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+
                 for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
-                    // Check visibility - skip if muscle is explicitly hidden
-                    auto vis_it = mMuscleVisibility.find(muscle_name);
-                    if (vis_it != mMuscleVisibility.end() && !vis_it->second) {
-                        continue;  // Skip non-visible muscles silently
+                    // Apply text filter (case-insensitive)
+                    if (!filter_lower.empty()) {
+                        std::string muscle_lower = muscle_name;
+                        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
+                        if (muscle_lower.find(filter_lower) == std::string::npos) {
+                            continue;
+                        }
                     }
-                    // If muscle not in visibility map, show it by default (might be std-only muscle)
+
+                    // Check visibility - same logic as main muscles (hide if not in map or unchecked)
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
+                        continue;
+                    }
 
                     // Build y_data for this muscle
                     std::vector<double> std_fp_data;
@@ -6300,6 +6127,279 @@ void PhysicalExam::clearSweepData() {
     // DON'T clear mMuscleVisibility - preserve user selections across sweeps
     // Note: mGraphData is now only used for posture control, not sweep data
     LOG_INFO("Sweep data cleared");
+}
+
+// ============================================================================
+// Character Loading (Browse & Rebuild) Section Methods
+// ============================================================================
+
+void PhysicalExam::drawClinicalDataSection() {
+    if (collapsingHeaderWithControls("Clinical Data")) {
+        if (!mPIDNavigator) {
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "PID Navigator not available");
+            return;
+        }
+
+        // PID Navigator inline selector
+        mPIDNavigator->renderInlineSelector(120, 0);  // PID list only, no file list
+
+        // Show selected PID info
+        const auto& pidState = mPIDNavigator->getState();
+        if (pidState.selectedPID >= 0) {
+            const std::string& pid = pidState.pidList[pidState.selectedPID];
+            if (pid != mBrowseCharacterPID) {
+                mBrowseCharacterPID = pid;
+                // Rescan files when PID changes
+                if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
+                    scanSkeletonFilesForBrowse();
+                }
+                if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
+                    scanMuscleFilesForBrowse();
+                }
+            }
+        } else if (!mBrowseCharacterPID.empty()) {
+            // PID was deselected
+            mBrowseCharacterPID.clear();
+            mClinicalWeightAvailable = false;
+        }
+    }
+}
+
+void PhysicalExam::drawCharacterLoadSection() {
+    if (collapsingHeaderWithControls("Character Loading")) {
+        // ============ SKELETON SECTION ============
+        bool skelChanged = false;
+        ImGui::Text("Skeleton Source:");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Default##skel", mBrowseSkeletonDataSource == CharacterDataSource::DefaultData)) {
+            if (mBrowseSkeletonDataSource != CharacterDataSource::DefaultData) {
+                mBrowseSkeletonDataSource = CharacterDataSource::DefaultData;
+                skelChanged = true;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Patient##skel", mBrowseSkeletonDataSource == CharacterDataSource::PatientData)) {
+            if (mBrowseSkeletonDataSource != CharacterDataSource::PatientData) {
+                mBrowseSkeletonDataSource = CharacterDataSource::PatientData;
+                skelChanged = true;
+            }
+        }
+
+        // Patient skeleton controls
+        if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
+            if (!mBrowseCharacterPID.empty()) {
+                ImGui::SameLine();
+                ImGui::Text("(%s)", mBrowseCharacterPID.c_str());
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Pre##skel", mBrowseSkeletonPreOp)) {
+                    if (!mBrowseSkeletonPreOp) { mBrowseSkeletonPreOp = true; skelChanged = true; }
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Post##skel", !mBrowseSkeletonPreOp)) {
+                    if (mBrowseSkeletonPreOp) { mBrowseSkeletonPreOp = false; skelChanged = true; }
+                }
+            } else {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
+            }
+        }
+
+        if (skelChanged) {
+            scanSkeletonFilesForBrowse();
+            mBrowseSkeletonPath.clear();
+        }
+
+        // Skeleton file list
+        std::string skelPrefix = "@data/skeleton/";
+        if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
+            std::string prePost = mBrowseSkeletonPreOp ? "pre" : "post";
+            skelPrefix = "@pid:" + mBrowseCharacterPID + "/gait/" + prePost + "/skeleton/";
+        }
+
+        if (ImGui::BeginListBox("##SkeletonList", ImVec2(-1, 60))) {
+            for (size_t i = 0; i < mBrowseSkeletonCandidates.size(); ++i) {
+                const auto& filename = mBrowseSkeletonCandidates[i];
+                bool isSelected = (mBrowseSkeletonPath.find(filename) != std::string::npos);
+                if (ImGui::Selectable(filename.c_str(), isSelected)) {
+                    mBrowseSkeletonPath = skelPrefix + filename;
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        ImGui::Spacing();
+
+        // ============ MUSCLE SECTION ============
+        bool muscleChanged = false;
+        ImGui::Text("Muscle Source:");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Default##muscle", mBrowseMuscleDataSource == CharacterDataSource::DefaultData)) {
+            if (mBrowseMuscleDataSource != CharacterDataSource::DefaultData) {
+                mBrowseMuscleDataSource = CharacterDataSource::DefaultData;
+                muscleChanged = true;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Patient##muscle", mBrowseMuscleDataSource == CharacterDataSource::PatientData)) {
+            if (mBrowseMuscleDataSource != CharacterDataSource::PatientData) {
+                mBrowseMuscleDataSource = CharacterDataSource::PatientData;
+                muscleChanged = true;
+            }
+        }
+
+        // Patient muscle controls
+        if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
+            if (!mBrowseCharacterPID.empty()) {
+                ImGui::SameLine();
+                ImGui::Text("(%s)", mBrowseCharacterPID.c_str());
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Pre##muscle", mBrowseMusclePreOp)) {
+                    if (!mBrowseMusclePreOp) { mBrowseMusclePreOp = true; muscleChanged = true; }
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Post##muscle", !mBrowseMusclePreOp)) {
+                    if (mBrowseMusclePreOp) { mBrowseMusclePreOp = false; muscleChanged = true; }
+                }
+            } else {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
+            }
+        }
+
+        if (muscleChanged) {
+            scanMuscleFilesForBrowse();
+            mBrowseMusclePath.clear();
+        }
+
+        // Muscle file list
+        std::string musclePrefix = "@data/muscle/";
+        if (mBrowseMuscleDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
+            std::string prePost = mBrowseMusclePreOp ? "pre" : "post";
+            musclePrefix = "@pid:" + mBrowseCharacterPID + "/gait/" + prePost + "/muscle/";
+        }
+
+        if (ImGui::BeginListBox("##MuscleList", ImVec2(-1, 60))) {
+            for (size_t i = 0; i < mBrowseMuscleCandidates.size(); ++i) {
+                const auto& filename = mBrowseMuscleCandidates[i];
+                bool isSelected = (mBrowseMusclePath.find(filename) != std::string::npos);
+                if (ImGui::Selectable(filename.c_str(), isSelected)) {
+                    mBrowseMusclePath = musclePrefix + filename;
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        ImGui::Separator();
+
+        // Rebuild button
+        bool canRebuild = !mBrowseSkeletonPath.empty() && !mBrowseMusclePath.empty();
+        if (!canRebuild) ImGui::BeginDisabled();
+        if (ImGui::Button("Rebuild", ImVec2(-1, 0))) {
+            reloadCharacterFromBrowse();
+        }
+        if (!canRebuild) ImGui::EndDisabled();
+    }
+}
+
+void PhysicalExam::scanSkeletonFilesForBrowse() {
+    namespace fs = std::filesystem;
+    mBrowseSkeletonCandidates.clear();
+
+    try {
+        fs::path skelDir;
+        if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
+            // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/skeleton/
+            fs::path pidRoot = rm::getManager().getPidRoot();
+            if (!pidRoot.empty()) {
+                std::string prePost = mBrowseSkeletonPreOp ? "pre" : "post";
+                skelDir = pidRoot / mBrowseCharacterPID / "gait" / prePost / "skeleton";
+
+                // Create directory if it doesn't exist
+                if (!fs::exists(skelDir)) {
+                    LOG_INFO("[PhysicalExam] Creating skeleton directory: " << skelDir);
+                    fs::create_directories(skelDir);
+                }
+            } else {
+                LOG_WARN("[PhysicalExam] PID root not available");
+                return;
+            }
+        } else {
+            // Use default data directory
+            skelDir = rm::getManager().resolveDir("@data/skeleton");
+            if (!fs::exists(skelDir)) return;
+        }
+
+        for (const auto& entry : fs::directory_iterator(skelDir)) {
+            auto ext = entry.path().extension().string();
+            if (ext == ".yaml" || ext == ".xml") {
+                mBrowseSkeletonCandidates.push_back(entry.path().filename().string());
+            }
+        }
+        std::sort(mBrowseSkeletonCandidates.begin(), mBrowseSkeletonCandidates.end());
+    }
+    catch (const std::exception& e) {
+        LOG_WARN("[PhysicalExam] Error scanning skeleton files: " << e.what());
+    }
+}
+
+void PhysicalExam::scanMuscleFilesForBrowse() {
+    namespace fs = std::filesystem;
+    mBrowseMuscleCandidates.clear();
+
+    try {
+        fs::path muscleDir;
+        if (mBrowseMuscleDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
+            // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/muscle/
+            fs::path pidRoot = rm::getManager().getPidRoot();
+            if (!pidRoot.empty()) {
+                std::string prePost = mBrowseMusclePreOp ? "pre" : "post";
+                muscleDir = pidRoot / mBrowseCharacterPID / "gait" / prePost / "muscle";
+
+                // Create directory if it doesn't exist
+                if (!fs::exists(muscleDir)) {
+                    LOG_INFO("[PhysicalExam] Creating muscle directory: " << muscleDir);
+                    fs::create_directories(muscleDir);
+                }
+            } else {
+                LOG_WARN("[PhysicalExam] PID root not available");
+                return;
+            }
+        } else {
+            // Use default data directory
+            muscleDir = rm::getManager().resolveDir("@data/muscle");
+            if (!fs::exists(muscleDir)) return;
+        }
+
+        for (const auto& entry : fs::directory_iterator(muscleDir)) {
+            auto ext = entry.path().extension().string();
+            if (ext == ".yaml" || ext == ".xml") {
+                mBrowseMuscleCandidates.push_back(entry.path().filename().string());
+            }
+        }
+        std::sort(mBrowseMuscleCandidates.begin(), mBrowseMuscleCandidates.end());
+    }
+    catch (const std::exception& e) {
+        LOG_WARN("[PhysicalExam] Error scanning muscle files: " << e.what());
+    }
+}
+
+void PhysicalExam::reloadCharacterFromBrowse() {
+    if (mBrowseSkeletonPath.empty() || mBrowseMusclePath.empty()) {
+        LOG_WARN("[PhysicalExam] Cannot reload: skeleton or muscle path not selected");
+        return;
+    }
+
+    LOG_INFO("[PhysicalExam] Reloading character:");
+    LOG_INFO("  Skeleton: " << mBrowseSkeletonPath);
+    LOG_INFO("  Muscle: " << mBrowseMusclePath);
+
+    // Call the existing loadCharacter method
+    loadCharacter(mBrowseSkeletonPath, mBrowseMusclePath, ActuatorType::tor);
+
+    // Reinitialize sweep muscles for the new character
+    setupSweepMuscles();
+
+    LOG_INFO("[PhysicalExam] Character reloaded successfully");
 }
 
 // ============================================================================
@@ -7115,12 +7215,12 @@ void PhysicalExam::drawCameraStatusSection() {
         ImGui::Separator();
         ImGui::Text("Camera Settings:");
 
-        ImGui::Text("Eye: [%.3f, %.3f, %.3f]", mEye[0], mEye[1], mEye[2]);
-        ImGui::Text("Up:  [%.3f, %.3f, %.3f]", mUp[0], mUp[1], mUp[2]);
-        ImGui::Text("Trans: [%.3f, %.3f, %.3f]", mTrans[0], mTrans[1], mTrans[2]);
-        ImGui::Text("Zoom: %.3f", mZoom);
+        ImGui::Text("Eye: [%.3f, %.3f, %.3f]", mCamera.eye[0], mCamera.eye[1], mCamera.eye[2]);
+        ImGui::Text("Up:  [%.3f, %.3f, %.3f]", mCamera.up[0], mCamera.up[1], mCamera.up[2]);
+        ImGui::Text("Trans: [%.3f, %.3f, %.3f]", mCamera.trans[0], mCamera.trans[1], mCamera.trans[2]);
+        ImGui::Text("Zoom: %.3f", mCamera.zoom);
 
-        Eigen::Quaterniond quat = mTrackball.getCurrQuat();
+        Eigen::Quaterniond quat = mCamera.trackball.getCurrQuat();
         ImGui::Text("Quaternion: [%.3f, %.3f, %.3f, %.3f]",
                     quat.w(), quat.x(), quat.y(), quat.z());
 
@@ -7423,12 +7523,9 @@ void PhysicalExam::showScriptPreview() {
 
 bool PhysicalExam::collapsingHeaderWithControls(const std::string& title)
 {
-    bool isDefaultOpen = isPanelDefaultOpen(title);
+    bool isDefaultOpen = isPanelDefaultOpen(title);  // inherited from ViewerAppBase
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen * isDefaultOpen;
     return ImGui::CollapsingHeader(title.c_str(), flags);
 }
 
-bool PhysicalExam::isPanelDefaultOpen(const std::string& panelName) const
-{
-    return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
-}
+// isPanelDefaultOpen() is inherited from ViewerAppBase

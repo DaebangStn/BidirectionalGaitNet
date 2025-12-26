@@ -344,10 +344,10 @@ private:
 
 // Optimize muscle waypoint positions using Ceres solver
 // Preserves force directions and length-angle curve characteristics
+// Each muscle uses itself as the reference
 class OptimizeWaypointsOp : public SurgeryOperation {
 public:
     OptimizeWaypointsOp(const std::vector<std::string>& muscle_names,
-                        const std::string& reference_muscle,
                         const std::string& hdf_motion_path,
                         int max_iterations = 10000,
                         int num_sampling = 10,
@@ -355,7 +355,6 @@ public:
                         double lambda_length_curve = 0.1,
                         bool fix_origin_insertion = true)
         : mMuscleNames(muscle_names),
-          mReferenceMuscle(reference_muscle),
           mHDFMotionPath(hdf_motion_path),
           mMaxIterations(max_iterations),
           mNumSampling(num_sampling),
@@ -372,7 +371,6 @@ public:
 
 private:
     std::vector<std::string> mMuscleNames;     // Muscles to optimize
-    std::string mReferenceMuscle;              // Reference muscle for comparison
     std::string mHDFMotionPath;                // Path to HDF motion file
     int mMaxIterations;                        // Maximum Ceres iterations
     int mNumSampling;                          // Number of pose samples from motion

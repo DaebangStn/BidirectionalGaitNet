@@ -212,11 +212,10 @@ private:
     CBufferData<double>* mGraphData;
 
     // Configuration
-    std::set<std::string> mDefaultOpenPanels;
-    int mControlPanelWidth;
+    // mDefaultOpenPanels and mControlPanelWidth inherited from ViewerAppBase
 
     // === Initialization ===
-    void loadRenderConfig();
+    void loadRenderConfigImpl() override;  // Loads c3d section from render.yaml
 
     // === Rendering ===
     void drawSkeleton();
@@ -255,7 +254,7 @@ private:
 
     // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);
-    bool isPanelDefaultOpen(const std::string& panelName) const;
+    // isPanelDefaultOpen() inherited from ViewerAppBase
 
     // === C3D processing ===
     void scanC3DFiles();

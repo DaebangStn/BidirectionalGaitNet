@@ -20,14 +20,6 @@ MotionEditorApp::MotionEditorApp(const std::string& configPath)
     : ViewerAppBase("Motion Editor", 1280, 720)
     , mConfigPath(configPath.empty() ? "data/rm_config.yaml" : configPath)
 {
-    // Load config first to get window size
-    loadRenderConfig();
-
-    // Set window position if specified in config
-    if (mWindowXPos != 0 || mWindowYPos != 0) {
-        glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-    }
-
     // Initialize Resource Manager for PID-based access (use singleton)
     try {
         mResourceManager = &rm::getManager();
@@ -230,34 +222,13 @@ void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
 // Initialization
 // =============================================================================
 
-void MotionEditorApp::loadRenderConfig()
+void MotionEditorApp::loadRenderConfigImpl()
 {
+    // Load motion_editor section from render.yaml (Template Method hook)
+    // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
     try {
         std::string resolved_path = rm::resolve("render.yaml");
         YAML::Node config = YAML::LoadFile(resolved_path);
-
-        if (config["geometry"]) {
-            if (config["geometry"]["window"]) {
-                if (config["geometry"]["window"]["width"])
-                    mWidth = config["geometry"]["window"]["width"].as<int>();
-                if (config["geometry"]["window"]["height"])
-                    mHeight = config["geometry"]["window"]["height"].as<int>();
-                if (config["geometry"]["window"]["xpos"])
-                    mWindowXPos = config["geometry"]["window"]["xpos"].as<int>();
-                if (config["geometry"]["window"]["ypos"])
-                    mWindowYPos = config["geometry"]["window"]["ypos"].as<int>();
-            }
-            if (config["geometry"]["panels"]) {
-                if (config["geometry"]["panels"]["control_panel_width"])
-                    mControlPanelWidth = config["geometry"]["panels"]["control_panel_width"].as<float>();
-            }
-        }
-
-        if (config["default_open_panels"]) {
-            for (const auto& panel : config["default_open_panels"]) {
-                mDefaultOpenPanels.insert(panel.as<std::string>());
-            }
-        }
 
         if (config["motion_editor"]) {
             if (config["motion_editor"]["foot_contact"]) {
@@ -273,10 +244,7 @@ void MotionEditorApp::loadRenderConfig()
     }
 }
 
-bool MotionEditorApp::isPanelDefaultOpen(const std::string& panelName) const
-{
-    return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
-}
+// isPanelDefaultOpen() is inherited from ViewerAppBase
 
 // =============================================================================
 // Rendering

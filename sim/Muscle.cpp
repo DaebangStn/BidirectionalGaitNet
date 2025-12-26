@@ -200,9 +200,25 @@ void Muscle::SetMuscle()
 
     if (isValid == false)
     {
-        std::cout << "MUSCLE RELATED DOF CHANGED " << name << std::endl;
-        exit(-1);
+        std::cout << "[WARNING] MUSCLE RELATED DOF CHANGED: " << name << std::endl;
+        // Update original indices to new set (allow the change)
+        original_related_dof_indices = related_dof_indices;
     }
+}
+
+void Muscle::updateLmtRef()
+{
+    // Recompute lmt_ref from current anchor positions without touching related_dof_indices.
+    // Safe to call during optimization when anchor positions have changed.
+    int n = mAnchors.size();
+    mCachedAnchorPositions.resize(n);
+
+    lmt_ref = 0;
+    for (int i = 1; i < n; i++) lmt_ref += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
+    lmt_base = lmt_ref;
+    lmt = lmt_ref;
+
+    UpdateGeometry();
 }
 
 void Muscle::RefreshMuscleParams()
@@ -589,4 +605,44 @@ double Muscle::GetBHAR04_EnergyRate() // It assume that activation == excitation
     e_dot = a_dot + m_dot + s_dot + w_dot;
 
     return e_dot;
+}
+
+Muscle* Muscle::clone(dart::dynamics::SkeletonPtr target_skeleton) const {
+    // Create new muscle with same base properties
+    Muscle* cloned = new Muscle(name, f0_base, lm_contract, lt_rel_base);
+
+    // Copy muscle modification variables
+    cloned->l_ratio = l_ratio;
+    cloned->f_ratio = f_ratio;
+    cloned->lt_rel_ofs = lt_rel_ofs;
+
+    // Copy other properties
+    cloned->type1_fraction = type1_fraction;
+    cloned->mUseVelocityForce = mUseVelocityForce;
+    cloned->mClipLmNorm = mClipLmNorm;
+
+    // Clone anchors with body nodes from target skeleton
+    for (const auto* anchor : mAnchors) {
+        std::vector<dart::dynamics::BodyNode*> target_bns;
+        std::vector<Eigen::Vector3d> local_positions = anchor->local_positions;
+        std::vector<double> weights = anchor->weights;
+
+        for (auto* bn : anchor->bodynodes) {
+            auto* target_bn = target_skeleton->getBodyNode(bn->getName());
+            if (!target_bn) {
+                // Body node not found in target skeleton
+                delete cloned;
+                return nullptr;
+            }
+            target_bns.push_back(target_bn);
+        }
+
+        cloned->mAnchors.push_back(new Anchor(target_bns, local_positions, weights));
+    }
+
+    // Initialize muscle state
+    cloned->SetMuscle();
+    cloned->RefreshMuscleParams();
+
+    return cloned;
 }

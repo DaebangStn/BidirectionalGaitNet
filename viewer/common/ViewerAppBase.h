@@ -13,6 +13,7 @@
 #include <Eigen/Dense>
 #include <string>
 #include <memory>
+#include <set>
 
 /**
  * @brief Base class for GLFW-based viewer applications
@@ -71,15 +72,29 @@ protected:
     GLFWwindow* mWindow = nullptr;
     int mWidth;
     int mHeight;
+    int mWindowXPos = 0;
+    int mWindowYPos = 0;
     std::string mWindowTitle;
 
     // ============================================================
     // Rendering
     // ============================================================
-    RenderMode mRenderMode = RenderMode::Mesh;
+    RenderMode mRenderMode = RenderMode::Wireframe;
     GroundMode mGroundMode = GroundMode::Wireframe;
     ShapeRenderer mShapeRenderer;
     bool mRenderGround = true;
+
+    // ============================================================
+    // UI Defaults (from render.yaml)
+    // ============================================================
+    std::set<std::string> mDefaultOpenPanels;
+    int mControlPanelWidth = 450;
+    int mPlotPanelWidth = 350;
+
+    // Check if a panel should be open by default
+    bool isPanelDefaultOpen(const std::string& panelName) const {
+        return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
+    }
 
     // ============================================================
     // Virtual Methods (Override in Derived Classes)
@@ -102,6 +117,10 @@ protected:
 
     // Called each frame before rendering
     virtual void onFrameStart() {}
+
+    // Template Method hook: override to parse app-specific render.yaml sections
+    // Called automatically after common config is loaded (geometry, default_open_panels)
+    virtual void loadRenderConfigImpl() {}
 
     // ============================================================
     // Protected Helpers
@@ -135,6 +154,7 @@ private:
     // ============================================================
     void initGLFW();
     void initImGui();
+    void loadRenderConfig();  // Load window geometry from render.yaml
     void cleanup();
 
     // ============================================================

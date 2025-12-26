@@ -1,31 +1,26 @@
 #ifndef __PHYSICAL_EXAM_H__
 #define __PHYSICAL_EXAM_H__
 
-#include <GLFW/glfw3.h>
-#include <imgui.h>
-#include <implot.h>
 #include <vector>
 #include <map>
 #include <set>
 #include <string>
 #include <optional>
+#include <memory>
+#include <H5Cpp.h>
+#include <implot.h>
 #include "dart/dart.hpp"
-#include "dart/gui/Trackball.hpp"
 #include "Character.h"
-#include "ShapeRenderer.h"
 #include "CBufferData.h"
 #include "SurgeryOperation.h"
 #include "SurgeryExecutor.h"
 #include "SurgeryPanel.h"
-#include <memory>
-#include <H5Cpp.h>
+#include "common/PIDNavigator.h"
+#include "common/ViewerAppBase.h"
 
 namespace PMuscle {
 
-/**
- * @brief Skeleton render mode
- */
-enum class RenderMode { Primitive, Mesh, Wireframe };
+// RenderMode is inherited from ViewerAppBase (defined in GLfunctions.h)
 
 struct ROMDataPoint {
     double force_magnitude;
@@ -78,6 +73,9 @@ enum class XAxisMode { RAW_ANGLE, NORMALIZED };
 // ROM metric selection - which metric determines ROM limit
 enum class ROMMetric { STIFFNESS, TORQUE, EITHER, BOTH };
 
+// Character data source for skeleton/muscle loading
+enum class CharacterDataSource { DefaultData, PatientData };
+
 // Posture control target
 struct PostureTarget {
     std::string bodyNodeName;
@@ -120,14 +118,20 @@ struct TrialFileInfo {
     std::string name;       // Trial name (from YAML "name" field, used for display)
 };
 
-class PhysicalExam : public SurgeryExecutor {
+class PhysicalExam : public ViewerAppBase, public SurgeryExecutor {
 public:
     PhysicalExam(int width = 1920, int height = 1080);
     ~PhysicalExam();
 
+    // ViewerAppBase virtual overrides
+    void onInitialize() override;
+    void onFrameStart() override;
+    void drawContent() override;
+    void drawUI() override;
+    void keyPress(int key, int scancode, int action, int mods) override;
+
     // Initialization
-    void initialize();
-    void loadRenderConfig();
+    void loadRenderConfigImpl() override;
     void loadCharacter(const std::string& skel_path, const std::string& muscle_path, ActuatorType _actType);
     void createGround();
 
@@ -203,17 +207,17 @@ public:
     void runAllTrials();
 
     // Rendering
-    void render();
-    void mainLoop();
     void reset();  // Reset camera and scene
     void resetSkeleton();  // Reset skeleton by reloading from XML
 
     // UI
     void drawLeftPanel();  // Left panel - force controls
     void drawRightPanel();  // Right panel - plots and data
-    void drawSurgeryPanel();  // Surgery panel - toggleable with G key
+    void drawSurgeryTabContent();  // Surgery content - now a tab in left panel
 
     // Control Panel Sections
+    void drawClinicalDataSection();
+    void drawCharacterLoadSection();
     void drawPosePresetsSection();
     void drawForceApplicationSection();
     void drawPrintInfoSection();
@@ -221,6 +225,11 @@ public:
     void drawRenderOptionsSection();
     void drawJointControlSection();
     void drawJointAngleSweepSection();
+
+    // Character loading helpers
+    void scanSkeletonFilesForBrowse();
+    void scanMuscleFilesForBrowse();
+    void reloadCharacterFromBrowse();
 
     // Visualization Panel Sections
     void drawTrialManagementSection();
@@ -264,7 +273,6 @@ public:
     void executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops);
     void showScriptPreview();
 
-    void drawSimFrame();
     void drawGround();
     void drawSkeleton(const dart::dynamics::SkeletonPtr& skel);
     void drawSingleBodyNode(const dart::dynamics::BodyNode* bn, const Eigen::Vector4d& color);
@@ -277,12 +285,7 @@ public:
 
     void drawReferenceAnchor();
 
-    // Camera control
-    void setCamera();
-    void mouseMove(double xpos, double ypos);
-    void mousePress(int button, int action, int mods);
-    void mouseScroll(double xoffset, double yoffset);
-    void keyboardPress(int key, int scancode, int action, int mods);
+    // Camera control (use base class setCamera, mouse methods)
     void windowResize(int width, int height);
     
     // Camera presets
@@ -319,36 +322,20 @@ private:
     bool mShowTrialNameInPlots;  // Toggle for showing trial name in plot titles
     std::string mCurrentSweepName;  // Current sweep name (trial name or "GUI Sweep")
 
-    // GLFW/ImGui
-    GLFWwindow* mWindow;
-    int mWidth, mHeight;
-    int mWindowXPos, mWindowYPos;
+    // Panel dimensions (GLFW/ImGui window is inherited from ViewerAppBase)
     int mControlPanelWidth;
     int mPlotPanelWidth;
     int mPhysicalExamControlPanelWidth;
     int mPhysicalExamDataPanelWidth;
 
-    // Camera
-    Eigen::Vector3d mEye;
-    Eigen::Vector3d mUp;
-    Eigen::Vector3d mTrans;
-    double mZoom;
-    dart::gui::Trackball mTrackball;
-    bool mMouseDown;
-    bool mRotate;
-    bool mTranslate;
+    // Camera state (mCamera inherited from ViewerAppBase)
     bool mCameraMoving = false;  // True while camera is being manipulated
-    double mMouseX, mMouseY;
-    
-    // Camera presets
+
+    // Camera presets (uses inherited CameraState)
     struct CameraPreset {
         std::string description;
-        Eigen::Vector3d eye;
-        Eigen::Vector3d up;
-        Eigen::Vector3d trans;
-        double zoom;
-        Eigen::Quaterniond quat;
-        bool isSet = false;  // Default to unset
+        CameraState state;  // Full camera state including trackball
+        bool isSet = false;
     };
     CameraPreset mCameraPresets[10];
     int mCurrentCameraPreset;  // Track which preset is currently active
@@ -454,8 +441,7 @@ private:
     int mSimulationHz;
     int mControlHz;
 
-    // Rendering
-    ShapeRenderer mShapeRenderer;
+    // Rendering (mShapeRenderer inherited from ViewerAppBase)
     float mPassiveForceNormalizer;  // Normalization factor for passive force visualization
     float mMuscleTransparency;       // Transparency for muscle rendering
     bool mShowJointPassiveForces;   // Toggle for joint passive force arrows
@@ -465,14 +451,13 @@ private:
     bool mShowPostureDebug;          // Toggle for posture control debug output
     bool mShowExamTable;             // Toggle for examination table visibility
     bool mShowAnchorPoints;          // Toggle for anchor point visualization
-    RenderMode mRenderMode;          // Skeleton render mode (Primitive, Mesh, Wireframe)
+    // mRenderMode inherited from ViewerAppBase
 
     // Muscle Selection UI
     char mMuscleFilterText[32];
     std::vector<bool> mMuscleSelectionStates;
 
     // Surgery Panel
-    bool mShowSurgeryPanel;          // Toggle for surgery panel visibility
     char mSaveMuscleFilename[64];   // Buffer for save muscle config filename
     char mSaveSkeletonFilename[64]; // Buffer for save skeleton config filename
     bool mSavingMuscle;              // Flag to prevent duplicate saves
@@ -535,9 +520,29 @@ private:
     void setPoseSupineKneeFlexed(double knee_angle);
 
     // UI helpers
-    std::set<std::string> mDefaultOpenPanels;
+    // mDefaultOpenPanels and isPanelDefaultOpen() inherited from ViewerAppBase
     bool collapsingHeaderWithControls(const std::string& title);
-    bool isPanelDefaultOpen(const std::string& panelName) const;
+
+    // ============================================================
+    // PID Navigator and Character Loading (Browse & Rebuild)
+    // ============================================================
+    std::unique_ptr<PIDNav::PIDNavigator> mPIDNavigator;
+
+    // Independent source selection for skeleton and muscle
+    CharacterDataSource mBrowseSkeletonDataSource = CharacterDataSource::DefaultData;
+    CharacterDataSource mBrowseMuscleDataSource = CharacterDataSource::DefaultData;
+    bool mBrowseSkeletonPreOp = true;   // true = pre, false = post
+    bool mBrowseMusclePreOp = true;     // true = pre, false = post
+    std::string mBrowseCharacterPID;    // PID from navigator (shared)
+
+    std::vector<std::string> mBrowseSkeletonCandidates;
+    std::vector<std::string> mBrowseMuscleCandidates;
+    std::string mBrowseSkeletonPath;    // Selected skeleton path
+    std::string mBrowseMusclePath;      // Selected muscle path
+
+    // Clinical weight data
+    float mClinicalWeight = 0.0f;       // kg (from clinical data)
+    bool mClinicalWeightAvailable = false;
 };
 
 } // namespace PMuscle

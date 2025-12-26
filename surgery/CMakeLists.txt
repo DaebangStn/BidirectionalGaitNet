@@ -87,4 +87,5 @@ target_link_libraries(physical_exam
     dart-gui
     yaml-cpp
     Boost::program_options
+    viewer_common
 )

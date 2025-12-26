@@ -58,7 +58,6 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     , mIsPlaying(false)
     , mXmin(-10.0)
     , mPlotHideLegend(false)
-    , mControlPanelWidth(400)
 {
     std::memset(mMarkerSearchFilter, 0, sizeof(mMarkerSearchFilter));
 
@@ -68,14 +67,6 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
 
     // C3D COM init
     mC3DCOM = Eigen::Vector3d::Zero();
-
-    // Load config first to get window size/position
-    loadRenderConfig();
-
-    // Set window position if specified in config
-    if (mWindowXPos != 0 || mWindowYPos != 0) {
-        glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-    }
 
     // Initialize ImPlot for this app
     ImPlot::CreateContext();
@@ -236,35 +227,13 @@ void C3DProcessorApp::updateCamera()
 
 // setCamera() removed - handled by ViewerAppBase::setCamera()
 
-void C3DProcessorApp::loadRenderConfig()
+void C3DProcessorApp::loadRenderConfigImpl()
 {
+    // Load c3d section from render.yaml (Template Method hook)
+    // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
     try {
         std::string resolved_path = rm::resolve("render.yaml");
-
         YAML::Node config = YAML::LoadFile(resolved_path);
-
-        if (config["geometry"]) {
-            if (config["geometry"]["window"]) {
-                if (config["geometry"]["window"]["width"])
-                    mWidth = config["geometry"]["window"]["width"].as<int>();
-                if (config["geometry"]["window"]["height"])
-                    mHeight = config["geometry"]["window"]["height"].as<int>();
-                if (config["geometry"]["window"]["xpos"])
-                    mWindowXPos = config["geometry"]["window"]["xpos"].as<int>();
-                if (config["geometry"]["window"]["ypos"])
-                    mWindowYPos = config["geometry"]["window"]["ypos"].as<int>();
-            }
-            if (config["geometry"]["panels"]) {
-                if (config["geometry"]["panels"]["control_panel_width"])
-                    mControlPanelWidth = config["geometry"]["panels"]["control_panel_width"].as<int>();
-            }
-        }
-
-        if (config["default_open_panels"]) {
-            for (const auto& panel : config["default_open_panels"]) {
-                mDefaultOpenPanels.insert(panel.as<std::string>());
-            }
-        }
 
         if (config["c3d"]) {
             auto c3d = config["c3d"];
@@ -312,10 +281,7 @@ void C3DProcessorApp::loadRenderConfig()
     }
 }
 
-bool C3DProcessorApp::isPanelDefaultOpen(const std::string& panelName) const
-{
-    return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
-}
+// isPanelDefaultOpen() is inherited from ViewerAppBase
 
 // =============================================================================
 // Rendering

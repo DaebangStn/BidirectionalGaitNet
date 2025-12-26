@@ -1,0 +1,302 @@
+digraph WaypointOptimizationPipeline {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+
+    // Title
+    labelloc="t";
+    label="Waypoint Optimization Pipeline\nSurgeryExecutor::optimizeWaypoints + WaypointOptimizer::optimizeMuscle\n(DOF Sweep with Analytical Gradients)";
+
+    // Styling
+    node [shape=box, style="rounded,filled"];
+
+    // Color scheme
+    // Input/Output: lightblue
+    // Validation: lightyellow
+    // Processing: lightgreen
+    // Ceres: lavender
+    // Decision: orange
+    // Loop: lightgray
+    // Gradient: lightsalmon
+
+    // =====================================================
+    // ENTRY POINT
+    // =====================================================
+    subgraph cluster_entry {
+        label="SurgeryExecutor::optimizeWaypoints()";
+        style=rounded;
+        bgcolor="#f0f0f0";
+
+        entry [label="optimizeWaypoints()\nmuscle_names, config,\nreference_character", shape=ellipse, fillcolor="#87CEEB"];
+
+        // Validation
+        val_char [label="mCharacter\nloaded?", shape=diamond, fillcolor="#FFE4B5"];
+        val_ref [label="reference_character\nprovided?", shape=diamond, fillcolor="#FFE4B5"];
+        val_skel [label="skeleton\navailable?", shape=diamond, fillcolor="#FFE4B5"];
+
+        error_char [label="ERROR:\nNo character", shape=box, fillcolor="#FFB6C1"];
+        error_ref [label="ERROR:\nNo reference", shape=box, fillcolor="#FFB6C1"];
+        error_skel [label="ERROR:\nNo skeleton", shape=box, fillcolor="#FFB6C1"];
+
+        // Setup
+        get_muscles [label="Get all muscles\nfrom mCharacter", fillcolor="#98FB98"];
+        create_opt [label="Create WaypointOptimizer\nConfigure: maxIter, numSampling,\nlambdaShape, lambdaLengthCurve,\nfixOriginInsertion", fillcolor="#98FB98"];
+
+        entry -> val_char;
+        val_char -> error_char [label="no"];
+        val_char -> val_ref [label="yes"];
+        val_ref -> error_ref [label="no"];
+        val_ref -> val_skel [label="yes"];
+        val_skel -> error_skel [label="no"];
+        val_skel -> get_muscles [label="yes"];
+        get_muscles -> create_opt;
+    }
+
+    // =====================================================
+    // MUSCLE LOOP
+    // =====================================================
+    subgraph cluster_loop {
+        label="For each muscle_name";
+        style=rounded;
+        bgcolor="#E8E8E8";
+
+        progress_cb [label="Progress Callback\n(muscleIndex, total, name)", fillcolor="#DDA0DD"];
+
+        find_subject [label="Find subject muscle\nby name", fillcolor="#98FB98"];
+        find_ref [label="Find reference muscle\nby name", fillcolor="#98FB98"];
+
+        check_subject [label="subject\nfound?", shape=diamond, fillcolor="#FFE4B5"];
+        check_ref [label="reference\nfound?", shape=diamond, fillcolor="#FFE4B5"];
+
+        skip_subject [label="WARN:\nskip muscle", fillcolor="#FFFACD"];
+        skip_ref [label="WARN:\nskip muscle", fillcolor="#FFFACD"];
+
+        call_optimize [label="optimizer.optimizeMuscle(\nsubject, reference,\nref_skel, subj_skel, config)", fillcolor="#87CEEB", style="rounded,filled,bold"];
+
+        check_result [label="result\nsuccess?", shape=diamond, fillcolor="#FFE4B5"];
+        inc_count [label="optimizedCount++", fillcolor="#98FB98"];
+        warn_fail [label="WARN:\nopt failed", fillcolor="#FFFACD"];
+
+        next_muscle [label="muscleIndex++", fillcolor="#D3D3D3"];
+
+        progress_cb -> find_subject;
+        find_subject -> check_subject;
+        check_subject -> skip_subject [label="no"];
+        check_subject -> find_ref [label="yes"];
+        find_ref -> check_ref;
+        check_ref -> skip_ref [label="no"];
+        check_ref -> call_optimize [label="yes"];
+        skip_subject -> next_muscle;
+        skip_ref -> next_muscle;
+        call_optimize -> check_result;
+        check_result -> inc_count [label="yes"];
+        check_result -> warn_fail [label="no"];
+        inc_count -> next_muscle;
+        warn_fail -> next_muscle;
+    }
+
+    // =====================================================
+    // INNER OPTIMIZATION (WaypointOptimizer::optimizeMuscle)
+    // =====================================================
+    subgraph cluster_inner {
+        label="WaypointOptimizer::optimizeMuscle()";
+        style=rounded;
+        bgcolor="#F5F5DC";
+
+        // Step 1: Reference curve (DOF sweep)
+        step1 [label="1. Compute REFERENCE curve\ncomputeMuscleLengthCurve()\nDOF sweep across joint limits", fillcolor="#98FB98"];
+        check_ref_curve [label="ref curve\nempty?", shape=diamond, fillcolor="#FFE4B5"];
+        analyze_ref [label="analyzeLengthCurve()\n→ min/max phase, delta", fillcolor="#98FB98"];
+
+        // Step 2: Subject before curve
+        step2 [label="2. Compute SUBJECT BEFORE curve\ncomputeMuscleLengthCurve()\nDOF sweep across joint limits", fillcolor="#98FB98"];
+        check_subj_curve [label="subj curve\nempty?", shape=diamond, fillcolor="#FFE4B5"];
+        analyze_subj [label="analyzeLengthCurve()\nGenerate phase data [0..1]", fillcolor="#98FB98"];
+
+        // Early exit check
+        check_anchors [label="≤2 anchors\n& fixOrigin?", shape=diamond, fillcolor="#FFE4B5"];
+        skip_opt [label="Skip optimization\nafter = before", fillcolor="#FFFACD"];
+
+        // DOF finding
+        find_dof [label="3. findBestDOF()\nSelect DOF with largest\nJacobian magnitude", fillcolor="#98FB98"];
+        check_dof [label="valid\nDOF?", shape=diamond, fillcolor="#FFE4B5"];
+        skip_dof [label="WARN: No valid DOF\nafter = before", fillcolor="#FFFACD"];
+
+        // Ceres setup
+        step4 [label="4. Create OptimizationContext\nDOFSweepConfig, ref_pose,\nref_chars", fillcolor="#E6E6FA"];
+
+        step5 [label="5. WaypointParameters (RAII)\nCopy anchor local_positions\nto double[] arrays", fillcolor="#E6E6FA"];
+
+        step6 [label="6. Setup ceres::Problem\nAddParameterBlock for each anchor", fillcolor="#E6E6FA"];
+
+        step7 [label="7. Fix origin/insertion\nSetParameterBlockConstant()", fillcolor="#E6E6FA"];
+
+        step8 [label="8. Add cost functions\n(Template Method Pattern)", fillcolor="#E6E6FA"];
+
+        fail_ref [label="FAIL:\nempty ref curve", shape=box, fillcolor="#FFB6C1"];
+        fail_subj [label="FAIL:\nempty subj curve", shape=box, fillcolor="#FFB6C1"];
+
+        step1 -> check_ref_curve;
+        check_ref_curve -> fail_ref [label="yes"];
+        check_ref_curve -> analyze_ref [label="no"];
+        analyze_ref -> step2;
+        step2 -> check_subj_curve;
+        check_subj_curve -> fail_subj [label="yes"];
+        check_subj_curve -> analyze_subj [label="no"];
+        analyze_subj -> check_anchors;
+        check_anchors -> skip_opt [label="yes"];
+        check_anchors -> find_dof [label="no"];
+        find_dof -> check_dof;
+        check_dof -> skip_dof [label="no"];
+        check_dof -> step4 [label="yes"];
+        step4 -> step5;
+        step5 -> step6;
+        step6 -> step7;
+        step7 -> step8;
+    }
+
+    // =====================================================
+    // COST FUNCTIONS (Template Method Pattern)
+    // =====================================================
+    subgraph cluster_cost {
+        label="WaypointCostFunction (Base Class)";
+        style=rounded;
+        bgcolor="#FFF8DC";
+
+        cost_base [label="WaypointCostFunction::Evaluate()\nupdateAnchorPosition(params)\nresidual = weight * sqrt(E)", fillcolor="#E6E6FA"];
+
+        cost_shape [label="ShapeCostFunction\ncomputeShapeEnergy()\ncomputeShapeGradient()", fillcolor="#FFA07A"];
+
+        cost_curve [label="LengthCurveCostFunction\ncomputeLengthCurveEnergy()\ncomputeLengthCurveGradient()", fillcolor="#FFA07A"];
+
+        cost_base -> cost_shape [label="override"];
+        cost_base -> cost_curve [label="override"];
+    }
+
+    // =====================================================
+    // ENERGY FUNCTIONS
+    // =====================================================
+    subgraph cluster_energy {
+        label="Energy & Gradient Functions";
+        style=rounded;
+        bgcolor="#FFFACD";
+
+        shape_energy [label="fShape Energy\nsweepDOF() → segment directions\ncross(subj_dir, ref_dir).norm()", fillcolor="#FFA07A"];
+
+        shape_grad [label="fShape Gradient\ncomputeSegmentShapeGradient()\n∂d/∂p = ±(I - d*dᵀ) / len\nR.transpose() * dd_dp * dcross_dd", fillcolor="#FFA07A"];
+
+        curve_energy [label="fLengthCurve Energy\nkPhaseWeight * (phase_diff)²\n+ kDeltaWeight * (delta_diff)²", fillcolor="#FFA07A"];
+
+        curve_grad [label="fLengthCurve Gradient\n∂L/∂p[i] = (p[i]-p[i-1])/len_prev\n         + (p[i]-p[i+1])/len_next\nR.transpose() * dL_dp * dE_ddelta", fillcolor="#FFA07A"];
+
+        shape_energy -> shape_grad [style=dashed];
+        curve_energy -> curve_grad [style=dashed];
+    }
+
+    // =====================================================
+    // SOLVER AND COMPLETION
+    // =====================================================
+    subgraph cluster_solve {
+        label="Ceres Solver";
+        style=rounded;
+        bgcolor="#E6E6FA";
+
+        solver_opts [label="9. Configure Ceres\nDENSE_QR, max_iterations\nkFunctionTolerance (1e-8)\nkGradientTolerance (1e-10)", fillcolor="#E6E6FA"];
+
+        solver_run [label="10. ceres::Solve()\nAnalytical Jacobians\n(no NumericDiff)", fillcolor="#DDA0DD", style="rounded,filled,bold"];
+
+        solver_log [label="11. Log summary\nBriefReport", fillcolor="#D3D3D3"];
+
+        apply_result [label="12. waypoint_params.applyTo()\nUpdate anchor local_positions", fillcolor="#98FB98"];
+
+        set_muscle [label="13. SetMuscle()\nRecompute geometry", fillcolor="#98FB98"];
+
+        final_curve [label="14. Compute SUBJECT AFTER\ncomputeMuscleLengthCurve()", fillcolor="#98FB98"];
+
+        result_out [label="Return WaypointOptResult\n{reference, before, after curves,\nphases, success}", shape=ellipse, fillcolor="#87CEEB"];
+
+        solver_opts -> solver_run;
+        solver_run -> solver_log;
+        solver_log -> apply_result;
+        apply_result -> set_muscle;
+        set_muscle -> final_curve;
+        final_curve -> result_out;
+    }
+
+    // =====================================================
+    // COMPLETION
+    // =====================================================
+    subgraph cluster_complete {
+        label="Completion";
+        style=rounded;
+        bgcolor="#f0f0f0";
+
+        final_cb [label="Final Progress Callback\n(total, total, \"Complete\")", fillcolor="#DDA0DD"];
+
+        check_count [label="optimizedCount\n== 0?", shape=diamond, fillcolor="#FFE4B5"];
+        error_none [label="ERROR:\nNo muscles optimized", shape=box, fillcolor="#FFB6C1"];
+
+        log_success [label="LOG: Waypoint optimization\ncompleted for N/M muscles", fillcolor="#D3D3D3"];
+
+        return_true [label="return true", shape=ellipse, fillcolor="#90EE90"];
+        return_false [label="return false", shape=ellipse, fillcolor="#FFB6C1"];
+
+        final_cb -> check_count;
+        check_count -> error_none [label="yes"];
+        check_count -> log_success [label="no"];
+        error_none -> return_false;
+        log_success -> return_true;
+    }
+
+    // =====================================================
+    // CROSS-CLUSTER EDGES
+    // =====================================================
+    create_opt -> progress_cb [lhead=cluster_loop];
+    next_muscle -> progress_cb [style=dashed, label="loop", constraint=false];
+    next_muscle -> final_cb [label="done"];
+
+    call_optimize -> step1 [lhead=cluster_inner, style=bold];
+
+    step8 -> cost_base [lhead=cluster_cost, style=bold];
+    cost_shape -> shape_energy [lhead=cluster_energy, style=dashed];
+    cost_curve -> curve_energy [lhead=cluster_energy, style=dashed];
+
+    step8 -> solver_opts [lhead=cluster_solve];
+    skip_opt -> result_out;
+    skip_dof -> result_out;
+    result_out -> check_result [ltail=cluster_solve, style=bold];
+
+    // =====================================================
+    // LEGEND
+    // =====================================================
+    subgraph cluster_legend {
+        label="Legend";
+        rank=sink;
+        style=rounded;
+        bgcolor="white";
+
+        leg_input [label="Input/Output", fillcolor="#87CEEB"];
+        leg_val [label="Validation", fillcolor="#FFE4B5"];
+        leg_proc [label="Processing", fillcolor="#98FB98"];
+        leg_ceres [label="Ceres Solver", fillcolor="#E6E6FA"];
+        leg_grad [label="Energy/Gradient", fillcolor="#FFA07A"];
+        leg_cb [label="Callback", fillcolor="#DDA0DD"];
+        leg_warn [label="Warning/Skip", fillcolor="#FFFACD"];
+        leg_error [label="Error", fillcolor="#FFB6C1"];
+
+        leg_input -> leg_val -> leg_proc -> leg_ceres -> leg_grad -> leg_cb -> leg_warn -> leg_error [style=invis];
+    }
+
+    // =====================================================
+    // CONSTANTS NOTE
+    // =====================================================
+    subgraph cluster_constants {
+        label="Constants";
+        rank=sink;
+        style=rounded;
+        bgcolor="#F0FFF0";
+
+        constants [label="kEpsilon = 1e-8\nkSqrtEpsilon = 1e-10\nkPhaseWeight = 0.007 (SkelGen)\nkDeltaWeight = 0.5 (SkelGen)\nkFunctionTolerance = 1e-8\nkGradientTolerance = 1e-10\nkParameterTolerance = 1e-10", shape=note, fillcolor="#F0FFF0"];
+    }
+}
