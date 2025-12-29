@@ -92,8 +92,8 @@ void RolloutSampleEnv::SetParameters(const std::map<std::string, double>& params
         }
     }
 
-    // Set the parameter state (normalized=false, doOptimization=true)
-    mEnv.setParamState(param_state, false, true);
+    // Set the parameter state
+    mEnv.setParamState(param_state);
 }
 
 Eigen::VectorXd RolloutSampleEnv::InterpolatePose(const Eigen::VectorXd& pose1,

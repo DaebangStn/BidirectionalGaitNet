@@ -6040,7 +6040,7 @@ void GLFWApp::loadParametersFromCurrentMotion()
         LOG_INFO("  Matched " + std::to_string(matched_count) + " parameters by name");
 
         // Apply parameters to simulation environment
-        mRenderEnv->setParamState(new_params, false, true);
+        mRenderEnv->setParamState(new_params);
 
         LOG_INFO("✓ Successfully loaded parameters from " + motion->getSourceType()
                   + " motion: " + motion->getName());
@@ -6137,7 +6137,7 @@ void GLFWApp::unloadMotion()
     // Reset simulation parameters to default from XML metadata
     if (mRenderEnv && mMotionCharacter) {
         Eigen::VectorXd default_params = mRenderEnv->getParamDefault();
-        mRenderEnv->setParamState(default_params, false, true);
+        mRenderEnv->setParamState(default_params);
         mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
         LOG_INFO("[Motion] Motion unloaded, parameters reset to defaults");
     }

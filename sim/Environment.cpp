@@ -2373,7 +2373,7 @@ Eigen::VectorXd Environment::getJointState(bool isMirror)
     return joint_state * 0.008;
 }
 
-void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
+void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle)
 {
     int idx = 0;
     // skeleton parameter
@@ -2392,7 +2392,7 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
         }
         // Only call setSkelParam if there are skeleton parameters to apply
         if (!skel_info.empty()) {
-            mCharacter->setSkelParam(skel_info, doOptimization);
+            mCharacter->setSkelParam(skel_info);
         }
 
         // Sync stride and cadence to GaitPhase (only if initialized)
@@ -2418,7 +2418,7 @@ void Environment::setParamState(Eigen::VectorXd _param_state, bool onlyMuscle, b
     mCharacter->cacheMuscleMass();
 }
 
-void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle, bool doOptimization)
+void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle)
 {
     int idx = 0;
     // skeleton parameter
@@ -2434,7 +2434,7 @@ void Environment::setNormalizedParamState(Eigen::VectorXd _param_state, bool onl
             if (name.find("torsion") != std::string::npos) skel_info.push_back(std::make_pair(name, mParamMin[idx] + _param_state[idx] * (mParamMax[idx] - mParamMin[idx])));
             idx++;
         }
-        mCharacter->setSkelParam(skel_info, doOptimization);
+        mCharacter->setSkelParam(skel_info);
 
         // Sync stride and cadence to GaitPhase (only if initialized)
         if (mGaitPhase) {

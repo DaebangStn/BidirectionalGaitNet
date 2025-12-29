@@ -3,7 +3,6 @@
 #include "dart/dart.hpp"
 #include "DARTHelper.h"
 #include "Muscle.h"
-#include "SimpleMotion.h"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -158,26 +157,9 @@ public:
     // Body Parameter
     double getSkelParamValue(std::string name);
     double getTorsionValue(std::string name);
-    void setSkelParam(std::vector<std::pair<std::string, double>> _skel_info, bool doOptimization = false);
-    void applySkeletonLength(const std::vector<BoneInfo> &info, bool doOptimization = false);
+    void setSkelParam(std::vector<std::pair<std::string, double>> _skel_info);
+    void applySkeletonLength(const std::vector<BoneInfo> &info);
     void applySkeletonBodyNode(const std::vector<BoneInfo> &info, dart::dynamics::SkeletonPtr skel);
-    double calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const std::vector<SimpleMotion *> &simpleMotions, const Eigen::EIGEN_VV_VEC3D &x0);
-    double fLengthCurve(double minPhaseDiff, double maxPhaseDiff, double lengthDiff) { return 0.007 * pow(minPhaseDiff, 2) + 0.007 * pow(maxPhaseDiff, 2) + 0.5 * pow(lengthDiff, 2); }
-    double fRegularizer(Muscle *rtgMuscle, const Eigen::EIGEN_VV_VEC3D &x0)
-    {
-        double total = 0;
-        for (int i = 1; i + 1 < rtgMuscle->mAnchors.size(); i++)
-        {
-            Anchor *anchor = rtgMuscle->mAnchors[i];
-            for (int j = 0; j < anchor->local_positions.size(); j++)
-            {
-                total += (anchor->local_positions[j] - x0[i - 1][j]).norm() * anchor->weights[j];
-            }
-        }
-        return total;
-    }
-    void setSimpleMotion(const std::string &simplemotion, const std::string &jointmap);
-    double fShape(Muscle *stdMuscle, Muscle *rtgMuscle);
 
     // For Drawing
     void updateRefSkelParam(dart::dynamics::SkeletonPtr skel) { applySkeletonBodyNode(mSkelInfos, skel); }
@@ -249,7 +231,6 @@ private:
 
     // Muscle
     std::vector<Muscle *> mMuscles;
-    std::vector<Muscle *> mRefMuscles;
     std::map<std::string, Muscle*> mMuscleNameCache;  // Fast lookup by name
 
     int mNumMuscleRelatedDof;
@@ -285,12 +266,9 @@ private:
     std::vector<Eigen::VectorXd> mMuscleTorqueLogs;
 
     // Skeleton Parameters
-    bool mLongOpt;
     std::vector<BoneInfo> mSkelInfos;
     double mGlobalRatio;
     std::map<dart::dynamics::BodyNode *, ModifyInfo> modifyLog;
-    std::map<std::string, std::vector<SimpleMotion *>> muscleToSimpleMotions;
-
     bool mIncludeJtPinSPD;
 
     // Upper body torque scaling for light bodies

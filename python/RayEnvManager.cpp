@@ -134,9 +134,9 @@ public:
     {
 
         Eigen::VectorXd cur_paramstate = Environment::getParamState();
-        Environment::setNormalizedParamState(toEigenVector(param), false, true);
+        Environment::setNormalizedParamState(toEigenVector(param));
         Eigen::VectorXd res = Environment::getNormalizedParamState(Environment::getParamMin(), Environment::getParamMax(), true);
-        Environment::setParamState(cur_paramstate, false, true);
+        Environment::setParamState(cur_paramstate);
         return toNumPyArray(res);
     }
 

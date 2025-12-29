@@ -388,7 +388,6 @@ Character::Character(std::string path, int skelFlags)
     }
     mNumMuscleRelatedDof = 0;
     mGlobalRatio = 1.0;
-    mLongOpt = false;
     mTorqueClipping = false;
 
     // Initialize step-based metrics system
@@ -605,9 +604,6 @@ Character::~Character()
     for(auto m : mMuscles)
         delete m;
     mMuscles.clear();
-    for(auto m : mRefMuscles)
-        delete m;
-    mRefMuscles.clear();
 }
 
 // Explanatation
@@ -925,7 +921,6 @@ void Character::setMusclesXML(std::string path, bool meshLbsWeight)
         double lt = std::stod(unit->Attribute("lt"));
 
         Muscle *muscle_elem = new Muscle(name, f0, lm, lt);
-        Muscle *refmuscle_elem = new Muscle(name, f0, lm, lt);
 
         bool isValid = true;
         int num_waypoints = 0;
@@ -959,14 +954,10 @@ void Character::setMusclesXML(std::string path, bool meshLbsWeight)
             if (i == 0 || i == num_waypoints - 1) // one of the insertion/origin points
             {
                 muscle_elem->AddAnchor(mSkeleton->getBodyNode(body), glob_pos);
-                refmuscle_elem->AddAnchor(mRefSkeleton->getBodyNode(body), glob_pos);
             }
             else
             {
-                // if (meshLbsWeight && isLegMuscle)
-                //     std::cout << "muscle name : " << name << std::endl;
                 muscle_elem->AddAnchor(mSkeleton, mSkeleton->getBodyNode(body), glob_pos, 2, meshLbsWeight && isLegMuscle);
-                refmuscle_elem->AddAnchor(mRefSkeleton, mRefSkeleton->getBodyNode(body), glob_pos, 2, meshLbsWeight && isLegMuscle);
             }
             i++;
         }
@@ -976,9 +967,15 @@ void Character::setMusclesXML(std::string path, bool meshLbsWeight)
             if (muscle_elem->GetNumRelatedDofs() > 0)
             {
                 mMuscles.push_back(muscle_elem);
-                refmuscle_elem->SetMuscle();
-                mRefMuscles.push_back(refmuscle_elem);
             }
+            else
+            {
+                delete muscle_elem;
+            }
+        }
+        else
+        {
+            delete muscle_elem;
         }
     }
 
@@ -989,7 +986,6 @@ void Character::setMusclesXML(std::string path, bool meshLbsWeight)
             for (int b_idx = 0; b_idx < mMuscles[i]->GetAnchors()[idx]->num_related_bodies; b_idx++)
             {
                 mMuscles[i]->GetAnchors()[idx]->weights[b_idx] = mMuscles[i + 1]->GetAnchors()[idx]->weights[b_idx];
-                mRefMuscles[i]->GetAnchors()[idx]->weights[b_idx] = mRefMuscles[i + 1]->GetAnchors()[idx]->weights[b_idx];
                 auto name = mMuscles[i]->GetAnchors()[idx]->bodynodes[b_idx]->getName();
                 if (mMuscles[i + 1]->GetAnchors()[idx]->bodynodes[b_idx]->getName().substr(0, name.length() - 1) != name.substr(0, name.length() - 1))
                 {
@@ -1064,9 +1060,7 @@ void Character::setMusclesYAML(std::string path)
             double lm_contract = muscle_node["lm_contract"].as<double>();
             double lt_rel = muscle_node["lt_rel"].as<double>();
 
-            // Create muscle objects (for both skeleton and reference)
             Muscle *muscle_elem = new Muscle(name, f0, lm_contract, lt_rel);
-            Muscle *refmuscle_elem = new Muscle(name, f0, lm_contract, lt_rel);
 
             bool isValid = true;
 
@@ -1075,7 +1069,6 @@ void Character::setMusclesYAML(std::string path)
             if (!waypoints_node) {
                 LOG_WARN("[Character] No waypoints found for muscle: " << name);
                 delete muscle_elem;
-                delete refmuscle_elem;
                 continue;
             }
 
@@ -1083,10 +1076,6 @@ void Character::setMusclesYAML(std::string path)
                 std::vector<dart::dynamics::BodyNode*> bodynodes;
                 std::vector<Eigen::Vector3d> local_positions;
                 std::vector<double> weights;
-
-                std::vector<dart::dynamics::BodyNode*> ref_bodynodes;
-                std::vector<Eigen::Vector3d> ref_local_positions;
-                std::vector<double> ref_weights;
 
                 // Parse all bodies in this anchor (multi-LBS support)
                 for (auto body_node : anchor_node) {
@@ -1121,32 +1110,23 @@ void Character::setMusclesYAML(std::string path)
                     bodynodes.push_back(body);
                     local_positions.push_back(local_pos);
                     weights.push_back(weight);
-
-                    ref_bodynodes.push_back(ref_body);
-                    ref_local_positions.push_back(local_pos);
-                    ref_weights.push_back(weight);
                 }
 
                 if (!isValid) break;
 
                 // Create anchor directly (skip AddAnchor computation!)
                 muscle_elem->mAnchors.push_back(new Anchor(bodynodes, local_positions, weights));
-                refmuscle_elem->mAnchors.push_back(new Anchor(ref_bodynodes, ref_local_positions, ref_weights));
             }
 
             if (isValid) {
                 muscle_elem->SetMuscle();
                 if (muscle_elem->GetNumRelatedDofs() > 0) {
                     mMuscles.push_back(muscle_elem);
-                    refmuscle_elem->SetMuscle();
-                    mRefMuscles.push_back(refmuscle_elem);
                 } else {
                     delete muscle_elem;
-                    delete refmuscle_elem;
                 }
             } else {
                 delete muscle_elem;
-                delete refmuscle_elem;
             }
         }
 
@@ -1155,7 +1135,6 @@ void Character::setMusclesYAML(std::string path)
             for (int idx = 0; idx < mMuscles[i]->GetAnchors().size(); idx++) {
                 for (int b_idx = 0; b_idx < mMuscles[i]->GetAnchors()[idx]->num_related_bodies; b_idx++) {
                     mMuscles[i]->GetAnchors()[idx]->weights[b_idx] = mMuscles[i + 1]->GetAnchors()[idx]->weights[b_idx];
-                    mRefMuscles[i]->GetAnchors()[idx]->weights[b_idx] = mRefMuscles[i + 1]->GetAnchors()[idx]->weights[b_idx];
                     auto name = mMuscles[i]->GetAnchors()[idx]->bodynodes[b_idx]->getName();
                     if (mMuscles[i + 1]->GetAnchors()[idx]->bodynodes[b_idx]->getName().substr(0, name.length() - 1) != name.substr(0, name.length() - 1)) {
                         LOG_ERROR("[Character] Body Node Setting Calibrate: " << mMuscles[i]->name << " " << mMuscles[i + 1]->name);
@@ -1195,12 +1174,6 @@ void Character::clearMuscles()
         delete m;
     }
     mMuscles.clear();
-
-    // Also clear reference muscles
-    for (auto m : mRefMuscles) {
-        delete m;
-    }
-    mRefMuscles.clear();
 
     // Clear muscle name cache
     mMuscleNameCache.clear();
@@ -1495,10 +1468,8 @@ Character::interpolatePose(const Eigen::VectorXd& pose1,
     return interpolated;
 }
 
-void Character::setSkelParam(std::vector<std::pair<std::string, double>> _skel_info, bool doOptimization)
+void Character::setSkelParam(std::vector<std::pair<std::string, double>> _skel_info)
 {
-
-    // doOptimization = true;
     // Global Setting
     for (auto s : _skel_info)
     {
@@ -1544,16 +1515,13 @@ void Character::setSkelParam(std::vector<std::pair<std::string, double>> _skel_i
         for (int i = 0; i < jn->getNumDofs(); i++)
             jn->setDampingCoefficient(i, mRefSkeleton->getJoint(jn->getName())->getDampingCoefficient(i) * pow(mGlobalRatio, 2.5));
 
-    if (doOptimization == true)
-        applySkeletonLength(mSkelInfos, doOptimization);
-
     // Re-apply target mass if it was set (skeleton modifications reset body masses)
     if (mTargetMass > 0) {
         setBodyMass(mTargetMass);
     }
 }
 
-void Character::applySkeletonLength(const std::vector<BoneInfo> &info, bool doOptimization)
+void Character::applySkeletonLength(const std::vector<BoneInfo> &info)
 {
     // const double f0_coeff = 1.5;
     for (auto bone : info)
@@ -1570,135 +1538,6 @@ void Character::applySkeletonLength(const std::vector<BoneInfo> &info, bool doOp
     mSkeleton->computeForwardKinematics(true, false, false);
     mRefSkeleton->setPositions(Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
     mRefSkeleton->computeForwardKinematics(true, false, false);
-
-    double currentLegLength = mSkeleton->getBodyNode("Pelvis")->getCOM()[1] - mSkeleton->getBodyNode("TalusL")->getCOM()[1];
-    double originalLegLength = mRefSkeleton->getBodyNode("Pelvis")->getCOM()[1] - mRefSkeleton->getBodyNode("TalusL")->getCOM()[1];
-
-    if (doOptimization)
-    {
-        for (int i = 0; i < mMuscles.size(); i++)
-        {
-            Muscle *mMuscle = mMuscles[i], *mRefMuscle = mRefMuscles[i];
-            for (int j = 0; j < mMuscle->GetAnchors().size(); j++)
-            {
-                Anchor *mAnchor = mMuscle->GetAnchors()[j], *mStdAnchor = mRefMuscle->GetAnchors()[j];
-                for (int k = 0; k < mAnchor->bodynodes.size(); k++)
-                {
-                    BodyNode *mBody = mAnchor->bodynodes[k];
-                    int axis = skeletonAxis[mBody->getName()];
-                    auto cur = Eigen::Isometry3d(Eigen::Translation3d(mStdAnchor->local_positions[k]));
-                    Eigen::Isometry3d tmp = modifyIsometry3d(cur, modifyLog[mBody], axis);
-                    mAnchor->local_positions[k] = tmp.translation();
-                }
-            }
-            mMuscle->SetMuscle();
-            mMuscle->f0_base = mMuscle->f0 = mRefMuscle->f0 * pow(mMuscle->lmt_ref / mRefMuscle->lmt_ref, 1.5);
-        }
-
-        {
-            // Way Point Optimization
-            double eps = 5e-5;
-            std::vector<double> derivative;
-            if (mLongOpt)
-                for (int muscleIdx = 0; muscleIdx < mMuscles.size(); muscleIdx++)
-                {
-                    auto stdMuscle = mRefMuscles[muscleIdx];
-                    auto rtgMuscle = mMuscles[muscleIdx];
-                    int numAnchors = rtgMuscle->mAnchors.size();
-                    if (muscleToSimpleMotions.find(rtgMuscle->name) == muscleToSimpleMotions.end())
-                        continue;
-                    const std::vector<SimpleMotion *> &simpleMotions = muscleToSimpleMotions.find(rtgMuscle->name)->second;
-                    if (simpleMotions.size() == 0 || numAnchors == 2)
-                        continue;
-
-                    std::vector<std::vector<Eigen::Vector3d>> x0(numAnchors - 2);
-                    for (int i = 1; i + 1 < numAnchors; i++)
-                    {
-                        Anchor *anchor = rtgMuscle->mAnchors[i];
-                        for (int j = 0; j < anchor->local_positions.size(); j++)
-                        {
-                            x0[i - 1].push_back(anchor->local_positions[j]);
-                        }
-                    }
-
-                    // optimize W_r*
-                    int rep;
-                    for (rep = 0; rep < 20; rep++)
-                    {
-                        double currentDifference = calculateMetric(stdMuscle, rtgMuscle, simpleMotions, x0);
-
-                        // if waypoint is origin or insertion of any muscle, then it must be fixed.
-                        derivative.clear();
-                        for (int i = 1; i + 1 < rtgMuscle->mAnchors.size(); i++)
-                        {
-                            Anchor *anchor = rtgMuscle->mAnchors[i];
-                            for (int j = 0; j < anchor->local_positions.size(); j++)
-                            {
-                                for (int dir = 0; dir < 3; dir++)
-                                { // 0:x, 1:y, 2;z
-                                    double dx = 0;
-                                    anchor->local_positions[j][dir] += eps;
-                                    rtgMuscle->SetMuscle();
-                                    dx += calculateMetric(stdMuscle, rtgMuscle, simpleMotions, x0);
-                                    anchor->local_positions[j][dir] -= eps * 2;
-                                    rtgMuscle->SetMuscle();
-                                    dx -= calculateMetric(stdMuscle, rtgMuscle, simpleMotions, x0);
-                                    anchor->local_positions[j][dir] += eps;
-                                    rtgMuscle->SetMuscle();
-                                    derivative.push_back(dx / (eps * 2));
-                                }
-                            }
-                        }
-
-                        double alpha = 0.1;
-                        // I tried k<100, but result was pretty same as k<16
-                        int lineStep;
-                        for (lineStep = 0; lineStep < 32; lineStep++)
-                        {
-                            for (int i = 1, derivativeIdx = 0; i + 1 < rtgMuscle->mAnchors.size(); i++)
-                            {
-                                Anchor *anchor = rtgMuscle->mAnchors[i];
-                                for (int j = 0; j < anchor->local_positions.size(); j++)
-                                {
-                                    for (int dir = 0; dir < 3; dir++, derivativeIdx++)
-                                    { // 0:x, 1:y, 2;z
-                                        anchor->local_positions[j][dir] -= alpha * derivative[derivativeIdx];
-                                    }
-                                }
-                            }
-                            rtgMuscle->SetMuscle();
-
-                            double nextDifference = calculateMetric(stdMuscle, rtgMuscle, simpleMotions, x0);
-                            if (nextDifference < currentDifference * 0.999)
-                                break;
-
-                            for (int i = 1, derivativeIdx = 0; i + 1 < rtgMuscle->mAnchors.size(); i++)
-                            {
-                                Anchor *anchor = rtgMuscle->mAnchors[i];
-                                for (int j = 0; j < anchor->local_positions.size(); j++)
-                                {
-                                    for (int dir = 0; dir < 3; dir++, derivativeIdx++)
-                                    { // 0:x, 1:y, 2;z
-                                        anchor->local_positions[j][dir] += alpha * derivative[derivativeIdx];
-                                    }
-                                }
-                            }
-                            rtgMuscle->SetMuscle();
-                            alpha *= 0.5;
-                        }
-                        if (lineStep == 32)
-                            break;
-                    }
-                    // std::cout << "Muscle " << rtgMuscle->name << " moves " << fRegularizer(rtgMuscle, x0) << " iter " << rep << std::endl;
-                }
-        }
-        for (int i = 0; i < mMuscles.size(); i++)
-        {
-            Muscle *mMuscle = mMuscles[i], *mRefMuscle = mRefMuscles[i];
-            mMuscle->SetMuscle();
-            mMuscle->f0_base = mMuscle->f0 = mRefMuscle->f0 * pow(mMuscle->lmt_ref / mRefMuscle->lmt_ref, 1.5);
-        } //*/
-    }
 
     mSkeleton->setPositions(positions);
     mSkeleton->computeForwardKinematics(true, false, false);
@@ -1877,100 +1716,9 @@ void Character::setClipLmNorm(double clip)
     LOG_VERBOSE("[Character] Set lm_norm clip to " << clip << " for all muscles");
 }
 
-double Character::calculateMetric(Muscle *stdMuscle, Muscle *rtgMuscle, const std::vector<SimpleMotion *> &simpleMotions, const Eigen::EIGEN_VV_VEC3D &x0)
-{
-    double lambdaShape = 0.1;
-    double lambdaLengthCurve = 1.0;
-    double lambdaRegularizer = 0.1;
-
-    double shapeTerm = 0;
-    double lengthCurveTerm = 0;
-    double regularizerTerm = 0;
-
-    double ret = 0.0;
-    int numSampling = 50;
-    for (SimpleMotion *sm : simpleMotions)
-    {
-        std::pair<double, double> stdMin, stdMax, rtgMin, rtgMax;
-        stdMin = rtgMin = std::pair<double, double>(1e10, 0);
-        stdMax = rtgMax = std::pair<double, double>(-1e10, 0);
-
-        for (int rep = 0; rep <= numSampling; rep++)
-        {
-            double phase = 1.0 * rep / numSampling;
-            for (auto [idx, pose] : sm->getPose(phase))
-            {
-                mRefSkeleton->setPosition(idx, pose);
-                mSkeleton->setPosition(idx, pose);
-            }
-
-            // shape term
-            stdMuscle->UpdateGeometry();
-            rtgMuscle->UpdateGeometry();
-            shapeTerm += (rep == 0 || rep == numSampling ? 0.5 : 1) * fShape(stdMuscle, rtgMuscle);
-
-            // length curve term
-            std::pair<double, double> stdLength = std::make_pair(stdMuscle->GetLengthRatio(), phase);
-            std::pair<double, double> rtgLength = std::make_pair(rtgMuscle->GetLengthRatio(), phase);
-            stdMin = std::min(stdMin, stdLength);
-            stdMax = std::max(stdMax, stdLength);
-            rtgMin = std::min(rtgMin, rtgLength);
-            rtgMax = std::max(rtgMax, rtgLength);
-        }
-        lengthCurveTerm += fLengthCurve(stdMin.second - rtgMin.second, stdMax.second - rtgMax.second,
-                                        (stdMax.first - stdMin.first) - (rtgMax.first - rtgMin.first));
-
-        for (auto [idx, pose] : sm->getPose(0))
-        {
-            mRefSkeleton->setPosition(idx, 0);
-            mSkeleton->setPosition(idx, 0);
-        }
-    }
-    regularizerTerm += fRegularizer(rtgMuscle, x0);
-
-    int dof = mRefSkeleton->getNumDofs();
-    mRefSkeleton->setPositions(Eigen::VectorXd::Zero(dof));
-    mSkeleton->setPositions(Eigen::VectorXd::Zero(dof));
-
-    return lambdaShape * shapeTerm / numSampling / simpleMotions.size() + lambdaLengthCurve * lengthCurveTerm / simpleMotions.size() + lambdaRegularizer * regularizerTerm;
-}
-
-double Character::fShape(Muscle *stdMuscle, Muscle *rtgMuscle)
-{
-    double ret = 0;
-    int cnt = 0;
-    for (int i = 1; i + 1 < stdMuscle->mAnchors.size(); i++)
-    {
-        auto std_bn = stdMuscle->mAnchors[i]->bodynodes[0];
-        auto rtg_bn = rtgMuscle->mAnchors[i]->bodynodes[0];
-        Eigen::Matrix3d std_bn_inv = std_bn->getTransform().linear().transpose();
-        Eigen::Matrix3d rtg_bn_inv = rtg_bn->getTransform().linear().transpose();
-        // Eigen::Isometry3d std_bn_inv = std_bn->getTransform().inverse();
-        // Eigen::Isometry3d rtg_bn_inv = rtg_bn->getTransform().inverse();
-
-        Eigen::Vector3d stdVector, rtgVector;
-        stdVector = std_bn_inv * (stdMuscle->mCachedAnchorPositions[i + 1] - stdMuscle->mCachedAnchorPositions[i]);
-        rtgVector = rtg_bn_inv * (rtgMuscle->mCachedAnchorPositions[i + 1] - rtgMuscle->mCachedAnchorPositions[i]);
-        stdVector.normalize();
-        rtgVector.normalize();
-        ret += 0.5 * (stdVector.cross(rtgVector)).norm();
-
-        stdVector = std_bn_inv * (stdMuscle->mCachedAnchorPositions[i - 1] - stdMuscle->mCachedAnchorPositions[i]);
-        rtgVector = rtg_bn_inv * (rtgMuscle->mCachedAnchorPositions[i - 1] - rtgMuscle->mCachedAnchorPositions[i]);
-        stdVector.normalize();
-        rtgVector.normalize();
-        ret += 0.5 * (stdVector.cross(rtgVector)).norm();
-
-        cnt += 1;
-    }
-    return cnt ? ret / cnt : 0;
-}
-
 double Character::getSkelParamValue(std::string skel_name)
 {
-
-    if (skel_name == "global")
-        return mGlobalRatio;
+    if (skel_name == "global") return mGlobalRatio;
     else
     {
         for (auto s_i : mSkelInfos)

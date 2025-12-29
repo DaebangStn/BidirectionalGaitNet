@@ -351,7 +351,7 @@ bool HDF::applyParametersToEnvironment(Environment* env) const
               << " parameters (Environment has " << sim_param_names.size() << " parameters)");
 
     // Apply matched parameters
-    env->setParamState(new_params, false, true);
+    env->setParamState(new_params);
     return true;
 }
 

@@ -362,11 +362,17 @@ void MusclePersonalizerApp::drawLeftPanel()
     ImGui::Begin("Control##Panel", nullptr,ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     if (ImGui::BeginTabBar("ControlTabs")) {
-        if (ImGui::BeginTabItem("Control")) {
+        if (ImGui::BeginTabItem("Character")) {
             drawClinicalDataSection();
             drawCharacterLoadSection();
             drawWeightApplicationSection();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Waypoint")) {
             drawWaypointOptimizationSection();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Contracture")) {
             drawContractureEstimationSection();
             ImGui::EndTabItem();
         }
@@ -627,8 +633,7 @@ void MusclePersonalizerApp::drawWeightApplicationSection()
 
 void MusclePersonalizerApp::drawWaypointOptimizationSection()
 {
-    if (collapsingHeaderWithControls("Waypoint Optimization")) {
-        ImGui::Text("Optimize muscle waypoints from HDF motion");
+    ImGui::Text("Optimize muscle waypoints from HDF motion");
         ImGui::Separator();
 
         // Motion file selection with DOF compatibility
@@ -818,9 +823,8 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
             runWaypointOptimizationAsync();
         }
 
-        if (isRunning) {
-            ImGui::EndDisabled();
-        }
+    if (isRunning) {
+        ImGui::EndDisabled();
     }
 }
 
@@ -866,18 +870,24 @@ void MusclePersonalizerApp::drawProgressOverlay()
 
 void MusclePersonalizerApp::drawContractureEstimationSection()
 {
-    if (collapsingHeaderWithControls("Contracture Estimation")) {
-        ImGui::Text("Estimate lm_contract from ROM trials");
+    ImGui::Text("Estimate lm_contract from ROM trials");
         ImGui::Separator();
 
         ImGui::Text("ROM Config Directory:");
+        ImGui::SameLine();
         ImGui::TextWrapped("%s", mROMConfigDir.c_str());
-
-        if (ImGui::Button("Scan ROM Configs")) {
-            scanROMConfigs();
-        }
+        ImGui::SameLine();
+        if (ImGui::Button("Scan ROM Configs")) scanROMConfigs();
 
         ImGui::Text("ROM Trials: %zu found", mROMTrials.size());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("All")) {
+            for (auto& trial : mROMTrials) trial.selected = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("None")) {
+            for (auto& trial : mROMTrials) trial.selected = false;
+        }
         ImGui::InputText("Filter##ROM", mROMFilter, sizeof(mROMFilter));
 
         // ROM selection list - display "TC name - CD value"
@@ -929,16 +939,15 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
 
         ImGui::Separator();
         ImGui::Text("Optimization Parameters:");
-        ImGui::SliderInt("Max Iterations##Contract", &mContractureMaxIterations, 10, 500);
-        ImGui::SliderFloat("Min Ratio", &mContractureMinRatio, 0.3f, 1.0f);
-        ImGui::SliderFloat("Max Ratio", &mContractureMaxRatio, 1.0f, 2.0f);
-        ImGui::Checkbox("Use Robust Loss (Huber)", &mContractureUseRobustLoss);
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputInt("Max Iterations##Contract", &mContractureMaxIterations);
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputFloat("Min Ratio", &mContractureMinRatio, 0.0f, 0.0f, "%.2f");
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputFloat("Max Ratio", &mContractureMaxRatio, 0.0f, 0.0f, "%.2f");
 
-        ImGui::Separator();
-        if (ImGui::Button("Estimate Contracture Parameters", ImVec2(-1, 0))) {
-            runContractureEstimation();
-        }
-    }
+    ImGui::Separator();
+    if (ImGui::Button("Estimate Contracture Parameters", ImVec2(-1, 0))) runContractureEstimation();
 }
 
 void MusclePersonalizerApp::drawRenderTab()

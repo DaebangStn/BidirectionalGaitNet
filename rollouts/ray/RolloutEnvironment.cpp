@@ -236,8 +236,8 @@ void RolloutEnvironment::SetParameters(const std::map<std::string, double>& para
         }
     }
 
-    // Set the parameter state (normalized=false, onlyMuscle=false, doOptimization=true)
-    mEnv.setParamState(param_state, false, true);
+    // Set the parameter state
+    mEnv.setParamState(param_state);
 }
 
 std::vector<std::string> RolloutEnvironment::GetParameterNames() {

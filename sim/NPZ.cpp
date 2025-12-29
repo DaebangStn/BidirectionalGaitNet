@@ -229,7 +229,7 @@ bool NPZ::applyParametersToEnvironment(Environment* env) const
     }
 
     // Apply parameters (positional matching)
-    env->setParamState(mParams, false, true);
+    env->setParamState(mParams);
     LOG_VERBOSE("[NPZ] Applied " << mParams.size() << " parameters");
     return true;
 }

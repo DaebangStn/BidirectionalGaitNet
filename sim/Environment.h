@@ -332,8 +332,8 @@ public:
     double getCadence() { return mCadence; }
     double getStride() { return mStride; }
 
-    void setParamState(Eigen::VectorXd _param_state, bool onlyMuscle = false, bool doOptimization = false);
-    void setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle = false, bool doOptimization = false);
+    void setParamState(Eigen::VectorXd _param_state, bool onlyMuscle = false);
+    void setNormalizedParamState(Eigen::VectorXd _param_state, bool onlyMuscle = false);
     Eigen::VectorXd getParamState(bool isMirror = false);
     Eigen::VectorXd getNormalizedParamState(Eigen::VectorXd minV, Eigen::VectorXd maxV, bool isMirror = false)
     {
@@ -349,7 +349,7 @@ public:
     Eigen::VectorXd getParamMin() { return mParamMin; }
     Eigen::VectorXd getParamMax() { return mParamMax; }
     Eigen::VectorXd getParamDefault() { return mParamDefault; }
-    void setParamDefault() { setParamState(getParamDefault(), false, true); }
+    void setParamDefault() { setParamState(getParamDefault()); }
     Eigen::VectorXd getParamSample();
     const std::vector<param_group> &getGroupParam() { return mParamGroups; }
     void setGroupParam(Eigen::VectorXd v)
@@ -367,10 +367,10 @@ public:
             }
             i++;
         }
-        setParamState(sampled_param, false, true);
+        setParamState(sampled_param);
     }
     int getNumParamState() { return mNumParamState; }
-    void updateParamState() { setParamState(getParamSample(), false, true); }
+    void updateParamState() { setParamState(getParamSample()); }
     double getLimitY() { return mLimitY; }
 
     void poseOptimization(int iter = 100);
