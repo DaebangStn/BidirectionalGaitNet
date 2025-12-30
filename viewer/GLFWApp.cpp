@@ -1769,6 +1769,31 @@ void GLFWApp::drawRightPanel()
         return;
     }
 
+    // Tab bar for visualization panels
+    if (ImGui::BeginTabBar("VisualizationTabs")) {
+        if (ImGui::BeginTabItem("Gait")) {
+            drawGaitTabContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Kinematics")) {
+            drawKinematicsTabContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Kinetics")) {
+            drawKineticsTabContent();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    ImGui::End();
+}
+
+// ============================================================
+// Gait Tab Content
+// ============================================================
+void GLFWApp::drawGaitTabContent()
+{
     // Status
     if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -1826,144 +1851,6 @@ void GLFWApp::drawRightPanel()
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Rollout: Completed");
         else
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Rollout: %d cycles remaining", mRolloutStatus.cycle);
-    }
-
-    // Center of Mass Trajectory
-    if (collapsingHeaderWithControls("COM Trajectory"))
-    {
-        // Plot selection controls
-        static int plotSelection = 1;  // 0 = Trajectory, 1 = Velocity, 2 = Deviation
-        static bool showStats = true;
-
-        // Checkbox for stats
-        ImGui::Checkbox("Stats", &showStats);
-
-        // Radio buttons for plot selection
-        ImGui::RadioButton("Trajectory", &plotSelection, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Velocity", &plotSelection, 1);
-        ImGui::SameLine();
-        ImGui::RadioButton("Deviation", &plotSelection, 2);
-
-        ImGui::Separator();
-
-        // Static variables for width and height
-        static double comPlotWidth = 4.0;   // Z-axis range (forward/backward)
-        static double comPlotHeight = 0.2;  // X-axis range (left/right)
-
-        // Width and height controls (only for trajectory plot)
-        if (plotSelection == 0) {
-            ImGui::SetNextItemWidth(70);
-            ImGui::InputDouble("Width", &comPlotWidth, 0.1, 1.0, "%.2f");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(70);
-            ImGui::InputDouble("Height", &comPlotHeight, 0.1, 1.0, "%.2f");
-
-            // Minimum values
-            if (comPlotWidth < 0.1) comPlotWidth = 0.1;
-            if (comPlotHeight < 0.1) comPlotHeight = 0.1;
-        }
-        // Trajectory plot (plotSelection == 0)
-        if (plotSelection == 0) {
-            double half_width = comPlotWidth / 2.0;
-            double half_height = comPlotHeight / 2.0;
-
-            // Get COM data from GraphData first to calculate limits
-            double mean_x = 0.0, mean_z = 0.0;
-
-            if (mGraphData->key_exists("com_x") && mGraphData->key_exists("com_z"))
-            {
-                auto com_x_data = mGraphData->get("com_x");
-                auto com_z_data = mGraphData->get("com_z");
-
-                if (!com_x_data.empty() && !com_z_data.empty())
-                {
-                    // Calculate mean of X and Z
-                    size_t count = std::min(com_x_data.size(), com_z_data.size());
-                    for (size_t i = 0; i < count; i++) {
-                        mean_x += com_x_data[i];
-                        mean_z += com_z_data[i];
-                    }
-                    mean_x /= count;
-                    mean_z /= count;
-                }
-            }
-            ImPlot::SetNextAxisLimits(ImAxis_X1, mean_z - half_width, mean_z + half_width, ImPlotCond_Always);
-            ImPlot::SetNextAxisLimits(ImAxis_Y1, mean_x - half_height, mean_x + half_height, ImPlotCond_Always);
-            std::string title_com = mPlotTitle ? mCheckpointName : "COM Trajectory";
-            if (ImPlot::BeginPlot((title_com + "##COMTraj").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
-            {
-                // Setup axes with limits BEFORE plotting
-                ImPlot::SetupAxes("Z Position (m)", "X Position (m)");
-
-                // Now plot the data
-                if (mGraphData->key_exists("com_x") && mGraphData->key_exists("com_z"))
-                {
-                    auto com_x_data = mGraphData->get("com_x");
-                    auto com_z_data = mGraphData->get("com_z");
-                    size_t count = std::min(com_x_data.size(), com_z_data.size());
-
-                    ImPlot::PlotLine("COM Path",
-                                   com_z_data.data(),  // X-axis: Z position
-                                   com_x_data.data(),  // Y-axis: X position
-                                   count);
-                }
-
-                ImPlot::EndPlot();
-            }
-        }
-
-        // Velocity plot (plotSelection == 1)
-        if (plotSelection == 1) {
-            // Velocity method selection
-            static int velocityMethod = 1;  // 0 = Least Squares, 1 = Avg Horizon
-            ImGui::RadioButton("Least Squares", &velocityMethod, 0);
-            ImGui::SameLine();
-            ImGui::RadioButton("Avg Horizon", &velocityMethod, 1);
-
-            // Update RenderEnvironment with selected method
-            mRenderEnv->setVelocityMethod(velocityMethod);
-
-            // Velocity plot
-            std::string title_vel = mPlotTitle ? mCheckpointName : "COM Velocity (m/s)";
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(ImAxis_X1, -10.0, 0, ImGuiCond_Once);
-            ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.15, 1.3, ImPlotCond_Once);
-            // ImPlot::SetNextAxisLimits(ImAxis_Y2, -0.05, 0.05, ImPlotCond_Once);
-            if (ImPlot::BeginPlot((title_vel + "##COMVel").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
-            {
-                ImPlot::SetupAxes("Time (s)", "Z Velocity (m/s)");
-                // ImPlot::SetupAxis(ImAxis_Y2, "X Velocity (m/s)", ImPlotAxisFlags_AuxDefault);
-
-                // Plot velocity data using common plotting function
-                plotGraphData({"com_vel_z"}, ImAxis_Y1, "", showStats);
-                // plotGraphData({"com_vel_x"}, ImAxis_Y2, "", showStats, 1);
-
-                // Plot target velocity as horizontal line
-                double targetVel = mRenderEnv->getTargetCOMVelocity();
-                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 0.8f)); // Red color
-                ImPlot::PlotInfLines("target_vel##target", &targetVel, 1, ImPlotInfLinesFlags_Horizontal);
-                ImPlot::PopStyleColor();
-
-                ImPlot::EndPlot();
-            }
-        }
-
-        // Deviation plot (plotSelection == 2)
-        if (plotSelection == 2) {
-            std::string title_err = mPlotTitle ? mCheckpointName : "Lateral Deviation Error (m)";
-            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0, 10, ImPlotCond_Once);
-            if (ImPlot::BeginPlot((title_err + "##COMRegErr").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
-            {
-                ImPlot::SetupAxes("Time (s)", "Mean Error (mm)");
-
-                // Plot regression error
-                std::vector<std::string> errKeys = {"com_deviation"};
-                plotGraphData(errKeys, ImAxis_Y1, "", showStats);
-
-                ImPlot::EndPlot();
-            }
-        }
     }
 
     // Gait Phase Metrics
@@ -2135,7 +2022,299 @@ void GLFWApp::drawRightPanel()
             }
         }
     }
+}
 
+// ============================================================
+// Kinematics Tab Content
+// ============================================================
+void GLFWApp::drawKinematicsTabContent()
+{
+    // Center of Mass Trajectory
+    if (collapsingHeaderWithControls("COM Trajectory"))
+    {
+        // Plot selection controls
+        static int plotSelection = 1;  // 0 = Trajectory, 1 = Velocity, 2 = Deviation
+        static bool showStats = true;
+
+        // Checkbox for stats
+        ImGui::Checkbox("Stats", &showStats);
+
+        // Radio buttons for plot selection
+        ImGui::RadioButton("Trajectory", &plotSelection, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Velocity", &plotSelection, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Deviation", &plotSelection, 2);
+
+        ImGui::Separator();
+
+        // Static variables for width and height
+        static double comPlotWidth = 4.0;   // Z-axis range (forward/backward)
+        static double comPlotHeight = 0.2;  // X-axis range (left/right)
+
+        // Width and height controls (only for trajectory plot)
+        if (plotSelection == 0) {
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputDouble("Width", &comPlotWidth, 0.1, 1.0, "%.2f");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputDouble("Height", &comPlotHeight, 0.1, 1.0, "%.2f");
+
+            // Minimum values
+            if (comPlotWidth < 0.1) comPlotWidth = 0.1;
+            if (comPlotHeight < 0.1) comPlotHeight = 0.1;
+        }
+        // Trajectory plot (plotSelection == 0)
+        if (plotSelection == 0) {
+            double half_width = comPlotWidth / 2.0;
+            double half_height = comPlotHeight / 2.0;
+
+            // Get COM data from GraphData first to calculate limits
+            double mean_x = 0.0, mean_z = 0.0;
+
+            if (mGraphData->key_exists("com_x") && mGraphData->key_exists("com_z"))
+            {
+                auto com_x_data = mGraphData->get("com_x");
+                auto com_z_data = mGraphData->get("com_z");
+
+                if (!com_x_data.empty() && !com_z_data.empty())
+                {
+                    // Calculate mean of X and Z
+                    size_t count = std::min(com_x_data.size(), com_z_data.size());
+                    for (size_t i = 0; i < count; i++) {
+                        mean_x += com_x_data[i];
+                        mean_z += com_z_data[i];
+                    }
+                    mean_x /= count;
+                    mean_z /= count;
+                }
+            }
+            ImPlot::SetNextAxisLimits(ImAxis_X1, mean_z - half_width, mean_z + half_width, ImPlotCond_Always);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, mean_x - half_height, mean_x + half_height, ImPlotCond_Always);
+            std::string title_com = mPlotTitle ? mCheckpointName : "COM Trajectory";
+            if (ImPlot::BeginPlot((title_com + "##COMTraj").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
+            {
+                // Setup axes with limits BEFORE plotting
+                ImPlot::SetupAxes("Z Position (m)", "X Position (m)");
+
+                // Now plot the data
+                if (mGraphData->key_exists("com_x") && mGraphData->key_exists("com_z"))
+                {
+                    auto com_x_data = mGraphData->get("com_x");
+                    auto com_z_data = mGraphData->get("com_z");
+                    size_t count = std::min(com_x_data.size(), com_z_data.size());
+
+                    ImPlot::PlotLine("COM Path",
+                                   com_z_data.data(),  // X-axis: Z position
+                                   com_x_data.data(),  // Y-axis: X position
+                                   count);
+                }
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        // Velocity plot (plotSelection == 1)
+        if (plotSelection == 1) {
+            // Velocity method selection
+            static int velocityMethod = 1;  // 0 = Least Squares, 1 = Avg Horizon
+            ImGui::RadioButton("Least Squares", &velocityMethod, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Avg Horizon", &velocityMethod, 1);
+
+            // Update RenderEnvironment with selected method
+            mRenderEnv->setVelocityMethod(velocityMethod);
+
+            // Velocity plot
+            std::string title_vel = mPlotTitle ? mCheckpointName : "COM Velocity (m/s)";
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -10.0, 0, ImGuiCond_Once);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 1.15, 1.3, ImPlotCond_Once);
+            if (ImPlot::BeginPlot((title_vel + "##COMVel").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
+            {
+                ImPlot::SetupAxes("Time (s)", "Z Velocity (m/s)");
+
+                // Plot velocity data using common plotting function
+                plotGraphData({"com_vel_z"}, ImAxis_Y1, "", showStats);
+
+                // Plot target velocity as horizontal line
+                double targetVel = mRenderEnv->getTargetCOMVelocity();
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 0.0f, 0.0f, 0.8f)); // Red color
+                ImPlot::PlotInfLines("target_vel##target", &targetVel, 1, ImPlotInfLinesFlags_Horizontal);
+                ImPlot::PopStyleColor();
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        // Deviation plot (plotSelection == 2)
+        if (plotSelection == 2) {
+            std::string title_err = mPlotTitle ? mCheckpointName : "Lateral Deviation Error (m)";
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, 0, 10, ImPlotCond_Once);
+            if (ImPlot::BeginPlot((title_err + "##COMRegErr").c_str(), ImVec2(-1, getPlotHeight("COM Trajectory"))))
+            {
+                ImPlot::SetupAxes("Time (s)", "Mean Error (mm)");
+
+                // Plot regression error
+                std::vector<std::string> errKeys = {"com_deviation"};
+                plotGraphData(errKeys, ImAxis_Y1, "", showStats);
+
+                ImPlot::EndPlot();
+            }
+        }
+    }
+
+    // Kinematics
+    if (collapsingHeaderWithControls("Kinematics"))
+    {
+        static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway, 4=Anteversion
+        static bool stats = true;
+        ImGui::Checkbox("Stats##KinematicsStats", &stats);
+
+        ImGui::RadioButton("Major##MajorJointsRadio", &angle_selection, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Minor##MinorJointsRadio", &angle_selection, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Pelvis##PelvisJointsRadio", &angle_selection, 2);
+        ImGui::SameLine();
+        ImGui::RadioButton("Sway##SwayRadio", &angle_selection, 3);
+        ImGui::SameLine();
+        ImGui::RadioButton("Anteversion##AnteversionRadio", &angle_selection, 4);
+
+        if (angle_selection == 0) { // Major joints
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImPlot::SetNextAxisLimits(3, -45, 60);
+
+            std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
+            float plotHeight = getPlotHeight("Kinematics");
+            if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
+            {
+                ImPlot::SetupAxes("Time (s)", "Angle (deg)");
+
+                std::vector<std::string> jointKeys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
+                plotGraphData(jointKeys, ImAxis_Y1, "", stats);
+
+                // Overlay phase bars
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+                ImPlot::EndPlot();
+            }
+            ImGui::Separator();
+        }
+
+        if (angle_selection == 1) { // Minor joints
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImPlot::SetNextAxisLimits(3, -10, 15);
+
+            std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
+            if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
+            {
+
+                ImPlot::SetupAxes("Time (s)", "Angle (deg)");
+
+                std::vector<std::string> jointKeys = {"angle_HipIRR", "angle_HipAbR"};
+                plotGraphData(jointKeys, ImAxis_Y1, "", stats);
+
+                // Overlay phase bars
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+                ImPlot::EndPlot();
+            }
+            ImGui::Separator();
+        }
+        if (angle_selection == 2) { // Pelvis joints
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImPlot::SetNextAxisLimits(3, -20, 20);
+
+            std::string title_pelvis_joints = mPlotTitle ? mCheckpointName : "Pelvis Angles (deg)";
+            if (ImPlot::BeginPlot((title_pelvis_joints + "##PelvisJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
+            {
+                ImPlot::SetupAxes("Time (s)", "Angle (deg)");
+
+                std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
+                plotGraphData(pelvisKeys, ImAxis_Y1, "", stats);
+
+                // Overlay phase bars
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        if (angle_selection == 3) { // Foot sway
+            static int sway_side_selection = 0; // 0=Right, 1=Left, 2=Both
+            ImGui::RadioButton("Right##FootSwayRight", &sway_side_selection, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Left##FootSwayLeft", &sway_side_selection, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("Both##FootSwayBoth", &sway_side_selection, 2);
+
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0.0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0.0);
+            ImPlot::SetNextAxisLimits(ImAxis_Y1, -0.2, 0.2);
+            ImPlot::SetNextAxisLimits(ImAxis_Y2, -60.0, 60.0, ImGuiCond_Once);
+
+            std::string title_sway = mPlotTitle ? mCheckpointName : "Foot Sway (m)";
+            if (ImPlot::BeginPlot((title_sway + "##FootSway").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
+            {
+                ImPlot::SetupAxes("Time (s)", "Sway (m)");
+                ImPlot::SetupAxis(ImAxis_Y2, "out - FPA (°) - in", ImPlotAxisFlags_AuxDefault);
+
+                std::vector<std::string> swayKeys;
+                if (sway_side_selection == 0) swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry"};
+                else if (sway_side_selection == 1) swayKeys = {"sway_Foot_Lx", "sway_Toe_Ly"};
+                else swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry", "sway_Foot_Lx", "sway_Toe_Ly"};
+                plotGraphData(swayKeys, ImAxis_Y1, "", stats);
+
+                std::vector<std::string> swayKeys1;
+                if (sway_side_selection == 0) swayKeys1 = {"sway_FPAr"};
+                else if (sway_side_selection == 1) swayKeys1 = {"sway_FPAl"};
+                else swayKeys1 = {"sway_FPAr", "sway_FPAl"};
+                int colorOffset = static_cast<int>(swayKeys.size());
+                plotGraphData(swayKeys1, ImAxis_Y2, "", stats, colorOffset);
+
+                // Overlay phase bars
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+                ImPlot::EndPlot();
+            }
+        }
+
+        if (angle_selection == 4) { // Anteversion
+            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImPlot::SetNextAxisLimits(3, -10, 10);
+
+            std::string title_anteversion = mPlotTitle ? mCheckpointName : "Anteversion (deg)";
+            if (ImPlot::BeginPlot((title_anteversion + "##Anteversion").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
+            {
+                ImPlot::SetupAxes("Time (s)", "Anteversion (deg)");
+
+                std::vector<std::string> anteversionKeys = {"sway_AnteversionR"};
+                plotGraphData(anteversionKeys, ImAxis_Y1, "", stats);
+
+                // Overlay phase bars
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
+                ImPlot::EndPlot();
+            }
+        }
+    }
+}
+
+// ============================================================
+// Kinetics Tab Content
+// ============================================================
+void GLFWApp::drawKineticsTabContent()
+{
     // Knee Loading
     if (collapsingHeaderWithControls("Knee Loading"))
     {
@@ -2268,168 +2447,6 @@ void GLFWApp::drawRightPanel()
                 ImPlot::EndPlot();
             }
         }
-    }
-
-    // Kinematics
-    if (collapsingHeaderWithControls("Kinematics"))
-    {
-        static int angle_selection = 0; // 0=Major, 1=Minor, 2=Pelvis, 3=Sway, 4=Anteversion
-        static bool stats = true;
-        ImGui::Checkbox("Stats##KinematicsStats", &stats);
-
-        ImGui::RadioButton("Major##MajorJointsRadio", &angle_selection, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Minor##MinorJointsRadio", &angle_selection, 1);
-        ImGui::SameLine();
-        ImGui::RadioButton("Pelvis##PelvisJointsRadio", &angle_selection, 2);
-        ImGui::SameLine();
-        ImGui::RadioButton("Sway##SwayRadio", &angle_selection, 3);
-        ImGui::SameLine();
-        ImGui::RadioButton("Anteversion##AnteversionRadio", &angle_selection, 4);
-
-        if (angle_selection == 0) { // Major joints
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
-            ImPlot::SetNextAxisLimits(3, -45, 60);
-            
-            std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
-            float plotHeight = getPlotHeight("Kinematics");
-            if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
-            {
-                ImPlot::SetupAxes("Time (s)", "Angle (deg)");
-
-                std::vector<std::string> jointKeys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
-                plotGraphData(jointKeys, ImAxis_Y1, "", stats);
-
-                // Overlay phase bars
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
-                ImPlot::EndPlot();
-            }
-            ImGui::Separator();
-        }
-
-        if (angle_selection == 1) { // Minor joints
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
-            ImPlot::SetNextAxisLimits(3, -10, 15);
-
-            std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
-            if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
-            {
-
-                ImPlot::SetupAxes("Time (s)", "Angle (deg)");
-
-                std::vector<std::string> jointKeys = {"angle_HipIRR", "angle_HipAbR"};
-                plotGraphData(jointKeys, ImAxis_Y1, "", stats);
-
-                // Overlay phase bars
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
-                ImPlot::EndPlot();
-            }
-            ImGui::Separator();
-        }
-        if (angle_selection == 2) { // Pelvis joints
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
-            ImPlot::SetNextAxisLimits(3, -20, 20);
-
-            std::string title_pelvis_joints = mPlotTitle ? mCheckpointName : "Pelvis Angles (deg)";
-            if (ImPlot::BeginPlot((title_pelvis_joints + "##PelvisJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
-            {
-                ImPlot::SetupAxes("Time (s)", "Angle (deg)");
-
-                std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
-                plotGraphData(pelvisKeys, ImAxis_Y1, "", stats);
-
-                // Overlay phase bars
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
-                ImPlot::EndPlot();
-            }
-        }
-
-        if (angle_selection == 3) { // Foot sway
-            static int sway_side_selection = 0; // 0=Right, 1=Left, 2=Both
-            ImGui::RadioButton("Right##FootSwayRight", &sway_side_selection, 0);
-            ImGui::SameLine();
-            ImGui::RadioButton("Left##FootSwayLeft", &sway_side_selection, 1);
-            ImGui::SameLine();
-            ImGui::RadioButton("Both##FootSwayBoth", &sway_side_selection, 2);
-
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0.0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0.0);
-            ImPlot::SetNextAxisLimits(ImAxis_Y1, -0.2, 0.2);
-            ImPlot::SetNextAxisLimits(ImAxis_Y2, -60.0, 60.0, ImGuiCond_Once);
-
-            std::string title_sway = mPlotTitle ? mCheckpointName : "Foot Sway (m)";
-            if (ImPlot::BeginPlot((title_sway + "##FootSway").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
-            {
-                ImPlot::SetupAxes("Time (s)", "Sway (m)");
-                ImPlot::SetupAxis(ImAxis_Y2, "out - FPA (°) - in", ImPlotAxisFlags_AuxDefault);
-
-                std::vector<std::string> swayKeys;
-                if (sway_side_selection == 0) swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry"};
-                else if (sway_side_selection == 1) swayKeys = {"sway_Foot_Lx", "sway_Toe_Ly"};
-                else swayKeys = {"sway_Foot_Rx", "sway_Toe_Ry", "sway_Foot_Lx", "sway_Toe_Ly"};
-                plotGraphData(swayKeys, ImAxis_Y1, "", stats);
-
-                std::vector<std::string> swayKeys1;
-                if (sway_side_selection == 0) swayKeys1 = {"sway_FPAr"};
-                else if (sway_side_selection == 1) swayKeys1 = {"sway_FPAl"};
-                else swayKeys1 = {"sway_FPAr", "sway_FPAl"};
-                int colorOffset = static_cast<int>(swayKeys.size());
-                plotGraphData(swayKeys1, ImAxis_Y2, "", stats, colorOffset);
-
-                // Overlay phase bars
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
-                ImPlot::EndPlot();
-            }
-        }
-
-        if (angle_selection == 4) { // Anteversion
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
-            ImPlot::SetNextAxisLimits(3, -10, 10);
-
-            std::string title_anteversion = mPlotTitle ? mCheckpointName : "Anteversion (deg)";
-            if (ImPlot::BeginPlot((title_anteversion + "##Anteversion").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
-            {
-                ImPlot::SetupAxes("Time (s)", "Anteversion (deg)");
-
-                std::vector<std::string> anteversionKeys = {"sway_AnteversionR"};
-                plotGraphData(anteversionKeys, ImAxis_Y1, "", stats);
-
-                // Overlay phase bars
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
-                ImPlot::EndPlot();
-            }
-        }
-
-        // // Torso Sway Plot
-        // ImPlot::SetNextAxisLimits(0, -3, 0);
-        // ImPlot::SetNextAxisLimits(3, -0.2, 0.2);
-        // if (ImPlot::BeginPlot("Torso Sway (m)"))
-        // {
-        //     ImPlot::SetupAxes("Time (s)", "Sway (m)");
-
-        //     std::vector<std::string> swayKeys = {"sway_Torso_X"};
-        //     plotGraphData(swayKeys, ImAxis_Y1);
-
-        //     // Overlay phase bars
-        //     ImPlotRect limits = ImPlot::GetPlotLimits();
-        //     plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
-        //     ImPlot::EndPlot();
-        // }
     }
 
     // Muscle Activations
@@ -2621,46 +2638,7 @@ void GLFWApp::drawRightPanel()
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No muscles selected. Search and click to add muscles to plot.");
         }
     }
-
-    // State
-    if (ImGui::CollapsingHeader("State"))
-    {
-        auto state = mRenderEnv->getState();
-        ImPlot::SetNextAxisLimits(0, -0.5, state.rows() + 0.5, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, -5, 5);
-
-        double *x = new double[state.rows()]();
-        double *y = new double[state.rows()]();
-        for (int i = 0; i < state.rows(); i++)
-        {
-            x[i] = i;
-            y[i] = state[i];
-        }
-        if (ImPlot::BeginPlot("state"))
-        {
-            ImPlot::PlotBars("", x, y, state.rows(), 1.0);
-            ImPlot::EndPlot();
-        }
-
-        ImGui::Separator();
-
-        // Constraint Force
-        Eigen::VectorXd cf = mRenderEnv->getCharacter()->getSkeleton()->getConstraintForces();
-        ImPlot::SetNextAxisLimits(0, -0.5, cf.rows() + 0.5, ImGuiCond_Always);
-        ImPlot::SetNextAxisLimits(3, -5, 5);
-        double *x_cf = new double[cf.rows()]();
-        double *y_cf = cf.data();
-
-        for (int i = 0; i < cf.rows(); i++)
-            x_cf[i] = i;
-
-        if (ImPlot::BeginPlot("Constraint Force"))
-        {
-            ImPlot::PlotBars("dt", x_cf, y_cf, cf.rows(), 1.0);
-            ImPlot::EndPlot();
-        }
-    }
-
+    
     // Torques
     static int joint_selected = 0;
     if (ImGui::CollapsingHeader("Torques"))
@@ -2854,56 +2832,6 @@ void GLFWApp::drawRightPanel()
             ImGui::EndListBox();
         }
     }
-
-    // Network Weights
-    if (ImGui::CollapsingHeader("Network Weights"))
-    {
-        if (mRenderEnv->getWeights().size() > 0)
-        {
-            auto weight = mRenderEnv->getWeights().data();
-            ImPlot::SetNextAxisLimits(0, -0.5, mRenderEnv->getWeights().size() - 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, 0.0, 1.0);
-
-            double *x_w = new double[mRenderEnv->getWeights().size()]();
-            for (int i = 0; i < mRenderEnv->getWeights().size(); i++)
-                x_w[i] = i;
-
-            if (ImPlot::BeginPlot("weight"))
-            {
-                ImPlot::PlotBars("", x_w, weight, mRenderEnv->getWeights().size(), 0.6);
-                ImPlot::EndPlot();
-            }
-        }
-
-        ImGui::Separator();
-
-        if (mRenderEnv->getDmins().size() > 0)
-        {
-            auto dmins = mRenderEnv->getDmins().data();
-            auto betas = mRenderEnv->getBetas().data();
-
-            ImPlot::SetNextAxisLimits(0, -0.5, mRenderEnv->getDmins().size() - 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, 0.0, 1.0);
-
-            double *x_dmin = new double[mRenderEnv->getDmins().size()]();
-            double *x_beta = new double[mRenderEnv->getBetas().size()]();
-
-            for (int i = 0; i < mRenderEnv->getDmins().size(); i++)
-            {
-                x_dmin[i] = (i - 0.15);
-                x_beta[i] = (i + 0.15);
-            }
-            if (ImPlot::BeginPlot("dmins_and_betas"))
-            {
-                ImPlot::PlotBars("dmin", x_dmin, dmins, mRenderEnv->getDmins().size(), 0.3);
-                ImPlot::PlotBars("beta", x_beta, betas, mRenderEnv->getBetas().size(), 0.3);
-
-                ImPlot::EndPlot();
-            }
-        }
-    }
-
-    ImGui::End();
 }
 
 void GLFWApp::drawCameraStatusSection() {
@@ -4112,12 +4040,12 @@ void GLFWApp::drawLeftPanel()
             drawKinematicsControlPanelContent();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Rendering")) {
-            drawRenderingContent();
-            ImGui::EndTabItem();
-        }
         if (ImGui::BeginTabItem("Timing")) {
             drawTimingPaneContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Rendering")) {
+            drawRenderingContent();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

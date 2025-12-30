@@ -208,6 +208,9 @@ private:
     void drawTimingPaneContent();
     void drawRenderingContent();
     void drawRightPanel();
+    void drawGaitTabContent();
+    void drawKinematicsTabContent();
+    void drawKineticsTabContent();
     void drawTitlePanel();
     void drawResizablePlotPane();
     void drawCameraStatusSection();
