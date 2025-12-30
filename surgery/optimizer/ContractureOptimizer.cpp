@@ -6,6 +6,7 @@
 #include <regex>
 #include <iostream>
 #include <cmath>
+#include <set>
 
 namespace PMuscle {
 
@@ -117,7 +118,10 @@ private:
 };
 
 
-ROMTrialConfig ContractureOptimizer::loadROMConfig(const std::string& yaml_path) {
+ROMTrialConfig ContractureOptimizer::loadROMConfig(
+    const std::string& yaml_path,
+    dart::dynamics::SkeletonPtr skeleton) {
+
     ROMTrialConfig config;
 
     std::string resolved = rm::resolve(yaml_path);
@@ -126,43 +130,45 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(const std::string& yaml_path)
     config.name = node["name"].as<std::string>("");
     config.description = node["description"].as<std::string>("");
 
-    // Load pose preset
-    if (node["pose"]) {
-        for (const auto& joint : node["pose"]) {
-            std::string joint_name = joint.first.as<std::string>();
-            YAML::Node angles = joint.second;
+    // Parse pose from YAML and convert to full skeleton positions
+    if (node["pose"] && skeleton) {
+        // Start from current skeleton pose (zeros or current state)
+        Eigen::VectorXd positions = skeleton->getPositions();
 
-            Eigen::VectorXd angle_vec;
+        for (const auto& joint_node : node["pose"]) {
+            std::string joint_name = joint_node.first.as<std::string>();
+            auto* joint = skeleton->getJoint(joint_name);
+            if (!joint) continue;
+
+            YAML::Node angles = joint_node.second;
+            int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+
             if (angles.IsSequence()) {
-                angle_vec.resize(angles.size());
-                for (size_t i = 0; i < angles.size(); ++i) {
-                    angle_vec[i] = angles[i].as<double>() * M_PI / 180.0;  // Convert to radians
+                for (size_t i = 0; i < angles.size() && i < joint->getNumDofs(); ++i) {
+                    positions[first_dof + i] = angles[i].as<double>() * M_PI / 180.0;
                 }
             } else {
-                angle_vec.resize(1);
-                angle_vec[0] = angles.as<double>() * M_PI / 180.0;
+                positions[first_dof] = angles.as<double>() * M_PI / 180.0;
             }
-            config.pose[joint_name] = angle_vec;
         }
+        config.pose = positions;
     }
 
-    // Load angle sweep
-    if (node["angle_sweep"]) {
-        config.sweep_joint = node["angle_sweep"]["joint"].as<std::string>("");
-        config.sweep_dof_index = node["angle_sweep"]["dof_index"].as<int>(0);
-        config.angle_min = node["angle_sweep"]["angle_min"].as<double>(0.0);
-        config.angle_max = node["angle_sweep"]["angle_max"].as<double>(90.0);
-        config.num_steps = node["angle_sweep"]["num_steps"].as<int>(10);
-    }
+    // Load target joint (simplified format - no angle_sweep section)
+    config.joint = node["joint"].as<std::string>("");
+    config.dof_index = node["dof_index"].as<int>(0);
 
-    // Load observed torques
-    if (node["observed_torques"]) {
-        for (const auto& obs : node["observed_torques"]) {
-            ObservedTorque ot;
-            ot.angle = obs["angle"].as<double>(0.0);
-            ot.torque = obs["torque"].as<double>(0.0);
-            config.observed_torques.push_back(ot);
-        }
+    // Load single torque value
+    config.torque = node["torque"].as<double>(15.0);
+
+    // ROM angle defaults to 0 - populated later from clinical data or manual input
+    config.rom_angle = 0.0;
+
+    // Load clinical_data reference
+    if (node["clinical_data"]) {
+        config.cd_side = node["clinical_data"]["side"].as<std::string>("");
+        config.cd_joint = node["clinical_data"]["joint"].as<std::string>("");
+        config.cd_field = node["clinical_data"]["field"].as<std::string>("");
     }
 
     return config;
@@ -227,26 +233,6 @@ int ContractureOptimizer::loadMuscleGroups(const std::string& yaml_path, Charact
 }
 
 
-void ContractureOptimizer::applyPosePreset(
-    dart::dynamics::SkeletonPtr skeleton,
-    const std::map<std::string, Eigen::VectorXd>& pose) {
-
-    for (const auto& [joint_name, angles] : pose) {
-        auto* joint = skeleton->getJoint(joint_name);
-        if (!joint) continue;
-
-        int num_dofs = static_cast<int>(joint->getNumDofs());
-        Eigen::VectorXd positions = joint->getPositions();
-
-        for (int i = 0; i < std::min(num_dofs, static_cast<int>(angles.size())); ++i) {
-            positions[i] = angles[i];
-        }
-
-        joint->setPositions(positions);
-    }
-}
-
-
 int ContractureOptimizer::getJointIndex(
     dart::dynamics::SkeletonPtr skeleton,
     const std::string& joint_name) {
@@ -298,38 +284,39 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
     auto skeleton = character->getSkeleton();
 
     for (const auto& config : rom_configs) {
-        // Apply base pose
-        applyPosePreset(skeleton, config.pose);
+        // Start with base pose from config (already full skeleton positions)
+        if (config.pose.size() == 0) {
+            std::cerr << "[ContractureOptimizer] Empty pose for config: " << config.name << std::endl;
+            continue;
+        }
 
-        int joint_idx = getJointIndex(skeleton, config.sweep_joint);
+        Eigen::VectorXd positions = config.pose;
+
+        int joint_idx = getJointIndex(skeleton, config.joint);
         if (joint_idx < 0) {
-            std::cerr << "[ContractureOptimizer] Joint not found: " << config.sweep_joint << std::endl;
+            std::cerr << "[ContractureOptimizer] Joint not found: " << config.joint << std::endl;
             continue;
         }
 
         auto* joint = skeleton->getJoint(joint_idx);
-        if (!joint || config.sweep_dof_index >= static_cast<int>(joint->getNumDofs())) {
-            std::cerr << "[ContractureOptimizer] Invalid DOF index for joint: " << config.sweep_joint << std::endl;
+        if (!joint || config.dof_index >= static_cast<int>(joint->getNumDofs())) {
+            std::cerr << "[ContractureOptimizer] Invalid DOF index for joint: " << config.joint << std::endl;
             continue;
         }
 
-        // For each observed torque point
-        for (const auto& obs : config.observed_torques) {
-            // Set swept joint angle
-            double angle_rad = obs.angle * M_PI / 180.0;
-            Eigen::VectorXd joint_pos = joint->getPositions();
-            joint_pos[config.sweep_dof_index] = angle_rad;
-            joint->setPositions(joint_pos);
+        // Set ROM joint to clinical angle (single point, not sweep)
+        int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+        double angle_rad = config.rom_angle * M_PI / 180.0;
+        positions[first_dof + config.dof_index] = angle_rad;
 
-            // Record full pose and observed torque
-            PoseData point;
-            point.joint_idx = joint_idx;
-            point.joint_dof = config.sweep_dof_index;
-            point.q = skeleton->getPositions();
-            point.tau_obs = obs.torque;
-            point.weight = 1.0;
-            data.push_back(point);
-        }
+        // Record single pose data point
+        PoseData point;
+        point.joint_idx = joint_idx;
+        point.joint_dof = config.dof_index;
+        point.q = positions;
+        point.tau_obs = config.torque;
+        point.weight = 1.0;
+        data.push_back(point);
     }
 
     return data;
@@ -436,6 +423,157 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     }
 
     return results;
+}
+
+
+ContractureOptResult ContractureOptimizer::optimizeWithResults(
+    Character* character,
+    const std::vector<ROMTrialConfig>& rom_configs,
+    const Config& config) {
+
+    ContractureOptResult result;
+
+    if (!character) {
+        std::cerr << "[ContractureOptimizer] No character provided" << std::endl;
+        return result;
+    }
+
+    if (mMuscleGroups.empty()) {
+        std::cerr << "[ContractureOptimizer] No muscle groups configured" << std::endl;
+        return result;
+    }
+
+    auto skeleton = character->getSkeleton();
+    const auto& muscles = character->getMuscles();
+
+    // ============================================================
+    // 1. Capture BEFORE state (lm_contract per muscle in all groups)
+    // ============================================================
+    std::map<int, double> lm_contract_before;
+    std::set<int> all_muscle_indices;
+
+    for (const auto& [group_id, muscle_ids] : mMuscleGroups) {
+        for (int m_idx : muscle_ids) {
+            lm_contract_before[m_idx] = muscles[m_idx]->lm_contract;
+            all_muscle_indices.insert(m_idx);
+        }
+    }
+
+    // ============================================================
+    // 2. Capture BEFORE passive torques per trial
+    // ============================================================
+    std::vector<PoseData> pose_data = buildPoseData(character, rom_configs);
+
+    for (size_t t = 0; t < rom_configs.size() && t < pose_data.size(); ++t) {
+        const auto& rom_config = rom_configs[t];
+        const auto& pose = pose_data[t];
+
+        TrialTorqueResult trial_result;
+        trial_result.trial_name = rom_config.name;
+        trial_result.joint = rom_config.joint;
+        trial_result.dof_index = rom_config.dof_index;
+        trial_result.observed_torque = rom_config.torque;
+        trial_result.pose = pose.q;
+
+        // Set pose
+        skeleton->setPositions(pose.q);
+        for (auto& m : muscles) {
+            m->UpdateGeometry();
+        }
+
+        // Compute BEFORE total passive torque
+        trial_result.computed_torque_before = computePassiveTorque(character, pose.joint_idx);
+
+        // Per-muscle contribution BEFORE
+        auto* joint = skeleton->getJoint(pose.joint_idx);
+        int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+
+        for (int m_idx : all_muscle_indices) {
+            auto* muscle = muscles[m_idx];
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            const auto& related_indices = muscle->related_dof_indices;
+
+            double contrib = 0.0;
+            for (size_t i = 0; i < related_indices.size(); ++i) {
+                if (related_indices[i] == first_dof + pose.joint_dof) {
+                    contrib = jtp[i];
+                    break;
+                }
+            }
+            trial_result.muscle_torques_before.push_back({muscle->name, contrib});
+        }
+
+        result.trial_results.push_back(trial_result);
+    }
+
+    // ============================================================
+    // 3. Run optimization
+    // ============================================================
+    result.group_results = optimize(character, rom_configs, config);
+
+    if (result.group_results.empty()) {
+        std::cerr << "[ContractureOptimizer] Optimization failed" << std::endl;
+        return result;
+    }
+
+    // Apply results to character
+    applyResults(character, result.group_results);
+
+    // ============================================================
+    // 4. Capture AFTER state (lm_contract per muscle)
+    // ============================================================
+    for (int m_idx : all_muscle_indices) {
+        MuscleContractureResult m_result;
+        m_result.muscle_name = muscles[m_idx]->name;
+        m_result.muscle_idx = m_idx;
+        m_result.lm_contract_before = lm_contract_before[m_idx];
+        m_result.lm_contract_after = muscles[m_idx]->lm_contract;
+        m_result.ratio = m_result.lm_contract_after / m_result.lm_contract_before;
+        result.muscle_results.push_back(m_result);
+    }
+
+    // ============================================================
+    // 5. Capture AFTER passive torques per trial
+    // ============================================================
+    for (size_t t = 0; t < result.trial_results.size() && t < pose_data.size(); ++t) {
+        auto& trial_result = result.trial_results[t];
+        const auto& pose = pose_data[t];
+
+        // Set pose
+        skeleton->setPositions(trial_result.pose);
+        for (auto& m : muscles) {
+            m->UpdateGeometry();
+        }
+
+        // Compute AFTER total passive torque
+        trial_result.computed_torque_after = computePassiveTorque(character, pose.joint_idx);
+
+        // Per-muscle contribution AFTER
+        auto* joint = skeleton->getJoint(pose.joint_idx);
+        int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+
+        for (int m_idx : all_muscle_indices) {
+            auto* muscle = muscles[m_idx];
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            const auto& related_indices = muscle->related_dof_indices;
+
+            double contrib = 0.0;
+            for (size_t i = 0; i < related_indices.size(); ++i) {
+                if (related_indices[i] == first_dof + pose.joint_dof) {
+                    contrib = jtp[i];
+                    break;
+                }
+            }
+            trial_result.muscle_torques_after.push_back({muscle->name, contrib});
+        }
+    }
+
+    result.converged = true;
+    std::cout << "[ContractureOptimizer] optimizeWithResults complete: "
+              << result.muscle_results.size() << " muscles, "
+              << result.trial_results.size() << " trials" << std::endl;
+
+    return result;
 }
 
 

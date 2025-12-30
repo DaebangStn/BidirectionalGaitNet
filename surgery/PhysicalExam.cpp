@@ -5568,9 +5568,6 @@ void PhysicalExam::runSweep() {
         return;
     }
 
-    // Set current sweep name for plot titles
-    mCurrentSweepName = "GUI Sweep";
-
     // Initialize sweep
     clearSweepData();
     setupSweepMuscles();
@@ -5582,6 +5579,9 @@ void PhysicalExam::runSweep() {
 
     auto skel = mCharacter->getSkeleton();
     auto joint = skel->getJoint(mSweepConfig.joint_index);
+
+    // Set current sweep name for plot titles (with joint name and DOF index)
+    mCurrentSweepName = "GUI Sweep: " + joint->getName() + " DOF" + std::to_string(mSweepConfig.dof_index);
 
     LOG_INFO("Starting sweep: " << joint->getName()
               << " from " << mSweepConfig.angle_min

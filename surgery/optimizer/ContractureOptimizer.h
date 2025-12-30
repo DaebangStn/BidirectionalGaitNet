@@ -13,32 +13,30 @@
 namespace PMuscle {
 
 /**
- * @brief Observed torque data point from ROM examination
- */
-struct ObservedTorque {
-    double angle;    // Joint angle in degrees
-    double torque;   // Observed passive torque in Nm
-};
-
-/**
  * @brief ROM trial configuration loaded from YAML
+ *
+ * Represents a single ROM measurement at a specific pose and joint angle.
+ * The rom_angle is typically populated from clinical data or manual input.
  */
 struct ROMTrialConfig {
     std::string name;
     std::string description;
 
-    // Base pose (joint_name -> angles vector)
-    std::map<std::string, Eigen::VectorXd> pose;
+    // Base pose as full skeleton positions (converted from YAML on load)
+    Eigen::VectorXd pose;
 
-    // Angle sweep parameters
-    std::string sweep_joint;
-    int sweep_dof_index;
-    double angle_min;
-    double angle_max;
-    int num_steps;
+    // Target joint for ROM measurement
+    std::string joint;
+    int dof_index = 0;
 
-    // Observed torques from clinical measurement
-    std::vector<ObservedTorque> observed_torques;
+    // Single ROM measurement point
+    double rom_angle = 0.0;    // ROM angle in degrees (from clinical data or manual)
+    double torque = 15.0;      // Observed passive torque at ROM limit (Nm)
+
+    // Clinical data reference (for patient data linking)
+    std::string cd_side;       // "left" or "right"
+    std::string cd_joint;      // "hip", "knee", "ankle"
+    std::string cd_field;      // field name in patient rom.yaml
 };
 
 /**
@@ -60,6 +58,45 @@ struct MuscleGroupResult {
     std::vector<std::string> muscle_names;
     double ratio;                // Optimized lm_contract ratio
     std::vector<double> lm_contract_values;  // Per-muscle lm_contract
+};
+
+/**
+ * @brief Per-muscle optimization result with before/after comparison
+ */
+struct MuscleContractureResult {
+    std::string muscle_name;
+    int muscle_idx;
+    double lm_contract_before;
+    double lm_contract_after;
+    double ratio;  // after / before
+};
+
+/**
+ * @brief Per-trial passive torque result
+ */
+struct TrialTorqueResult {
+    std::string trial_name;
+    std::string joint;
+    int dof_index;
+    Eigen::VectorXd pose;            // Full skeleton pose at ROM angle
+    double observed_torque;           // Target from clinical data
+    double computed_torque_before;    // Simulated before optimization
+    double computed_torque_after;     // Simulated after optimization
+    // Per-muscle contribution at this trial pose
+    std::vector<std::pair<std::string, double>> muscle_torques_before;
+    std::vector<std::pair<std::string, double>> muscle_torques_after;
+};
+
+/**
+ * @brief Comprehensive contracture optimization result
+ */
+struct ContractureOptResult {
+    std::vector<MuscleGroupResult> group_results;
+    std::vector<MuscleContractureResult> muscle_results;
+    std::vector<TrialTorqueResult> trial_results;
+    int iterations = 0;
+    double final_cost = 0.0;
+    bool converged = false;
 };
 
 /**
@@ -136,10 +173,17 @@ public:
     /**
      * @brief Load ROM trial configuration from YAML file
      *
+     * Parses YAML and converts pose map to full skeleton positions.
+     * The rom_angle is left at 0.0 and should be populated later from
+     * clinical data or manual input.
+     *
      * @param yaml_path Path to ROM trial YAML file
+     * @param skeleton Skeleton for resolving pose to full positions (optional)
      * @return ROMTrialConfig Loaded configuration
      */
-    static ROMTrialConfig loadROMConfig(const std::string& yaml_path);
+    static ROMTrialConfig loadROMConfig(
+        const std::string& yaml_path,
+        dart::dynamics::SkeletonPtr skeleton = nullptr);
 
     // ========== Optimization ==========
 
@@ -154,6 +198,23 @@ public:
      * @return Vector of results per muscle group
      */
     std::vector<MuscleGroupResult> optimize(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const Config& config = Config()
+    );
+
+    /**
+     * @brief Run contracture optimization with comprehensive before/after results
+     *
+     * Captures lm_contract and passive torque values before and after optimization
+     * for visualization and analysis.
+     *
+     * @param character Character with muscles to optimize
+     * @param rom_configs ROM trial configurations
+     * @param config Optimization configuration
+     * @return Comprehensive result with before/after comparison
+     */
+    ContractureOptResult optimizeWithResults(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
         const Config& config = Config()
@@ -219,12 +280,6 @@ public:
     );
 
 private:
-    // Apply pose preset from ROM config
-    void applyPosePreset(
-        dart::dynamics::SkeletonPtr skeleton,
-        const std::map<std::string, Eigen::VectorXd>& pose
-    );
-
     // Get joint index by name
     static int getJointIndex(
         dart::dynamics::SkeletonPtr skeleton,

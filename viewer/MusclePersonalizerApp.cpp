@@ -14,7 +14,7 @@ namespace fs = std::filesystem;
 // ============================================================
 
 MusclePersonalizerApp::MusclePersonalizerApp(const std::string& configPath)
-    : ViewerAppBase("MusclePersonalizer", 1920, 1080),
+    : ViewerAppBase("Muscle Personalizer", 1920, 1080),
       mConfigPath(configPath),
       mResultsPanelWidth(450)
 {
@@ -396,6 +396,10 @@ void MusclePersonalizerApp::drawRightPanel()
     if (ImGui::BeginTabBar("DataTabs")) {
         if (ImGui::BeginTabItem("Waypoint Opt.")) {
             drawWaypointCurvesTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Contracture")) {
+            drawContractureResultsTab();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Exports")) {
@@ -914,6 +918,20 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
 
             if (ImGui::Checkbox(label.c_str(), &trial.selected)) {
                 // Selection changed
+            }
+
+            // If no clinical data available, show manual ROM input
+            if (!trial.cd_value.has_value()) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60);
+                char input_id[64];
+                snprintf(input_id, sizeof(input_id), "##manual_rom_%zu", i);
+                if (ImGui::InputFloat(input_id, &mROMTrials[i].manual_rom, 0, 0, "%.1f")) {
+                    // Manual ROM value updated
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Manual ROM angle (degrees)");
+                }
             }
 
             // Show tooltip with details on hover
@@ -1682,34 +1700,43 @@ void MusclePersonalizerApp::runContractureEstimation()
         return;
     }
 
-    // Collect selected ROM configs
-    std::vector<std::string> selectedPaths;
-    for (const auto& trial : mROMTrials) {
-        if (trial.selected) {
-            selectedPaths.push_back(trial.filePath);
-        }
-    }
+    auto skeleton = mExecutor->getCharacter()->getSkeleton();
 
-    if (selectedPaths.empty()) {
-        std::cerr << "[MusclePersonalizer] No ROM configs selected" << std::endl;
-        return;
-    }
-
-    std::cout << "[MusclePersonalizer] Loading " << selectedPaths.size() << " ROM configs..." << std::endl;
-
-    // Load ROM configs
+    // Collect selected ROM trials with clinical data values
     std::vector<PMuscle::ROMTrialConfig> configs;
-    for (const auto& path : selectedPaths) {
+
+    for (const auto& trial : mROMTrials) {
+        if (!trial.selected) continue;
+
         try {
-            configs.push_back(PMuscle::ContractureOptimizer::loadROMConfig(path));
-            std::cout << "[MusclePersonalizer]   Loaded: " << path << std::endl;
+            // Pass skeleton to resolve pose to full VectorXd
+            PMuscle::ROMTrialConfig config = PMuscle::ContractureOptimizer::loadROMConfig(
+                trial.filePath, skeleton);
+
+            // Populate rom_angle from clinical data or manual input
+            if (trial.cd_value.has_value()) {
+                config.rom_angle = trial.cd_value.value();
+                std::cout << "[MusclePersonalizer] Using clinical ROM: " << config.name
+                          << " = " << config.rom_angle << "°" << std::endl;
+            } else if (std::abs(trial.manual_rom) > 0.001f) {
+                config.rom_angle = static_cast<double>(trial.manual_rom);
+                std::cout << "[MusclePersonalizer] Using manual ROM: " << config.name
+                          << " = " << config.rom_angle << "°" << std::endl;
+            } else {
+                std::cerr << "[MusclePersonalizer] Skipping " << config.name
+                          << ": No ROM value available (set clinical data or manual input)" << std::endl;
+                continue;
+            }
+
+            configs.push_back(config);
         } catch (const std::exception& e) {
-            std::cerr << "[MusclePersonalizer]   Failed: " << path << ": " << e.what() << std::endl;
+            std::cerr << "[MusclePersonalizer] Failed to load " << trial.filePath
+                      << ": " << e.what() << std::endl;
         }
     }
 
     if (configs.empty()) {
-        std::cerr << "[MusclePersonalizer] No valid ROM configs loaded" << std::endl;
+        std::cerr << "[MusclePersonalizer] No valid ROM configs (need clinical data or manual ROM values)" << std::endl;
         return;
     }
 
@@ -1723,27 +1750,28 @@ void MusclePersonalizerApp::runContractureEstimation()
         return;
     }
 
-    // Configure and run iterative optimization (handles biarticular muscles)
-    PMuscle::ContractureOptimizer::IterativeConfig iterConfig;
-    iterConfig.baseConfig.maxIterations = mContractureMaxIterations;
-    iterConfig.baseConfig.minRatio = mContractureMinRatio;
-    iterConfig.baseConfig.maxRatio = mContractureMaxRatio;
-    iterConfig.baseConfig.useRobustLoss = mContractureUseRobustLoss;
-    iterConfig.baseConfig.verbose = true;
-    iterConfig.maxOuterIterations = 3;     // Averaging iterations for biarticular muscles
-    iterConfig.convergenceThreshold = 0.01;
+    // Configure optimization
+    PMuscle::ContractureOptimizer::Config optConfig;
+    optConfig.maxIterations = mContractureMaxIterations;
+    optConfig.minRatio = mContractureMinRatio;
+    optConfig.maxRatio = mContractureMaxRatio;
+    optConfig.useRobustLoss = mContractureUseRobustLoss;
+    optConfig.verbose = true;
 
-    std::cout << "[MusclePersonalizer] Running iterative optimization..." << std::endl;
-    auto optimizerResults = optimizer.optimizeIterative(mExecutor->getCharacter(), configs, iterConfig);
+    std::cout << "[MusclePersonalizer] Running optimization with results capture..." << std::endl;
 
-    if (optimizerResults.empty()) {
+    // Run optimization with comprehensive results capture
+    mContractureOptResult = optimizer.optimizeWithResults(mExecutor->getCharacter(), configs, optConfig);
+
+    if (!mContractureOptResult.has_value() || mContractureOptResult->group_results.empty()) {
         std::cerr << "[MusclePersonalizer] Optimization returned no results" << std::endl;
+        mContractureOptResult = std::nullopt;
         return;
     }
 
-    // Convert to local result type
+    // Convert to local result type for backwards compatibility
     mGroupResults.clear();
-    for (const auto& optResult : optimizerResults) {
+    for (const auto& optResult : mContractureOptResult->group_results) {
         MuscleGroupResult result;
         result.group_name = optResult.group_name;
         result.muscle_names = optResult.muscle_names;
@@ -1752,11 +1780,14 @@ void MusclePersonalizerApp::runContractureEstimation()
         mGroupResults.push_back(result);
     }
 
-    // Apply results to character
-    PMuscle::ContractureOptimizer::applyResults(mExecutor->getCharacter(), optimizerResults);
+    // Reset selection indices for visualization tab
+    mContractureSelectedGroupIdx = mContractureOptResult->group_results.empty() ? -1 : 0;
+    mContractureSelectedTrialIdx = mContractureOptResult->trial_results.empty() ? -1 : 0;
 
     std::cout << "[MusclePersonalizer] Contracture estimation complete: "
-              << mGroupResults.size() << " groups optimized" << std::endl;
+              << mGroupResults.size() << " groups, "
+              << mContractureOptResult->muscle_results.size() << " muscles, "
+              << mContractureOptResult->trial_results.size() << " trials" << std::endl;
 }
 
 // ============================================================
@@ -2096,6 +2127,236 @@ bool MusclePersonalizerApp::collapsingHeaderWithControls(const std::string& titl
         flags = ImGuiTreeNodeFlags_None;
     }
     return ImGui::CollapsingHeader(title.c_str(), flags);
+}
+
+void MusclePersonalizerApp::drawContractureResultsTab()
+{
+    if (!mContractureOptResult.has_value()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            "No contracture optimization results available.\n"
+            "Run optimization in the 'Contracture Estimation' section first.");
+        return;
+    }
+
+    const auto& result = mContractureOptResult.value();
+
+    // ===== Selectors Section (collapsible) =====
+    if (ImGui::TreeNodeEx("Selectors", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Group selector
+        ImGui::Text("Muscle Groups (%zu)", result.group_results.size());
+        ImGui::InputTextWithHint("##grpFilter", "Filter...",
+            mContractureGroupFilter, sizeof(mContractureGroupFilter));
+
+        if (ImGui::BeginListBox("##GroupList", ImVec2(-FLT_MIN, 100))) {
+            for (size_t i = 0; i < result.group_results.size(); ++i) {
+                const auto& grp = result.group_results[i];
+                if (strlen(mContractureGroupFilter) > 0 &&
+                    grp.group_name.find(mContractureGroupFilter) == std::string::npos)
+                    continue;
+
+                bool selected = (mContractureSelectedGroupIdx == static_cast<int>(i));
+                char label[128];
+                snprintf(label, sizeof(label), "%s (%.3f)", grp.group_name.c_str(), grp.ratio);
+                if (ImGui::Selectable(label, selected)) {
+                    mContractureSelectedGroupIdx = static_cast<int>(i);
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        ImGui::Spacing();
+
+        // Trial selector
+        ImGui::Text("ROM Trials (%zu)", result.trial_results.size());
+        ImGui::InputTextWithHint("##trialFilter", "Filter...",
+            mContractureTrialFilter, sizeof(mContractureTrialFilter));
+
+        if (ImGui::BeginListBox("##TrialList", ImVec2(-FLT_MIN, 100))) {
+            for (size_t i = 0; i < result.trial_results.size(); ++i) {
+                const auto& trial = result.trial_results[i];
+                if (strlen(mContractureTrialFilter) > 0 &&
+                    trial.trial_name.find(mContractureTrialFilter) == std::string::npos)
+                    continue;
+
+                bool selected = (mContractureSelectedTrialIdx == static_cast<int>(i));
+                if (ImGui::Selectable(trial.trial_name.c_str(), selected)) {
+                    mContractureSelectedTrialIdx = static_cast<int>(i);
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        ImGui::TreePop();
+    }
+
+    ImGui::Separator();
+
+    // ===== Chart 1: lm_contract before/after for selected group =====
+    if (mContractureSelectedGroupIdx >= 0 &&
+        mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
+
+        const auto& grp = result.group_results[mContractureSelectedGroupIdx];
+        ImGui::Text("lm_contract: %s (ratio=%.3f)", grp.group_name.c_str(), grp.ratio);
+
+        // Collect data for selected group muscles
+        std::vector<std::string> labels;
+        std::vector<double> before_vals, after_vals;
+
+        for (const auto& m_result : result.muscle_results) {
+            // Check if this muscle belongs to selected group
+            bool in_group = std::find(grp.muscle_names.begin(), grp.muscle_names.end(),
+                                      m_result.muscle_name) != grp.muscle_names.end();
+            if (in_group) {
+                labels.push_back(m_result.muscle_name);
+                before_vals.push_back(m_result.lm_contract_before);
+                after_vals.push_back(m_result.lm_contract_after);
+            }
+        }
+
+        if (!labels.empty()) {
+            // Create tick labels
+            std::vector<const char*> tick_labels;
+            for (const auto& l : labels) tick_labels.push_back(l.c_str());
+
+            if (ImPlot::BeginPlot("##lm_contract_chart", ImVec2(-1, 200))) {
+                ImPlot::SetupAxes("Muscle", "lm_contract (m)");
+
+                double bar_width = 0.35;
+                int n = static_cast<int>(labels.size());
+
+                // Generate positions for grouped bars
+                std::vector<double> x_before(n), x_after(n);
+                for (int i = 0; i < n; ++i) {
+                    x_before[i] = i - bar_width / 2.0;
+                    x_after[i] = i + bar_width / 2.0;
+                }
+
+                ImPlot::SetupAxisTicks(ImAxis_X1, 0, n - 1, n, tick_labels.data());
+
+                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
+                ImPlot::PlotBars("Before", x_before.data(), before_vals.data(), n, bar_width);
+
+                ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
+                ImPlot::PlotBars("After", x_after.data(), after_vals.data(), n, bar_width);
+
+                ImPlot::EndPlot();
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No muscle data for this group");
+        }
+    }
+
+    ImGui::Spacing();
+
+    // ===== Chart 2: Per-muscle passive torque at selected trial pose =====
+    if (mContractureSelectedTrialIdx >= 0 &&
+        mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size()) &&
+        mContractureSelectedGroupIdx >= 0 &&
+        mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
+
+        const auto& trial = result.trial_results[mContractureSelectedTrialIdx];
+        const auto& grp = result.group_results[mContractureSelectedGroupIdx];
+
+        ImGui::Text("Passive Torque at %s: %s", trial.trial_name.c_str(), grp.group_name.c_str());
+
+        // Filter muscle torques to selected group
+        std::vector<std::string> labels;
+        std::vector<double> before_vals, after_vals;
+
+        for (size_t i = 0; i < trial.muscle_torques_before.size(); ++i) {
+            const auto& [name, before_val] = trial.muscle_torques_before[i];
+            bool in_group = std::find(grp.muscle_names.begin(), grp.muscle_names.end(),
+                                      name) != grp.muscle_names.end();
+            if (in_group && i < trial.muscle_torques_after.size()) {
+                labels.push_back(name);
+                before_vals.push_back(before_val);
+                after_vals.push_back(trial.muscle_torques_after[i].second);
+            }
+        }
+
+        if (!labels.empty()) {
+            std::vector<const char*> tick_labels;
+            for (const auto& l : labels) tick_labels.push_back(l.c_str());
+
+            if (ImPlot::BeginPlot("##torque_chart", ImVec2(-1, 200))) {
+                ImPlot::SetupAxes("Muscle", "Passive Torque (Nm)");
+
+                double bar_width = 0.35;
+                int n = static_cast<int>(labels.size());
+
+                std::vector<double> x_before(n), x_after(n);
+                for (int i = 0; i < n; ++i) {
+                    x_before[i] = i - bar_width / 2.0;
+                    x_after[i] = i + bar_width / 2.0;
+                }
+
+                ImPlot::SetupAxisTicks(ImAxis_X1, 0, n - 1, n, tick_labels.data());
+
+                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
+                ImPlot::PlotBars("Before", x_before.data(), before_vals.data(), n, bar_width);
+
+                ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
+                ImPlot::PlotBars("After", x_after.data(), after_vals.data(), n, bar_width);
+
+                ImPlot::EndPlot();
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No torque data for this group/trial");
+        }
+    }
+
+    ImGui::Spacing();
+
+    // ===== Chart 3: Joint total passive torque before/after per trial =====
+    if (mContractureSelectedTrialIdx >= 0 &&
+        mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size())) {
+
+        const auto& trial = result.trial_results[mContractureSelectedTrialIdx];
+
+        ImGui::Text("Joint Torque: %s (%s DOF %d)",
+                   trial.trial_name.c_str(), trial.joint.c_str(), trial.dof_index);
+
+        // Summary bar: observed vs before vs after
+        const char* bar_labels[] = {"Observed", "Before", "After"};
+        double values[] = {
+            trial.observed_torque,
+            trial.computed_torque_before,
+            trial.computed_torque_after
+        };
+
+        if (ImPlot::BeginPlot("##joint_torque", ImVec2(-1, 150))) {
+            ImPlot::SetupAxes("", "Torque (Nm)");
+            ImPlot::SetupAxisTicks(ImAxis_X1, 0, 2, 3, bar_labels);
+
+            // Different colors for each bar
+            ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.8f, 0.2f, 0.8f));  // Green for observed
+            ImPlot::PlotBars("##observed", &values[0], 1, 0.5, 0);
+
+            ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));  // Blue for before
+            ImPlot::PlotBars("##before", &values[1], 1, 0.5, 1);
+
+            ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));  // Orange for after
+            ImPlot::PlotBars("##after", &values[2], 1, 0.5, 2);
+
+            ImPlot::EndPlot();
+        }
+
+        // Show numeric values
+        ImGui::Text("Observed: %.2f Nm | Before: %.2f Nm | After: %.2f Nm",
+                   trial.observed_torque, trial.computed_torque_before, trial.computed_torque_after);
+
+        // Error indicator
+        double error_before = std::abs(trial.computed_torque_before - trial.observed_torque);
+        double error_after = std::abs(trial.computed_torque_after - trial.observed_torque);
+        if (error_after < error_before) {
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+                "Improvement: %.2f Nm -> %.2f Nm (%.1f%% reduction)",
+                error_before, error_after, (1.0 - error_after / error_before) * 100.0);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f),
+                "Error: Before %.2f Nm, After %.2f Nm", error_before, error_after);
+        }
+    }
 }
 
 // isPanelDefaultOpen() is inherited from ViewerAppBase

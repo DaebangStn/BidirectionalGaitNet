@@ -8,6 +8,7 @@
 #include "rm/rm.hpp"
 #include "SurgeryExecutor.h"
 #include "common/imgui_common.h"
+#include "optimizer/ContractureOptimizer.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -145,6 +146,8 @@ private:
         std::string cd_field;   // field name in rom.yaml
         // resolved CD value (angle in degrees)
         std::optional<float> cd_value;
+        // Manual ROM input (when cd_value unavailable)
+        float manual_rom = 0.0f;
         // selection state
         bool selected = false;
     };
@@ -170,6 +173,15 @@ private:
         std::vector<double> lm_contract_values;
     };
     std::vector<MuscleGroupResult> mGroupResults;
+
+    // Comprehensive optimization results (for visualization tab)
+    std::optional<PMuscle::ContractureOptResult> mContractureOptResult;
+
+    // UI state for contracture results tab
+    int mContractureSelectedGroupIdx = -1;
+    int mContractureSelectedTrialIdx = -1;
+    char mContractureGroupFilter[64] = "";
+    char mContractureTrialFilter[64] = "";
 
     // ============================================================
     // Rendering Flags
@@ -233,6 +245,7 @@ private:
     void drawRightPanel();
     void drawResultsSection();
     void drawWaypointCurvesTab();
+    void drawContractureResultsTab();
 
     // ============================================================
     // Tool Operations (delegate to SurgeryExecutor)

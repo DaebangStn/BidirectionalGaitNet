@@ -31,7 +31,7 @@ waypoint_optimization:
   lambda_length_curve: 0.2
   weight_phase: 1.0      # weight for (min_phase - ref)² + (max_phase - ref)²
   weight_delta: 5.0     # weight for (delta - ref)²
-  weight_samples: 5.0    # weight for sample loss at N phase points
+  weight_samples: 0.0    # weight for sample loss at N phase points
   num_phase_samples: 5   # number of evenly-spaced phase points (3 → 0, 0.5, 1.0)
   loss_power: 2          # Power exponent (2=squared, 3=cube)
   parallelism: 32
