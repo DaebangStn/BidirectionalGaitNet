@@ -58,9 +58,11 @@ struct WaypointOptResult {
     // Phase data (x-axis for plotting)
     std::vector<double> phases;  // 0.0 to 1.0
 
-    // Per-phase shape energy (direction misalignment in degrees)
-    std::vector<double> shape_energy_before;  // ref vs subject_before per phase
-    std::vector<double> shape_energy_after;   // ref vs subject_after per phase
+    // Per-phase shape metrics
+    std::vector<double> shape_angle_before;   // Direction misalignment in degrees (for visualization)
+    std::vector<double> shape_angle_after;    // Direction misalignment in degrees (for visualization)
+    std::vector<double> shape_energy_before;  // (1-dot)² values per phase (actual optimization metric)
+    std::vector<double> shape_energy_after;   // (1-dot)² values per phase (actual optimization metric)
 
     // Energy tracking
     double initial_shape_energy = 0.0;
@@ -76,6 +78,12 @@ struct WaypointOptResult {
 
     // Which length type was used (for plot labeling)
     LengthCurveType length_type = LengthCurveType::MTU_LENGTH;
+
+    // Bound hit tracking: number of waypoints that hit displacement bounds
+    int num_bound_hits = 0;
+
+    // Optimization progress: number of iterations used
+    int num_iterations = 0;
 };
 
 /**
@@ -109,12 +117,24 @@ public:
 
         LengthCurveType lengthType;  // Which length metric to use for curve fitting
         int numParallel;             // Number of parallel threads (1 = sequential)
+        double maxDisplacement;               // Max displacement for normal waypoints (m)
+        double maxDisplacementOriginInsertion; // Max displacement for origin/insertion (m)
+
+        // Solver tolerances
+        double functionTolerance;    // Convergence tolerance on cost function change
+        double gradientTolerance;    // Convergence tolerance on gradient norm
+        double parameterTolerance;   // Convergence tolerance on parameter change
+
+        bool adaptiveSampleWeight;   // Use adaptive weighting for sample matching
 
         Config() : maxIterations(10000), numSampling(10), lambdaShape(0.1),
                    lambdaLengthCurve(0.1), fixOriginInsertion(true), verbose(false),
                    analyticalGradient(true), weightPhase(1.0), weightDelta(50.0),
                    weightSamples(1.0), numPhaseSamples(3), lossPower(2),
-                   lengthType(LengthCurveType::MTU_LENGTH), numParallel(1) {}
+                   lengthType(LengthCurveType::MTU_LENGTH), numParallel(1),
+                   maxDisplacement(0.2), maxDisplacementOriginInsertion(0.03),
+                   functionTolerance(1e-4), gradientTolerance(1e-5), parameterTolerance(1e-5),
+                   adaptiveSampleWeight(false) {}
     };
 
     WaypointOptimizer() = default;

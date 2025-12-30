@@ -36,9 +36,6 @@ void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::str
     std::string resolved_skel = rm::resolve(skel_path);
     std::string resolved_muscle = rm::resolve(muscle_path);
 
-    LOG_INFO("Loading skeleton: " << resolved_skel);
-    LOG_INFO("Loading muscle: " << resolved_muscle);
-
     // Create character
     mCharacter = new Character(resolved_skel, true);
 
@@ -50,8 +47,6 @@ void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::str
     if (mCharacter->getMuscles().size() > 0) {
         mCharacter->setActivations(mCharacter->getActivations().setZero());
     }
-
-    LOG_INFO("Character loaded successfully");
 }
 
 void SurgeryExecutor::applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles) {

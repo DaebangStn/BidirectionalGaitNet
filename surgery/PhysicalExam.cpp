@@ -433,15 +433,12 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     // Resolve URIs
     std::string resolved_skel = rm::resolve(skel_path);
 
-    LOG_INFO("Loading skeleton: " << resolved_skel);
-
     // Create character
     mCharacter = new Character(resolved_skel, SKEL_COLLIDE_ALL);
 
     // Load muscles if path is provided
     if (!muscle_path.empty()) {
         std::string resolved_muscle = rm::resolve(muscle_path);
-        LOG_INFO("Loading muscle: " << resolved_muscle);
         mCharacter->setMuscles(resolved_muscle);
 
         // Zero muscle activations

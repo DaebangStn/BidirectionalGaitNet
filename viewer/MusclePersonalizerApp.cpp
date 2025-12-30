@@ -21,8 +21,6 @@ MusclePersonalizerApp::MusclePersonalizerApp(const std::string& configPath)
     // Adjust camera for muscle personalizer (slightly different defaults)
     mCamera.eye = Eigen::Vector3d(0.0, 0.0, 3.0);
     mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
-
-    std::cout << "[MusclePersonalizer] Constructor complete" << std::endl;
 }
 
 
@@ -42,7 +40,6 @@ void MusclePersonalizerApp::onInitialize()
 {
     // Create surgery executor
     mExecutor = std::make_unique<PMuscle::SurgeryExecutor>("MusclePersonalizer");
-    std::cout << "[MusclePersonalizer] Surgery executor created" << std::endl;
 
     // Load character through surgery executor
     loadCharacter();
@@ -68,8 +65,6 @@ void MusclePersonalizerApp::onInitialize()
         );
         mPIDNavigator->scanPIDs();
     }
-
-    std::cout << "[MusclePersonalizer] Initialization complete" << std::endl;
 }
 
 void MusclePersonalizerApp::drawContent()
@@ -167,6 +162,12 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
                 mWaypointAnalyticalGradient = wp["anayltical_gradient"].as<bool>(true);
             }
             mWaypointNumParallel = wp["parallelism"].as<int>(1);
+            mWaypointMaxDisplacement = wp["max_displacement"].as<float>(0.2f);
+            mWaypointMaxDispOriginInsertion = wp["max_displacement_origin_insertion"].as<float>(0.03f);
+            mWaypointFunctionTolerance = wp["function_tolerance"].as<float>(1e-4f);
+            mWaypointGradientTolerance = wp["gradient_tolerance"].as<float>(1e-5f);
+            mWaypointParameterTolerance = wp["parameter_tolerance"].as<float>(1e-5f);
+            mWaypointAdaptiveSampleWeight = wp["adaptive_sample_weight"].as<bool>(false);
         }
 
         // Contracture estimation defaults
@@ -356,10 +357,9 @@ void MusclePersonalizerApp::drawMuscles()
 
 void MusclePersonalizerApp::drawLeftPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
-
     ImGui::Begin("Control##Panel", nullptr,ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::SetWindowPos(ImVec2(0, 0), ImGuiCond_Always);
 
     if (ImGui::BeginTabBar("ControlTabs")) {
         if (ImGui::BeginTabItem("Character")) {
@@ -388,10 +388,9 @@ void MusclePersonalizerApp::drawLeftPanel()
 
 void MusclePersonalizerApp::drawRightPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(mWidth - mResultsPanelWidth, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(mResultsPanelWidth, mHeight), ImGuiCond_Once);
-
     ImGui::Begin("Data##Panel", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     if (ImGui::BeginTabBar("DataTabs")) {
         if (ImGui::BeginTabItem("Waypoint Opt.")) {
@@ -432,6 +431,20 @@ void MusclePersonalizerApp::drawClinicalDataSection()
             if (pid != mCurrentROMPID || pidState.preOp != mCurrentROMPreOp) {
                 loadPatientROM(pid, pidState.preOp);
                 loadClinicalWeight(pid, pidState.preOp);
+
+                // Auto-select patient skeleton (first available file)
+                mCharacterPID = pid;
+                mSkeletonDataSource = CharacterDataSource::PatientData;
+                scanSkeletonFiles();
+
+                // Select first skeleton file if available and auto-rebuild
+                if (!mSkeletonCandidates.empty()) {
+                    std::string prePost = pidState.preOp ? "pre" : "post";
+                    mSkeletonPath = "@pid:" + pid + "/gait/" + prePost + "/skeleton/" + mSkeletonCandidates[0];
+
+                    loadCharacter();
+                    initializeSurgeryExecutor();
+                }
             }
         } else if (!mCurrentROMPID.empty()) {
             // PID was deselected
@@ -466,6 +479,7 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
         // ============ SKELETON SECTION ============
         bool skelChanged = false;
         ImGui::Text("Skeleton Source:");
+        ImGui::SameLine();
         if (ImGui::RadioButton("Default##skel", mSkeletonDataSource == CharacterDataSource::DefaultData)) {
             if (mSkeletonDataSource != CharacterDataSource::DefaultData) {
                 mSkeletonDataSource = CharacterDataSource::DefaultData;
@@ -520,6 +534,7 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
         // ============ MUSCLE SECTION ============
         bool muscleChanged = false;
         ImGui::Text("Muscle Source:");
+        ImGui::SameLine();
         if (ImGui::RadioButton("Default##muscle", mMuscleDataSource == CharacterDataSource::DefaultData)) {
             if (mMuscleDataSource != CharacterDataSource::DefaultData) {
                 mMuscleDataSource = CharacterDataSource::DefaultData;
@@ -649,6 +664,20 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                 ImGui::Text("Skeleton DOF: %d", skelDof);
             } else {
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Load character to check compatibility");
+            }
+
+            // Auto-select first compatible motion file if none selected
+            if (mHDFPath[0] == '\0' && skelDof > 0) {
+                for (const auto& filename : mMotionCandidates) {
+                    auto it = mMotionDOFMap.find(filename);
+                    int motionDof = (it != mMotionDOFMap.end()) ? it->second : -1;
+                    if (skelDof == 0 || motionDof == skelDof) {
+                        std::string fullPath = "@data/motion/" + filename;
+                        strncpy(mHDFPath, fullPath.c_str(), sizeof(mHDFPath) - 1);
+                        mHDFPath[sizeof(mHDFPath) - 1] = '\0';
+                        break;
+                    }
+                }
             }
 
             if (ImGui::BeginListBox("##MotionList", ImVec2(-1, 80))) {
@@ -781,6 +810,52 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                     ImGui::SetTooltip("Parallel threads (1 = sequential)");
                 }
 
+                // Row 6: Max Displacement | Max Disp Origin/Insertion
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Max Disp");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##max_disp", &mWaypointMaxDisplacement, 0.0f, 0.0f, "%.3f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Max waypoint displacement from initial position (meters)");
+                }
+
+                ImGui::TableNextColumn();
+                ImGui::Text("Max Disp O/I");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##max_disp_oi", &mWaypointMaxDispOriginInsertion, 0.0f, 0.0f, "%.3f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Max displacement for origin/insertion (meters)\nShould be tighter than normal waypoints");
+                }
+
+                // Row 7: Function Tol | Gradient Tol
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Func Tol");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##func_tol", &mWaypointFunctionTolerance, 0.0f, 0.0f, "%.1e");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Convergence tolerance on cost function change");
+                }
+
+                ImGui::TableNextColumn();
+                ImGui::Text("Grad Tol");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##grad_tol", &mWaypointGradientTolerance, 0.0f, 0.0f, "%.1e");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Convergence tolerance on gradient norm");
+                }
+
+                // Row 8: Param Tol | Outer Iterations
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Param Tol");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##param_tol", &mWaypointParameterTolerance, 0.0f, 0.0f, "%.1e");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Convergence tolerance on parameter change");
+                }
+
                 ImGui::EndTable();
             }
 
@@ -807,6 +882,14 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                 ImGui::Checkbox("Normalized (lm_norm)", &mWaypointUseNormalizedLength);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Use normalized muscle fiber length.\nMore accurate but slower.");
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Adaptive Sample Weight", &mWaypointAdaptiveSampleWeight);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Weight samples by normalized length:\n"
+                                      "len<1.0: w=1, len<1.2: w=2^len, else: w=5^len");
                 }
 
                 ImGui::EndTable();
@@ -842,7 +925,7 @@ void MusclePersonalizerApp::drawProgressOverlay()
     ImVec2 displaySize = io.DisplaySize;
 
     // Center window
-    ImVec2 windowSize(400, 100);
+    ImVec2 windowSize(400, 150);
     ImVec2 windowPos((displaySize.x - windowSize.x) / 2,
                      (displaySize.y - windowSize.y) / 2);
 
@@ -858,7 +941,7 @@ void MusclePersonalizerApp::drawProgressOverlay()
     float progress = total > 0 ? static_cast<float>(current) / total : 0.0f;
 
     char overlay[64];
-    snprintf(overlay, sizeof(overlay), "%d / %d", current, total);
+    snprintf(overlay, sizeof(overlay), "%d / %d muscles", current, total);
     ImGui::ProgressBar(progress, ImVec2(-1, 0), overlay);
 
     // Current muscle name (mutex-protected)
@@ -868,6 +951,22 @@ void MusclePersonalizerApp::drawProgressOverlay()
         muscleName = mWaypointOptMuscleName;
     }
     ImGui::Text("Current: %s", muscleName.c_str());
+
+    // Elapsed time and ETA
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - mWaypointOptStartTime);
+    int elapsedSec = static_cast<int>(elapsed.count());
+
+    if (current > 0 && progress < 1.0f) {
+        float avgTime = static_cast<float>(elapsedSec) / current;
+        int remaining = static_cast<int>(avgTime * (total - current));
+        ImGui::Text("Elapsed: %d:%02d  |  ETA: %d:%02d",
+            elapsedSec / 60, elapsedSec % 60,
+            remaining / 60, remaining % 60);
+    } else {
+        ImGui::Text("Elapsed: %d:%02d  |  ETA: --:--",
+            elapsedSec / 60, elapsedSec % 60);
+    }
 
     ImGui::End();
 }
@@ -1089,6 +1188,18 @@ void MusclePersonalizerApp::drawRenderTab()
     if (ImGui::CollapsingHeader("Plot", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SetNextItemWidth(100);
         ImGui::InputFloat("Plot Height", &mPlotHeight, 10.0f, 50.0f, "%.0f");
+
+        // Legend position
+        ImGui::Text("Legend:");
+        ImGui::SameLine();
+        int legendPos = mPlotLegendEast ? 1 : 0;
+        if (ImGui::RadioButton("West (Left)", &legendPos, 0)) {
+            mPlotLegendEast = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("East (Right)", &legendPos, 1)) {
+            mPlotLegendEast = true;
+        }
     }
 }
 
@@ -1198,26 +1309,251 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
         if (r.success) numSuccess++;
     }
 
-    // Filterable radio button list for single muscle selection
+    // Sortable table for muscle selection
     char treeLabel[64];
     snprintf(treeLabel, sizeof(treeLabel), "Optimized result (%d/%zu)",
              numSuccess, mWaypointOptResults.size());
     if (ImGui::TreeNodeEx(treeLabel, ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Color function: green for success, red for failure
-        auto colorFunc = [this](int idx) -> ImVec4 {
-            if (idx >= 0 && idx < static_cast<int>(mWaypointOptResults.size())) {
-                return mWaypointOptResults[idx].success
-                    ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f)
-                    : ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
-            }
-            return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        };
+        // Sort key radio buttons
+        ImGui::Text("Sort by:");
+        ImGui::SameLine();
+        int sortCol = static_cast<int>(mWaypointSortColumn);
+        if (ImGui::RadioButton("Name", &sortCol, 0)) {
+            mWaypointSortColumn = WaypointSortColumn::Name;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Shape", &sortCol, 1)) {
+            mWaypointSortColumn = WaypointSortColumn::ShapeEnergy;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Length", &sortCol, 2)) {
+            mWaypointSortColumn = WaypointSortColumn::LengthEnergy;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Total", &sortCol, 3)) {
+            mWaypointSortColumn = WaypointSortColumn::TotalEnergy;
+        }
 
-        ImGuiCommon::FilterableRadioList(
-            "##ResultRadioList", muscleNames,
-            &mWaypointResultSelectedIdx,
-            mWaypointResultFilter, sizeof(mWaypointResultFilter),
-            120, colorFunc);
+        // Sort direction radio buttons
+        int sortDir = mWaypointSortAscending ? 0 : 1;
+        if (ImGui::RadioButton("Asc", &sortDir, 0)) {
+            mWaypointSortAscending = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Desc", &sortDir, 1)) {
+            mWaypointSortAscending = false;
+        }
+
+        // Before/After energy selector
+        ImGui::SameLine();
+        ImGui::Text(" | ");
+        ImGui::SameLine();
+        int energyType = mWaypointShowAfterEnergy ? 1 : 0;
+        if (ImGui::RadioButton("Before", &energyType, 0)) {
+            mWaypointShowAfterEnergy = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("After", &energyType, 1)) {
+            mWaypointShowAfterEnergy = true;
+        }
+
+        // Filter input
+        ImGui::SetNextItemWidth(150);
+        ImGui::InputText("##ResultFilter", mWaypointResultFilter, sizeof(mWaypointResultFilter));
+        ImGui::SameLine();
+        ImGui::TextDisabled("Filter");
+
+        // Build sorted indices
+        mWaypointSortedIndices.clear();
+        for (int i = 0; i < static_cast<int>(mWaypointOptResults.size()); ++i) {
+            mWaypointSortedIndices.push_back(i);
+        }
+
+        // Sort based on current column (using before/after energy as selected)
+        std::stable_sort(mWaypointSortedIndices.begin(), mWaypointSortedIndices.end(),
+            [this](int a, int b) {
+                const auto& ra = mWaypointOptResults[a];
+                const auto& rb = mWaypointOptResults[b];
+
+                // Select energy values based on before/after toggle
+                double shapeA = mWaypointShowAfterEnergy ? ra.final_shape_energy : ra.initial_shape_energy;
+                double shapeB = mWaypointShowAfterEnergy ? rb.final_shape_energy : rb.initial_shape_energy;
+                double lengthA = mWaypointShowAfterEnergy ? ra.final_length_energy : ra.initial_length_energy;
+                double lengthB = mWaypointShowAfterEnergy ? rb.final_length_energy : rb.initial_length_energy;
+
+                bool less = false;
+                switch (mWaypointSortColumn) {
+                    case WaypointSortColumn::Name:
+                        less = ra.muscle_name < rb.muscle_name;
+                        break;
+                    case WaypointSortColumn::ShapeEnergy:
+                        less = shapeA < shapeB;
+                        break;
+                    case WaypointSortColumn::LengthEnergy:
+                        less = lengthA < lengthB;
+                        break;
+                    case WaypointSortColumn::TotalEnergy:
+                        less = (shapeA + lengthA) < (shapeB + lengthB);
+                        break;
+                }
+                return mWaypointSortAscending ? less : !less;
+            });
+
+        // Table with radio button, name, shape energy, length energy, total energy, iterations
+        ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                     ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
+        if (ImGui::BeginTable("ResultsTable", 6, tableFlags, ImVec2(0, 120))) {
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 15.0f);
+            ImGui::TableSetupColumn("Muscle", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Shape E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+            ImGui::TableSetupColumn("Length E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+            ImGui::TableSetupColumn("Total E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+            ImGui::TableSetupColumn("Iters", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableHeadersRow();
+
+            std::string filterLower(mWaypointResultFilter);
+            std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+
+            for (int sortedIdx : mWaypointSortedIndices) {
+                const auto& r = mWaypointOptResults[sortedIdx];
+
+                // Apply filter
+                if (!filterLower.empty()) {
+                    std::string nameLower = r.muscle_name;
+                    std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+                    if (nameLower.find(filterLower) == std::string::npos) {
+                        continue;
+                    }
+                }
+
+                // Color: green=success, orange=success with bound hits, red=failure
+                ImVec4 color;
+                if (!r.success) {
+                    color = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);  // Red for failure
+                } else if (r.num_bound_hits > 0) {
+                    color = ImVec4(1.0f, 0.6f, 0.0f, 1.0f);  // Orange for bound hits
+                } else {
+                    color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green for success
+                }
+
+                ImGui::TableNextRow();
+                ImGui::PushID(sortedIdx);
+
+                // Column 1: Radio button (clickable)
+                ImGui::TableNextColumn();
+                bool isSelected = (mWaypointResultSelectedIdx == sortedIdx);
+                if (ImGui::RadioButton("##radio", isSelected)) {
+                    mWaypointResultSelectedIdx = sortedIdx;
+                }
+
+                // Column 2: Muscle name (with bound hit indicator)
+                ImGui::TableNextColumn();
+                if (r.num_bound_hits > 0) {
+                    ImGui::TextColored(color, "%s [%d]", r.muscle_name.c_str(), r.num_bound_hits);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%d waypoint(s) hit displacement bounds.\n"
+                                          "Consider increasing max displacement limits.",
+                                          r.num_bound_hits);
+                    }
+                } else {
+                    ImGui::TextColored(color, "%s", r.muscle_name.c_str());
+                }
+
+                // Select energy values based on before/after toggle
+                double shapeE = mWaypointShowAfterEnergy ? r.final_shape_energy : r.initial_shape_energy;
+                double lengthE = mWaypointShowAfterEnergy ? r.final_length_energy : r.initial_length_energy;
+
+                // Column 3: Shape energy
+                ImGui::TableNextColumn();
+                ImGui::TextColored(color, "%.4f", shapeE);
+
+                // Column 4: Length energy
+                ImGui::TableNextColumn();
+                ImGui::TextColored(color, "%.4f", lengthE);
+
+                // Column 5: Total energy
+                ImGui::TableNextColumn();
+                ImGui::TextColored(color, "%.4f", shapeE + lengthE);
+
+                // Column 6: Iterations
+                ImGui::TableNextColumn();
+                ImGui::TextColored(color, "%d", r.num_iterations);
+
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+
+        // Compute and display summary for logging/capture
+        if (!mWaypointOptResults.empty()) {
+            int count = static_cast<int>(mWaypointOptResults.size());
+
+            ImGui::Separator();
+
+            // Line 1: Key optimization parameters (compact)
+            ImGui::Text("Params: iter=%d samp=%d lS=%.2f lL=%.2f wP=%.1f wD=%.1f wS=%.1f nPS=%d pow=%d disp=%.3f dispOI=%.3f %s%s%s",
+                mWaypointMaxIterations, mWaypointNumSampling,
+                mWaypointLambdaShape, mWaypointLambdaLengthCurve,
+                mWaypointWeightPhase, mWaypointWeightDelta, mWaypointWeightSamples,
+                mWaypointNumPhaseSamples, mWaypointLossPower,
+                mWaypointMaxDisplacement, mWaypointMaxDispOriginInsertion,
+                mWaypointFixOriginInsertion ? "fixOI " : "",
+                mWaypointAnalyticalGradient ? "analGrad " : "",
+                mWaypointUseNormalizedLength ? "normLen" : "lmt");
+
+            // Line 2: Character configs (small font)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+            float smallFontScale = 0.85f;
+            ImGui::SetWindowFontScale(smallFontScale);
+
+            // Extract filenames from paths for compact display
+            auto extractFilename = [](const std::string& path) -> std::string {
+                size_t lastSlash = path.find_last_of("/\\");
+                return (lastSlash != std::string::npos) ? path.substr(lastSlash + 1) : path;
+            };
+
+            std::string skelFile = extractFilename(mSkeletonPath);
+            std::string muscleFile = extractFilename(mMusclePath);
+            std::string motionFile = extractFilename(std::string(mHDFPath));
+
+            if (!mCharacterPID.empty() && (mSkeletonDataSource == CharacterDataSource::PatientData ||
+                                          mMuscleDataSource == CharacterDataSource::PatientData)) {
+                ImGui::Text("Config: pid=%s skel=%s muscle=%s motion=%s",
+                    mCharacterPID.c_str(), skelFile.c_str(), muscleFile.c_str(), motionFile.c_str());
+            } else {
+                ImGui::Text("Config: skel=%s muscle=%s motion=%s",
+                    skelFile.c_str(), muscleFile.c_str(), motionFile.c_str());
+            }
+
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
+
+            // Line 3: Average metrics (both Before and After) with reduction ratio
+            double avgShapeBefore = 0.0, avgLengthBefore = 0.0;
+            double avgShapeAfter = 0.0, avgLengthAfter = 0.0;
+            for (const auto& r : mWaypointOptResults) {
+                avgShapeBefore += r.initial_shape_energy;
+                avgLengthBefore += r.initial_length_energy;
+                avgShapeAfter += r.final_shape_energy;
+                avgLengthAfter += r.final_length_energy;
+            }
+            if (count > 0) {
+                avgShapeBefore /= count; avgLengthBefore /= count;
+                avgShapeAfter /= count; avgLengthAfter /= count;
+            }
+            double totalBefore = avgShapeBefore + avgLengthBefore;
+            double totalAfter = avgShapeAfter + avgLengthAfter;
+            double shapeRed = (avgShapeBefore > 1e-9) ? (1.0 - avgShapeAfter / avgShapeBefore) * 100.0 : 0.0;
+            double lengthRed = (avgLengthBefore > 1e-9) ? (1.0 - avgLengthAfter / avgLengthBefore) * 100.0 : 0.0;
+            double totalRed = (totalBefore > 1e-9) ? (1.0 - totalAfter / totalBefore) * 100.0 : 0.0;
+            ImGui::Text("Avg[n=%d]: Before(S=%.4f L=%.4f T=%.4f) After(S=%.4f L=%.4f T=%.4f) Red(S=%.1f%% L=%.1f%% T=%.1f%%)",
+                count,
+                avgShapeBefore, avgLengthBefore, totalBefore,
+                avgShapeAfter, avgLengthAfter, totalAfter,
+                shapeRed, lengthRed, totalRed);
+        }
+
         ImGui::TreePop();
     }
 
@@ -1382,6 +1718,7 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
             ImPlot::SetupAxes("Phase", yAxisLabel);
             ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);  // X fixed 0-1
             ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImPlotCond_Always); // Y auto once
+            ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
             // Reference curve (blue) - target behavior from standard character
             ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
@@ -1404,37 +1741,38 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
             ImPlot::EndPlot();
         }
 
-        // Shape Energy Plot (Direction Alignment)
-        if (!result.phases.empty() && !result.shape_energy_before.empty()) {
+        // Shape Angle Plot (Direction Alignment in degrees)
+        if (!result.phases.empty() && !result.shape_angle_before.empty()) {
             ImGui::Spacing();
 
             // Compute Y-axis range with padding
             auto minmax_before = std::minmax_element(
-                result.shape_energy_before.begin(), result.shape_energy_before.end());
+                result.shape_angle_before.begin(), result.shape_angle_before.end());
             auto minmax_after = std::minmax_element(
-                result.shape_energy_after.begin(), result.shape_energy_after.end());
+                result.shape_angle_after.begin(), result.shape_angle_after.end());
 
             double shape_y_min = std::min(*minmax_before.first, *minmax_after.first) * 0.9;
             double shape_y_max = std::max(*minmax_before.second, *minmax_after.second) * 1.1;
             shape_y_min = std::max(0.0, shape_y_min);  // Angle can't be negative
             shape_y_max = std::max(shape_y_max, 1.0);  // Ensure at least 1 degree range
 
-            if (ImPlot::BeginPlot("Shape Energy (Direction Alignment)", ImVec2(-1, mPlotHeight))) {
+            if (ImPlot::BeginPlot("Direction Misalignment", ImVec2(-1, mPlotHeight))) {
                 ImPlot::SetupAxes("Phase", "Angle (degrees)");
                 ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, shape_y_min, shape_y_max, ImPlotCond_Always);
+                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
                 // Before curve (orange)
                 ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
                 ImPlot::PlotLine("Before", result.phases.data(),
-                                result.shape_energy_before.data(),
+                                result.shape_angle_before.data(),
                                 static_cast<int>(result.phases.size()));
                 ImPlot::PopStyleColor();
 
                 // After curve (green)
                 ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
                 ImPlot::PlotLine("After", result.phases.data(),
-                                result.shape_energy_after.data(),
+                                result.shape_angle_after.data(),
                                 static_cast<int>(result.phases.size()));
                 ImPlot::PopStyleColor();
 
@@ -1612,6 +1950,7 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     mWaypointOptRunning = true;
     mWaypointOptCurrent = 0;
     mWaypointOptTotal = static_cast<int>(selectedMuscles.size());
+    mWaypointOptStartTime = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lock(mWaypointOptMutex);
         mWaypointOptMuscleName = "Starting...";
@@ -1642,6 +1981,12 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     config.lengthType = mWaypointUseNormalizedLength
         ? PMuscle::LengthCurveType::NORMALIZED
         : PMuscle::LengthCurveType::MTU_LENGTH;
+    config.maxDisplacement = static_cast<double>(mWaypointMaxDisplacement);
+    config.maxDisplacementOriginInsertion = static_cast<double>(mWaypointMaxDispOriginInsertion);
+    config.functionTolerance = static_cast<double>(mWaypointFunctionTolerance);
+    config.gradientTolerance = static_cast<double>(mWaypointGradientTolerance);
+    config.parameterTolerance = static_cast<double>(mWaypointParameterTolerance);
+    config.adaptiveSampleWeight = mWaypointAdaptiveSampleWeight;
 
     std::cout << "[MusclePersonalizer] Starting async waypoint optimization" << std::endl;
     std::cout << "[MusclePersonalizer]   HDF: " << hdfPath << std::endl;
@@ -2107,7 +2452,7 @@ void MusclePersonalizerApp::refreshMuscleList()
     auto muscles = mExecutor->getCharacter()->getMuscles();
     for (const auto& muscle : muscles) {
         mAvailableMuscles.push_back(muscle->name);
-        mSelectedMuscles.push_back(false);  // Select all by default
+        mSelectedMuscles.push_back(true);
     }
 
     std::cout << "[MusclePersonalizer] Found " << mAvailableMuscles.size() << " muscles" << std::endl;

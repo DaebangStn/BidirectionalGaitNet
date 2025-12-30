@@ -17,18 +17,6 @@ namespace PMuscle {
 static constexpr double kEpsilon = 1e-8;
 static constexpr double kSqrtEpsilon = 1e-10;
 
-// Default weights for length curve energy (can be overridden via Config)
-static constexpr double kDefaultPhaseWeight = 1.0;
-static constexpr double kDefaultDeltaWeight = 50.0;
-
-// Solver tolerances
-static constexpr double kFunctionTolerance = 1e-4;
-static constexpr double kGradientTolerance = 1e-5;
-static constexpr double kParameterTolerance = 1e-5;
-
-// Maximum anchor displacement from initial position (30cm)
-static constexpr double kMaxDisplacement = 0.3;
-
 // ============================================================================
 // Loss Function Helper
 // ============================================================================
@@ -112,12 +100,13 @@ struct OptimizationContext {
     LengthCurveCharacteristics ref_chars;
     bool verbose = false;
     bool useAnalyticalGradient = true;
-    double weightPhase = kDefaultPhaseWeight;
-    double weightDelta = kDefaultDeltaWeight;
+    double weightPhase = 1.0;
+    double weightDelta = 50.0;
     double weightSamples = 1.0;
     int numPhaseSamples = 3;
     int lossPower = 2;
     LengthCurveType lengthType = LengthCurveType::MTU_LENGTH;
+    bool adaptiveSampleWeight = false;
 
     // Pointers to ALL parameter blocks (for cross-anchor sync)
     std::vector<double*> all_param_blocks;
@@ -153,12 +142,13 @@ struct OptimizationContext {
         const LengthCurveCharacteristics& chars,
         bool is_verbose = false,
         bool analytical_grad = true,
-        double weight_phase = kDefaultPhaseWeight,
-        double weight_delta = kDefaultDeltaWeight,
+        double weight_phase = 1.0,
+        double weight_delta = 50.0,
         double weight_samples = 1.0,
         int num_phase_samples = 3,
         int loss_power = 2,
-        LengthCurveType length_type = LengthCurveType::MTU_LENGTH)
+        LengthCurveType length_type = LengthCurveType::MTU_LENGTH,
+        bool adaptive_sample_weight = false)
     {
         auto ctx = std::make_shared<OptimizationContext>();
         ctx->subject_muscle = subj_muscle;
@@ -178,6 +168,7 @@ struct OptimizationContext {
         ctx->numPhaseSamples = num_phase_samples;
         ctx->lossPower = loss_power;
         ctx->lengthType = length_type;
+        ctx->adaptiveSampleWeight = adaptive_sample_weight;
         return ctx;
     }
 };
@@ -251,8 +242,7 @@ static std::vector<double> computeMuscleLengthCurveWithDOF(
     // This ensures lm_norm is correctly normalized for the current anchor positions
     if (length_type == LengthCurveType::NORMALIZED) {
         skeleton->setPositions(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
-        muscle->UpdateGeometry();
-        muscle->updateLmtRef();  // Safe: only updates lmt_ref, not related_dof_indices
+        muscle->SetMuscle();
     }
 
     for (int i = 0; i < num_samples; ++i) {
@@ -353,13 +343,10 @@ static Eigen::Vector3d computeSegmentShapeGradient(
     if (ref_len < kEpsilon) return Eigen::Vector3d::Zero();
 
     Eigen::Vector3d ref_d = ref_seg / ref_len;
-    Eigen::Vector3d cross = d.cross(ref_d);
-    double cross_norm = cross.norm();
 
-    if (cross_norm < kEpsilon) return Eigen::Vector3d::Zero();
-
-    // ∂||a×b||/∂a = b×(a×b) / ||a×b|| = -(a×b)×b / ||a×b||
-    Eigen::Vector3d dcross_dd = ref_d.cross(cross) / cross_norm;
+    // Energy = (1 - dot) where dot = d · ref_d
+    // ∂(1-dot)/∂d = -ref_d
+    Eigen::Vector3d denergy_dd = -ref_d;
 
     // ∂d/∂p = ±(I - d*d^T) / len
     // + for end point (moving end increases segment in d direction)
@@ -367,7 +354,7 @@ static Eigen::Vector3d computeSegmentShapeGradient(
     double sign = is_end_point ? 1.0 : -1.0;
     Eigen::Matrix3d dd_dp = sign * (Eigen::Matrix3d::Identity() - d * d.transpose()) / len;
 
-    return R.transpose() * dd_dp.transpose() * dcross_dd;
+    return R.transpose() * dd_dp.transpose() * denergy_dd;
 }
 
 // ============================================================================
@@ -400,7 +387,11 @@ static double computeShapeEnergy(const OptimizationContext& ctx) {
             if (subj_len > kEpsilon && ref_len > kEpsilon) {
                 Eigen::Vector3d subj_dir = subj_seg / subj_len;
                 Eigen::Vector3d ref_dir = ref_seg / ref_len;
-                energy += subj_dir.cross(ref_dir).norm();
+                // (1 - dot): 0° → 0, 90° → 1, 180° → 2
+                double dot = subj_dir.dot(ref_dir);
+                double _energy = 1.0 - dot;
+                if (_energy > 0.3) _energy = std::pow(5.0, _energy);
+                energy += _energy;
                 ++count;
             }
         }
@@ -416,7 +407,11 @@ static double computeShapeEnergy(const OptimizationContext& ctx) {
             if (subj_len > kEpsilon && ref_len > kEpsilon) {
                 Eigen::Vector3d subj_dir = subj_seg / subj_len;
                 Eigen::Vector3d ref_dir = ref_seg / ref_len;
-                energy += subj_dir.cross(ref_dir).norm();
+                // (1 - dot): 0° → 0, 90° → 1, 180° → 2
+                double dot = subj_dir.dot(ref_dir);
+                double _energy = 1.0 - dot;
+                if (_energy > 0.3) _energy = std::pow(5.0, _energy);
+                energy += _energy;
                 ++count;
             }
         }
@@ -426,24 +421,31 @@ static double computeShapeEnergy(const OptimizationContext& ctx) {
 }
 
 /**
- * @brief Compute per-phase shape energy for all segments
+ * @brief Compute per-phase shape metrics for all segments
  *
  * Unlike computeShapeEnergy which focuses on segments adjacent to a single anchor,
  * this computes the total direction misalignment across ALL muscle segments at each phase.
  *
- * @return Vector of angles (in degrees) at each phase, showing direction misalignment
+ * @param result WaypointOptResult to populate (shape_angle_* and shape_energy_*)
+ * @param is_before true for "before" optimization, false for "after"
  */
-static std::vector<double> computePerPhaseShapeEnergy(
+static void computePerPhaseShapeMetrics(
+    WaypointOptResult& result,
     Muscle* subject_muscle,
     Muscle* reference_muscle,
     dart::dynamics::SkeletonPtr subject_skeleton,
     dart::dynamics::SkeletonPtr reference_skeleton,
     int num_samples,
     const DOFSweepConfig& dof_config,
-    const Eigen::VectorXd& ref_pose)
+    const Eigen::VectorXd& ref_pose,
+    bool is_before)
 {
-    std::vector<double> per_phase_energy;
-    per_phase_energy.reserve(num_samples);
+    auto& angles = is_before ? result.shape_angle_before : result.shape_angle_after;
+    auto& energies = is_before ? result.shape_energy_before : result.shape_energy_after;
+    angles.clear();
+    energies.clear();
+    angles.reserve(num_samples);
+    energies.reserve(num_samples);
 
     for (int sample = 0; sample < num_samples; ++sample) {
         double t = static_cast<double>(sample) / (num_samples - 1);
@@ -457,11 +459,12 @@ static std::vector<double> computePerPhaseShapeEnergy(
         subject_muscle->UpdateGeometry();
         reference_muscle->UpdateGeometry();
 
-        // Compute cross product sum for all segments at this phase
+        // Compute dot product sum for all segments at this phase
         auto& subj_anchors = subject_muscle->GetAnchors();
         auto& ref_anchors = reference_muscle->GetAnchors();
 
-        double cross_sum = 0.0;
+        double dot_sum = 0.0;
+        double energy_sum = 0.0;
         int segment_count = 0;
 
         for (size_t i = 0; i + 1 < subj_anchors.size(); ++i) {
@@ -474,20 +477,24 @@ static std::vector<double> computePerPhaseShapeEnergy(
             if (subj_len > kEpsilon && ref_len > kEpsilon) {
                 Eigen::Vector3d subj_dir = subj_seg / subj_len;
                 Eigen::Vector3d ref_dir = ref_seg / ref_len;
-                cross_sum += subj_dir.cross(ref_dir).norm();
+                double dot = subj_dir.dot(ref_dir);
+                dot_sum += dot;
+                double one_minus_dot = 1.0 - dot;
+                energy_sum += one_minus_dot;
                 ++segment_count;
             }
         }
 
-        // Convert to angle in degrees: asin(||cross||) * 180 / PI
-        double avg_cross = (segment_count > 0) ? cross_sum / segment_count : 0.0;
-        // Clamp to [0, 1] for numerical safety
-        avg_cross = std::min(1.0, std::max(0.0, avg_cross));
-        double angle_deg = std::asin(avg_cross) * 180.0 / M_PI;
-        per_phase_energy.push_back(angle_deg);
-    }
+        // Angle in degrees: acos(avg_dot) for visualization
+        double avg_dot = (segment_count > 0) ? dot_sum / segment_count : 1.0;
+        avg_dot = std::clamp(avg_dot, -1.0, 1.0);
+        double angle_deg = std::acos(avg_dot) * 180.0 / M_PI;
+        angles.push_back(angle_deg);
 
-    return per_phase_energy;
+        // Energy: average (1-dot)² for logging
+        double avg_energy = (segment_count > 0) ? energy_sum / segment_count : 0.0;
+        energies.push_back(avg_energy);
+    }
 }
 
 static Eigen::Vector3d computeShapeGradient(const OptimizationContext& ctx) {
@@ -591,7 +598,15 @@ static double computeLengthCurveEnergy(const OptimizationContext& ctx) {
     if (ctx.weightSamples > kEpsilon &&
         subj_chars.phase_samples.size() == ctx.ref_chars.phase_samples.size()) {
         for (size_t i = 0; i < subj_chars.phase_samples.size(); ++i) {
-            energy += ctx.weightSamples *
+            double sample_weight = 1.0;
+            if (ctx.adaptiveSampleWeight) {
+                double norm_len = ctx.ref_chars.phase_samples[i];
+                if (norm_len >= 1.0) {
+                    sample_weight = std::pow(5.0, norm_len);
+                }
+                // else: sample_weight = 1.0
+            }
+            energy += ctx.weightSamples * sample_weight *
                       applyLoss(subj_chars.phase_samples[i] - ctx.ref_chars.phase_samples[i], ctx.lossPower);
         }
     }
@@ -711,8 +726,7 @@ static Eigen::Vector3d computeDeltaGradient(const OptimizationContext& ctx) {
     // For NORMALIZED mode, recompute lmt_ref at zero pose first
     if (ctx.lengthType == LengthCurveType::NORMALIZED) {
         ctx.subject_skeleton->setPositions(Eigen::VectorXd::Zero(ctx.subject_skeleton->getNumDofs()));
-        ctx.subject_muscle->UpdateGeometry();
-        ctx.subject_muscle->updateLmtRef();
+        ctx.subject_muscle->SetMuscle();
     }
 
     for (int sample = 0; sample <= ctx.num_samples; ++sample) {
@@ -1053,15 +1067,19 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
 
     Eigen::VectorXd ref_pose = subject_skeleton->getPositions();
 
-    // Compute per-phase shape energy for "before" state
-    result.shape_energy_before = computePerPhaseShapeEnergy(
-        subject_muscle, reference_muscle,
+    // Compute per-phase shape metrics for "before" state
+    computePerPhaseShapeMetrics(result, subject_muscle, reference_muscle,
         subject_skeleton, reference_skeleton,
-        config.numSampling, dof_config, ref_pose);
+        config.numSampling, dof_config, ref_pose, true);
 
-    // 4. Setup Ceres problem
-    ceres::Problem problem;
+    // 4. Setup waypoint parameters (shared across outer iterations)
     WaypointParameters waypoint_params(anchors);
+
+    // Store initial positions for bound hit detection and potential revert
+    std::vector<std::array<double, 3>> initial_positions(waypoint_params.size());
+    for (size_t i = 0; i < waypoint_params.size(); ++i) {
+        initial_positions[i] = {waypoint_params[i][0], waypoint_params[i][1], waypoint_params[i][2]};
+    }
 
     if (config.verbose) {
         LOG_INFO("[WaypointOpt] Initial anchor positions:");
@@ -1071,6 +1089,18 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
         }
     }
 
+    // 5. Solver options (shared across outer iterations)
+    ceres::Solver::Options options;
+    options.max_num_iterations = config.maxIterations;
+    options.linear_solver_type = ceres::DENSE_QR;
+    options.function_tolerance = config.functionTolerance;
+    options.gradient_tolerance = config.gradientTolerance;
+    options.parameter_tolerance = config.parameterTolerance;
+
+    // 6. Build Ceres problem
+    ceres::Problem problem;
+    std::vector<std::shared_ptr<OptimizationContext>> contexts;
+
     // Build vector of all parameter block pointers for cross-anchor sync
     std::vector<double*> all_param_ptrs;
     all_param_ptrs.reserve(waypoint_params.size());
@@ -1078,23 +1108,24 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
         all_param_ptrs.push_back(waypoint_params[i]);
     }
 
-    // Store contexts for setting up all_param_blocks after creation
-    std::vector<std::shared_ptr<OptimizationContext>> contexts;
-
     for (size_t i = 0; i < waypoint_params.size(); ++i) {
         problem.AddParameterBlock(waypoint_params[i], 3);
 
-        bool is_fixed = config.fixOriginInsertion && (i == 0 || i == anchors.size() - 1);
+        bool is_origin_insertion = (i == 0 || i == anchors.size() - 1);
+        bool is_fixed = config.fixOriginInsertion && is_origin_insertion;
         if (is_fixed) {
             problem.SetParameterBlockConstant(waypoint_params[i]);
             continue;
         }
 
-        // Add bounds to prevent unrealistic anchor movements
+        // Use tighter bounds for origin/insertion, normal bounds otherwise
+        double max_disp = is_origin_insertion
+            ? config.maxDisplacementOriginInsertion
+            : config.maxDisplacement;
         for (int dim = 0; dim < 3; ++dim) {
-            double initial_val = waypoint_params[i][dim];
-            problem.SetParameterLowerBound(waypoint_params[i], dim, initial_val - kMaxDisplacement);
-            problem.SetParameterUpperBound(waypoint_params[i], dim, initial_val + kMaxDisplacement);
+            double current_val = waypoint_params[i][dim];
+            problem.SetParameterLowerBound(waypoint_params[i], dim, current_val - max_disp);
+            problem.SetParameterUpperBound(waypoint_params[i], dim, current_val + max_disp);
         }
 
         auto ctx = OptimizationContext::create(
@@ -1103,9 +1134,9 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
             static_cast<int>(i), config.numSampling,
             dof_config, ref_pose, result.reference_chars, config.verbose,
             config.analyticalGradient, config.weightPhase, config.weightDelta,
-            config.weightSamples, config.numPhaseSamples, config.lossPower, config.lengthType);
+            config.weightSamples, config.numPhaseSamples, config.lossPower, config.lengthType,
+            config.adaptiveSampleWeight);
 
-        // Set up cross-anchor sync pointers
         ctx->all_param_blocks = all_param_ptrs;
 
         if (config.lambdaShape > 0) {
@@ -1122,8 +1153,7 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
         contexts.push_back(ctx);
     }
 
-    // 5. Compute initial energies (before optimization)
-    // Always compute both energies for display, but total only includes weighted terms
+    // Lambda to compute energies using current contexts
     auto computeEnergies = [&](double& shape_out, double& length_out, double& total_out) {
         shape_out = 0.0;
         length_out = 0.0;
@@ -1131,37 +1161,60 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
             shape_out += computeShapeEnergy(*ctx);
             length_out += computeLengthCurveEnergy(*ctx);
         }
-        // Total cost only includes weighted terms (matches Ceres cost)
         total_out = config.lambdaShape * shape_out + config.lambdaLengthCurve * length_out;
     };
 
+    // Compute initial energies
     computeEnergies(result.initial_shape_energy, result.initial_length_energy, result.initial_total_cost);
 
-    // 6. Solve
-    ceres::Solver::Options options;
-    options.max_num_iterations = config.maxIterations;
-    options.linear_solver_type = ceres::DENSE_QR;
-    options.minimizer_progress_to_stdout = config.verbose;
-    options.logging_type = config.verbose ? ceres::PER_MINIMIZER_ITERATION : ceres::SILENT;
-    options.function_tolerance = kFunctionTolerance;
-    options.gradient_tolerance = kGradientTolerance;
-    options.parameter_tolerance = kParameterTolerance;
-
+    // 7. Solve
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 
+    result.num_iterations = static_cast<int>(summary.iterations.size());
+
     if (config.verbose) {
-        LOG_INFO("[WaypointOpt] " << summary.BriefReport());
-        LOG_INFO("[WaypointOpt] Final anchor positions:");
-        for (size_t i = 0; i < waypoint_params.size(); ++i) {
-            LOG_INFO("  [" << i << "] " << waypoint_params[i][0] << " "
-                     << waypoint_params[i][1] << " " << waypoint_params[i][2]);
+        LOG_INFO("[WaypointOpt] " << subject_muscle->name
+                 << ": cost " << summary.initial_cost << " -> " << summary.final_cost
+                 << " (" << summary.iterations.size() << " iters, "
+                 << ceres::TerminationTypeToString(summary.termination_type) << ")");
+    }
+
+    // Apply results to anchors
+    waypoint_params.applyTo(anchors);
+
+    // Update muscle state
+    subject_skeleton->setPositions(Eigen::VectorXd::Zero(subject_skeleton->getNumDofs()));
+    subject_muscle->SetMuscle();
+    subject_skeleton->setPositions(ref_pose);
+
+    // Detect bound hits
+    constexpr double kBoundTolerance = 1e-4;
+    result.num_bound_hits = 0;
+    for (size_t i = 0; i < waypoint_params.size(); ++i) {
+        bool is_origin_insertion = (i == 0 || i == anchors.size() - 1);
+        bool is_fixed = config.fixOriginInsertion && is_origin_insertion;
+        if (is_fixed) continue;
+
+        double max_disp = is_origin_insertion
+            ? config.maxDisplacementOriginInsertion
+            : config.maxDisplacement;
+
+        for (int dim = 0; dim < 3; ++dim) {
+            double disp = std::abs(waypoint_params[i][dim] - initial_positions[i][dim]);
+            if (disp >= max_disp - kBoundTolerance) {
+                result.num_bound_hits++;
+                if (config.verbose) {
+                    LOG_WARN("[WaypointOpt] Anchor " << i << " dim " << dim
+                             << " hit bound: disp=" << disp << " max=" << max_disp);
+                }
+                break;
+            }
         }
     }
 
-    // 6. Check termination type - only CONVERGENCE is success
+    // Check convergence status
     const bool converged = (summary.termination_type == ceres::CONVERGENCE);
-    const bool hit_max_iter = (summary.termination_type == ceres::NO_CONVERGENCE);
 
     if (!converged) {
         std::string reason;
@@ -1184,32 +1237,41 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
                  << ", Initial cost: " << summary.initial_cost);
     }
 
-    // 7. Apply results (even if not converged, to see what happened)
-    waypoint_params.applyTo(anchors);
-
-    // SetMuscle() computes lmt_ref from current pose - must be zero pose
-    subject_skeleton->setPositions(Eigen::VectorXd::Zero(subject_skeleton->getNumDofs()));
-    subject_muscle->SetMuscle();
-
-    // Restore to base pose for energy computation
-    subject_skeleton->setPositions(ref_pose);
-
     // 8. Compute final energies
     computeEnergies(result.final_shape_energy, result.final_length_energy, result.final_total_cost);
 
-    // 9. Compute final curve using SAME DOF as optimization (not findBestDOF again!)
+    // 9. Compute "after" curves and metrics BEFORE potential revert (to log what optimization produced)
     result.subject_after_lengths = computeMuscleLengthCurveWithDOF(
         subject_muscle, subject_skeleton, config.numSampling, dof_config, config.lengthType);
     result.subject_after_chars = analyzeLengthCurve(result.subject_after_lengths, config.numPhaseSamples);
 
-    // Compute per-phase shape energy for "after" state
-    result.shape_energy_after = computePerPhaseShapeEnergy(
-        subject_muscle, reference_muscle,
+    computePerPhaseShapeMetrics(result, subject_muscle, reference_muscle,
         subject_skeleton, reference_skeleton,
-        config.numSampling, dof_config, ref_pose);
+        config.numSampling, dof_config, ref_pose, false);
 
-    // Only CONVERGENCE is considered success
-    result.success = converged;
+    // 10. Check if optimization made things worse - if so, revert waypoints but keep logs
+    bool ceres_cost_increased = summary.final_cost > summary.initial_cost;
+    if (ceres_cost_increased) {
+        LOG_WARN("[WaypointOpt] Ceres cost INCREASED ("
+                 << summary.initial_cost << " -> " << summary.final_cost
+                 << ") after " << result.num_iterations << " iterations, reverting to original positions");
+
+        // Restore original waypoint positions
+        for (size_t i = 0; i < waypoint_params.size(); ++i) {
+            anchors[i]->local_positions[0] = Eigen::Vector3d(
+                initial_positions[i][0], initial_positions[i][1], initial_positions[i][2]);
+        }
+
+        // Re-initialize muscle with restored positions
+        subject_skeleton->setPositions(Eigen::VectorXd::Zero(subject_skeleton->getNumDofs()));
+        subject_muscle->SetMuscle();
+        subject_skeleton->setPositions(ref_pose);
+
+        // Note: "after" logs are kept showing the failed optimization results for debugging
+    }
+
+    // Success only if converged AND didn't increase Ceres cost
+    result.success = converged && !ceres_cost_increased;
     restorePoses();
     return result;
 }

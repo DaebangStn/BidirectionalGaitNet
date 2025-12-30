@@ -1,0 +1,84 @@
+digraph WaypointOptimizerLoop {
+    rankdir=TB;
+    node [shape=box, fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Title
+    labelloc="t";
+    label="WaypointOptimizer::optimizeMuscle Flow";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    // Subgraph for initialization
+    subgraph cluster_init {
+        label="Initialization";
+        style=rounded;
+        bgcolor="#e8f4e8";
+
+        store_poses [label="Store initial poses\n(subject & reference)"];
+        check_anchors [label="Check anchors count\n(skip if ≤2 with fixOriginInsertion)", shape=diamond];
+        find_dof [label="Find best DOF\n(findBestDOF)"];
+        compute_curves [label="Compute reference &\nsubject_before curves"];
+        setup_params [label="Setup WaypointParameters\n& store initial positions"];
+        setup_solver [label="Setup Solver Options\n(tolerances, iterations)"];
+    }
+
+    // Ceres optimization
+    subgraph cluster_ceres {
+        label="Ceres Optimization";
+        style=rounded;
+        bgcolor="#e8e8f4";
+
+        build_problem [label="Build Ceres Problem"];
+        add_params [label="Add Parameter Blocks\n& displacement bounds"];
+        add_residuals [label="Add ShapeCost &\nLengthCurveCost residuals"];
+        compute_init_energy [label="Compute initial energies"];
+        ceres_solve [label="Ceres::Solve()", style=bold, color=blue];
+        apply_waypoints [label="waypoint_params.applyTo(anchors)"];
+        set_muscle [label="SetMuscle()\n(update muscle state)"];
+    }
+
+    // Post-optimization processing
+    subgraph cluster_post {
+        label="Post-Optimization";
+        style=rounded;
+        bgcolor="#f4e8e8";
+
+        detect_bounds [label="Detect bound hits"];
+        check_converge [label="Check convergence status"];
+        compute_final [label="Compute final energies\n& after curves"];
+        check_cost_increase [label="Cost increased?", shape=diamond];
+        revert [label="Revert to\ninitial positions", style=dashed];
+        store_result [label="Store optimized\nanchor positions"];
+        restore_poses [label="Restore initial poses"];
+        return_result [label="Return result", shape=ellipse];
+    }
+
+    // Flow connections - Initialization
+    store_poses -> check_anchors;
+    check_anchors -> find_dof [label="optimize"];
+    check_anchors -> restore_poses [label="skip", style=dashed];
+    find_dof -> compute_curves;
+    compute_curves -> setup_params;
+    setup_params -> setup_solver;
+    setup_solver -> build_problem;
+
+    // Flow connections - Ceres
+    build_problem -> add_params;
+    add_params -> add_residuals;
+    add_residuals -> compute_init_energy;
+    compute_init_energy -> ceres_solve;
+    ceres_solve -> apply_waypoints;
+    apply_waypoints -> set_muscle;
+    set_muscle -> detect_bounds;
+
+    // Flow connections - Post-optimization
+    detect_bounds -> check_converge;
+    check_converge -> compute_final;
+    compute_final -> check_cost_increase;
+    check_cost_increase -> revert [label="yes"];
+    check_cost_increase -> store_result [label="no"];
+    revert -> store_result;
+    store_result -> restore_poses;
+    restore_poses -> return_result;
+}

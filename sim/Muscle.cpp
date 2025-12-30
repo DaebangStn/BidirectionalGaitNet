@@ -154,11 +154,7 @@ void Muscle::SetMuscle()
     int n = mAnchors.size();
     mCachedAnchorPositions.resize(n);
 
-    lmt_ref = 0;
-    for (int i = 1; i < n; i++) lmt_ref += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
-    lmt_base = lmt_ref;
-    lmt = lmt_ref;
-
+    updateLmtRef();
     UpdateGeometry();
     Eigen::MatrixXd Jt = GetJacobianTranspose();
     auto Ap = GetForceJacobianAndPassive();
@@ -211,14 +207,11 @@ void Muscle::updateLmtRef()
     // Recompute lmt_ref from current anchor positions without touching related_dof_indices.
     // Safe to call during optimization when anchor positions have changed.
     int n = mAnchors.size();
-    mCachedAnchorPositions.resize(n);
 
     lmt_ref = 0;
     for (int i = 1; i < n; i++) lmt_ref += (mAnchors[i]->GetPoint() - mAnchors[i - 1]->GetPoint()).norm();
     lmt_base = lmt_ref;
     lmt = lmt_ref;
-
-    UpdateGeometry();
 }
 
 void Muscle::RefreshMuscleParams()

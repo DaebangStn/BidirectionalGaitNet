@@ -18,6 +18,7 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <chrono>
 
 /**
  * @brief Muscle Personalizer Application
@@ -111,11 +112,18 @@ private:
     int mWaypointLossPower = 2;  // 2=squared, 3=cube, etc.
     int mWaypointNumParallel = 1;  // Number of parallel threads (1 = sequential)
     bool mWaypointUseNormalizedLength = false;  // false = lmt (MTU), true = lm_norm (normalized)
+    float mWaypointMaxDisplacement = 0.2f;  // Max displacement for normal waypoints (m)
+    float mWaypointMaxDispOriginInsertion = 0.03f;  // Max displacement for origin/insertion (m)
+    float mWaypointFunctionTolerance = 1e-4f;  // Convergence tolerance on cost function
+    float mWaypointGradientTolerance = 1e-5f;  // Convergence tolerance on gradient
+    float mWaypointParameterTolerance = 1e-5f;  // Convergence tolerance on parameters
+    bool mWaypointAdaptiveSampleWeight = false;  // Adaptive weighting for samples
 
     // Waypoint optimization progress (thread-safe)
     std::atomic<bool> mWaypointOptRunning{false};
     std::atomic<int> mWaypointOptCurrent{0};
     std::atomic<int> mWaypointOptTotal{0};
+    std::chrono::steady_clock::time_point mWaypointOptStartTime;  // Start time for elapsed/ETA
     std::mutex mWaypointOptMutex;
     std::mutex mCharacterMutex;  // Protects skeleton/muscle access during async optimization
     std::string mWaypointOptMuscleName;
@@ -126,6 +134,14 @@ private:
     std::mutex mWaypointResultsMutex;
     int mWaypointResultSelectedIdx = -1;  // Single selection index
     char mWaypointResultFilter[64] = "";
+
+    // Sort state for waypoint results table
+    enum class WaypointSortColumn { Name, ShapeEnergy, LengthEnergy, TotalEnergy };
+    WaypointSortColumn mWaypointSortColumn = WaypointSortColumn::TotalEnergy;
+    bool mWaypointSortAscending = false;
+    bool mWaypointShowAfterEnergy = false;  // true=After, false=Before
+    std::vector<int> mWaypointSortedIndices;  // Sorted index mapping
+    bool mPlotLegendEast = true;  // true=East (right), false=West (left)
 
     // ============================================================
     // Tool 3: Contracture Estimation
