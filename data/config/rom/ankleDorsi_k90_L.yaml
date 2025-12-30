@@ -3,9 +3,9 @@ description: "Left ankle dorsiflexion ROM with knee flexed 90 degrees"
 
 # 1. Base pose
 pose:
-  Pelvis: [-90, 0, 0, 0, 0.5, 0]
+  Pelvis: [0, 0, 0, 0, 0.0, 0]
   FemurL: [-90, 0, 0]
-  TibiaL: -90
+  TibiaL: 90
   TalusL: [0, 0, 0]
 
 # 2. Moving joint and DOF
@@ -20,3 +20,6 @@ clinical_data:
   side: left
   joint: ankle
   field: dorsiflexion_knee90_r2
+
+# 5. Target muscle group for grid search initialization
+uniform_search_group: "plantarflexor_l"

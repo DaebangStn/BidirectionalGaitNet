@@ -36,6 +36,30 @@ MusclePersonalizerApp::~MusclePersonalizerApp()
 // ViewerAppBase Overrides
 // ============================================================
 
+void MusclePersonalizerApp::keyPress(int key, int scancode, int action, int mods)
+{
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
+
+    if (action == GLFW_PRESS) {
+        switch (key) {
+            case GLFW_KEY_R:
+                // Reset camera
+                resetCamera();
+                // Reset skeleton pose to zero
+                if (mExecutor && mExecutor->getCharacter()) {
+                    auto skel = mExecutor->getCharacter()->getSkeleton();
+                    if (skel) {
+                        skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+                    }
+                }
+                return;
+        }
+    }
+
+    // Call base class for other keys
+    ViewerAppBase::keyPress(key, scancode, action, mods);
+}
+
 void MusclePersonalizerApp::onInitialize()
 {
     // Create surgery executor
@@ -176,7 +200,6 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
             mContractureMaxIterations = ce["max_iterations"].as<int>(100);
             mContractureMinRatio = ce["min_ratio"].as<float>(0.7f);
             mContractureMaxRatio = ce["max_ratio"].as<float>(1.2f);
-            mContractureUseRobustLoss = ce["use_robust_loss"].as<bool>(true);
         }
 
         std::cout << "[MusclePersonalizer] App config loaded from " << resolved << std::endl;
@@ -240,12 +263,6 @@ void MusclePersonalizerApp::loadReferenceCharacter()
         std::cerr << "[MusclePersonalizer] Failed to load reference character: " << e.what() << std::endl;
         mReferenceCharacter = nullptr;
     }
-}
-
-void MusclePersonalizerApp::initializeSurgeryExecutor()
-{
-    // No longer needed - SurgeryExecutor is created in onInitialize
-    // Kept for compatibility but does nothing
 }
 
 // ============================================================
@@ -437,13 +454,21 @@ void MusclePersonalizerApp::drawClinicalDataSection()
                 mSkeletonDataSource = CharacterDataSource::PatientData;
                 scanSkeletonFiles();
 
-                // Select first skeleton file if available and auto-rebuild
-                if (!mSkeletonCandidates.empty()) {
-                    std::string prePost = pidState.preOp ? "pre" : "post";
-                    mSkeletonPath = "@pid:" + pid + "/gait/" + prePost + "/skeleton/" + mSkeletonCandidates[0];
+                // Auto-select patient muscle (first available file)
+                mMuscleDataSource = CharacterDataSource::PatientData;
+                scanMuscleFiles();
 
+                // Select first skeleton/muscle files if available and auto-rebuild
+                std::string prePost = pidState.preOp ? "pre" : "post";
+                if (!mSkeletonCandidates.empty()) {
+                    mSkeletonPath = "@pid:" + pid + "/gait/" + prePost + "/skeleton/" + mSkeletonCandidates[0];
+                }
+                if (!mMuscleCandidates.empty()) {
+                    mMusclePath = "@pid:" + pid + "/gait/" + prePost + "/muscle/" + mMuscleCandidates[0];
+                }
+
+                if (!mSkeletonCandidates.empty() || !mMuscleCandidates.empty()) {
                     loadCharacter();
-                    initializeSurgeryExecutor();
                 }
             }
         } else if (!mCurrentROMPID.empty()) {
@@ -589,7 +614,6 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
         // Rebuild button
         if (ImGui::Button("Rebuild", ImVec2(-1, 0))) {
             loadCharacter();
-            initializeSurgeryExecutor();
         }
     }
 }
@@ -1062,6 +1086,17 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::InputFloat("Min Ratio", &mContractureMinRatio, 0.0f, 0.0f, "%.2f");
         ImGui::SetNextItemWidth(100);
         ImGui::InputFloat("Max Ratio", &mContractureMaxRatio, 0.0f, 0.0f, "%.2f");
+        ImGui::Checkbox("Verbose (Ceres + torque)", &mContractureVerbose);
+
+        ImGui::Text("Grid Search Range:");
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputFloat("Begin##Grid", &mContractureGridBegin, 0.0f, 0.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputFloat("End##Grid", &mContractureGridEnd, 0.0f, 0.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputFloat("Step##Grid", &mContractureGridInterval, 0.0f, 0.0f, "%.2f");
 
     ImGui::Separator();
     if (ImGui::Button("Estimate Contracture Parameters", ImVec2(-1, 0))) runContractureEstimation();
@@ -1200,6 +1235,10 @@ void MusclePersonalizerApp::drawRenderTab()
         if (ImGui::RadioButton("East (Right)", &legendPos, 1)) {
             mPlotLegendEast = true;
         }
+
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputInt("Bars per Chart", &mPlotBarsPerChart);
+        mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
     }
 }
 
@@ -2100,8 +2139,10 @@ void MusclePersonalizerApp::runContractureEstimation()
     optConfig.maxIterations = mContractureMaxIterations;
     optConfig.minRatio = mContractureMinRatio;
     optConfig.maxRatio = mContractureMaxRatio;
-    optConfig.useRobustLoss = mContractureUseRobustLoss;
-    optConfig.verbose = true;
+    optConfig.verbose = mContractureVerbose;
+    optConfig.gridSearchBegin = mContractureGridBegin;
+    optConfig.gridSearchEnd = mContractureGridEnd;
+    optConfig.gridSearchInterval = mContractureGridInterval;
 
     std::cout << "[MusclePersonalizer] Running optimization with results capture..." << std::endl;
 
@@ -2487,23 +2528,33 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
     // ===== Selectors Section (collapsible) =====
     if (ImGui::TreeNodeEx("Selectors", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Group selector
+        // Group selector - sorted by deviation from 1 (largest first)
         ImGui::Text("Muscle Groups (%zu)", result.group_results.size());
         ImGui::InputTextWithHint("##grpFilter", "Filter...",
             mContractureGroupFilter, sizeof(mContractureGroupFilter));
 
+        // Create sorted indices by |ratio - 1| descending
+        std::vector<size_t> sortedGroupIndices(result.group_results.size());
+        std::iota(sortedGroupIndices.begin(), sortedGroupIndices.end(), 0);
+        std::sort(sortedGroupIndices.begin(), sortedGroupIndices.end(),
+            [&result](size_t a, size_t b) {
+                double devA = std::abs(result.group_results[a].ratio - 1.0);
+                double devB = std::abs(result.group_results[b].ratio - 1.0);
+                return devA > devB;
+            });
+
         if (ImGui::BeginListBox("##GroupList", ImVec2(-FLT_MIN, 100))) {
-            for (size_t i = 0; i < result.group_results.size(); ++i) {
-                const auto& grp = result.group_results[i];
+            for (size_t idx : sortedGroupIndices) {
+                const auto& grp = result.group_results[idx];
                 if (strlen(mContractureGroupFilter) > 0 &&
                     grp.group_name.find(mContractureGroupFilter) == std::string::npos)
                     continue;
 
-                bool selected = (mContractureSelectedGroupIdx == static_cast<int>(i));
+                bool selected = (mContractureSelectedGroupIdx == static_cast<int>(idx));
                 char label[128];
                 snprintf(label, sizeof(label), "%s (%.3f)", grp.group_name.c_str(), grp.ratio);
                 if (ImGui::Selectable(label, selected)) {
-                    mContractureSelectedGroupIdx = static_cast<int>(i);
+                    mContractureSelectedGroupIdx = static_cast<int>(idx);
                 }
             }
             ImGui::EndListBox();
@@ -2559,15 +2610,53 @@ void MusclePersonalizerApp::drawContractureResultsTab()
         }
 
         if (!labels.empty()) {
-            // Create tick labels
+            // Pagination logic (shared between both charts)
+            int total = static_cast<int>(labels.size());
+            int maxPages = (total + mPlotBarsPerChart - 1) / mPlotBarsPerChart;
+            mContractureChartPage = std::max(0, std::min(mContractureChartPage, maxPages - 1));
+            int startIdx = mContractureChartPage * mPlotBarsPerChart;
+            int endIdx = std::min(startIdx + mPlotBarsPerChart, total);
+            int n = endIdx - startIdx;
+
+            // Extract page data
             std::vector<const char*> tick_labels;
-            for (const auto& l : labels) tick_labels.push_back(l.c_str());
+            std::vector<double> page_before, page_after;
+            for (int i = startIdx; i < endIdx; ++i) {
+                tick_labels.push_back(labels[i].c_str());
+                page_before.push_back(before_vals[i]);
+                page_after.push_back(after_vals[i]);
+            }
+
+            // Compute Y range from current page data
+            double y_min = 0.0, y_max = 0.0;
+            for (size_t i = 0; i < page_before.size(); ++i) {
+                y_min = std::min(y_min, std::min(page_before[i], page_after[i]));
+                y_max = std::max(y_max, std::max(page_before[i], page_after[i]));
+            }
+            double y_margin = (y_max - y_min) * 0.1;
+            y_min -= y_margin;
+            y_max += y_margin;
+
+            // Page navigation (controls both charts)
+            ImGui::BeginDisabled(mContractureChartPage == 0);
+            if (ImGui::ArrowButton("##chart_prev", ImGuiDir_Left)) mContractureChartPage--;
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::Text("%d/%d", mContractureChartPage + 1, maxPages);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(mContractureChartPage >= maxPages - 1);
+            if (ImGui::ArrowButton("##chart_next", ImGuiDir_Right)) mContractureChartPage++;
+            ImGui::EndDisabled();
 
             if (ImPlot::BeginPlot("##lm_contract_chart", ImVec2(-1, 200))) {
                 ImPlot::SetupAxes("Muscle", "lm_contract (m)");
+                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
                 double bar_width = 0.35;
-                int n = static_cast<int>(labels.size());
+
+                // Fix x-axis to bar width
+                ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, n - 0.5, ImPlotCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImPlotCond_Always);
 
                 // Generate positions for grouped bars
                 std::vector<double> x_before(n), x_after(n);
@@ -2579,10 +2668,10 @@ void MusclePersonalizerApp::drawContractureResultsTab()
                 ImPlot::SetupAxisTicks(ImAxis_X1, 0, n - 1, n, tick_labels.data());
 
                 ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
-                ImPlot::PlotBars("Before", x_before.data(), before_vals.data(), n, bar_width);
+                ImPlot::PlotBars("Before", x_before.data(), page_before.data(), n, bar_width);
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
-                ImPlot::PlotBars("After", x_after.data(), after_vals.data(), n, bar_width);
+                ImPlot::PlotBars("After", x_after.data(), page_after.data(), n, bar_width);
 
                 ImPlot::EndPlot();
             }
@@ -2620,14 +2709,44 @@ void MusclePersonalizerApp::drawContractureResultsTab()
         }
 
         if (!labels.empty()) {
+            // Use shared pagination from lm_contract chart
+            int total = static_cast<int>(labels.size());
+            int startIdx = mContractureChartPage * mPlotBarsPerChart;
+            int endIdx = std::min(startIdx + mPlotBarsPerChart, total);
+            if (startIdx >= total) {
+                startIdx = 0;
+                endIdx = std::min(mPlotBarsPerChart, total);
+            }
+            int n = endIdx - startIdx;
+
+            // Extract page data
             std::vector<const char*> tick_labels;
-            for (const auto& l : labels) tick_labels.push_back(l.c_str());
+            std::vector<double> page_before, page_after;
+            for (int i = startIdx; i < endIdx; ++i) {
+                tick_labels.push_back(labels[i].c_str());
+                page_before.push_back(before_vals[i]);
+                page_after.push_back(after_vals[i]);
+            }
+
+            // Compute Y range from current page data
+            double y_min = 0.0, y_max = 0.0;
+            for (size_t i = 0; i < page_before.size(); ++i) {
+                y_min = std::min(y_min, std::min(page_before[i], page_after[i]));
+                y_max = std::max(y_max, std::max(page_before[i], page_after[i]));
+            }
+            double y_margin = (y_max - y_min) * 0.1;
+            y_min -= y_margin;
+            y_max += y_margin;
 
             if (ImPlot::BeginPlot("##torque_chart", ImVec2(-1, 200))) {
                 ImPlot::SetupAxes("Muscle", "Passive Torque (Nm)");
+                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
                 double bar_width = 0.35;
-                int n = static_cast<int>(labels.size());
+
+                // Fix x-axis to bar width
+                ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, n - 0.5, ImPlotCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImPlotCond_Always);
 
                 std::vector<double> x_before(n), x_after(n);
                 for (int i = 0; i < n; ++i) {
@@ -2638,10 +2757,10 @@ void MusclePersonalizerApp::drawContractureResultsTab()
                 ImPlot::SetupAxisTicks(ImAxis_X1, 0, n - 1, n, tick_labels.data());
 
                 ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
-                ImPlot::PlotBars("Before", x_before.data(), before_vals.data(), n, bar_width);
+                ImPlot::PlotBars("Before", x_before.data(), page_before.data(), n, bar_width);
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
-                ImPlot::PlotBars("After", x_after.data(), after_vals.data(), n, bar_width);
+                ImPlot::PlotBars("After", x_after.data(), page_after.data(), n, bar_width);
 
                 ImPlot::EndPlot();
             }
@@ -2652,7 +2771,96 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
     ImGui::Spacing();
 
-    // ===== Chart 3: Joint total passive torque before/after per trial =====
+    // ===== Chart 3: Per-muscle passive force at selected trial pose =====
+    if (mContractureSelectedTrialIdx >= 0 &&
+        mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size()) &&
+        mContractureSelectedGroupIdx >= 0 &&
+        mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
+
+        const auto& trial = result.trial_results[mContractureSelectedTrialIdx];
+        const auto& grp = result.group_results[mContractureSelectedGroupIdx];
+
+        ImGui::Text("Passive Force at %s: %s", trial.trial_name.c_str(), grp.group_name.c_str());
+
+        // Filter muscle forces to selected group
+        std::vector<std::string> labels;
+        std::vector<double> before_vals, after_vals;
+
+        for (size_t i = 0; i < trial.muscle_forces_before.size(); ++i) {
+            const auto& [name, before_val] = trial.muscle_forces_before[i];
+            bool in_group = std::find(grp.muscle_names.begin(), grp.muscle_names.end(),
+                                      name) != grp.muscle_names.end();
+            if (in_group && i < trial.muscle_forces_after.size()) {
+                labels.push_back(name);
+                before_vals.push_back(before_val);
+                after_vals.push_back(trial.muscle_forces_after[i].second);
+            }
+        }
+
+        if (!labels.empty()) {
+            // Use shared pagination from lm_contract chart
+            int total = static_cast<int>(labels.size());
+            int startIdx = mContractureChartPage * mPlotBarsPerChart;
+            int endIdx = std::min(startIdx + mPlotBarsPerChart, total);
+            if (startIdx >= total) {
+                startIdx = 0;
+                endIdx = std::min(mPlotBarsPerChart, total);
+            }
+            int n = endIdx - startIdx;
+
+            // Extract page data
+            std::vector<const char*> tick_labels;
+            std::vector<double> page_before, page_after;
+            for (int i = startIdx; i < endIdx; ++i) {
+                tick_labels.push_back(labels[i].c_str());
+                page_before.push_back(before_vals[i]);
+                page_after.push_back(after_vals[i]);
+            }
+
+            // Compute Y range from current page data
+            double y_min = 0.0, y_max = 0.0;
+            for (size_t i = 0; i < page_before.size(); ++i) {
+                y_min = std::min(y_min, std::min(page_before[i], page_after[i]));
+                y_max = std::max(y_max, std::max(page_before[i], page_after[i]));
+            }
+            double y_margin = (y_max - y_min) * 0.1;
+            y_min -= y_margin;
+            y_max += y_margin;
+
+            if (ImPlot::BeginPlot("##force_chart", ImVec2(-1, 200))) {
+                ImPlot::SetupAxes("Muscle", "Passive Force (N)");
+                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
+
+                double bar_width = 0.35;
+
+                // Fix x-axis to bar width
+                ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, n - 0.5, ImPlotCond_Always);
+                ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImPlotCond_Always);
+
+                std::vector<double> x_before(n), x_after(n);
+                for (int i = 0; i < n; ++i) {
+                    x_before[i] = i - bar_width / 2.0;
+                    x_after[i] = i + bar_width / 2.0;
+                }
+
+                ImPlot::SetupAxisTicks(ImAxis_X1, 0, n - 1, n, tick_labels.data());
+
+                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
+                ImPlot::PlotBars("Before", x_before.data(), page_before.data(), n, bar_width);
+
+                ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
+                ImPlot::PlotBars("After", x_after.data(), page_after.data(), n, bar_width);
+
+                ImPlot::EndPlot();
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No force data for this group/trial");
+        }
+    }
+
+    ImGui::Spacing();
+
+    // ===== Chart 4: Joint total passive torque before/after per trial =====
     if (mContractureSelectedTrialIdx >= 0 &&
         mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size())) {
 
@@ -2671,6 +2879,12 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
         if (ImPlot::BeginPlot("##joint_torque", ImVec2(-1, 150))) {
             ImPlot::SetupAxes("", "Torque (Nm)");
+            ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, 2.5, ImPlotCond_Always);
+            // Set Y limits with margin
+            double t_min = std::min({values[0], values[1], values[2]});
+            double t_max = std::max({values[0], values[1], values[2]});
+            double t_margin = (t_max - t_min) * 0.15;
+            ImPlot::SetupAxisLimits(ImAxis_Y1, t_min - t_margin, t_max + t_margin, ImPlotCond_Always);
             ImPlot::SetupAxisTicks(ImAxis_X1, 0, 2, 3, bar_labels);
 
             // Different colors for each bar

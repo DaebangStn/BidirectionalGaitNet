@@ -1,0 +1,90 @@
+digraph ContractureOptimizerFlow {
+    rankdir=TB;
+    node [shape=box, fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Title
+    labelloc="t";
+    label="ContractureOptimizer::optimize Flow";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    // Validation
+    subgraph cluster_validate {
+        label="Input Validation";
+        style=rounded;
+        bgcolor="#f4e8e8";
+
+        check_character [label="Check character != null", shape=diamond];
+        check_groups [label="Check mMuscleGroups\nnot empty", shape=diamond];
+        return_empty [label="Return empty results", shape=ellipse, style=dashed];
+    }
+
+    // Preparation
+    subgraph cluster_prep {
+        label="Preparation";
+        style=rounded;
+        bgcolor="#e8f4e8";
+
+        store_base [label="Store base lm_contract\nfor all muscles"];
+        build_pose [label="buildPoseData()\nfrom ROM configs"];
+        check_pose [label="pose_data empty?", shape=diamond];
+        init_params [label="Initialize parameters\nx[num_groups] = 1.0"];
+    }
+
+    // Ceres optimization
+    subgraph cluster_ceres {
+        label="Ceres Optimization";
+        style=rounded;
+        bgcolor="#e8e8f4";
+
+        build_problem [label="Create Ceres Problem"];
+        add_residuals [label="For each pose:\nAdd TorqueResidual"];
+        set_bounds [label="Set parameter bounds\n[minRatio, maxRatio]"];
+        solver_opts [label="Configure Solver Options\n(iterations, tolerance)"];
+        ceres_solve [label="Ceres::Solve()", style=bold, color=blue];
+        print_report [label="Print summary report"];
+    }
+
+    // Results
+    subgraph cluster_results {
+        label="Build Results";
+        style=rounded;
+        bgcolor="#f4f4e8";
+
+        loop_groups [label="For each muscle group"];
+        build_result [label="Create MuscleGroupResult:\n- group_name\n- ratio = x[group_id]\n- muscle_names\n- lm_contract_values"];
+        push_result [label="results.push_back()"];
+        return_results [label="Return results", shape=ellipse];
+    }
+
+    // Flow connections - Validation
+    check_character -> check_groups [label="valid"];
+    check_character -> return_empty [label="null"];
+    check_groups -> store_base [label="has groups"];
+    check_groups -> return_empty [label="empty"];
+
+    // Flow connections - Preparation
+    store_base -> build_pose;
+    build_pose -> check_pose;
+    check_pose -> return_empty [label="empty", style=dashed];
+    check_pose -> init_params [label="has data"];
+
+    // Flow connections - Ceres
+    init_params -> build_problem;
+    build_problem -> add_residuals;
+    add_residuals -> set_bounds;
+    set_bounds -> solver_opts;
+    solver_opts -> ceres_solve;
+    ceres_solve -> print_report;
+
+    // Flow connections - Results
+    print_report -> loop_groups;
+    loop_groups -> build_result;
+    build_result -> push_result;
+    push_result -> loop_groups [label="next group", style=dashed];
+    push_result -> return_results [label="done"];
+
+    // Layout hints
+    {rank=same; check_character; check_groups;}
+}

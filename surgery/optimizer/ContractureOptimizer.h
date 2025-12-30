@@ -37,6 +37,9 @@ struct ROMTrialConfig {
     std::string cd_side;       // "left" or "right"
     std::string cd_joint;      // "hip", "knee", "ankle"
     std::string cd_field;      // field name in patient rom.yaml
+
+    // Grid search initialization
+    std::string uniform_search_group;  // Target muscle group for grid search (e.g., "plantarflexor_l")
 };
 
 /**
@@ -85,6 +88,9 @@ struct TrialTorqueResult {
     // Per-muscle contribution at this trial pose
     std::vector<std::pair<std::string, double>> muscle_torques_before;
     std::vector<std::pair<std::string, double>> muscle_torques_after;
+    // Per-muscle passive force (f_p * f0) at this trial pose
+    std::vector<std::pair<std::string, double>> muscle_forces_before;
+    std::vector<std::pair<std::string, double>> muscle_forces_after;
 };
 
 /**
@@ -116,11 +122,15 @@ public:
         int maxIterations;
         double minRatio;
         double maxRatio;
-        bool useRobustLoss;
         bool verbose;
 
+        // Grid search initialization (applied when uniform_search_group is specified)
+        double gridSearchBegin = 0.7;
+        double gridSearchEnd = 1.3;
+        double gridSearchInterval = 0.1;
+
         Config() : maxIterations(100), minRatio(0.7), maxRatio(1.3),
-                   useRobustLoss(true), verbose(false) {}
+                   verbose(false) {}
     };
 
     /**
@@ -238,7 +248,7 @@ public:
      * @param joint_idx Joint index
      * @return Total passive torque from all muscles
      */
-    static double computePassiveTorque(Character* character, int joint_idx);
+    static double computePassiveTorque(Character* character, int joint_idx, bool verbose = false);
 
     /**
      * @brief Build pose data from ROM configs for optimization
@@ -284,6 +294,18 @@ private:
     static int getJointIndex(
         dart::dynamics::SkeletonPtr skeleton,
         const std::string& joint_name
+    );
+
+    // Find group ID by name
+    int findGroupIdByName(const std::string& name) const;
+
+    // Grid search to find best initial ratio for a muscle group
+    double findBestInitialRatio(
+        Character* character,
+        const PoseData& pose,
+        int group_id,
+        const std::map<int, double>& base_lm_contract,
+        const Config& config
     );
 
     // Ceres cost functor

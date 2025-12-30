@@ -225,7 +225,7 @@ digraph ContractureEstimationFlow {
         ];
 
         add_residuals [
-            label="For each pose:\nAddResidualBlock(\n  TorqueResidual,\n  HuberLoss (optional),\n  x.data())",
+            label="For each pose:\nAddResidualBlock(\n  TorqueResidual,\n  x.data())",
             fillcolor="#FFA07A"
         ];
 

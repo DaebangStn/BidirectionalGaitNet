@@ -41,6 +41,7 @@ protected:
     void onInitialize() override;
     void drawContent() override;
     void drawUI() override;
+    void keyPress(int key, int scancode, int action, int mods) override;
 
 private:
     // ============================================================
@@ -142,6 +143,7 @@ private:
     bool mWaypointShowAfterEnergy = false;  // true=After, false=Before
     std::vector<int> mWaypointSortedIndices;  // Sorted index mapping
     bool mPlotLegendEast = true;  // true=East (right), false=West (left)
+    int mPlotBarsPerChart = 3;    // Max number of bars per chart (for x-label readability)
 
     // ============================================================
     // Tool 3: Contracture Estimation
@@ -179,7 +181,12 @@ private:
     int mContractureMaxIterations = 100;
     float mContractureMinRatio = 0.7f;
     float mContractureMaxRatio = 1.2f;
-    bool mContractureUseRobustLoss = true;
+    bool mContractureVerbose = false;
+
+    // Grid search initialization
+    float mContractureGridBegin = 0.7f;
+    float mContractureGridEnd = 1.3f;
+    float mContractureGridInterval = 0.1f;
 
     // Results (muscle groups detected after running optimization)
     struct MuscleGroupResult {
@@ -198,6 +205,7 @@ private:
     int mContractureSelectedTrialIdx = -1;
     char mContractureGroupFilter[64] = "";
     char mContractureTrialFilter[64] = "";
+    int mContractureChartPage = 0;  // Shared pagination for muscle charts
 
     // ============================================================
     // Rendering Flags
@@ -239,7 +247,6 @@ private:
     void loadRenderConfigImpl() override;
     void loadCharacter();
     void loadReferenceCharacter();  // Load standard reference character for waypoint optimization
-    void initializeSurgeryExecutor();
 
     // ============================================================
     // Rendering

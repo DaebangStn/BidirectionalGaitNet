@@ -1,6 +1,7 @@
 // Contracture Optimizer - Implementation
 #include "ContractureOptimizer.h"
 #include "rm/rm.hpp"
+#include "Log.h"
 #include <yaml-cpp/yaml.h>
 #include <ceres/ceres.h>
 #include <regex>
@@ -132,8 +133,8 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
 
     // Parse pose from YAML and convert to full skeleton positions
     if (node["pose"] && skeleton) {
-        // Start from current skeleton pose (zeros or current state)
-        Eigen::VectorXd positions = skeleton->getPositions();
+        // Start from zero pose
+        Eigen::VectorXd positions = Eigen::VectorXd::Zero(skeleton->getNumDofs());
 
         for (const auto& joint_node : node["pose"]) {
             std::string joint_name = joint_node.first.as<std::string>();
@@ -170,6 +171,9 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
         config.cd_joint = node["clinical_data"]["joint"].as<std::string>("");
         config.cd_field = node["clinical_data"]["field"].as<std::string>("");
     }
+
+    // Load uniform_search_group for grid search initialization
+    config.uniform_search_group = node["uniform_search_group"].as<std::string>("");
 
     return config;
 }
@@ -246,7 +250,7 @@ int ContractureOptimizer::getJointIndex(
 }
 
 
-double ContractureOptimizer::computePassiveTorque(Character* character, int joint_idx) {
+double ContractureOptimizer::computePassiveTorque(Character* character, int joint_idx, bool verbose) {
     if (!character) return 0.0;
     if (character->getMuscles().empty()) return 0.0;
 
@@ -259,6 +263,7 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
 
     double total_torque = 0.0;
     const auto& muscles = character->getMuscles();
+    int contributing_muscles = 0;
 
     for (auto& muscle : muscles) {
         Eigen::VectorXd jtp = muscle->GetRelatedJtp();
@@ -268,8 +273,19 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
             int global_dof = related_indices[i];
             if (global_dof >= first_dof && global_dof < first_dof + num_dofs) {
                 total_torque += jtp[i];
+                if (verbose && std::abs(jtp[i]) > 1e-6) {
+                    LOG_INFO("    " << muscle->name << " DOF " << global_dof
+                             << " jtp=" << jtp[i] << " Nm");
+                }
+                contributing_muscles++;
             }
         }
+    }
+
+    if (verbose) {
+        LOG_INFO("  Joint " << joint->getName() << " (idx=" << joint_idx
+                 << ", DOFs " << first_dof << "-" << (first_dof + num_dofs - 1) << "): "
+                 << contributing_muscles << " muscle contributions, total=" << total_torque << " Nm");
     }
 
     return total_torque;
@@ -291,7 +307,6 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
         }
 
         Eigen::VectorXd positions = config.pose;
-
         int joint_idx = getJointIndex(skeleton, config.joint);
         if (joint_idx < 0) {
             std::cerr << "[ContractureOptimizer] Joint not found: " << config.joint << std::endl;
@@ -320,6 +335,86 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
     }
 
     return data;
+}
+
+
+int ContractureOptimizer::findGroupIdByName(const std::string& name) const {
+    for (const auto& [id, gname] : mGroupNames) {
+        if (gname == name) return id;
+    }
+    return -1;
+}
+
+
+double ContractureOptimizer::findBestInitialRatio(
+    Character* character,
+    const PoseData& pose,
+    int group_id,
+    const std::map<int, double>& base_lm_contract,
+    const Config& config) {
+
+    auto& muscles = character->getMuscles();
+    auto skeleton = character->getSkeleton();
+
+    // Get muscle indices for this group
+    auto group_it = mMuscleGroups.find(group_id);
+    if (group_it == mMuscleGroups.end()) {
+        return 1.0;  // Default if group not found
+    }
+    const auto& muscle_indices = group_it->second;
+
+    double best_ratio = 1.0;
+    double best_error = std::numeric_limits<double>::max();
+
+    // Store original lm_contract values
+    std::vector<double> original_lm_contract(muscles.size());
+    for (size_t i = 0; i < muscles.size(); ++i) {
+        original_lm_contract[i] = muscles[i]->lm_contract;
+    }
+
+    // Grid search over ratio values
+    for (double ratio = config.gridSearchBegin;
+         ratio <= config.gridSearchEnd + 1e-6;
+         ratio += config.gridSearchInterval) {
+
+        // Apply ratio to this group's muscles
+        for (int m_idx : muscle_indices) {
+            auto it = base_lm_contract.find(m_idx);
+            double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
+            muscles[m_idx]->lm_contract = base * ratio;
+            muscles[m_idx]->RefreshMuscleParams();
+        }
+
+        // Set skeleton pose
+        skeleton->setPositions(pose.q);
+
+        // Update muscle geometry
+        for (auto& muscle : muscles) {
+            muscle->UpdateGeometry();
+        }
+
+        // Compute passive torque
+        double computed_torque = computePassiveTorque(character, pose.joint_idx);
+        double error = std::abs(computed_torque - pose.tau_obs);
+
+        if (config.verbose) {
+            LOG_INFO("[GridSearch] ratio=" << ratio << " torque=" << computed_torque
+                     << " target=" << pose.tau_obs << " error=" << error);
+        }
+
+        if (error < best_error) {
+            best_error = error;
+            best_ratio = ratio;
+        }
+    }
+
+    // Restore original lm_contract values
+    for (size_t i = 0; i < muscles.size(); ++i) {
+        muscles[i]->lm_contract = original_lm_contract[i];
+        muscles[i]->RefreshMuscleParams();
+    }
+
+    return best_ratio;
 }
 
 
@@ -364,18 +459,35 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     // Initialize parameters (all ratios = 1.0)
     std::vector<double> x(num_groups, 1.0);
 
+    // Grid search for trials with uniform_search_group specified
+    for (size_t i = 0; i < rom_configs.size() && i < pose_data.size(); ++i) {
+        const auto& rom_config = rom_configs[i];
+        if (rom_config.uniform_search_group.empty()) continue;
+
+        // Find group_id for this uniform_search_group name
+        int target_group_id = findGroupIdByName(rom_config.uniform_search_group);
+        if (target_group_id < 0) {
+            LOG_INFO("[Contracture] Warning: uniform_search_group '"
+                     << rom_config.uniform_search_group << "' not found in muscle groups");
+            continue;
+        }
+
+        // Find best initial ratio via grid search
+        double best_ratio = findBestInitialRatio(
+            character, pose_data[i], target_group_id, base_lm_contract, config);
+
+        x[target_group_id] = best_ratio;
+        LOG_INFO("[Contracture] Grid search for " << rom_config.uniform_search_group
+                 << ": best_ratio=" << best_ratio);
+    }
+
     // Build Ceres problem
     ceres::Problem problem;
 
     // Add residual blocks
     for (const auto& pose : pose_data) {
         auto* cost = new TorqueResidual(character, pose, mMuscleGroups, base_lm_contract, num_groups);
-
-        ceres::LossFunction* loss = config.useRobustLoss
-            ? new ceres::HuberLoss(1.0)
-            : nullptr;
-
-        problem.AddResidualBlock(cost, loss, x.data());
+        problem.AddResidualBlock(cost, nullptr, x.data());
     }
 
     // Set bounds
@@ -390,7 +502,6 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     options.linear_solver_type = (num_groups < 20)
         ? ceres::DENSE_QR
         : ceres::SPARSE_NORMAL_CHOLESKY;
-    options.minimizer_progress_to_stdout = config.verbose;
     options.function_tolerance = 1e-6;
     options.gradient_tolerance = 1e-8;
 
@@ -399,9 +510,9 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     ceres::Solve(options, &problem, &summary);
 
     if (config.verbose) {
-        std::cout << summary.FullReport() << std::endl;
+        LOG_INFO(summary.FullReport());
     } else {
-        std::cout << "[ContractureOptimizer] " << summary.BriefReport() << std::endl;
+        LOG_INFO("[ContractureOptimizer] " << summary.BriefReport());
     }
 
     // Build results
@@ -482,7 +593,10 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
         }
 
         // Compute BEFORE total passive torque
-        trial_result.computed_torque_before = computePassiveTorque(character, pose.joint_idx);
+        if (config.verbose) {
+            LOG_INFO("[Contracture] Trial '" << rom_config.name << "' BEFORE torque:");
+        }
+        trial_result.computed_torque_before = computePassiveTorque(character, pose.joint_idx, config.verbose);
 
         // Per-muscle contribution BEFORE
         auto* joint = skeleton->getJoint(pose.joint_idx);
@@ -501,6 +615,9 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
                 }
             }
             trial_result.muscle_torques_before.push_back({muscle->name, contrib});
+            // Capture passive force (f_p * f0)
+            double passive_force = muscle->Getf_p() * muscle->f0;
+            trial_result.muscle_forces_before.push_back({muscle->name, passive_force});
         }
 
         result.trial_results.push_back(trial_result);
@@ -546,7 +663,10 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
         }
 
         // Compute AFTER total passive torque
-        trial_result.computed_torque_after = computePassiveTorque(character, pose.joint_idx);
+        if (config.verbose) {
+            LOG_INFO("[Contracture] Trial '" << trial_result.trial_name << "' AFTER torque:");
+        }
+        trial_result.computed_torque_after = computePassiveTorque(character, pose.joint_idx, config.verbose);
 
         // Per-muscle contribution AFTER
         auto* joint = skeleton->getJoint(pose.joint_idx);
@@ -565,6 +685,9 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
                 }
             }
             trial_result.muscle_torques_after.push_back({muscle->name, contrib});
+            // Capture passive force (f_p * f0)
+            double passive_force = muscle->Getf_p() * muscle->f0;
+            trial_result.muscle_forces_after.push_back({muscle->name, passive_force});
         }
     }
 
