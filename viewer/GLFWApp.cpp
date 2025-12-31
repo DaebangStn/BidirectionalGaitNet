@@ -2051,8 +2051,7 @@ void GLFWApp::drawKinematicsTabContent()
             {"Major", "Minor", "Pelvis", "Sway", "Anteversion"}, &angle_selection);
 
         if (angle_selection == 0) { // Major joints
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -45, 60);
 
             std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
@@ -2074,8 +2073,7 @@ void GLFWApp::drawKinematicsTabContent()
         }
 
         if (angle_selection == 1) { // Minor joints
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -10, 15);
 
             std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
@@ -2096,8 +2094,7 @@ void GLFWApp::drawKinematicsTabContent()
             ImGui::Separator();
         }
         if (angle_selection == 2) { // Pelvis joints
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -20, 20);
 
             std::string title_pelvis_joints = mPlotTitle ? mCheckpointName : "Pelvis Angles (deg)";
@@ -2121,8 +2118,7 @@ void GLFWApp::drawKinematicsTabContent()
             ImGuiCommon::RadioButtonGroup("SwaySide",
                 {"Right", "Left", "Both"}, &sway_side_selection);
 
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0.0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0.0);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(ImAxis_Y1, -0.2, 0.2);
             ImPlot::SetNextAxisLimits(ImAxis_Y2, -60.0, 60.0, ImGuiCond_Once);
 
@@ -2154,8 +2150,7 @@ void GLFWApp::drawKinematicsTabContent()
         }
 
         if (angle_selection == 4) { // Anteversion
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -10, 10);
 
             std::string title_anteversion = mPlotTitle ? mCheckpointName : "Anteversion (deg)";
@@ -2198,8 +2193,7 @@ void GLFWApp::drawKineticsTabContent()
 
     // Plot torques using mGraphData
     if (!torqueKeysToPlot.empty()) {
-        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
-        else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0);
+        ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
 
         if (ImPlot::BeginPlot("Joint Torques##TorquePlots", ImVec2(-1, getPlotHeight("Torque Plots")))) {
             ImPlot::SetupAxes("Time (s)", "Torque (Nm)", 0, ImPlotAxisFlags_AutoFit);
@@ -2223,8 +2217,7 @@ void GLFWApp::drawKineticsTabContent()
         ImGui::Checkbox("Stats##KneeLoadingStats", &show_knee_stats);
 
         std::string title_knee = mPlotTitle ? mCheckpointName : "Max Knee Loading";
-        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-        else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+        ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
         ImPlot::SetNextAxisLimits(3, 0, 5);
         if (ImPlot::BeginPlot((title_knee + "##KneeLoading").c_str(), ImVec2(-1, getPlotHeight("Knee Loading"))))
         {
@@ -2246,10 +2239,7 @@ void GLFWApp::drawKineticsTabContent()
         ImGui::Checkbox("Stats##GRFStats", &show_grf_stats);
 
         std::string title_grf = mPlotTitle ? mCheckpointName : "Ground Reaction Force";
-        if (std::abs(mXmin) > 1e-6)
-            ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-        else
-            ImPlot::SetNextAxisLimits(0, -1.5, 0);
+        ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
         ImPlot::SetNextAxisLimits(3, 0, 3);  // 0-3x body weight typical range
 
         if (ImPlot::BeginPlot((title_grf + "##GRF").c_str(), ImVec2(-1, getPlotHeight("Ground Reaction Force"))))
@@ -2293,8 +2283,7 @@ void GLFWApp::drawKineticsTabContent()
         // Force plot
         if (!plot_torque) {
             std::string title_force = mPlotTitle ? mCheckpointName : (selected_name + " Forces (N)");
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -1, 6);
             if (ImPlot::BeginPlot((title_force + "##JointForces").c_str(), ImVec2(-1, getPlotHeight("Joint Loading"))))
             {
@@ -2319,7 +2308,7 @@ void GLFWApp::drawKineticsTabContent()
         } else {
             // Torque plot
             std::string title_torque = mPlotTitle ? mCheckpointName : (selected_name + " Torques (Nm)");
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -150, 150);
             if (ImPlot::BeginPlot((title_torque + "##JointTorques").c_str(), ImVec2(-1, getPlotHeight("Joint Loading"))))
             {
@@ -2435,8 +2424,7 @@ void GLFWApp::drawMuscleTabContent()
         }
 
         if (!keysToPlot.empty()) {
-            if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
-            else ImPlot::SetNextAxisLimits(0, -1.5, 0);
+            ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
 
             // Set Y-axis label and title based on mode
             std::string yAxisLabel;

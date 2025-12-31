@@ -1,7 +1,9 @@
 #include "imgui_common.h"
 #include "Muscle.h"
+#include "implot.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace ImGuiCommon {
 
@@ -520,6 +522,18 @@ bool ScrollableListBox(const char* label, const std::vector<std::string>& items,
 
     ImGui::EndChild();
     return changed;
+}
+
+// ============================================================
+// ImPlot Helpers
+// ============================================================
+
+void SetupPlotXAxis(double xMin, double defaultMin)
+{
+    if (std::abs(xMin) > 1e-6)
+        ImPlot::SetNextAxisLimits(ImAxis_X1, xMin, 0, ImGuiCond_Always);
+    else
+        ImPlot::SetNextAxisLimits(ImAxis_X1, defaultMin, 0);
 }
 
 } // namespace ImGuiCommon

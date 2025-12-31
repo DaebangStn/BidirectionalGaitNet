@@ -142,6 +142,14 @@ bool ScrollableListBox(const char* label, const std::vector<std::string>& items,
                        int* selectedIdx, float height = 200.0f,
                        const char* filterText = nullptr);
 
+// ============================================================
+// ImPlot Helpers
+// ============================================================
+
+// Setup X-axis limits for time-series plots
+// If xMin is significant (abs > 1e-6), uses [xMin, 0], otherwise uses [defaultMin, 0]
+void SetupPlotXAxis(double xMin, double defaultMin = -1.5);
+
 } // namespace ImGuiCommon
 
 #endif // IMGUI_COMMON_H

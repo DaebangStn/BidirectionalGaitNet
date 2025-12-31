@@ -1005,6 +1005,8 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::TextWrapped("%s", mROMConfigDir.c_str());
         ImGui::SameLine();
         if (ImGui::Button("Scan ROM Configs")) scanROMConfigs();
+        ImGui::SameLine();
+        if (ImGui::Button("Default")) applyDefaultROMValues();
 
         ImGui::Text("ROM Trials: %zu found", mROMTrials.size());
         ImGui::SameLine();
@@ -2234,6 +2236,33 @@ void MusclePersonalizerApp::scanROMConfigs()
     catch (const std::exception& e) {
         std::cerr << "[MusclePersonalizer] Error scanning ROM configs: " << e.what() << std::endl;
     }
+}
+
+void MusclePersonalizerApp::applyDefaultROMValues()
+{
+    // Hardcoded default ROM values for each clinical data field
+    // Format: cd_field -> default angle in degrees
+    static const std::map<std::string, float> defaultROMValues = {
+        // Ankle
+        {"dorsiflexion_knee0_r2", 10.0f},    // Dorsiflexion with knee extended
+        {"dorsiflexion_knee90_r2", 20.0f},   // Dorsiflexion with knee flexed
+        // Hip
+        {"abduction_ext_r2", 45.0f},         // Hip abduction
+        {"internal_rotation", 45.0f},        // Hip internal rotation
+        // Knee
+        {"popliteal_bilateral", 70.0f},      // Popliteal angle (hamstring tightness)
+    };
+
+    int applied = 0;
+    for (auto& trial : mROMTrials) {
+        auto it = defaultROMValues.find(trial.cd_field);
+        if (it != defaultROMValues.end()) {
+            trial.cd_value = it->second;
+            applied++;
+        }
+    }
+
+    std::cout << "[MusclePersonalizer] Applied default ROM values to " << applied << " trials" << std::endl;
 }
 
 void MusclePersonalizerApp::loadPatientROM(const std::string& pid, bool preOp)

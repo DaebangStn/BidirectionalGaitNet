@@ -283,6 +283,7 @@ private:
 
     // Helper methods
     void scanROMConfigs();
+    void applyDefaultROMValues();
     void loadPatientROM(const std::string& pid, bool preOp);
     void loadClinicalWeight(const std::string& pid, bool preOp);
     void updateROMTrialCDValues();
