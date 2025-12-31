@@ -239,6 +239,7 @@ public:
 
     MuscleTuple getRandomMuscleTuple() { return mRandomMuscleTuple; }
     Eigen::VectorXd getRandomDesiredTorque() { return mRandomDesiredTorque; }
+    const Eigen::VectorXd& getLastDesiredTorque() const { return mLastDesiredTorque; }
 
     Eigen::VectorXd getRandomPrevOut() { return mRandomPrevOut; }
     Eigen::VectorXf getRandomWeight()
@@ -448,8 +449,6 @@ public:
     }
     std::vector<bool> getUseWeights() { return mUseWeights; }
 
-    const std::vector<Eigen::VectorXd> &getDesiredTorqueLogs() { return mDesiredTorqueLogs; }
-
     Eigen::VectorXd getParamStateFromNormalized(Eigen::VectorXd normalizedParamState)
     {
         Eigen::VectorXd paramState = Eigen::VectorXd::Zero(mNumParamState);
@@ -529,6 +528,7 @@ private:
     // Muscle Learning Tuple
     bool mTupleFilled;
     Eigen::VectorXd mRandomDesiredTorque;
+    Eigen::VectorXd mLastDesiredTorque;  // Last computed SPD torque for visualization
     MuscleTuple mRandomMuscleTuple;
     Eigen::VectorXd mRandomPrevOut;
     double mRandomWeight;
@@ -595,8 +595,6 @@ private:
 
     std::vector<bool> mUseWeights; // Only For Rendering
     int mHorizon;
-
-    std::vector<Eigen::VectorXd> mDesiredTorqueLogs;
 
     bool mUseNormalizedParamState;
     int mNumKnownParam;

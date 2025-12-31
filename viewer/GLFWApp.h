@@ -1,7 +1,7 @@
+#include "common/ViewerAppBase.h"
 #include "dart/gui/Trackball.hpp"
 #include "Environment.h"
 #include "GLfunctions.h"
-#include "ShapeRenderer.h"
 #include "CBufferData.h"
 #include "RenderEnvironment.h"
 #include "RenderCharacter.h"
@@ -39,13 +39,6 @@ enum MuscleRenderingType
     activationLevel,
     contracture,
     weakness
-};
-
-enum class SkeletonRenderMode
-{
-    Solid = 0,
-    Wireframe,
-    Mesh
 };
 
 struct RolloutStatus
@@ -135,7 +128,7 @@ struct DrawFlags
     bool noiseArrows = true;
     bool fgnSkeleton = false;
     bool obj = true;
-    SkeletonRenderMode skeletonRenderMode = SkeletonRenderMode::Solid;
+    RenderMode skeletonRenderMode = RenderMode::Primitive;
 };
 
 /**
@@ -162,12 +155,21 @@ struct PlaybackViewerState
     int manualFrameIndex = 0;                                        ///< Manual frame index when navigationMode == PLAYBACK_MANUAL_FRAME
 };
 
-class GLFWApp
+class GLFWApp : public ViewerAppBase
 {
 public:
     GLFWApp(int argc, char **argv);
-    ~GLFWApp();
-    void startLoop();
+    ~GLFWApp() override;
+
+protected:
+    // ViewerAppBase overrides
+    void onFrameStart() override;
+    void drawContent() override;
+    void drawUI() override;
+    void updateCamera() override;
+    void keyPress(int key, int scancode, int action, int mods) override;
+    void onInitialize() override;
+    void loadRenderConfigImpl() override;
     
 private:
     py::object mns;
@@ -197,11 +199,7 @@ private:
 
     void setWindowIcon(const char* icon_path);
 
-    // Drawing Component
-    void setCamera();
-
-    void drawSimFrame();
-    void drawUIFrame();
+    // Drawing Components
     void drawLeftPanel();
     void drawSimControlPanelContent();
     void drawKinematicsControlPanelContent();
@@ -211,6 +209,7 @@ private:
     void drawGaitTabContent();
     void drawKinematicsTabContent();
     void drawKineticsTabContent();
+    void drawMuscleTabContent();
     void drawTitlePanel();
     void drawResizablePlotPane();
     void drawCameraStatusSection();
@@ -252,14 +251,6 @@ private:
     // Plot control
     float getHeelStrikeTime();
 
-    // Mousing Function
-    void mouseMove(double xpos, double ypos);
-    void mousePress(int button, int action, int mods);
-    void mouseScroll(double xoffset, double yoffset);
-
-    // Keyboard Function
-    void keyboardPress(int key, int scancode, int action, int mods);
-
     // Camera presets
     struct CameraPreset {
         std::string description;
@@ -273,23 +264,13 @@ private:
     CameraPreset mCameraPresets[3];
     int mCurrentCameraPreset;
 
-    // Variable
-    double mWidth, mHeight;
-    bool mRotate, mTranslate, mZooming, mMouseDown;
+    // GLFWApp-specific flags (mRotate, mTranslate, mMouseDown, mMouseX, mMouseY inherited from ViewerAppBase)
+    bool mZooming;  // Middle mouse zoom (GLFWApp-specific)
 
-    GLFWwindow *mWindow;
+    // Note: mWindow, mWidth, mHeight, mShapeRenderer inherited from ViewerAppBase
+    // Note: Camera state (mCamera.zoom, .persp, .trackball, .trans, .eye, .up, .relTrans, .focus) inherited from ViewerAppBase
     RenderEnvironment *mRenderEnv;
     RenderCharacter *mMotionCharacter;
-
-
-    ShapeRenderer mShapeRenderer;
-
-    // Trackball/Camera variables
-    dart::gui::Trackball mTrackball;
-    double mZoom, mPersp, mMouseX, mMouseY;
-    Eigen::Vector3d mTrans, mEye, mUp;
-    Eigen::Vector3d mRelTrans;  // User's manual translation offset (preserved across focus modes)
-    int mFocus;
 
     // mMotionSkeleton removed - use mMotionCharacter->getSkeleton() instead
 
@@ -317,11 +298,17 @@ private:
     char mMuscleFilterText[32];
     std::vector<bool> mMuscleSelectionStates;
 
-    // Muscle Activation Plot UI
-    char mActivationFilterText[256];
-    std::vector<std::string> mSelectedActivationKeys;
+    // Muscle Plot UI
+    char mPlotMuscleFilterText[256];
+    std::vector<std::string> mPlotMuscleNames;
+    std::vector<bool> mPlotMuscleSelected;
     bool mPlotActivationNoise;
-    int mMuscleMetricMode = 0;  // 0=activation, 1=passive force, 2=lm_norm
+    int mMuscleMetricMode = 0;  // 0=activation, 1=passive force, 2=active, 3=total, 4=lm_norm, 5=F-L curve
+
+    // Joint Torque Plot UI
+    char mPlotJointFilterText[256] = "";
+    std::vector<std::string> mPlotJointDofNames;  // e.g., "FemurR_x", "TibiaR_x"
+    std::vector<bool> mPlotJointSelected;
 
     // Muscle Rendering Option
     std::vector<Muscle *> mSelectedMuscles;
@@ -508,20 +495,9 @@ private:
     // Plot legend control
     bool mPlotHideLegend;
 
-    // Default open panels configuration
-    std::set<std::string> mDefaultOpenPanels;
-    bool isPanelDefaultOpen(const std::string& panelName) const;
-
-    // Configuration loading
-    void loadRenderConfig();
-
-    // Panel widths from config
-    int mControlPanelWidth;
-    int mPlotPanelWidth;
-
-    // Window position from config
-    int mWindowXPos;
-    int mWindowYPos;
+    // Note: mDefaultOpenPanels, isPanelDefaultOpen(), mControlPanelWidth, mPlotPanelWidth,
+    //       mWindowXPos, mWindowYPos inherited from ViewerAppBase
+    // Note: loadRenderConfig() inherited; use loadRenderConfigImpl() override for app-specific config
 
     // Rollout configuration
     int mDefaultRolloutCount, mRolloutCycles = -1;

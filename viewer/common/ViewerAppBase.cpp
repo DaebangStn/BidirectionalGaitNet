@@ -193,9 +193,7 @@ void ViewerAppBase::startLoop()
         setCamera();
 
         // Draw ground if enabled
-        if (mRenderGround) {
-            GUI::DrawGroundGrid(mGroundMode);
-        }
+        if (mRenderGround) GUI::DrawGroundGrid(mGroundMode);
 
         // Draw 3D content (pure virtual - must be overridden)
         drawContent();

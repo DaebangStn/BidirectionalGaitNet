@@ -1,5 +1,6 @@
 #include "GLFWApp.h"
 #include "PlaybackUtils.h"
+#include "common/imgui_common.h"
 #include "rm/rm.hpp"
 #include <rm/global.hpp>
 #include "stb_image.h"
@@ -40,19 +41,14 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
 };
 
 GLFWApp::GLFWApp(int argc, char **argv)
+    : ViewerAppBase("MuscleSim", 2560, 1440)  // Base class handles GLFW/ImGui init
 {
     mRenderEnv = nullptr;
     mMotionCharacter = nullptr;
     mGVAELoaded = false;
     mRenderConditions = false;
 
-    // Set default values before loading config
-    mWidth = 2560;
-    mHeight = 1440;
-    mWindowXPos = 0;
-    mWindowYPos = 0;
-    mControlPanelWidth = 450;
-    mPlotPanelWidth = 450;
+    // App-specific defaults (base class already loaded render.yaml for panel sizes, etc.)
     mDefaultRolloutCount = 10;
     mXmin = 0.0;
     mXminResizablePlotPane = 0.0;
@@ -88,20 +84,15 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mMotion = nullptr;
     mMotionProcessor = std::make_unique<MotionProcessor>();
 
-    // Load configuration from render.yaml (will override defaults if file exists)
-    loadRenderConfig();
+    // Note: Base class already calls loadRenderConfig() and resetCamera()
+    // GLFWApp-specific config loaded via loadRenderConfigImpl() override
     updateResizablePlotsFromKeys();
 
-    mZoom = 1.0;
-    mPersp = 45.0;
-    mMouseDown = false;
-    mRotate = false;
-    mTranslate = false;
+    // GLFWApp-specific input state
     mZooming = false;
-    mTrans = Eigen::Vector3d(0.0, 0.0, 0.0);
-    mRelTrans = Eigen::Vector3d(0.0, 0.0, 0.0);  // Initialize user translation offset
-    mEye = Eigen::Vector3d(0.0, 0.0, 1.0);
-    mUp = Eigen::Vector3d(0.0, 1.0, 0.0);
+
+    // Set default camera focus mode (1 = follow character)
+    mCamera.focus = 1;
 
     // Rendering Options (mDrawFlags initialized with struct defaults)
     mStochasticPolicy = false;
@@ -216,11 +207,12 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // Motion list
     mSelectedMotion = -1;
 
-    mFocus = 1;
+    // Note: mCamera.focus already set above (1 = follow character)
     // C3D marker rendering moved to c3d_processor
 
-    mTrackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
-    mTrackball.setQuaternion(Eigen::Quaterniond::Identity());
+    // Initialize trackball using base class camera
+    mCamera.trackball.setTrackball(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5), mWidth * 0.5);
+    mCamera.trackball.setQuaternion(Eigen::Quaterniond::Identity());
 
     // Initialize camera presets
     initializeCameraPresets();
@@ -275,93 +267,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    // GLFW Initialization
-    glfwInit();
-    glfwWindowHint(GLFW_SAMPLES, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
-
-    glfwWindowHintString(GLFW_X11_CLASS_NAME, "MuscleSim");
-    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
-    mWindow = glfwCreateWindow(mWidth, mHeight, "MuscleSim", nullptr, nullptr);
-    if (mWindow == NULL)
-    {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
-        glfwTerminate();
-        exit(EXIT_FAILURE);
-    }
-
-    // Set window position from config
-    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
-    glfwMakeContextCurrent(mWindow);
-
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-    {
-        std::cerr << "Failed to initialize GLAD" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-    glViewport(0, 0, mWidth, mHeight);
-    glfwSetWindowUserPointer(mWindow, this); // 창 사이즈 변경
-
-    auto framebufferSizeCallback = [](GLFWwindow *window, int width, int height)
-    {
-        GLFWApp *app = static_cast<GLFWApp *>(glfwGetWindowUserPointer(window));
-        app->mWidth = width;
-        app->mHeight = height;
-        glViewport(0, 0, width, height);
-    };
-    glfwSetFramebufferSizeCallback(mWindow, framebufferSizeCallback);
-
-    auto keyCallback = [](GLFWwindow *window, int key, int scancode, int action, int mods)
-    {
-        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        {
-            glfwSetWindowShouldClose(window, true);
-        }
-        auto &io = ImGui::GetIO();
-        if (!io.WantCaptureKeyboard)
-        {
-            GLFWApp *app = static_cast<GLFWApp *>(glfwGetWindowUserPointer(window));
-            app->keyboardPress(key, scancode, action, mods);
-        }
-    };
-    glfwSetKeyCallback(mWindow, keyCallback);
-
-    auto cursorPosCallback = [](GLFWwindow *window, double xpos, double ypos)
-    {
-        auto &io = ImGui::GetIO();
-        if (!io.WantCaptureMouse)
-        {
-            GLFWApp *app = static_cast<GLFWApp *>(glfwGetWindowUserPointer(window));
-            app->mouseMove(xpos, ypos);
-        }
-    };
-    glfwSetCursorPosCallback(mWindow, cursorPosCallback);
-
-    auto mouseButtonCallback = [](GLFWwindow *window, int button, int action, int mods)
-    {
-        auto &io = ImGui::GetIO();
-        if (!io.WantCaptureMouse)
-        {
-            GLFWApp *app = static_cast<GLFWApp *>(glfwGetWindowUserPointer(window));
-            app->mousePress(button, action, mods);
-        }
-    };
-    glfwSetMouseButtonCallback(mWindow, mouseButtonCallback);
-
-    auto scrollCallback = [](GLFWwindow *window, double xoffset, double yoffset)
-    {
-        auto &io = ImGui::GetIO();
-        if (!io.WantCaptureMouse)
-        {
-            GLFWApp *app = static_cast<GLFWApp *>(glfwGetWindowUserPointer(window));
-            app->mouseScroll(xoffset, yoffset);
-        }
-    };
-    glfwSetScrollCallback(mWindow, scrollCallback);
-
-    GUI::InitImGui(mWindow, true);
+    // Note: GLFW/ImGui initialization handled by ViewerAppBase constructor
+    // Base class registers callbacks that dispatch to virtual methods (keyPress, mouseMove, etc.)
 
     mns = py::module::import("__main__").attr("__dict__");
     py::module::import("sys").attr("path").attr("insert")(1, "python");
@@ -369,9 +276,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mSelectedMuscles.clear();
     mRelatedDofs.clear();
 
-    // Initialize muscle activation plot UI
-    memset(mActivationFilterText, 0, sizeof(mActivationFilterText));
-    mSelectedActivationKeys.clear();
+    // Initialize muscle plot UI
+    memset(mPlotMuscleFilterText, 0, sizeof(mPlotMuscleFilterText));
 
     py::gil_scoped_acquire gil;
     
@@ -511,37 +417,15 @@ Eigen::Vector3d GLFWApp::computeMotionCycleDistance(Motion* motion)
 
 // computeMarkerCycleDistance moved to c3d_processor
 
-void GLFWApp::loadRenderConfig()
+// ViewerAppBase override: Load GLFWApp-specific config from render.yaml
+// (Base class already loads geometry, panel widths, default_open_panels)
+void GLFWApp::loadRenderConfigImpl()
 {
     try {
-        // Use rm::resolve to resolve the config path
         std::string resolved_path = rm::resolve("render.yaml");
-
-        LOG_VERBOSE("[Config] Loading render config from: " << resolved_path);
-
         YAML::Node config = YAML::LoadFile(resolved_path);
 
-        // Load geometry settings
-        if (config["geometry"]) {
-            if (config["geometry"]["window"]) {
-                if (config["geometry"]["window"]["width"])
-                    mWidth = config["geometry"]["window"]["width"].as<int>();
-                if (config["geometry"]["window"]["height"])
-                    mHeight = config["geometry"]["window"]["height"].as<int>();
-                if (config["geometry"]["window"]["xpos"])
-                    mWindowXPos = config["geometry"]["window"]["xpos"].as<int>();
-                if (config["geometry"]["window"]["ypos"])
-                    mWindowYPos = config["geometry"]["window"]["ypos"].as<int>();
-            }
-
-            if (config["geometry"]["control"])
-                mControlPanelWidth = config["geometry"]["control"].as<int>();
-
-            if (config["geometry"]["plot"])
-                mPlotPanelWidth = config["geometry"]["plot"].as<int>();
-        }
-
-        // Load glfwapp settings
+        // Load glfwapp-specific settings
         if (config["glfwapp"]) {
             if (config["glfwapp"]["rollout"] && config["glfwapp"]["rollout"]["count"])
                 mDefaultRolloutCount = config["glfwapp"]["rollout"]["count"].as<int>();
@@ -584,50 +468,31 @@ void GLFWApp::loadRenderConfig()
                 if (config["glfwapp"]["resizable_plot"]["title"])
                     mPlotTitleResizablePlotPane = config["glfwapp"]["resizable_plot"]["title"].as<bool>();
             }
-
-            // Load default open panels configuration
-            if (config["default_open_panels"]) {
-                mDefaultOpenPanels.clear();
-                if (config["default_open_panels"].IsSequence()) {
-                    for (const auto& panel : config["default_open_panels"]) {
-                        mDefaultOpenPanels.insert(panel.as<std::string>());
-                    }
-                    LOG_VERBOSE("[Config] Default open panels: " << mDefaultOpenPanels.size() << " panels");
-                }
-            }
         }
 
-        LOG_VERBOSE("[Config] Loaded - Window: " << mWidth << "x" << mHeight
-                     << ", Control: " << mControlPanelWidth
-                     << ", Plot: " << mPlotPanelWidth
-                     << ", Rollout: " << mDefaultRolloutCount
-                     << ", Playback Speed: " << mViewerPlaybackSpeed); 
+        LOG_VERBOSE("[GLFWApp Config] Rollout: " << mDefaultRolloutCount
+                     << ", Playback Speed: " << mViewerPlaybackSpeed);
 
     } catch (const std::exception& e) {
-        std::cerr << "[Config] Warning: Could not load render.yaml: " << e.what() << std::endl;
-        std::cerr << "[Config] Using default values." << std::endl;
+        // Base class already logs config loading issues
     }
 }
 
-bool GLFWApp::isPanelDefaultOpen(const std::string& panelName) const
+void GLFWApp::onInitialize()
 {
-    return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
+    // App-specific initialization after GLFW/ImGui is ready
+    // (Most init is done in constructor; this is for things that need the window)
 }
 
 GLFWApp::~GLFWApp()
 {
-    // Clean up single motion
+    // Clean up GLFWApp-specific resources
+    // (ImGui/GLFW cleanup handled by ViewerAppBase::~ViewerAppBase)
     delete mMotion;
     mMotion = nullptr;
 
     delete mRenderEnv;
     delete mMotionCharacter;
-    ImPlot::DestroyContext();
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    glfwDestroyWindow(mWindow);
-    glfwTerminate();
 }
 
 void GLFWApp::setWindowIcon(const char* icon_path)
@@ -974,108 +839,97 @@ float GLFWApp::getHeelStrikeTime()
     return heel_strike_time;
 }
 
-void GLFWApp::startLoop()
+void GLFWApp::onFrameStart()
 {
-    mLastRealTime = glfwGetTime();
+    // Measure real-time delta
+    double currentRealTime = glfwGetTime();
+    double realDeltaTime = currentRealTime - mLastRealTime;
+    mLastRealTime = currentRealTime;
 
-    while (!glfwWindowShouldClose(mWindow))
+    // Update moving average of frame delta time (alpha = 0.005)
+    const double alpha = 0.005;
+    if (mRealDeltaTimeAvg == 0.0) {
+        mRealDeltaTimeAvg = realDeltaTime;
+    } else {
+        mRealDeltaTimeAvg = alpha * realDeltaTime + (1.0 - alpha) * mRealDeltaTimeAvg;
+    }
+
+    // Detect playback speed change and resync viewer time to simulation time
+    if (mRenderEnv && mViewerPlaybackSpeed != mLastPlaybackSpeed)
     {
-        // Measure real-time delta
-        double currentRealTime = glfwGetTime();
-        double realDeltaTime = currentRealTime - mLastRealTime;
-        mLastRealTime = currentRealTime;
+        mViewerTime = mRenderEnv->getWorld()->getTime();
+        mLastPlaybackSpeed = mViewerPlaybackSpeed;
+    }
 
-        // Update moving average of frame delta time (alpha = 0.005)
-        const double alpha = 0.005;
-        if (mRealDeltaTimeAvg == 0.0) {
-            mRealDeltaTimeAvg = realDeltaTime;
+    // Update viewer time (master clock for playback)
+    // In manual frame mode when paused, update pose but don't advance time
+    double dt = realDeltaTime * mViewerPlaybackSpeed;
+    if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+    {
+        // Playing: normal time progression
+        updateViewerTime(dt);
+    }
+    else
+    {
+        // Paused: check if either motion OR marker is in manual mode
+        PlaybackNavigationMode navMode = PLAYBACK_SYNC;
+        if (mMotion != nullptr) {
+            navMode = mMotionState.navigationMode;
+        }
+
+        bool needUpdate = (navMode == PLAYBACK_MANUAL_FRAME);
+
+        if (needUpdate) {
+            // Paused + manual mode: compute pose but don't advance time
+            updateViewerTime(0.0);
+        }
+    }
+
+    // Simulation Step with performance monitoring and sync control
+    if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+    {
+        double simStartTime = glfwGetTime();
+        double simStartWorldTime = mRenderEnv ? mRenderEnv->getWorld()->getTime() : 0.0;
+
+        // Sync control: only step simulation if viewer time has caught up with sim time
+        // This prevents viewer time from running ahead of simulation time
+        bool shouldStepSimulation = (mViewerTime >= simStartWorldTime);
+
+        if (shouldStepSimulation)
+        {
+            update();
+        }
+        // else: idle rendering - render current state without stepping simulation
+
+        double simEndTime = glfwGetTime();
+        double simEndWorldTime = mRenderEnv ? mRenderEnv->getWorld()->getTime() : 0.0;
+
+        // Measure actual simulation step duration
+        mSimulationStepDuration = simEndTime - simStartTime;
+
+        // Update moving average with exponential smoothing (alpha = 0.005)
+        const double alpha = 0.01;
+        if (mSimStepDurationAvg < 0.0) {
+            // Initialize on first measurement
+            mSimStepDurationAvg = mSimulationStepDuration;
         } else {
-            mRealDeltaTimeAvg = alpha * realDeltaTime + (1.0 - alpha) * mRealDeltaTimeAvg;
+            // Exponential moving average: new_avg = alpha * new_value + (1 - alpha) * old_avg
+            mSimStepDurationAvg = alpha * mSimulationStepDuration + (1.0 - alpha) * mSimStepDurationAvg;
         }
 
-        // Detect playback speed change and resync viewer time to simulation time
-        if (mRenderEnv && mViewerPlaybackSpeed != mLastPlaybackSpeed)
-        {
-            mViewerTime = mRenderEnv->getWorld()->getTime();
-            mLastPlaybackSpeed = mViewerPlaybackSpeed;
-        }
+        double simTimeAdvanced = simEndWorldTime - simStartWorldTime;
 
-        // Update viewer time (master clock for playback)
-        // In manual frame mode when paused, update pose but don't advance time
-        double dt = realDeltaTime * mViewerPlaybackSpeed;
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
+        // Check if playback is too fast for simulation to keep up
+        // If simulation advances by dt, it should take at most dt/playback_speed in real time
+        if (mRenderEnv && simTimeAdvanced > 0.0)
         {
-            // Playing: normal time progression
-            updateViewerTime(dt);
+            double expectedRealTime = simTimeAdvanced / mViewerPlaybackSpeed;
+            mIsPlaybackTooFast = (mSimulationStepDuration > expectedRealTime * 1.2); // 20% tolerance
         }
         else
         {
-            // Paused: check if either motion OR marker is in manual mode
-            PlaybackNavigationMode navMode = PLAYBACK_SYNC;
-            if (mMotion != nullptr) {
-                navMode = mMotionState.navigationMode;
-            }
-
-            bool needUpdate = (navMode == PLAYBACK_MANUAL_FRAME);
-
-            if (needUpdate) {
-                // Paused + manual mode: compute pose but don't advance time
-                updateViewerTime(0.0);
-            }
+            mIsPlaybackTooFast = false;
         }
-
-        // Simulation Step with performance monitoring and sync control
-        if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-        {
-            double simStartTime = glfwGetTime();
-            double simStartWorldTime = mRenderEnv ? mRenderEnv->getWorld()->getTime() : 0.0;
-
-            // Sync control: only step simulation if viewer time has caught up with sim time
-            // This prevents viewer time from running ahead of simulation time
-            bool shouldStepSimulation = (mViewerTime >= simStartWorldTime);
-
-            if (shouldStepSimulation)
-            {
-                update();
-            }
-            // else: idle rendering - render current state without stepping simulation
-
-            double simEndTime = glfwGetTime();
-            double simEndWorldTime = mRenderEnv ? mRenderEnv->getWorld()->getTime() : 0.0;
-
-            // Measure actual simulation step duration
-            mSimulationStepDuration = simEndTime - simStartTime;
-
-            // Update moving average with exponential smoothing (alpha = 0.005)
-            const double alpha = 0.01;
-            if (mSimStepDurationAvg < 0.0) {
-                // Initialize on first measurement
-                mSimStepDurationAvg = mSimulationStepDuration;
-            } else {
-                // Exponential moving average: new_avg = alpha * new_value + (1 - alpha) * old_avg
-                mSimStepDurationAvg = alpha * mSimulationStepDuration + (1.0 - alpha) * mSimStepDurationAvg;
-            }
-
-            double simTimeAdvanced = simEndWorldTime - simStartWorldTime;
-
-            // Check if playback is too fast for simulation to keep up
-            // If simulation advances by dt, it should take at most dt/playback_speed in real time
-            if (mRenderEnv && simTimeAdvanced > 0.0)
-            {
-                double expectedRealTime = simTimeAdvanced / mViewerPlaybackSpeed;
-                mIsPlaybackTooFast = (mSimulationStepDuration > expectedRealTime * 1.2); // 20% tolerance
-            }
-            else
-            {
-                mIsPlaybackTooFast = false;
-            }
-        }
-
-        // Rendering
-        drawSimFrame();
-        drawUIFrame();
-        glfwPollEvents();
-        glfwSwapBuffers(mWindow);
     }
 }
 
@@ -1248,8 +1102,28 @@ void GLFWApp::initEnv(std::string metadata)
         mGraphData->register_key("act_" + muscle_name, 1000);
         mGraphData->register_key("noise_" + muscle_name, 1000);
         mGraphData->register_key("fp_" + muscle_name, 1000);
+        mGraphData->register_key("fa_" + muscle_name, 1000);
+        mGraphData->register_key("ft_" + muscle_name, 1000);
         mGraphData->register_key("lm_" + muscle_name, 1000);
     }
+
+    // Register torque keys for each DOF (excluding root joint)
+    mPlotJointDofNames.clear();
+    auto skel = mRenderEnv->getCharacter()->getSkeleton();
+    std::vector<std::string> axisSuffixes = {"_x", "_y", "_z"};
+    for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root (i=0)
+        auto joint = skel->getJoint(i);
+        std::string jointName = joint->getName();
+        int numDofs = joint->getNumDofs();
+
+        for (int d = 0; d < numDofs; ++d) {
+            std::string suffix = (d < 3) ? axisSuffixes[d] : "_" + std::to_string(d);
+            std::string dofName = jointName + suffix;
+            mGraphData->register_key("torque_" + dofName, 1000);
+            mPlotJointDofNames.push_back(dofName);
+        }
+    }
+    mPlotJointSelected.resize(mPlotJointDofNames.size(), false);
 
     // Set window title
     if (!mRolloutStatus.name.empty()) {
@@ -1305,6 +1179,13 @@ void GLFWApp::initEnv(std::string metadata)
         auto muscles = character->getMuscles();
         mMuscleSelectionStates.clear();
         mMuscleSelectionStates.resize(muscles.size(), true);
+
+        // Initialize plot muscle names and selection
+        mPlotMuscleNames.clear();
+        for (const auto& m : muscles) {
+            mPlotMuscleNames.push_back(m->name);
+        }
+        mPlotMuscleSelected.resize(muscles.size(), false);
     }
 
     // Load GaitNet lists (FGN, BGN, C3D)
@@ -1783,6 +1664,10 @@ void GLFWApp::drawRightPanel()
             drawKineticsTabContent();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Muscle")) {
+            drawMuscleTabContent();
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
 
@@ -1862,14 +1747,9 @@ void GLFWApp::drawGaitTabContent()
 
         // Checkbox for stats
         ImGui::Checkbox("Stats##GaitStats", &showGaitStats);
-        ImGui::SameLine();
-
         // Radio buttons for metric selection
-        ImGui::RadioButton("Stride Length", &gaitMetricSelection, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Step time", &gaitMetricSelection, 1);
-        ImGui::SameLine();
-        ImGui::RadioButton("Local Phase", &gaitMetricSelection, 2);
+        ImGuiCommon::RadioButtonGroup("GaitMetric",
+            {"Stride Length", "Step time", "Local Phase"}, &gaitMetricSelection);
         ImGui::Separator();
 
         // Stride Length plot (gaitMetricSelection == 0)
@@ -2040,11 +1920,8 @@ void GLFWApp::drawKinematicsTabContent()
         ImGui::Checkbox("Stats", &showStats);
 
         // Radio buttons for plot selection
-        ImGui::RadioButton("Trajectory", &plotSelection, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Velocity", &plotSelection, 1);
-        ImGui::SameLine();
-        ImGui::RadioButton("Deviation", &plotSelection, 2);
+        ImGuiCommon::RadioButtonGroup("COMPlotSelection",
+            {"Trajectory", "Velocity", "Deviation"}, &plotSelection);
 
         ImGui::Separator();
 
@@ -2118,9 +1995,8 @@ void GLFWApp::drawKinematicsTabContent()
         if (plotSelection == 1) {
             // Velocity method selection
             static int velocityMethod = 1;  // 0 = Least Squares, 1 = Avg Horizon
-            ImGui::RadioButton("Least Squares", &velocityMethod, 0);
-            ImGui::SameLine();
-            ImGui::RadioButton("Avg Horizon", &velocityMethod, 1);
+            ImGuiCommon::RadioButtonGroup("VelMethod",
+                {"Least Squares", "Avg Horizon"}, &velocityMethod);
 
             // Update RenderEnvironment with selected method
             mRenderEnv->setVelocityMethod(velocityMethod);
@@ -2171,15 +2047,8 @@ void GLFWApp::drawKinematicsTabContent()
         static bool stats = true;
         ImGui::Checkbox("Stats##KinematicsStats", &stats);
 
-        ImGui::RadioButton("Major##MajorJointsRadio", &angle_selection, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Minor##MinorJointsRadio", &angle_selection, 1);
-        ImGui::SameLine();
-        ImGui::RadioButton("Pelvis##PelvisJointsRadio", &angle_selection, 2);
-        ImGui::SameLine();
-        ImGui::RadioButton("Sway##SwayRadio", &angle_selection, 3);
-        ImGui::SameLine();
-        ImGui::RadioButton("Anteversion##AnteversionRadio", &angle_selection, 4);
+        ImGuiCommon::RadioButtonGroup("KinematicsAngle",
+            {"Major", "Minor", "Pelvis", "Sway", "Anteversion"}, &angle_selection);
 
         if (angle_selection == 0) { // Major joints
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
@@ -2249,11 +2118,8 @@ void GLFWApp::drawKinematicsTabContent()
 
         if (angle_selection == 3) { // Foot sway
             static int sway_side_selection = 0; // 0=Right, 1=Left, 2=Both
-            ImGui::RadioButton("Right##FootSwayRight", &sway_side_selection, 0);
-            ImGui::SameLine();
-            ImGui::RadioButton("Left##FootSwayLeft", &sway_side_selection, 1);
-            ImGui::SameLine();
-            ImGui::RadioButton("Both##FootSwayBoth", &sway_side_selection, 2);
+            ImGuiCommon::RadioButtonGroup("SwaySide",
+                {"Right", "Left", "Both"}, &sway_side_selection);
 
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0.0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0.0);
@@ -2315,6 +2181,35 @@ void GLFWApp::drawKinematicsTabContent()
 // ============================================================
 void GLFWApp::drawKineticsTabContent()
 {
+    // Use FilterableChecklist for joint DOF selection
+    ImGuiCommon::FilterableChecklist("##PlotJointList", mPlotJointDofNames,
+                                        mPlotJointSelected, mPlotJointFilterText,
+                                        sizeof(mPlotJointFilterText), 100.0f);
+
+    // Build keys to plot
+    std::vector<std::string> torqueKeysToPlot;
+    for (size_t i = 0; i < mPlotJointDofNames.size(); i++) {
+        if (mPlotJointSelected[i]) {
+            torqueKeysToPlot.push_back("torque_" + mPlotJointDofNames[i]);
+        }
+    }
+
+    ImGui::Separator();
+
+    // Plot torques using mGraphData
+    if (!torqueKeysToPlot.empty()) {
+        if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(ImAxis_X1, mXmin, 0, ImGuiCond_Always);
+        else ImPlot::SetNextAxisLimits(ImAxis_X1, -1.5, 0);
+
+        if (ImPlot::BeginPlot("Joint Torques##TorquePlots", ImVec2(-1, getPlotHeight("Torque Plots")))) {
+            ImPlot::SetupAxes("Time (s)", "Torque (Nm)", 0, ImPlotAxisFlags_AutoFit);
+            plotGraphData(torqueKeysToPlot, ImAxis_Y1);
+            ImPlot::EndPlot();
+        }
+    } else {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No joints selected.");
+    }
+
     // Knee Loading
     if (collapsingHeaderWithControls("Knee Loading"))
     {
@@ -2448,388 +2343,142 @@ void GLFWApp::drawKineticsTabContent()
             }
         }
     }
+}
 
-    // Muscle Activations
-    if (collapsingHeaderWithControls("Muscle Activations"))
-    {
-        // Mode selection radio buttons
-        ImGui::RadioButton("Activation", &mMuscleMetricMode, 0);
+void GLFWApp::drawMuscleTabContent()
+{
+    // Mode selection radio buttons
+    ImGuiCommon::RadioButtonGroup("MuscleMetricMode",
+        {"Activation", "Fp", "Fa*a", "Total", "Lm Norm", "F-L Curve"}, &mMuscleMetricMode);
+
+    if (mMuscleMetricMode == 0) {
         ImGui::SameLine();
-        ImGui::RadioButton("Passive", &mMuscleMetricMode, 1);
-        ImGui::SameLine();
-        ImGui::RadioButton("Lm Norm", &mMuscleMetricMode, 2);
+        ImGui::Checkbox("Plot NI", &mPlotActivationNoise);
+    }
+    
+    // Use FilterableChecklist for muscle selection
+    ImGuiCommon::FilterableChecklist("##PlotMuscleList", mPlotMuscleNames,
+                                     mPlotMuscleSelected, mPlotMuscleFilterText,
+                                     sizeof(mPlotMuscleFilterText), 100.0f);
 
-        // Determine prefix based on mode
-        std::string metricPrefix = (mMuscleMetricMode == 0) ? "act_" :
-                                   (mMuscleMetricMode == 1) ? "fp_" : "lm_";
-
-        // Get all available keys from graph data
-        static std::vector<std::string> all_activation_keys;
-        static int lastMode = -1;
-        if (ImGui::IsWindowAppearing() || all_activation_keys.empty() || lastMode != mMuscleMetricMode)
-        {
-            all_activation_keys.clear();
-            mSelectedActivationKeys.clear();  // Clear selection when mode changes
-            lastMode = mMuscleMetricMode;
-            auto all_keys = mGraphData->get_keys();
-            for (const auto& key : all_keys)
-            {
-                // Filter for keys with current mode prefix
-                if (key.substr(0, metricPrefix.size()) == metricPrefix)
-                {
-                    all_activation_keys.push_back(key);
-                }
-            }
+    // Get first selected muscle index
+    int firstSelectedIdx = -1;
+    for (size_t i = 0; i < mPlotMuscleSelected.size(); i++) {
+        if (mPlotMuscleSelected[i]) {
+            firstSelectedIdx = static_cast<int>(i);
+            break;
         }
+    }
 
-        // Display count of selected muscles
-        ImGui::Text("Selected Muscles: %zu", mSelectedActivationKeys.size());
-        ImGui::SameLine();
-        if (ImGui::Button("Clear All"))
-        {
-            mSelectedActivationKeys.clear();
-        }
+    ImGui::Separator();
 
-        // Checkbox to plot activation noise (only for activation mode)
-        if (mMuscleMetricMode == 0) {
-            ImGui::Checkbox("Plot NI", &mPlotActivationNoise);
-        }
-
-        // Search input
-        ImGui::Text("Search Muscle:");
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        bool enterPressed = ImGui::InputText("##ActivationFilter", mActivationFilterText, sizeof(mActivationFilterText), ImGuiInputTextFlags_EnterReturnsTrue);
-
-        // Filter candidates based on search text
-        std::vector<std::string> candidates;
-        if (strlen(mActivationFilterText) > 0)
-        {
-            std::string search_str = mActivationFilterText;
-            std::transform(search_str.begin(), search_str.end(), search_str.begin(), ::tolower);
-
-            for (const auto& key : all_activation_keys)
-            {
-                std::string lower_key = key;
-                std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
-
-                if (lower_key.find(search_str) != std::string::npos)
-                {
-                    candidates.push_back(key);
-                }
-            }
-        }
-        else
-        {
-            candidates = all_activation_keys;
-        }
-
-        // If Enter pressed, add all candidates
-        if (enterPressed && !candidates.empty())
-        {
-            for (const auto& candidate : candidates)
-            {
-                // Add if not already selected
-                if (std::find(mSelectedActivationKeys.begin(), mSelectedActivationKeys.end(), candidate) == mSelectedActivationKeys.end())
-                {
-                    mSelectedActivationKeys.push_back(candidate);
-                }
-            }
-            // Clear search
-            mActivationFilterText[0] = '\0';
-        }
-
-        // Display candidate list in scrollable box
-        if (!candidates.empty())
-        {
-            ImGui::Text("Available Muscles: %zu (Enter to add all)", candidates.size());
-            if (ImGui::BeginListBox("##ActivationCandidates", ImVec2(-1, 150)))
-            {
-                for (const auto& candidate : candidates)
-                {
-                    // Check if already selected
-                    bool is_selected = std::find(mSelectedActivationKeys.begin(),
-                                                 mSelectedActivationKeys.end(),
-                                                 candidate) != mSelectedActivationKeys.end();
-
-                    // Display with checkmark if selected
-                    std::string display_name = (is_selected ? "[X] " : "[ ] ") + candidate;
-
-                    if (ImGui::Selectable(display_name.c_str(), is_selected))
+    // Mode 5: Force-Length Curve
+    if (mMuscleMetricMode == 5) {
+        if (firstSelectedIdx >= 0) {
+            auto muscles = mRenderEnv->getCharacter()->getMuscles();
+            for (auto m : muscles) {
+                if (m->name == mPlotMuscleNames[firstSelectedIdx]) {
+                    ImPlot::SetNextAxisLimits(ImAxis_X1, 0, 1.5, ImGuiCond_Always);
+                    ImPlot::SetNextAxisLimits(ImAxis_Y1, 0, 1000.0, ImGuiCond_Once);
+                    if (ImPlot::BeginPlot((m->name + "_force_length").c_str(), ImVec2(-1, getPlotHeight("Muscle Plots"))))
                     {
-                        // Toggle selection
-                        if (is_selected)
-                        {
-                            // Remove from selection
-                            mSelectedActivationKeys.erase(
-                                std::remove(mSelectedActivationKeys.begin(),
-                                          mSelectedActivationKeys.end(),
-                                          candidate),
-                                mSelectedActivationKeys.end()
-                            );
-                        }
-                        else
-                        {
-                            // Add to selection
-                            mSelectedActivationKeys.push_back(candidate);
-                        }
+                        ImPlot::SetupAxes("length", "force");
+                        std::vector<std::vector<double>> p = m->GetGraphData();
+
+                        ImPlot::PlotLine("fa##active", p[1].data(), p[2].data(), 250);
+                        ImPlot::PlotLine("fa*a##active_with_activation", p[1].data(), p[3].data(), 250);
+                        ImPlot::PlotLine("fp##passive", p[1].data(), p[4].data(), 250);
+
+                        // Draw vertical line at current length (instead of infinite line)
+                        double currentX = p[0][0];
+                        double vlineX[] = {currentX, currentX};
+                        double vlineY[] = {-1000.0, 2000.0};
+                        ImPlot::PlotLine("current", vlineX, vlineY, 2);
+                        ImPlot::EndPlot();
+                    }
+                    break;
+                }
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No muscles selected.");
+        }
+    }
+    // Modes 0-4: Time-series plots
+    else {
+        // Build keys with prefix based on mode
+        std::string metricPrefix;
+        switch (mMuscleMetricMode) {
+            case 0: metricPrefix = "act_"; break;
+            case 1: metricPrefix = "fp_"; break;
+            case 2: metricPrefix = "fa_"; break;
+            case 3: metricPrefix = "ft_"; break;
+            case 4: metricPrefix = "lm_"; break;
+        }
+        std::vector<std::string> keysToPlot;
+        for (size_t i = 0; i < mPlotMuscleNames.size(); i++) {
+            if (mPlotMuscleSelected[i]) {
+                keysToPlot.push_back(metricPrefix + mPlotMuscleNames[i]);
+            }
+        }
+
+        // Add noise keys if enabled (only for activation mode)
+        if (mMuscleMetricMode == 0 && mPlotActivationNoise) {
+            auto all_keys = mGraphData->get_keys();
+            for (size_t i = 0; i < mPlotMuscleNames.size(); i++) {
+                if (mPlotMuscleSelected[i]) {
+                    std::string noiseKey = "noise_" + mPlotMuscleNames[i];
+                    if (std::find(all_keys.begin(), all_keys.end(), noiseKey) != all_keys.end()) {
+                        keysToPlot.push_back(noiseKey);
                     }
                 }
-                ImGui::EndListBox();
             }
         }
 
-        ImGui::Separator();
-
-        // Plot selected muscle metrics
-        if (!mSelectedActivationKeys.empty())
-        {
+        if (!keysToPlot.empty()) {
             if (std::abs(mXmin) > 1e-6) ImPlot::SetNextAxisLimits(0, mXmin, 0, ImGuiCond_Always);
             else ImPlot::SetNextAxisLimits(0, -1.5, 0);
 
-            // Set Y-axis limits based on mode
+            // Set Y-axis label and title based on mode
             std::string yAxisLabel;
-            if (mMuscleMetricMode == 0) {
-                ImPlot::SetNextAxisLimits(3, 0.0, 1.0);  // Activation range 0-1
-                yAxisLabel = "Activation (0-1)";
-            } else if (mMuscleMetricMode == 1) {
-                ImPlot::SetNextAxisLimits(3, 0.0, 1.0, ImGuiCond_Once);  // Auto-fit for passive force
-                yAxisLabel = "Passive Force (norm)";
-            } else {
-                ImPlot::SetNextAxisLimits(3, 0.5, 1.5);  // Lm norm typically around 1.0
-                yAxisLabel = "Lm Norm";
+            std::string plotTitle;
+            switch (mMuscleMetricMode) {
+                case 0:  yAxisLabel = "Activation"; plotTitle = "Muscle Activations"; break;
+                case 1:  yAxisLabel = "Passive Force"; plotTitle = "Passive Force"; break;
+                case 2:  yAxisLabel = "Active Force"; plotTitle = "Active Force"; break;
+                case 3:  yAxisLabel = "Total Force"; plotTitle = "Total Force"; break;
+                case 4:  yAxisLabel = "Muscle Length"; plotTitle = "Muscle Length"; break;
             }
-
-            std::string plotTitle = (mMuscleMetricMode == 0) ? "Muscle Activations" :
-                                    (mMuscleMetricMode == 1) ? "Passive Force" : "Muscle Length";
             std::string title_activations = mPlotTitle ? mCheckpointName : plotTitle;
-            if (ImPlot::BeginPlot((title_activations + "##MuscleActivations").c_str(), ImVec2(-1, getPlotHeight("Muscle Activations"))))
+            if (ImPlot::BeginPlot((title_activations + "##MusclePlots").c_str(), ImVec2(-1, getPlotHeight("Muscle Plots"))))
             {
-                ImPlot::SetupAxes("Time (s)", yAxisLabel.c_str());
-
-                // Merge keys with noise keys (only for activation mode)
-                std::vector<std::string> keysToPlot = mSelectedActivationKeys;
-
-                if (mMuscleMetricMode == 0 && mPlotActivationNoise) {
-                    auto all_keys = mGraphData->get_keys();
-                    for (const auto& actKey : mSelectedActivationKeys) {
-                        // Convert "act_" to "noise_" key
-                        if (actKey.substr(0, 4) == "act_") {
-                            std::string noiseKey = "noise_" + actKey.substr(4);
-                            // Add noise key if it exists
-                            if (std::find(all_keys.begin(), all_keys.end(), noiseKey) != all_keys.end()) {
-                                keysToPlot.push_back(noiseKey);
-                            }
-                        }
-                    }
-                }
-
-                // Plot all keys
+                ImPlot::SetupAxes("Time (s)", yAxisLabel.c_str(), 0, ImPlotAxisFlags_AutoFit);
                 plotGraphData(keysToPlot, ImAxis_Y1);
-
-                // Overlay phase bars
-                ImPlotRect limits = ImPlot::GetPlotLimits();
-                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
-
                 ImPlot::EndPlot();
             }
-        }
-        else
-        {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No muscles selected. Search and click to add muscles to plot.");
-        }
-    }
-    
-    // Torques
-    static int joint_selected = 0;
-    if (ImGui::CollapsingHeader("Torques"))
-    {
-        if (ImGui::BeginListBox("Joint", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
-        {
-            int idx = 0;
-
-            for (int i = 0; i < mRenderEnv->getCharacter()->getSkeleton()->getNumDofs(); i++)
-            {
-                if (ImGui::Selectable((std::to_string(i) + "_force").c_str(), joint_selected == i))
-                    joint_selected = i;
-                ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndListBox();
-        }
-        ImPlot::SetNextAxisLimits(3, 0, 1.5);
-        ImPlot::SetNextAxisLimits(0, 0, 2.5, ImGuiCond_Always);
-        if (ImPlot::BeginPlot((std::to_string(joint_selected) + "_torque_graph").c_str(), ImVec2(-1, 250)))
-        {
-            std::vector<std::vector<double>> p;
-            std::vector<double> px;
-            std::vector<double> py;
-            p.clear();
-            px.clear();
-            py.clear();
-
-            for (int i = 0; i < mRenderEnv->getDesiredTorqueLogs().size(); i++)
-            {
-                px.push_back(0.01 * i - mRenderEnv->getDesiredTorqueLogs().size() * 0.01 + 2.5);
-                py.push_back(mRenderEnv->getDesiredTorqueLogs()[i][joint_selected]);
-            }
-
-            p.push_back(px);
-            p.push_back(py);
-
-            ImPlot::PlotLine("##activation_graph", p[0].data(), p[1].data(), p[0].size());
-            ImPlot::EndPlot();
-        }
-
-        ImGui::Separator();
-
-        // Torque bars
-        if (mRenderEnv->getUseMuscle())
-        {
-            MuscleTuple tp = mRenderEnv->getCharacter()->getMuscleTuple(false);
-
-            Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mRenderEnv->getCharacter()->getSkeleton()->getNumDofs());
-            if (mRenderEnv->getCharacter()->getIncludeJtPinSPD())
-                fullJtp.tail(fullJtp.rows() - mRenderEnv->getCharacter()->getSkeleton()->getRootJoint()->getNumDofs()) = tp.JtP;
-            Eigen::VectorXd dt = mRenderEnv->getCharacter()->getSPDForces(mRenderEnv->getCharacter()->getPDTarget(), fullJtp).tail(tp.JtP.rows());
-
-            auto mtl = mRenderEnv->getCharacter()->getMuscleTorqueLogs();
-
-            Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
-            Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(tp.JtP.rows());
-
-            for (int i = 0; i < tp.JtA.rows(); i++)
-            {
-                for (int j = 0; j < tp.JtA.cols(); j++)
-                {
-                    if (tp.JtA(i, j) > 0)
-                        max_tau[i] += tp.JtA(i, j);
-                    else
-                        min_tau[i] += tp.JtA(i, j);
-                }
-            }
-
-            ImPlot::SetNextAxisLimits(0, -0.5, dt.rows() + 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, -5, 5);
-            double *x_tau = new double[dt.rows()]();
-            double *y_tau = dt.data();
-            double *y_min = min_tau.data();
-            double *y_max = max_tau.data();
-            double *y_passive = tp.JtP.data();
-
-            for (int i = 0; i < dt.rows(); i++)
-                x_tau[i] = i;
-
-            if (ImPlot::BeginPlot("torque"))
-            {
-                ImPlot::PlotBars("min", x_tau, y_min, dt.rows(), 1.0);
-                ImPlot::PlotBars("max", x_tau, y_max, dt.rows(), 1.0);
-                ImPlot::PlotBars("dt", x_tau, y_tau, dt.rows(), 1.0);
-                ImPlot::PlotBars("passive", x_tau, y_passive, dt.rows(), 1.0);
-                if (mtl.size() > 0)
-                    ImPlot::PlotBars("exact", x_tau, mtl.back().tail(mtl.back().rows() - 6).data(), dt.rows(), 1.0);
-
-                ImPlot::EndPlot();
-            }
-        }
-        else
-        {
-            Eigen::VectorXd dt = mRenderEnv->getCharacter()->getTorque();
-            ImPlot::SetNextAxisLimits(0, -0.5, dt.rows() + 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, -5, 5);
-            double *x_tau = new double[dt.rows()]();
-            for (int i = 0; i < dt.rows(); i++)
-                x_tau[i] = i;
-            if (ImPlot::BeginPlot("torque"))
-            {
-                ImPlot::PlotBars("dt", x_tau, dt.data(), dt.rows(), 1.0);
-                ImPlot::EndPlot();
-            }
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No muscles selected.");
         }
     }
 
-    // Muscles
-    static int selected = 0;
-    if (ImGui::CollapsingHeader("Muscles"))
+    // Activation bars for all muscles (shown in all modes)
+    if (mRenderEnv->getUseMuscle())
     {
+        Eigen::VectorXd activation = mRenderEnv->getCharacter()->getActivations();
 
-        auto m = mRenderEnv->getCharacter()->getMuscles()[selected];
+        ImPlot::SetNextAxisLimits(0, -0.5, activation.rows() + 0.5, ImGuiCond_Always);
+        ImPlot::SetNextAxisLimits(3, 0, 1);
+        std::vector<double> x_act(activation.rows());
+        std::vector<double> y_act(activation.rows());
 
-        ImPlot::SetNextAxisLimits(3, 500, 0);
-        ImPlot::SetNextAxisLimits(0, 0, 1.5, ImGuiCond_Always);
-        if (ImPlot::BeginPlot((m->name + "_force_graph").c_str(), ImVec2(-1, 250)))
+        for (int i = 0; i < activation.rows(); i++)
         {
-            ImPlot::SetupAxes("length", "force");
-            std::vector<std::vector<double>> p = m->GetGraphData();
-
-            ImPlot::PlotLine("##active", p[1].data(), p[2].data(), 250);
-            ImPlot::PlotLine("##active_with_activation", p[1].data(), p[3].data(), 250);
-            ImPlot::PlotLine("##passive", p[1].data(), p[4].data(), 250);
-
-            ImPlot::PlotInfLines("current", p[0].data(), 1);
+            x_act[i] = i;
+            y_act[i] = activation[i];
+        }
+        if (ImPlot::BeginPlot("activation##bars", ImVec2(-1, 150)))
+        {
+            ImPlot::PlotBars("activation_level", x_act.data(), y_act.data(), activation.rows(), 1.0);
             ImPlot::EndPlot();
-        }
-
-        ImPlot::SetNextAxisLimits(3, 0, 1.5);
-        ImPlot::SetNextAxisLimits(0, 0, 2.5, ImGuiCond_Always);
-        if (ImPlot::BeginPlot((m->name + "_activation_graph").c_str(), ImVec2(-1, 250)))
-        {
-            // Only plot if this is a right-side muscle (has data in mGraphData)
-            std::string key = "act_" + m->name;
-            if (mGraphData->key_exists(key))
-            {
-                std::vector<double> activation_data = mGraphData->get(key);
-                std::vector<double> px;
-                std::vector<double> py;
-
-                for (int i = 0; i < activation_data.size(); i++)
-                {
-                    px.push_back(0.01 * i - activation_data.size() * 0.01 + 2.5);
-                    py.push_back(activation_data[i]);
-                }
-
-                ImPlot::PlotLine("##activation_graph", px.data(), py.data(), px.size());
-            }
-            ImPlot::EndPlot();
-        }
-
-        ImGui::Separator();
-
-        // Activation bars
-        if (mRenderEnv->getUseMuscle())
-        {
-            Eigen::VectorXd activation = mRenderEnv->getCharacter()->getActivations();
-
-            ImPlot::SetNextAxisLimits(0, -0.5, activation.rows() + 0.5, ImGuiCond_Always);
-            ImPlot::SetNextAxisLimits(3, 0, 1);
-            double *x_act = new double[activation.rows()]();
-            double *y_act = new double[activation.rows()]();
-
-            for (int i = 0; i < activation.rows(); i++)
-            {
-                x_act[i] = i;
-                y_act[i] = activation[i];
-            }
-            if (ImPlot::BeginPlot("activation"))
-            {
-                ImPlot::PlotBars("activation_level", x_act, y_act, activation.rows(), 1.0);
-                ImPlot::EndPlot();
-            }
-        }
-
-        ImGui::Separator();
-
-        ImGui::Text("Muscle Name");
-        if (ImGui::BeginListBox("Muscle", ImVec2(-FLT_MIN, 10 * ImGui::GetTextLineHeightWithSpacing())))
-        {
-            int idx = 0;
-            for (auto m : mRenderEnv->getCharacter()->getMuscles())
-            {
-                if (ImGui::Selectable((m->name + "_force").c_str(), selected == idx))
-                    selected = idx;
-                if (selected)
-                    ImGui::SetItemDefaultFocus();
-                idx++;
-            }
-            ImGui::EndListBox();
         }
     }
 }
@@ -2849,12 +2498,12 @@ void GLFWApp::drawCameraStatusSection() {
         ImGui::Separator();
         ImGui::Text("Camera Settings:");
 
-        ImGui::Text("Eye: [%.3f, %.3f, %.3f]", mEye[0], mEye[1], mEye[2]);
-        ImGui::Text("Up:  [%.3f, %.3f, %.3f]", mUp[0], mUp[1], mUp[2]);
-        ImGui::Text("RelTrans: [%.3f, %.3f, %.3f]", mRelTrans[0], mRelTrans[1], mRelTrans[2]);
-        ImGui::Text("Zoom: %.3f", mZoom);
+        ImGui::Text("Eye: [%.3f, %.3f, %.3f]", mCamera.eye[0], mCamera.eye[1], mCamera.eye[2]);
+        ImGui::Text("Up:  [%.3f, %.3f, %.3f]", mCamera.up[0], mCamera.up[1], mCamera.up[2]);
+        ImGui::Text("RelTrans: [%.3f, %.3f, %.3f]", mCamera.relTrans[0], mCamera.relTrans[1], mCamera.relTrans[2]);
+        ImGui::Text("Zoom: %.3f", mCamera.zoom);
 
-        Eigen::Quaterniond quat = mTrackball.getCurrQuat();
+        Eigen::Quaterniond quat = mCamera.trackball.getCurrQuat();
         ImGui::Text("Quaternion: [%.3f, %.3f, %.3f, %.3f]",
                     quat.w(), quat.x(), quat.y(), quat.z());
 
@@ -3003,16 +2652,16 @@ void GLFWApp::drawJointControlSection() {
 }
 
 void GLFWApp::printCameraInfo() {
-    Eigen::Quaterniond quat = mTrackball.getCurrQuat();
+    Eigen::Quaterniond quat = mCamera.trackball.getCurrQuat();
 
     std::cout << "\n======================================" << std::endl;
     std::cout << "Copy and paste below to CAMERA_PRESET_DEFINITIONS:" << std::endl;
     std::cout << "======================================" << std::endl;
     std::cout << "PRESET|[Add description]|"
-              << mEye[0] << "," << mEye[1] << "," << mEye[2] << "|"
-              << mUp[0] << "," << mUp[1] << "," << mUp[2] << "|"
-              << mRelTrans[0] << "," << mRelTrans[1] << "," << mRelTrans[2] << "|"
-              << mZoom << "|"
+              << mCamera.eye[0] << "," << mCamera.eye[1] << "," << mCamera.eye[2] << "|"
+              << mCamera.up[0] << "," << mCamera.up[1] << "," << mCamera.up[2] << "|"
+              << mCamera.relTrans[0] << "," << mCamera.relTrans[1] << "," << mCamera.relTrans[2] << "|"
+              << mCamera.zoom << "|"
               << quat.w() << "," << quat.x() << "," << quat.y() << "," << quat.z()
               << std::endl;
     std::cout << "======================================\n" << std::endl;
@@ -3047,7 +2696,7 @@ void GLFWApp::initializeCameraPresets() {
             std::getline(ss_up, val, ','); mCameraPresets[i].up[1] = std::stod(val);
             std::getline(ss_up, val, ','); mCameraPresets[i].up[2] = std::stod(val);
 
-            // Note: 'trans' in preset definitions represents mRelTrans (user manual offset)
+            // Note: 'trans' in preset definitions represents mCamera.relTrans (user manual offset)
             std::stringstream ss_trans(tokens[4]);
             std::getline(ss_trans, val, ','); mCameraPresets[i].trans[0] = std::stod(val);
             std::getline(ss_trans, val, ','); mCameraPresets[i].trans[1] = std::stod(val);
@@ -3089,11 +2738,11 @@ void GLFWApp::loadCameraPreset(int index) {
     }
     LOG_VERBOSE("[Camera] Loading camera preset " << index << ": " << mCameraPresets[index].description);
 
-    mEye = mCameraPresets[index].eye;
-    mUp = mCameraPresets[index].up;
-    mRelTrans = mCameraPresets[index].trans;  // Restore user manual translation offset
-    mZoom = mCameraPresets[index].zoom;
-    mTrackball.setQuaternion(mCameraPresets[index].quat);
+    mCamera.eye = mCameraPresets[index].eye;
+    mCamera.up = mCameraPresets[index].up;
+    mCamera.relTrans = mCameraPresets[index].trans;  // Restore user manual translation offset
+    mCamera.zoom = mCameraPresets[index].zoom;
+    mCamera.trackball.setQuaternion(mCameraPresets[index].quat);
     mCurrentCameraPreset = index;
 }
 
@@ -3127,7 +2776,7 @@ void GLFWApp::alignCameraToPlane(int plane) {
             return;
     }
 
-    mTrackball.setQuaternion(quat);
+    mCamera.trackball.setQuaternion(quat);
     LOG_INFO("[Camera] Aligned to " << planeName << " plane");
 }
 
@@ -3147,10 +2796,21 @@ void GLFWApp::drawSimControlPanelContent()
     if (!mRenderEnv) {
         return;
     }
+    
+    // Rollout Control
+    if (mRolloutCycles == -1) mRolloutCycles = mDefaultRolloutCount;
+    ImGui::SetNextItemWidth(70);
+    ImGui::InputInt("Cycles", &mRolloutCycles);
+    if (mRolloutCycles < 1) mRolloutCycles = 1;
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Run##Rollout")) runRollout();
 
     // Body Mass Control
     double currentMass = mRenderEnv->getCharacter()->getSkeleton()->getMass();
     ImGui::Text("Current Mass: %.2f kg", currentMass);
+    ImGui::SameLine();
 
     static float targetMass = 0.0f;
     if (targetMass == 0.0f) targetMass = static_cast<float>(currentMass);
@@ -3474,20 +3134,6 @@ void GLFWApp::drawSimControlPanelContent()
             ImGui::Unindent();
             ImGui::TreePop();
         }
-    }
-
-    // Rollout Control
-    if (ImGui::CollapsingHeader("Rollout", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        if (mRolloutCycles == -1) mRolloutCycles = mDefaultRolloutCount;
-        ImGui::SetNextItemWidth(70);
-        ImGui::InputInt("Cycles", &mRolloutCycles);
-        if (mRolloutCycles < 1) mRolloutCycles = 1;
-
-        ImGui::SameLine();
-
-        // Run button
-        if (ImGui::Button("Run##Rollout")) runRollout();
     }
 
     // Muscle Control
@@ -3916,86 +3562,22 @@ void GLFWApp::drawRenderingContent()
     ImGui::Checkbox("Draw EOE", &mDrawFlags.eoe);
     ImGui::Checkbox("Draw Collision", &mDrawFlags.collision);
 
-    // Skeleton Render Mode
-    const char* renderModes[] = {"Solid", "Wireframe", "Mesh"};
+    // Skeleton Render Mode (matches RenderMode enum: Primitive, Mesh, Wireframe)
+    const char* renderModes[] = {"Solid", "Mesh", "Wireframe"};
     int currentMode = static_cast<int>(mDrawFlags.skeletonRenderMode);
     ImGui::SetNextItemWidth(100);
     if (ImGui::Combo("Render Mode", &currentMode, renderModes, IM_ARRAYSIZE(renderModes)))
     {
-        mDrawFlags.skeletonRenderMode = static_cast<SkeletonRenderMode>(currentMode);
+        mDrawFlags.skeletonRenderMode = static_cast<RenderMode>(currentMode);
     }
 
     ImGui::Separator();
     // Muscle Filtering and Selection
     if (ImGui::CollapsingHeader("Muscle##Rendering", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        // Get all muscles
         auto allMuscles = mRenderEnv->getCharacter()->getMuscles();
-
-        // Initialize selection states if needed
-        if (mMuscleSelectionStates.size() != allMuscles.size())
-        {
-            mMuscleSelectionStates.resize(allMuscles.size(), true);
-        }
-
-        // Count selected muscles
-        int selectedCount = 0;
-        for (bool selected : mMuscleSelectionStates)
-        {
-            if (selected) selectedCount++;
-        }
-
-        ImGui::Text("Selected: %d / %zu", selectedCount, allMuscles.size());
-
-        // Text filter
-        ImGui::InputText("Filter", mMuscleFilterText, IM_ARRAYSIZE(mMuscleFilterText));
-
-        // Filter muscles by name
-        std::vector<int> filteredIndices;
-        std::string filterStr(mMuscleFilterText);
-        std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
-
-        for (int i = 0; i < allMuscles.size(); i++)
-        {
-            std::string muscleName = allMuscles[i]->name;
-            std::transform(muscleName.begin(), muscleName.end(), muscleName.begin(), ::tolower);
-
-            if (filterStr.empty() || muscleName.find(filterStr) != std::string::npos)
-            {
-                filteredIndices.push_back(i);
-            }
-        }
-
-        // Select All / Deselect All buttons for filtered muscles
-        if (ImGui::Button("Select"))
-        {
-            for (int idx : filteredIndices)
-            {
-                mMuscleSelectionStates[idx] = true;
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Deselect"))
-        {
-            for (int idx : filteredIndices)
-            {
-                mMuscleSelectionStates[idx] = false;
-            }
-        }
-
-        ImGui::Text("Filtered Muscles: %zu", filteredIndices.size());
-
-        // Display filtered muscles with checkboxes
-        ImGui::BeginChild("MuscleList", ImVec2(0, 300), true);
-        for (int idx : filteredIndices)
-        {
-            bool selected = mMuscleSelectionStates[idx];
-            if (ImGui::Checkbox(allMuscles[idx]->name.c_str(), &selected))
-            {
-                mMuscleSelectionStates[idx] = selected;
-            }
-        }
-        ImGui::EndChild();
+        ImGuiCommon::MuscleSelector("MuscleList", allMuscles, mMuscleSelectionStates,
+                                    mMuscleFilterText, sizeof(mMuscleFilterText), 300.0f);
     }
 
     if (mRenderEnv->getUseMuscle()) mRenderEnv->getCharacter()->getMuscleTuple(false);
@@ -4054,20 +3636,12 @@ void GLFWApp::drawLeftPanel()
     ImGui::End();
 }
 
-void GLFWApp::drawUIFrame()
+void GLFWApp::drawUI()
 {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
     drawLeftPanel();
     drawRightPanel();
     drawTitlePanel();
     drawResizablePlotPane();
-
-    // Marker index labels moved to c3d_processor
-
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 void GLFWApp::drawTimingPaneContent()
@@ -4369,32 +3943,8 @@ bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std
     return motion->getName().find(sourceFile) != std::string::npos;
 }
 
-void GLFWApp::drawSimFrame()
+void GLFWApp::drawContent()
 {
-    initGL();
-    setCamera();
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-
-    glViewport(0, 0, mWidth, mHeight);
-    gluPerspective(mPersp, mWidth / mHeight, 0.1, 100.0);
-    gluLookAt(mEye[0], mEye[1], mEye[2], 0.0, 0.0, 0.0, mUp[0], mUp[1], mUp[2]);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    mTrackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-    mTrackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-    mTrackball.applyGLRotation();
-
-    glScalef(mZoom, mZoom, mZoom);
-    // Apply combined translation: automatic focus tracking + user manual offset
-    Eigen::Vector3d totalTrans = mTrans + mRelTrans;
-    glTranslatef(totalTrans[0] * 0.001, totalTrans[1] * 0.001, totalTrans[2] * 0.001);
-    glEnable(GL_DEPTH_TEST);
-
-    if (!mRenderConditions) drawGround();
-
     // Simulated Character
     if (mRenderEnv){
         // Draw phase using viewer time
@@ -4501,32 +4051,6 @@ void GLFWApp::drawSimFrame()
 
 }
 
-// void GLFWApp::drawGround(double height)
-// {
-//     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-//     glDisable(GL_LIGHTING);
-//     double width = 0.005;
-//     int count = 0;
-//     glBegin(GL_QUADS);
-//     for (double x = -100.0; x < 100.01; x += 1.0)
-//     {
-//         for (double z = -100.0; z < 100.01; z += 1.0)
-//         {
-//             if (count % 2 == 0)
-//                 glColor3f(216.0 / 255.0, 211.0 / 255.0, 204.0 / 255.0);
-//             else
-//                 glColor3f(216.0 / 255.0 - 0.1, 211.0 / 255.0 - 0.1, 204.0 / 255.0 - 0.1);
-//             count++;
-//             glVertex3f(x, height, z);
-//             glVertex3f(x + 1.0, height, z);
-//             glVertex3f(x + 1.0, height, z + 1.0);
-//             glVertex3f(x, height, z + 1.0);
-//         }
-//     }
-//     glEnd();
-//     glEnable(GL_LIGHTING);
-// }
-
 void GLFWApp::drawGround()
 {
     // Get ground dimensions from the world
@@ -4563,60 +4087,6 @@ void GLFWApp::drawGround()
     glEnd();
 
     glEnable(GL_LIGHTING);
-}
-
-void GLFWApp::mouseScroll(double xoffset, double yoffset)
-{
-    if (yoffset < 0)
-        mEye *= 1.05;
-    else if ((yoffset > 0) && (mEye.norm() > 0.5))
-        mEye *= 0.95;
-}
-
-void GLFWApp::mouseMove(double xpos, double ypos)
-{
-    double deltaX = xpos - mMouseX;
-    double deltaY = ypos - mMouseY;
-    mMouseX = xpos;
-    mMouseY = ypos;
-    if (mRotate)
-    {
-        if (deltaX != 0 || deltaY != 0)
-            mTrackball.updateBall(xpos, mHeight - ypos);
-    }
-    if (mTranslate)
-    {
-        Eigen::Matrix3d rot;
-        rot = mTrackball.getRotationMatrix();
-        mRelTrans += (1 / mZoom) * rot.transpose() * Eigen::Vector3d(deltaX, -deltaY, 0.0);
-    }
-    if (mZooming)
-        mZoom = std::max(0.01, mZoom + deltaY * 0.01);
-}
-
-void GLFWApp::mousePress(int button, int action, int mods)
-{
-    if (action == GLFW_PRESS)
-    {
-        mMouseDown = true;
-        if (button == GLFW_MOUSE_BUTTON_LEFT)
-        {
-            mRotate = true;
-            mTrackball.startBall(mMouseX, mHeight - mMouseY);
-        }
-        else if (button == GLFW_MOUSE_BUTTON_RIGHT)
-            mTranslate = true;
-    }
-    else if (action == GLFW_RELEASE)
-    {
-        mMouseDown = false;
-        if (button == GLFW_MOUSE_BUTTON_LEFT)
-        {
-            mRotate = false;
-        }
-        else if (button == GLFW_MOUSE_BUTTON_RIGHT)
-            mTranslate = false;
-    }
 }
 
 void GLFWApp::reset()
@@ -4972,7 +4442,7 @@ void GLFWApp::updateViewerTime(double dt)
     evaluateMotionPlayback(motionContext);
 }
 
-void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
+void GLFWApp::keyPress(int key, int scancode, int action, int mods)
 {
     if (action == GLFW_PRESS)
     {
@@ -5000,8 +4470,8 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             else reset();
             break;
         case GLFW_KEY_O:
-            // Cycle through render modes: Solid -> Wireframe -> Mesh -> Solid
-            mDrawFlags.skeletonRenderMode = static_cast<SkeletonRenderMode>(
+            // Cycle through render modes: Primitive -> Mesh -> Wireframe -> Primitive
+            mDrawFlags.skeletonRenderMode = static_cast<RenderMode>(
                 (static_cast<int>(mDrawFlags.skeletonRenderMode) + 1) % 3);
             break;
         case GLFW_KEY_SPACE:
@@ -5019,9 +4489,12 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
             printCameraInfo();
             break;
         // case GLFW_KEY_F:
-            // mFocus += 1;
-            // mFocus %= 5;
+            // mCamera.focus += 1;
+            // mCamera.focus %= 5;
             // break;
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
+            break;
         case GLFW_KEY_H:
             mXminResizablePlotPane = getHeelStrikeTime();
             mXmin = mXminResizablePlotPane;
@@ -5045,7 +4518,6 @@ void GLFWApp::keyboardPress(int key, int scancode, int action, int mods)
         // case GLFW_KEY_KP_3:
         //     alignCameraToPlane(3);  // ZX plane
         //     break;
-
 
         default:
             break;
@@ -5110,56 +4582,37 @@ void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &co
 {
     if (!mMotionCharacter) return;
     auto skel = mMotionCharacter->getSkeleton();
-
-    // Safety check: validate DOF match to prevent Eigen assertion failure
-    if (pos.size() != skel->getNumDofs()) {
-        LOG_WARN("[drawSkeleton] DOF mismatch: pos has " << pos.size() << " values, skeleton has " << skel->getNumDofs() << " DOFs. Skipping render.");
-        return;
-    }
-
     skel->setPositions(pos);
-
-    // Convert SkeletonRenderMode to RenderMode
-    RenderMode mode = RenderMode::Primitive;  // default to Solid/Primitive
-    if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Mesh) {
-        mode = RenderMode::Mesh;
-    } else if (mDrawFlags.skeletonRenderMode == SkeletonRenderMode::Wireframe) {
-        mode = RenderMode::Wireframe;
-    }
-
     // glDepthMask(GL_FALSE);
-    GUI::DrawSkeleton(skel, color, mode, &mShapeRenderer);
+    GUI::DrawSkeleton(skel, color, mDrawFlags.skeletonRenderMode, &mShapeRenderer);
     // glDepthMask(GL_TRUE);
 }
 
 
-void GLFWApp::setCamera()
+void GLFWApp::updateCamera()
 {
     if (mRenderEnv)
     {
-        if (mFocus == 1)
+        if (mCamera.focus == 1)
         {
-            mTrans = -mRenderEnv->getCharacter()->getSkeleton()->getCOM();
-            mTrans[1] = -1;
-            mTrans *= 1000;
+            mCamera.trans = -mRenderEnv->getCharacter()->getSkeleton()->getCOM();
+            mCamera.trans[1] = -1;
         }
-        else if (mFocus == 2)
+        else if (mCamera.focus == 2)
         {
-            mTrans = -mRenderEnv->getRefPose().segment(3, 3);
-            mTrans[1] = -1;
-            mTrans *= 1000;
+            mCamera.trans = -mRenderEnv->getRefPose().segment(3, 3);
+            mCamera.trans[1] = -1;
         }
-        else if (mFocus == 3)
+        else if (mCamera.focus == 3)
         {
             // C3D focus mode removed - moved to c3d_processor
-            mFocus++;
+            mCamera.focus++;
         }
-        else if (mFocus == 4)
+        else if (mCamera.focus == 4)
         {
-            mTrans[0] = -mFGNRootOffset[0];
-            mTrans[1] = -1;
-            mTrans[2] = -mFGNRootOffset[2];
-            mTrans *= 1000;
+            mCamera.trans[0] = -mFGNRootOffset[0];
+            mCamera.trans[1] = -1;
+            mCamera.trans[2] = -mFGNRootOffset[2];
         }
     }
     else
@@ -5167,9 +4620,8 @@ void GLFWApp::setCamera()
         // Motion-only viewing mode: focus on current motion position
         if (mMotion != nullptr && mMotionCharacter) {
             if (mMotion == nullptr) {
-                mTrans = Eigen::Vector3d::Zero();
-                mTrans[1] = -1;
-                mTrans *= 1000;
+                mCamera.trans = Eigen::Vector3d::Zero();
+                mCamera.trans[1] = -1;
                 return;
             }
             // Calculate current position based on cycle accumulation
@@ -5197,14 +4649,13 @@ void GLFWApp::setCamera()
             Eigen::VectorXd current_pos = current_frame;
 
             // Standard position offset handling for HDF/C3D
-            mTrans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
-            mTrans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
-            mTrans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
+            mCamera.trans[0] = -(current_pos[3] + state.cycleAccumulation[0] + state.displayOffset[0]);
+            mCamera.trans[1] = -(current_pos[4] + state.displayOffset[1]) - 1;
+            mCamera.trans[2] = -(current_pos[5] + state.cycleAccumulation[2] + state.displayOffset[2]);
         } else {
-            mTrans = Eigen::Vector3d::Zero();
-            mTrans[1] = -1;
+            mCamera.trans = Eigen::Vector3d::Zero();
+            mCamera.trans[1] = -1;
         }
-        mTrans *= 1000;
     }
 }
 
@@ -5300,7 +4751,7 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
         }
         case contractileForce:
         {
-            double f_c = muscle->Getf_A() * a / mMuscleResolution;
+            double f_c = muscle->GetActiveForce() / mMuscleResolution;
             color = Eigen::Vector4d(0.1, 0.1 + 0.9 * f_c, 0.1, mMuscleTransparency + f_c);
             break;
         }
@@ -5977,79 +5428,6 @@ void GLFWApp::loadParametersFromCurrentMotion()
         LOG_ERROR("Error loading parameters from motion: " + std::string(e.what()));
     }
 }
-
-// REMOVED: loadSelectedHDF5Motion() - HDF5 rollout format no longer used
-
-#if 0  // TODO: Update for Motion* interface
-void GLFWApp::addSimulationMotion()
-{
-    ViewerMotion current_motion;
-    current_motion.name = "New Motion " + std::to_string(mMotions.size());
-    current_motion.param = mRenderEnv->getParamState();
-    current_motion.source_type = "simulation";
-    current_motion.num_frames = 60;  // Default: 2 seconds at 30Hz
-    current_motion.values_per_frame = 101;  // Default frame count
-    current_motion.motion = Eigen::VectorXd::Zero(current_motion.num_frames * current_motion.values_per_frame);
-
-    std::vector<double> phis;
-    // phis list of 1/60 for 2 seconds
-    for (int i = 0; i < 60; i++)
-        phis.push_back(((double)i) / mRenderEnv->getControlHz());
-
-    // rollout
-    std::vector<Eigen::VectorXd> current_trajectory;
-    std::vector<double> current_phi;
-    std::vector<Eigen::VectorXd> refined_trajectory;
-    reset();
-
-    double prev_phi = -1.0;
-    int phi_offset = -1.0;
-    while (!mRenderEnv->isEOE())
-    {
-        for (int i = 0; i < 60 / mRenderEnv->getControlHz(); i++)
-            update();
-
-        current_trajectory.push_back(mRenderEnv->getCharacter()->posToSixDof(mRenderEnv->getCharacter()->getSkeleton()->getPositions()));
-
-        if (prev_phi > mRenderEnv->getGaitPhase()->getAdaptivePhase())
-            phi_offset += 1;
-        prev_phi = mRenderEnv->getGaitPhase()->getAdaptivePhase();
-
-        current_phi.push_back(mRenderEnv->getGaitPhase()->getAdaptivePhase() + phi_offset);
-    }
-
-    int phi_idx = 0;
-    int current_idx = 0;
-    refined_trajectory.clear();
-    while (phi_idx < phis.size() && current_idx < current_trajectory.size() - 1)
-    {
-        // if phi is smaller than current phi, then add current trajectory to refined trajectory
-        if (current_phi[current_idx] <= phis[phi_idx] && phis[phi_idx] < current_phi[current_idx + 1])
-        {
-            // Interpolate between current_idx and current_idx+1
-            double t = (phis[phi_idx] - current_phi[current_idx]) / (current_phi[current_idx + 1] - current_phi[current_idx]);
-            // calculate v
-            Eigen::Vector3d v1 = current_trajectory[current_idx].segment(6, 3) - current_trajectory[current_idx - 1].segment(6, 3);
-            Eigen::Vector3d v2 = current_trajectory[current_idx + 1].segment(6, 3) - current_trajectory[current_idx].segment(6, 3);
-
-            Eigen::VectorXd interpolated = (1 - t) * current_trajectory[current_idx] + t * current_trajectory[current_idx + 1];
-            Eigen::Vector3d v = (1 - t) * v1 + t * v2;
-
-            interpolated[6] = v[0];
-            interpolated[8] = v[2];
-            int start_idx = interpolated.rows() * refined_trajectory.size();
-            current_motion.motion.segment(start_idx, interpolated.rows()) = interpolated;
-            refined_trajectory.push_back(interpolated);
-
-            phi_idx++;
-        }
-        else
-            current_idx++;
-    }
-    setMotion(current_motion);
-    mAddedMotions.push_back(current_motion);
-}
-#endif  // addSimulationMotion
 
 void GLFWApp::unloadMotion()
 {

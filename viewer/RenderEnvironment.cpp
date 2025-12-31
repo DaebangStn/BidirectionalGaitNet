@@ -1,4 +1,5 @@
 #include "RenderEnvironment.h"
+#include "Log.h"
 #include <Eigen/Geometry>
 #include <cmath>
 
@@ -305,9 +306,35 @@ void RenderEnvironment::RecordGraphData() {
         if (mGraphData->key_exists("fp_" + muscle_name)) {
             mGraphData->push("fp_" + muscle_name, muscle->Getf_p());
         }
+        // Active force
+        if (mGraphData->key_exists("fa_" + muscle_name)) {
+            mGraphData->push("fa_" + muscle_name, muscle->GetActiveForce());
+        }
+        // Total force
+        if (mGraphData->key_exists("ft_" + muscle_name)) {
+            mGraphData->push("ft_" + muscle_name, muscle->GetForce());
+        }
         // Normalized muscle length
         if (mGraphData->key_exists("lm_" + muscle_name)) {
             mGraphData->push("lm_" + muscle_name, muscle->GetLmNorm());
+        }
+    }
+
+    // Log torque per DOF (excluding root joint)
+    const Eigen::VectorXd& torques = getLastDesiredTorque();
+    std::vector<std::string> axisSuffixes = {"_x", "_y", "_z"};
+    for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root (i=0)
+        auto joint = skel->getJoint(i);
+        std::string jointName = joint->getName();
+        int numDofs = joint->getNumDofs();
+
+        for (int d = 0; d < numDofs; ++d) {
+            std::string suffix = (d < 3) ? axisSuffixes[d] : "_" + std::to_string(d);
+            std::string key = "torque_" + jointName + suffix;
+            if (mGraphData->key_exists(key)) {
+                int dofIdx = joint->getIndexInSkeleton(d);
+                mGraphData->push(key, torques[dofIdx]);
+            }
         }
     }
 

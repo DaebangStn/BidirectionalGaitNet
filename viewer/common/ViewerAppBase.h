@@ -139,6 +139,14 @@ protected:
     // Get current window aspect ratio
     double getAspectRatio() const { return static_cast<double>(mWidth) / mHeight; }
 
+    // ============================================================
+    // Input Handling (protected virtual - override for app-specific behavior)
+    // ============================================================
+    virtual void mousePress(int button, int action, int mods);
+    virtual void mouseMove(double x, double y);
+    virtual void mouseScroll(double xoff, double yoff);
+    void resize(int width, int height);
+
 private:
     // ============================================================
     // GLFW Callbacks (static)
@@ -156,14 +164,6 @@ private:
     void initImGui();
     void loadRenderConfig();  // Load window geometry from render.yaml
     void cleanup();
-
-    // ============================================================
-    // Input Handling
-    // ============================================================
-    void mousePress(int button, int action, int mods);
-    void mouseMove(double x, double y);
-    void mouseScroll(double xoff, double yoff);
-    void resize(int width, int height);
 };
 
 #endif // VIEWER_APP_BASE_H

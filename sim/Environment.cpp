@@ -1835,11 +1835,9 @@ void Environment::calcActivation()
     if (mCharacter->getIncludeJtPinSPD()) fullJtp.tail(fullJtp.rows() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs()) = mt.JtP;
     if (isMirror()) fullJtp = mCharacter->getMirrorPosition(fullJtp);
 
-    Eigen::VectorXd fulldt = mCharacter->getSPDForces(mCharacter->getPDTarget(), fullJtp);
-    mDesiredTorqueLogs.push_back(fulldt);
-
-    if (isMirror()) fulldt = mCharacter->getMirrorPosition(fulldt);
-    Eigen::VectorXd dt = fulldt.tail(mt.JtP.rows());
+    mLastDesiredTorque = mCharacter->getSPDForces(mCharacter->getPDTarget(), fullJtp);
+    if (isMirror()) mLastDesiredTorque = mCharacter->getMirrorPosition(mLastDesiredTorque);
+    Eigen::VectorXd dt = mLastDesiredTorque.tail(mt.JtP.rows());
     if (!mCharacter->getIncludeJtPinSPD()) dt -= mt.JtP;
 
     std::vector<Eigen::VectorXf> prev_activations;
@@ -2191,7 +2189,6 @@ void Environment::reset(double phase)
     }
 
     mCharacter->clearLogs();
-    mDesiredTorqueLogs.clear();
 
     mDragStartX = mCharacter->getSkeleton()->getCOM()[0];
 
