@@ -2,8 +2,8 @@
 #include "Character.h"
 #include "ContractureOptimizer.h"
 #include "optimizer/WaypointOptimizer.h"
+#include "Log.h"
 #include <yaml-cpp/yaml.h>
-#include <iostream>
 #include <filesystem>
 #include <implot.h>
 
@@ -139,7 +139,7 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
         }
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Failed to load render.yaml: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Failed to load render.yaml: " << e.what());
     }
 
     // Load app-specific settings from muscle_personalizer.yaml
@@ -200,21 +200,31 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
             mContractureMaxIterations = ce["max_iterations"].as<int>(100);
             mContractureMinRatio = ce["min_ratio"].as<float>(0.7f);
             mContractureMaxRatio = ce["max_ratio"].as<float>(1.2f);
+            mContractureLambdaRatioReg = ce["lambda_ratio_reg"].as<float>(0.1f);
+            mContractureLambdaTorqueReg = ce["lambda_torque_reg"].as<float>(0.01f);
+            mContractureOuterIterations = ce["outer_iterations"].as<int>(3);
+
+            if (ce["grid_search"]) {
+                auto gs = ce["grid_search"];
+                mContractureGridBegin = gs["begin"].as<float>(0.7f);
+                mContractureGridEnd = gs["end"].as<float>(1.3f);
+                mContractureGridInterval = gs["interval"].as<float>(0.1f);
+            }
         }
 
-        std::cout << "[MusclePersonalizer] App config loaded from " << resolved << std::endl;
+        LOG_INFO("[MusclePersonalizer] App config loaded from " << resolved);
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Failed to load config: " << e.what() << std::endl;
-        std::cerr << "[MusclePersonalizer] Using default configuration" << std::endl;
+        LOG_WARN("[MusclePersonalizer] Failed to load config: " << e.what());
+        LOG_WARN("[MusclePersonalizer] Using default configuration");
     }
 }
 
 void MusclePersonalizerApp::loadCharacter()
 {
     try {
-        std::cout << "[MusclePersonalizer] Loading skeleton: " << mSkeletonPath << std::endl;
-        std::cout << "[MusclePersonalizer] Loading muscles: " << mMusclePath << std::endl;
+        LOG_INFO("[MusclePersonalizer] Loading skeleton: " << mSkeletonPath);
+        LOG_INFO("[MusclePersonalizer] Loading muscles: " << mMusclePath);
 
         // Load character through SurgeryExecutor
         mExecutor->loadCharacter(mSkeletonPath, mMusclePath, ActuatorType::mus);
@@ -223,14 +233,14 @@ void MusclePersonalizerApp::loadCharacter()
         mReferenceMass = mExecutor->getCharacter()->getSkeleton()->getMass();
         mCurrentMass = mReferenceMass;
 
-        std::cout << "[MusclePersonalizer] Character loaded successfully" << std::endl;
-        std::cout << "[MusclePersonalizer] Reference mass: " << mReferenceMass << " kg" << std::endl;
+        LOG_INFO("[MusclePersonalizer] Character loaded successfully");
+        LOG_INFO("[MusclePersonalizer] Reference mass: " << mReferenceMass << " kg");
 
         // Refresh muscle list
         refreshMuscleList();
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Failed to load character: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Failed to load character: " << e.what());
     }
 }
 
@@ -242,9 +252,9 @@ void MusclePersonalizerApp::loadReferenceCharacter()
         std::string skelResolved = rm::resolve(mReferenceSkeletonPath);
         std::string muscleResolved = rm::resolve(mReferenceMusclePath);
 
-        std::cout << "[MusclePersonalizer] Loading reference character:" << std::endl;
-        std::cout << "[MusclePersonalizer]   Skeleton: " << mReferenceSkeletonPath << std::endl;
-        std::cout << "[MusclePersonalizer]   Muscles: " << mReferenceMusclePath << std::endl;
+        LOG_INFO("[MusclePersonalizer] Loading reference character:");
+        LOG_INFO("[MusclePersonalizer]   Skeleton: " << mReferenceSkeletonPath);
+        LOG_INFO("[MusclePersonalizer]   Muscles: " << mReferenceMusclePath);
 
         // Create reference character
         mReferenceCharacter = new Character(skelResolved, true);
@@ -256,11 +266,11 @@ void MusclePersonalizerApp::loadReferenceCharacter()
             mReferenceCharacter->setActivations(mReferenceCharacter->getActivations().setZero());
         }
 
-        std::cout << "[MusclePersonalizer] Reference character loaded successfully" << std::endl;
-        std::cout << "[MusclePersonalizer]   Reference muscles: " << mReferenceCharacter->getMuscles().size() << std::endl;
+        LOG_INFO("[MusclePersonalizer] Reference character loaded successfully");
+        LOG_INFO("[MusclePersonalizer]   Reference muscles: " << mReferenceCharacter->getMuscles().size());
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Failed to load reference character: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Failed to load reference character: " << e.what());
         mReferenceCharacter = nullptr;
     }
 }
@@ -383,6 +393,8 @@ void MusclePersonalizerApp::drawLeftPanel()
             drawClinicalDataSection();
             drawCharacterLoadSection();
             drawWeightApplicationSection();
+            drawJointAngleSection();
+
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Waypoint")) {
@@ -670,6 +682,133 @@ void MusclePersonalizerApp::drawWeightApplicationSection()
 
         if (mAppliedRatio != 1.0f) {
             ImGui::TextColored(ImVec4(0, 1, 0, 1), "Last applied ratio: %.3f", mAppliedRatio);
+        }
+    }
+}
+
+void MusclePersonalizerApp::drawJointAngleSection()
+{
+    if (collapsingHeaderWithControls("Joint Angle")) {
+        if (!mExecutor || !mExecutor->getCharacter()) {
+            ImGui::TextDisabled("Load character first");
+            return;
+        }
+
+        auto character = mExecutor->getCharacter();
+        auto skel = character->getSkeleton();
+
+        // Reset button
+        if (ImGui::Button("Reset to Zero")) {
+            skel->setPositions(Eigen::VectorXd::Zero(skel->getNumDofs()));
+            for (auto* m : character->getMuscles()) {
+                m->UpdateGeometry();
+            }
+        }
+
+        ImGui::Separator();
+
+        // Get current positions and limits
+        Eigen::VectorXd pos_lower_limit = skel->getPositionLowerLimits();
+        Eigen::VectorXd pos_upper_limit = skel->getPositionUpperLimits();
+        Eigen::VectorXd currentPos = skel->getPositions();
+        Eigen::VectorXf pos_rad = currentPos.cast<float>();
+        Eigen::VectorXf pos_deg = pos_rad * (180.0f / M_PI);
+
+        // DOF direction labels
+        const char* dof_labels[] = {"X", "Y", "Z", "tX", "tY", "tZ"};
+
+        bool changed = false;
+        int dof_idx = 0;
+        for (size_t j = 0; j < skel->getNumJoints(); j++) {
+            auto joint = skel->getJoint(j);
+            std::string joint_name = joint->getName();
+            int num_dofs = joint->getNumDofs();
+
+            if (num_dofs == 0) continue;
+
+            // Display joint name as a header
+            ImGui::Text("%s:", joint_name.c_str());
+            ImGui::Indent();
+
+            for (int d = 0; d < num_dofs; d++) {
+                // Check if this is a translation DOF (root joint DOFs 3-5 are tx, ty, tz)
+                bool is_translation = (dof_idx >= 3 && dof_idx < 6);
+
+                // Prepare limits and display value
+                float lower_limit, upper_limit;
+                float display_value;
+
+                if (dof_idx < 6) {
+                    // Root joint - expand limits
+                    if (is_translation) {
+                        lower_limit = -2.0f;
+                        upper_limit = 2.0f;
+                        display_value = pos_rad[dof_idx];
+                    } else {
+                        lower_limit = -2.0f * (180.0f / M_PI);
+                        upper_limit = 2.0f * (180.0f / M_PI);
+                        display_value = pos_deg[dof_idx];
+                    }
+                } else {
+                    // Non-root joints: always rotation, convert to degrees
+                    lower_limit = pos_lower_limit[dof_idx] * (180.0f / M_PI);
+                    upper_limit = pos_upper_limit[dof_idx] * (180.0f / M_PI);
+                    display_value = pos_deg[dof_idx];
+                }
+
+                // Create label
+                std::string label;
+                if (num_dofs > 1 && d < 6) {
+                    label = std::string(dof_labels[d]);
+                } else if (num_dofs > 1) {
+                    label = "DOF " + std::to_string(d);
+                } else {
+                    label = "";
+                }
+
+                float prev_value = display_value;
+
+                // Slider
+                std::string slider_label = label + "##slider_" + joint_name + std::to_string(d);
+                ImGui::SetNextItemWidth(200);
+                const char* format = is_translation ? "%.3fm" : "%.1f°";
+                ImGui::SliderFloat(slider_label.c_str(), &display_value, lower_limit, upper_limit, format);
+
+                // InputFloat on same line
+                ImGui::SameLine();
+                std::string input_label = "##input_" + joint_name + std::to_string(d);
+                ImGui::SetNextItemWidth(50);
+                const char* input_format = is_translation ? "%.3f" : "%.1f";
+                ImGui::InputFloat(input_label.c_str(), &display_value, 0.0f, 0.0f, input_format);
+
+                // Clamp to limits
+                if (display_value < lower_limit) display_value = lower_limit;
+                if (display_value > upper_limit) display_value = upper_limit;
+
+                // Update internal storage
+                if (is_translation) {
+                    pos_rad[dof_idx] = display_value;
+                } else {
+                    pos_deg[dof_idx] = display_value;
+                    pos_rad[dof_idx] = display_value * (M_PI / 180.0f);
+                }
+
+                if (prev_value != display_value) {
+                    changed = true;
+                }
+
+                dof_idx++;
+            }
+
+            ImGui::Unindent();
+        }
+
+        // Update positions if changed
+        if (changed) {
+            skel->setPositions(pos_rad.cast<double>());
+            for (auto* m : character->getMuscles()) {
+                m->UpdateGeometry();
+            }
         }
     }
 }
@@ -1100,6 +1239,25 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::SetNextItemWidth(60);
         ImGui::InputFloat("Step##Grid", &mContractureGridInterval, 0.0f, 0.0f, "%.2f");
 
+        ImGui::Text("Regularization:");
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Ratio##Reg", &mContractureLambdaRatioReg, 0.0f, 0.0f, "%.3f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Penalize (ratio - 1.0)^2\n0 = disabled");
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Torque##Reg", &mContractureLambdaTorqueReg, 0.0f, 0.0f, "%.3f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Penalize passive torque magnitude\n0 = disabled");
+        }
+
+        ImGui::SetNextItemWidth(120);
+        ImGui::SliderInt("Outer Iters", &mContractureOuterIterations, 1, 10);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Outer iterations for biarticular convergence\n1 = single pass");
+        }
+
     ImGui::Separator();
     if (ImGui::Button("Estimate Contracture Parameters", ImVec2(-1, 0))) runContractureEstimation();
 }
@@ -1225,6 +1383,7 @@ void MusclePersonalizerApp::drawRenderTab()
     if (ImGui::CollapsingHeader("Plot", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SetNextItemWidth(100);
         ImGui::InputFloat("Plot Height", &mPlotHeight, 10.0f, 50.0f, "%.0f");
+        ImGui::Checkbox("Hide Legend", &mPlotHideLegend);
 
         // Legend position
         ImGui::Text("Legend:");
@@ -1290,9 +1449,9 @@ void MusclePersonalizerApp::drawResultsSection()
                 skelPath = skelDir / skelFilename;
             }
             mExecutor->exportSkeleton(skelPath.string());
-            std::cout << "[MusclePersonalizer] Skeleton exported to: " << skelPrefix << skelFilename << std::endl;
+            LOG_INFO("[MusclePersonalizer] Skeleton exported to: " << skelPrefix << skelFilename );
         } catch (const std::exception& e) {
-            std::cerr << "[MusclePersonalizer] Error exporting skeleton: " << e.what() << std::endl;
+            LOG_ERROR("[MusclePersonalizer] Error exporting skeleton: " << e.what() );
         }
     }
     if (skelExists) {
@@ -1318,9 +1477,9 @@ void MusclePersonalizerApp::drawResultsSection()
                 musclePath = muscleDir / muscleFilename;
             }
             mExecutor->exportMuscles(musclePath.string());
-            std::cout << "[MusclePersonalizer] Muscle exported to: " << musclePrefix << muscleFilename << std::endl;
+            LOG_INFO("[MusclePersonalizer] Muscle exported to: " << musclePrefix << muscleFilename );
         } catch (const std::exception& e) {
-            std::cerr << "[MusclePersonalizer] Error exporting muscle: " << e.what() << std::endl;
+            LOG_ERROR("[MusclePersonalizer] Error exporting muscle: " << e.what() );
         }
     }
     if (muscleExists) {
@@ -1752,14 +1911,15 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
         if (result.dof_idx >= 0 && !result.dof_name.empty()) {
             plotTitle += " - " + result.dof_name + " (" + std::to_string(result.dof_idx) + ")";
         }
-        if (ImPlot::BeginPlot(plotTitle.c_str(), ImVec2(-1, mPlotHeight))) {
+        if (ImPlot::BeginPlot(plotTitle.c_str(), ImVec2(-1, mPlotHeight), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
             const char* yAxisLabel = (result.length_type == PMuscle::LengthCurveType::NORMALIZED)
                 ? "Normalized Length (lm_norm)"
                 : "MTU Length (lmt)";
             ImPlot::SetupAxes("Phase", yAxisLabel);
             ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);  // X fixed 0-1
             ImPlot::SetupAxisLimits(ImAxis_Y1, y_min, y_max, ImPlotCond_Always); // Y auto once
-            ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
+            if (!mPlotHideLegend)
+                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
             // Reference curve (blue) - target behavior from standard character
             ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
@@ -1797,11 +1957,12 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
             shape_y_min = std::max(0.0, shape_y_min);  // Angle can't be negative
             shape_y_max = std::max(shape_y_max, 1.0);  // Ensure at least 1 degree range
 
-            if (ImPlot::BeginPlot("Direction Misalignment", ImVec2(-1, mPlotHeight))) {
+            if (ImPlot::BeginPlot("Direction Misalignment", ImVec2(-1, mPlotHeight), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Phase", "Angle (degrees)");
                 ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);
                 ImPlot::SetupAxisLimits(ImAxis_Y1, shape_y_min, shape_y_max, ImPlotCond_Always);
-                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
+                if (!mPlotHideLegend)
+                    ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
                 // Before curve (orange)
                 ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
@@ -1830,18 +1991,18 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
 void MusclePersonalizerApp::applyWeightScaling()
 {
     if (!mExecutor) {
-        std::cerr << "[MusclePersonalizer] No surgery executor available" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No surgery executor available" );
         return;
     }
 
     Character* character = mExecutor->getCharacter();
     if (!character) {
-        std::cerr << "[MusclePersonalizer] No character loaded" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No character loaded" );
         return;
     }
 
     if (mTargetMass <= 0.0f || mReferenceMass <= 0.0f) {
-        std::cerr << "[MusclePersonalizer] Invalid mass values" << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Invalid mass values" );
         return;
     }
 
@@ -1860,32 +2021,32 @@ void MusclePersonalizerApp::applyWeightScaling()
     mAppliedRatio = static_cast<float>(f0_ratio);
     mCurrentMass = mTargetMass;
 
-    std::cout << "[MusclePersonalizer] Applied weight scaling: "
-              << mTargetMass << " kg (f0 ratio: " << f0_ratio << ")" << std::endl;
+    LOG_INFO("[MusclePersonalizer] Applied weight scaling: "
+              << mTargetMass << " kg (f0 ratio: " << f0_ratio << ")" );
 }
 
 void MusclePersonalizerApp::runWaypointOptimization()
 {
     if (!mExecutor) {
-        std::cerr << "[MusclePersonalizer] No surgery executor available" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No surgery executor available" );
         return;
     }
 
     auto* character = mExecutor->getCharacter();
     if (!character) {
-        std::cerr << "[MusclePersonalizer] No character loaded" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No character loaded" );
         return;
     }
 
     if (!mReferenceCharacter) {
-        std::cerr << "[MusclePersonalizer] No reference character loaded" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No reference character loaded" );
         return;
     }
 
     // Check HDF path
     std::string hdfPath(mHDFPath);
     if (hdfPath.empty()) {
-        std::cerr << "[MusclePersonalizer] No HDF file specified" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No HDF file specified" );
         return;
     }
 
@@ -1899,13 +2060,13 @@ void MusclePersonalizerApp::runWaypointOptimization()
     }
 
     if (selectedMuscles.empty()) {
-        std::cerr << "[MusclePersonalizer] No muscles selected for optimization" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No muscles selected for optimization" );
         return;
     }
 
-    std::cout << "[MusclePersonalizer] Starting waypoint optimization" << std::endl;
-    std::cout << "[MusclePersonalizer]   HDF: " << hdfPath << std::endl;
-    std::cout << "[MusclePersonalizer]   Muscles: " << selectedMuscles.size() << std::endl;
+    LOG_INFO("[MusclePersonalizer] Starting waypoint optimization" );
+    LOG_INFO("[MusclePersonalizer]   HDF: " << hdfPath );
+    LOG_INFO("[MusclePersonalizer]   Muscles: " << selectedMuscles.size() );
 
     // Build Config struct from UI parameters
     PMuscle::WaypointOptimizer::Config config;
@@ -1931,9 +2092,9 @@ void MusclePersonalizerApp::runWaypointOptimization()
     );
 
     if (success) {
-        std::cout << "[MusclePersonalizer] Waypoint optimization completed successfully" << std::endl;
+        LOG_INFO("[MusclePersonalizer] Waypoint optimization completed successfully" );
     } else {
-        std::cerr << "[MusclePersonalizer] Waypoint optimization failed" << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Waypoint optimization failed" );
     }
 }
 
@@ -1942,7 +2103,7 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
 {
     // Don't start if already running
     if (mWaypointOptRunning) {
-        std::cerr << "[MusclePersonalizer] Optimization already running" << std::endl;
+        LOG_WARN("[MusclePersonalizer] Optimization already running" );
         return;
     }
 
@@ -1952,18 +2113,18 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     }
 
     if (!mExecutor) {
-        std::cerr << "[MusclePersonalizer] No surgery executor available" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No surgery executor available" );
         return;
     }
 
     auto* character = mExecutor->getCharacter();
     if (!character) {
-        std::cerr << "[MusclePersonalizer] No character loaded" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No character loaded" );
         return;
     }
 
     if (!mReferenceCharacter) {
-        std::cerr << "[MusclePersonalizer] No reference character loaded" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No reference character loaded" );
         return;
     }
 
@@ -1977,13 +2138,13 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     }
 
     if (selectedMuscles.empty()) {
-        std::cerr << "[MusclePersonalizer] No muscles selected" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No muscles selected" );
         return;
     }
 
     std::string hdfPath(mHDFPath);
     if (hdfPath.empty()) {
-        std::cerr << "[MusclePersonalizer] No HDF file specified" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No HDF file specified" );
         return;
     }
 
@@ -2029,13 +2190,13 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     config.parameterTolerance = static_cast<double>(mWaypointParameterTolerance);
     config.adaptiveSampleWeight = mWaypointAdaptiveSampleWeight;
 
-    std::cout << "[MusclePersonalizer] Starting async waypoint optimization" << std::endl;
-    std::cout << "[MusclePersonalizer]   HDF: " << hdfPath << std::endl;
-    std::cout << "[MusclePersonalizer]   Muscles: " << selectedMuscles.size() << std::endl;
-    std::cout << "[MusclePersonalizer]   Gradient: " << (config.analyticalGradient ? "analytical" : "numeric") << std::endl;
-    std::cout << "[MusclePersonalizer]   Weights: phase=" << config.weightPhase << ", delta=" << config.weightDelta
-              << ", samples=" << config.weightSamples << std::endl;
-    std::cout << "[MusclePersonalizer]   Length type: " << (mWaypointUseNormalizedLength ? "normalized (lm_norm)" : "MTU (lmt)") << std::endl;
+    LOG_INFO("[MusclePersonalizer] Starting async waypoint optimization" );
+    LOG_INFO("[MusclePersonalizer]   HDF: " << hdfPath );
+    LOG_INFO("[MusclePersonalizer]   Muscles: " << selectedMuscles.size() );
+    LOG_INFO("[MusclePersonalizer]   Gradient: " << (config.analyticalGradient ? "analytical" : "numeric") );
+    LOG_INFO("[MusclePersonalizer]   Weights: phase=" << config.weightPhase << ", delta=" << config.weightDelta
+              << ", samples=" << config.weightSamples );
+    LOG_INFO("[MusclePersonalizer]   Length type: " << (mWaypointUseNormalizedLength ? "normalized (lm_norm)" : "MTU (lmt)") );
 
     // Capture reference character pointer for thread
     Character* refChar = mReferenceCharacter;
@@ -2069,8 +2230,8 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
         for (const auto& r : results) {
             if (r.success) successCount++;
         }
-        std::cout << "[MusclePersonalizer] Waypoint optimization completed: "
-                  << successCount << "/" << results.size() << " succeeded" << std::endl;
+        LOG_INFO("[MusclePersonalizer] Waypoint optimization completed: "
+                  << successCount << "/" << results.size() << " succeeded" );
 
         mWaypointOptRunning = false;
     });
@@ -2082,7 +2243,7 @@ void MusclePersonalizerApp::runContractureEstimation()
     static const std::string MUSCLE_GROUPS_CONFIG = "@data/config/muscle_groups.yaml";
 
     if (!mExecutor || !mExecutor->getCharacter()) {
-        std::cerr << "[MusclePersonalizer] No character loaded" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No character loaded" );
         return;
     }
 
@@ -2101,28 +2262,37 @@ void MusclePersonalizerApp::runContractureEstimation()
 
             // Populate rom_angle from clinical data or manual input
             if (trial.cd_value.has_value()) {
-                config.rom_angle = trial.cd_value.value();
-                std::cout << "[MusclePersonalizer] Using clinical ROM: " << config.name
-                          << " = " << config.rom_angle << "°" << std::endl;
+                config.rom_angle = trial.cd_neg ? -trial.cd_value.value() : trial.cd_value.value();
+                LOG_INFO("[MusclePersonalizer] Using clinical ROM: " << config.name
+                          << " = " << config.rom_angle << "°"
+                          << (trial.cd_neg ? " (negated)" : "") );
             } else if (std::abs(trial.manual_rom) > 0.001f) {
                 config.rom_angle = static_cast<double>(trial.manual_rom);
-                std::cout << "[MusclePersonalizer] Using manual ROM: " << config.name
-                          << " = " << config.rom_angle << "°" << std::endl;
+                LOG_INFO("[MusclePersonalizer] Using manual ROM: " << config.name
+                          << " = " << config.rom_angle << "°" );
             } else {
-                std::cerr << "[MusclePersonalizer] Skipping " << config.name
-                          << ": No ROM value available (set clinical data or manual input)" << std::endl;
+                LOG_WARN("[MusclePersonalizer] Skipping " << config.name
+                          << ": No ROM value available (set clinical data or manual input)" );
+                continue;
+            }
+
+            // Check cutoff: skip if |rom_angle| > cutoff (no muscle contraction)
+            if (trial.cd_cutoff > 0 && std::abs(config.rom_angle) > trial.cd_cutoff) {
+                LOG_INFO("[MusclePersonalizer] Skipping " << config.name
+                          << ": ROM " << config.rom_angle << "° exceeds cutoff "
+                          << trial.cd_cutoff << "° (no contracture)" );
                 continue;
             }
 
             configs.push_back(config);
         } catch (const std::exception& e) {
-            std::cerr << "[MusclePersonalizer] Failed to load " << trial.filePath
-                      << ": " << e.what() << std::endl;
+            LOG_ERROR("[MusclePersonalizer] Failed to load " << trial.filePath
+                      << ": " << e.what() );
         }
     }
 
     if (configs.empty()) {
-        std::cerr << "[MusclePersonalizer] No valid ROM configs (need clinical data or manual ROM values)" << std::endl;
+        LOG_WARN("[MusclePersonalizer] No valid ROM configs (need clinical data or manual ROM values)" );
         return;
     }
 
@@ -2131,8 +2301,8 @@ void MusclePersonalizerApp::runContractureEstimation()
 
     // Load muscle groups from config (required)
     if (optimizer.loadMuscleGroups(MUSCLE_GROUPS_CONFIG, mExecutor->getCharacter()) == 0) {
-        std::cerr << "[MusclePersonalizer] Failed to load muscle groups from "
-                  << MUSCLE_GROUPS_CONFIG << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Failed to load muscle groups from "
+                  << MUSCLE_GROUPS_CONFIG );
         return;
     }
 
@@ -2145,14 +2315,17 @@ void MusclePersonalizerApp::runContractureEstimation()
     optConfig.gridSearchBegin = mContractureGridBegin;
     optConfig.gridSearchEnd = mContractureGridEnd;
     optConfig.gridSearchInterval = mContractureGridInterval;
+    optConfig.lambdaRatioReg = mContractureLambdaRatioReg;
+    optConfig.lambdaTorqueReg = mContractureLambdaTorqueReg;
+    optConfig.outerIterations = mContractureOuterIterations;
 
-    std::cout << "[MusclePersonalizer] Running optimization with results capture..." << std::endl;
+    LOG_INFO("[MusclePersonalizer] Running optimization with results capture..." );
 
     // Run optimization with comprehensive results capture
     mContractureOptResult = optimizer.optimizeWithResults(mExecutor->getCharacter(), configs, optConfig);
 
     if (!mContractureOptResult.has_value() || mContractureOptResult->group_results.empty()) {
-        std::cerr << "[MusclePersonalizer] Optimization returned no results" << std::endl;
+        LOG_WARN("[MusclePersonalizer] Optimization returned no results" );
         mContractureOptResult = std::nullopt;
         return;
     }
@@ -2172,10 +2345,10 @@ void MusclePersonalizerApp::runContractureEstimation()
     mContractureSelectedGroupIdx = mContractureOptResult->group_results.empty() ? -1 : 0;
     mContractureSelectedTrialIdx = mContractureOptResult->trial_results.empty() ? -1 : 0;
 
-    std::cout << "[MusclePersonalizer] Contracture estimation complete: "
+    LOG_INFO("[MusclePersonalizer] Contracture estimation complete: "
               << mGroupResults.size() << " groups, "
               << mContractureOptResult->muscle_results.size() << " muscles, "
-              << mContractureOptResult->trial_results.size() << " trials" << std::endl;
+              << mContractureOptResult->trial_results.size() << " trials" );
 }
 
 // ============================================================
@@ -2192,7 +2365,7 @@ void MusclePersonalizerApp::scanROMConfigs()
         std::string dir = resolved_path.string();
 
         if (dir.empty() || !fs::exists(dir)) {
-            std::cerr << "[MusclePersonalizer] ROM directory does not exist: " << mROMConfigDir << std::endl;
+            LOG_WARN("[MusclePersonalizer] ROM directory does not exist: " << mROMConfigDir );
             return;
         }
 
@@ -2215,6 +2388,8 @@ void MusclePersonalizerApp::scanROMConfigs()
                         trial.cd_side = cd["side"].as<std::string>("");
                         trial.cd_joint = cd["joint"].as<std::string>("");
                         trial.cd_field = cd["field"].as<std::string>("");
+                        trial.cd_neg = cd["neg"].as<bool>(false);
+                        trial.cd_cutoff = cd["cutoff"].as<float>(-1.0f);
                     }
 
                     trial.selected = false;
@@ -2223,7 +2398,7 @@ void MusclePersonalizerApp::scanROMConfigs()
                     mROMTrials.push_back(trial);
                 }
                 catch (const std::exception& e) {
-                    std::cerr << "[MusclePersonalizer] Error parsing " << entry.path() << ": " << e.what() << std::endl;
+                    LOG_ERROR("[MusclePersonalizer] Error parsing " << entry.path() << ": " << e.what() );
                 }
             }
         }
@@ -2231,10 +2406,13 @@ void MusclePersonalizerApp::scanROMConfigs()
         // Update CD values if patient ROM is loaded
         updateROMTrialCDValues();
 
-        std::cout << "[MusclePersonalizer] Found " << mROMTrials.size() << " ROM configs" << std::endl;
+        // Apply default ROM values for any trials without patient data
+        applyDefaultROMValues();
+
+        LOG_INFO("[MusclePersonalizer] Found " << mROMTrials.size() << " ROM configs" );
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Error scanning ROM configs: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Error scanning ROM configs: " << e.what() );
     }
 }
 
@@ -2255,14 +2433,19 @@ void MusclePersonalizerApp::applyDefaultROMValues()
 
     int applied = 0;
     for (auto& trial : mROMTrials) {
-        auto it = defaultROMValues.find(trial.cd_field);
-        if (it != defaultROMValues.end()) {
-            trial.cd_value = it->second;
-            applied++;
+        // Only apply default if no value is already set (don't overwrite patient data)
+        if (!trial.cd_value.has_value()) {
+            auto it = defaultROMValues.find(trial.cd_field);
+            if (it != defaultROMValues.end()) {
+                trial.cd_value = it->second;
+                applied++;
+            }
         }
     }
 
-    std::cout << "[MusclePersonalizer] Applied default ROM values to " << applied << " trials" << std::endl;
+    if (applied > 0) {
+        std::cout << "[MusclePersonalizer] Applied default ROM values to " << applied << " trials" << std::endl;
+    }
 }
 
 void MusclePersonalizerApp::loadPatientROM(const std::string& pid, bool preOp)
@@ -2279,7 +2462,7 @@ void MusclePersonalizerApp::loadPatientROM(const std::string& pid, bool preOp)
         std::string resolvedPath = rm::getManager().resolve(romPath);
 
         if (resolvedPath.empty() || !fs::exists(resolvedPath)) {
-            std::cout << "[MusclePersonalizer] No ROM data found for PID: " << pid << std::endl;
+            LOG_INFO("[MusclePersonalizer] No ROM data found for PID: " << pid );
             return;
         }
 
@@ -2288,7 +2471,7 @@ void MusclePersonalizerApp::loadPatientROM(const std::string& pid, bool preOp)
         // Select phase based on preOp flag
         std::string phaseName = preOp ? "pre_op" : "post_op";
         if (!romData[phaseName]) {
-            std::cout << "[MusclePersonalizer] No " << phaseName << " data in ROM file" << std::endl;
+            LOG_INFO("[MusclePersonalizer] No " << phaseName << " data in ROM file" );
             return;
         }
 
@@ -2324,14 +2507,14 @@ void MusclePersonalizerApp::loadPatientROM(const std::string& pid, bool preOp)
             }
         }
 
-        std::cout << "[MusclePersonalizer] Loaded " << mPatientROMValues.size()
-                  << " ROM values for PID " << pid << " (" << phaseName << ")" << std::endl;
+        LOG_INFO("[MusclePersonalizer] Loaded " << mPatientROMValues.size()
+                  << " ROM values for PID " << pid << " (" << phaseName << ")" );
 
         // Update trial CD values
         updateROMTrialCDValues();
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Error loading patient ROM: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Error loading patient ROM: " << e.what() );
     }
 }
 
@@ -2366,7 +2549,7 @@ void MusclePersonalizerApp::loadClinicalWeight(const std::string& pid, bool preO
         std::string resolvedPath = rm::getManager().resolve(metaPath);
 
         if (resolvedPath.empty() || !fs::exists(resolvedPath)) {
-            std::cout << "[MusclePersonalizer] No gait metadata found for PID: " << pid << std::endl;
+            LOG_INFO("[MusclePersonalizer] No gait metadata found for PID: " << pid );
             return;
         }
 
@@ -2377,8 +2560,8 @@ void MusclePersonalizerApp::loadClinicalWeight(const std::string& pid, bool preO
         if (meta[phaseName] && meta[phaseName]["weight"]) {
             mClinicalWeight = meta[phaseName]["weight"].as<float>();
             mClinicalWeightAvailable = true;
-            std::cout << "[MusclePersonalizer] Loaded weight: " << mClinicalWeight
-                      << " kg (" << phaseName << ")" << std::endl;
+            LOG_INFO("[MusclePersonalizer] Loaded weight: " << mClinicalWeight
+                      << " kg (" << phaseName << ")" );
 
             // Update target mass if using clinical data
             if (mWeightSource == WeightSource::ClinicalData) {
@@ -2387,7 +2570,7 @@ void MusclePersonalizerApp::loadClinicalWeight(const std::string& pid, bool preO
         }
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Error loading clinical weight: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Error loading clinical weight: " << e.what() );
     }
 }
 
@@ -2406,11 +2589,11 @@ void MusclePersonalizerApp::scanSkeletonFiles()
 
                 // Create directory if it doesn't exist
                 if (!fs::exists(skelDir)) {
-                    std::cout << "[MusclePersonalizer] Creating skeleton directory: " << skelDir << std::endl;
+                    LOG_INFO("[MusclePersonalizer] Creating skeleton directory: " << skelDir );
                     fs::create_directories(skelDir);
                 }
             } else {
-                std::cerr << "[MusclePersonalizer] PID root not available" << std::endl;
+                LOG_WARN("[MusclePersonalizer] PID root not available" );
                 return;
             }
         } else {
@@ -2428,7 +2611,7 @@ void MusclePersonalizerApp::scanSkeletonFiles()
         std::sort(mSkeletonCandidates.begin(), mSkeletonCandidates.end());
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Error scanning skeleton files: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Error scanning skeleton files: " << e.what() );
     }
 }
 
@@ -2447,11 +2630,11 @@ void MusclePersonalizerApp::scanMuscleFiles()
 
                 // Create directory if it doesn't exist
                 if (!fs::exists(muscleDir)) {
-                    std::cout << "[MusclePersonalizer] Creating muscle directory: " << muscleDir << std::endl;
+                    LOG_INFO("[MusclePersonalizer] Creating muscle directory: " << muscleDir );
                     fs::create_directories(muscleDir);
                 }
             } else {
-                std::cerr << "[MusclePersonalizer] PID root not available" << std::endl;
+                LOG_WARN("[MusclePersonalizer] PID root not available" );
                 return;
             }
         } else {
@@ -2469,7 +2652,7 @@ void MusclePersonalizerApp::scanMuscleFiles()
         std::sort(mMuscleCandidates.begin(), mMuscleCandidates.end());
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Error scanning muscle files: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Error scanning muscle files: " << e.what() );
     }
 }
 
@@ -2508,7 +2691,7 @@ void MusclePersonalizerApp::scanMotionFiles()
         std::sort(mMotionCandidates.begin(), mMotionCandidates.end());
     }
     catch (const std::exception& e) {
-        std::cerr << "[MusclePersonalizer] Error scanning motion files: " << e.what() << std::endl;
+        LOG_ERROR("[MusclePersonalizer] Error scanning motion files: " << e.what() );
     }
 }
 
@@ -2525,13 +2708,13 @@ void MusclePersonalizerApp::refreshMuscleList()
         mSelectedMuscles.push_back(true);
     }
 
-    std::cout << "[MusclePersonalizer] Found " << mAvailableMuscles.size() << " muscles" << std::endl;
+    LOG_INFO("[MusclePersonalizer] Found " << mAvailableMuscles.size() << " muscles" );
 }
 
 void MusclePersonalizerApp::exportMuscleConfig()
 {
     // TODO: Implement muscle config export
-    std::cout << "[MusclePersonalizer] Muscle config export not yet implemented" << std::endl;
+    LOG_INFO("[MusclePersonalizer] Muscle config export not yet implemented" );
 }
 
 bool MusclePersonalizerApp::collapsingHeaderWithControls(const std::string& title)
@@ -2677,9 +2860,10 @@ void MusclePersonalizerApp::drawContractureResultsTab()
             if (ImGui::ArrowButton("##chart_next", ImGuiDir_Right)) mContractureChartPage++;
             ImGui::EndDisabled();
 
-            if (ImPlot::BeginPlot("##lm_contract_chart", ImVec2(-1, 200))) {
+            if (ImPlot::BeginPlot("##lm_contract_chart", ImVec2(-1, 200), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Muscle", "lm_contract (m)");
-                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
+                if (!mPlotHideLegend)
+                    ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
                 double bar_width = 0.35;
 
@@ -2767,9 +2951,9 @@ void MusclePersonalizerApp::drawContractureResultsTab()
             y_min -= y_margin;
             y_max += y_margin;
 
-            if (ImPlot::BeginPlot("##torque_chart", ImVec2(-1, 200))) {
+            if (ImPlot::BeginPlot("##torque_chart", ImVec2(-1, 200), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Muscle", "Passive Torque (Nm)");
-                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
+                if (!mPlotHideLegend) ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
                 double bar_width = 0.35;
 
@@ -2856,9 +3040,10 @@ void MusclePersonalizerApp::drawContractureResultsTab()
             y_min -= y_margin;
             y_max += y_margin;
 
-            if (ImPlot::BeginPlot("##force_chart", ImVec2(-1, 200))) {
+            if (ImPlot::BeginPlot("##force_chart", ImVec2(-1, 200), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Muscle", "Passive Force (N)");
-                ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
+                if (!mPlotHideLegend)
+                    ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
                 double bar_width = 0.35;
 
@@ -2889,6 +3074,66 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
     ImGui::Spacing();
 
+    // ===== Chart 3.5: Group total passive torque (sum of muscles in group) =====
+    if (mContractureSelectedTrialIdx >= 0 &&
+        mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size()) &&
+        mContractureSelectedGroupIdx >= 0 &&
+        mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
+
+        const auto& trial = result.trial_results[mContractureSelectedTrialIdx];
+        const auto& grp = result.group_results[mContractureSelectedGroupIdx];
+
+        // Sum torques for muscles in selected group
+        double sum_before = 0.0, sum_after = 0.0;
+        int muscle_count = 0;
+
+        for (size_t i = 0; i < trial.muscle_torques_before.size(); ++i) {
+            const auto& [name, before_val] = trial.muscle_torques_before[i];
+            bool in_group = std::find(grp.muscle_names.begin(), grp.muscle_names.end(),
+                                      name) != grp.muscle_names.end();
+            if (in_group && i < trial.muscle_torques_after.size()) {
+                sum_before += before_val;
+                sum_after += trial.muscle_torques_after[i].second;
+                muscle_count++;
+            }
+        }
+
+        if (muscle_count > 0) {
+            ImGui::Text("Group Total Torque: %s (%d muscles)", grp.group_name.c_str(), muscle_count);
+
+            const char* bar_labels[] = {"Before", "After"};
+            double values[] = {sum_before, sum_after};
+
+            if (ImPlot::BeginPlot("##group_torque", ImVec2(-1, 150), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
+                ImPlot::SetupAxes("", "Torque (Nm)");
+                ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, 1.5, ImPlotCond_Always);
+
+                double t_min = std::min(values[0], values[1]);
+                double t_max = std::max(values[0], values[1]);
+                double t_margin = (t_max - t_min) * 0.15;
+                if (t_margin < 0.1) t_margin = 0.1;
+                ImPlot::SetupAxisLimits(ImAxis_Y1, t_min - t_margin, t_max + t_margin, ImPlotCond_Always);
+                ImPlot::SetupAxisTicks(ImAxis_X1, 0, 1, 2, bar_labels);
+
+                ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));  // Blue for before
+                ImPlot::PlotBars("##grp_before", &values[0], 1, 0.5, 0);
+
+                ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));  // Orange for after
+                ImPlot::PlotBars("##grp_after", &values[1], 1, 0.5, 1);
+
+                ImPlot::EndPlot();
+            }
+
+            // Show numeric values and change
+            double change = sum_after - sum_before;
+            double pct_change = (sum_before != 0) ? (change / std::abs(sum_before)) * 100.0 : 0.0;
+            ImGui::Text("Before: %.2f Nm | After: %.2f Nm | Change: %+.2f Nm (%.1f%%)",
+                       sum_before, sum_after, change, pct_change);
+        }
+    }
+
+    ImGui::Spacing();
+
     // ===== Chart 4: Joint total passive torque before/after per trial =====
     if (mContractureSelectedTrialIdx >= 0 &&
         mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size())) {
@@ -2906,7 +3151,7 @@ void MusclePersonalizerApp::drawContractureResultsTab()
             trial.computed_torque_after
         };
 
-        if (ImPlot::BeginPlot("##joint_torque", ImVec2(-1, 150))) {
+        if (ImPlot::BeginPlot("##joint_torque", ImVec2(-1, 150), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
             ImPlot::SetupAxes("", "Torque (Nm)");
             ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, 2.5, ImPlotCond_Always);
             // Set Y limits with margin

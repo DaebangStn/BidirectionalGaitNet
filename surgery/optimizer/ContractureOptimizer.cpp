@@ -4,8 +4,11 @@
 #include "Log.h"
 #include <yaml-cpp/yaml.h>
 #include <ceres/ceres.h>
+#include <dart/dynamics/BallJoint.hpp>
 #include <regex>
 #include <iostream>
+#include <sstream>
+#include <iomanip>
 #include <cmath>
 #include <set>
 
@@ -60,7 +63,9 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
         }
 
         // Compute predicted passive torque
-        double tau_pred = computePassiveTorque(character_, pose_.joint_idx);
+        // For composite axis (abd_knee), use Y-axis DOF (offset 1)
+        int dof_offset = pose_.use_composite_axis ? 1 : -1;
+        double tau_pred = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset);
 
         // Restore original lm_contract values
         for (size_t i = 0; i < muscles.size(); ++i) {
@@ -95,7 +100,7 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
                 for (auto& muscle : muscles) {
                     muscle->UpdateGeometry();
                 }
-                double tau_plus = computePassiveTorque(character_, pose_.joint_idx);
+                double tau_plus = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset);
 
                 // Restore
                 for (size_t i = 0; i < muscles.size(); ++i) {
@@ -116,6 +121,115 @@ private:
     PoseData pose_;
     std::map<int, std::vector<int>> muscle_groups_;
     std::map<int, double> base_lm_contract_;
+};
+
+// Ratio regularization: penalizes deviation from ratio=1.0
+struct RatioRegCost {
+    int group_idx;
+    double sqrt_lambda;
+
+    RatioRegCost(int g, double sl)
+        : group_idx(g), sqrt_lambda(sl) {}
+
+    bool operator()(const double* const* parameters, double* residual) const {
+        residual[0] = sqrt_lambda * (parameters[0][group_idx] - 1.0);
+        return true;
+    }
+};
+
+// Torque regularization: penalizes passive torque magnitude
+// This functor computes group passive torque at a specific trial pose
+struct TorqueRegCost {
+    Character* character;
+    PoseData pose;
+    int group_id;
+    std::vector<int> muscle_indices;
+    std::map<int, double> base_lm_contract;
+    double sqrt_lambda;
+
+    TorqueRegCost(Character* c, const PoseData& p, int g,
+                  const std::vector<int>& m_ids,
+                  const std::map<int, double>& base_lm,
+                  double sl)
+        : character(c), pose(p), group_id(g), muscle_indices(m_ids),
+          base_lm_contract(base_lm), sqrt_lambda(sl) {}
+
+    bool operator()(const double* const* parameters, double* residual) const {
+        if (!character) {
+            residual[0] = 0.0;
+            return true;
+        }
+
+        auto skeleton = character->getSkeleton();
+        auto& muscles = character->getMuscles();
+
+        // Apply ratio to this group's muscles
+        double ratio = parameters[0][group_id];
+        std::vector<double> old_lm_contract(muscles.size());
+        for (int m_idx : muscle_indices) {
+            old_lm_contract[m_idx] = muscles[m_idx]->lm_contract;
+            auto it = base_lm_contract.find(m_idx);
+            double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
+            muscles[m_idx]->lm_contract = base * ratio;
+            muscles[m_idx]->RefreshMuscleParams();
+        }
+
+        // Set pose and update geometry
+        skeleton->setPositions(pose.q);
+        for (auto& m : muscles) {
+            m->UpdateGeometry();
+        }
+
+        // Compute group passive torque at target DOF (or composite axis)
+        auto* joint = skeleton->getJoint(pose.joint_idx);
+        int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+        int num_dofs = static_cast<int>(joint->getNumDofs());
+
+        double group_torque = 0.0;
+
+        if (pose.use_composite_axis) {
+            // Composite mode: project 3D torque onto axis
+            for (int m_idx : muscle_indices) {
+                auto* muscle = muscles[m_idx];
+                Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+                const auto& related_indices = muscle->related_dof_indices;
+
+                Eigen::Vector3d torque_vec = Eigen::Vector3d::Zero();
+                for (size_t i = 0; i < related_indices.size(); ++i) {
+                    int global_dof = related_indices[i];
+                    int local_dof = global_dof - first_dof;
+                    if (local_dof >= 0 && local_dof < num_dofs && local_dof < 3) {
+                        torque_vec[local_dof] = jtp[i];
+                    }
+                }
+                group_torque += torque_vec.dot(pose.composite_axis);
+            }
+        } else {
+            // Single-DOF mode: existing logic
+            int target_dof = first_dof + pose.joint_dof;
+            for (int m_idx : muscle_indices) {
+                auto* muscle = muscles[m_idx];
+                Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+                const auto& related_indices = muscle->related_dof_indices;
+
+                for (size_t i = 0; i < related_indices.size(); ++i) {
+                    if (related_indices[i] == target_dof) {
+                        group_torque += jtp[i];
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Restore original lm_contract
+        for (int m_idx : muscle_indices) {
+            muscles[m_idx]->lm_contract = old_lm_contract[m_idx];
+            muscles[m_idx]->RefreshMuscleParams();
+        }
+
+        residual[0] = sqrt_lambda * group_torque;
+        return true;
+    }
 };
 
 
@@ -141,15 +255,41 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
             auto* joint = skeleton->getJoint(joint_name);
             if (!joint) continue;
 
-            YAML::Node angles = joint_node.second;
+            YAML::Node values = joint_node.second;
             int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+            size_t num_dofs = joint->getNumDofs();
 
-            if (angles.IsSequence()) {
-                for (size_t i = 0; i < angles.size() && i < joint->getNumDofs(); ++i) {
-                    positions[first_dof + i] = angles[i].as<double>() * M_PI / 180.0;
+            // Determine how many DOFs are rotational vs translational
+            // FreeJoint: 6 DOFs (0-2 rotation, 3-5 translation)
+            // BallJoint: 3 DOFs (all rotation)
+            // RevoluteJoint: 1 DOF (rotation)
+            // PrismaticJoint: 1 DOF (translation)
+            size_t num_rot_dofs = num_dofs;  // Default: all are rotation
+            std::string joint_type = joint->getType();
+            if (joint_type == "FreeJoint") {
+                num_rot_dofs = 3;  // First 3 are rotation, last 3 are translation
+            } else if (joint_type == "PrismaticJoint") {
+                num_rot_dofs = 0;  // All translation
+            }
+
+            if (values.IsSequence()) {
+                for (size_t i = 0; i < values.size() && i < num_dofs; ++i) {
+                    double val = values[i].as<double>();
+                    if (i < num_rot_dofs) {
+                        // Rotation DOF: convert degrees to radians
+                        positions[first_dof + i] = val * M_PI / 180.0;
+                    } else {
+                        // Translation DOF: use value directly (meters)
+                        positions[first_dof + i] = val;
+                    }
                 }
             } else {
-                positions[first_dof] = angles.as<double>() * M_PI / 180.0;
+                double val = values.as<double>();
+                if (num_rot_dofs > 0) {
+                    positions[first_dof] = val * M_PI / 180.0;
+                } else {
+                    positions[first_dof] = val;
+                }
             }
         }
         config.pose = positions;
@@ -157,7 +297,28 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
 
     // Load target joint (simplified format - no angle_sweep section)
     config.joint = node["joint"].as<std::string>("");
-    config.dof_index = node["dof_index"].as<int>(0);
+
+    // Parse dof field - can be int or string (composite DOF type)
+    if (node["dof"]) {
+        try {
+            // Try parsing as integer first
+            config.dof_index = node["dof"].as<int>();
+            config.is_composite_dof = false;
+        } catch (const YAML::BadConversion&) {
+            // It's a string - composite DOF type (e.g., "abd_knee")
+            config.dof_type = node["dof"].as<std::string>();
+            config.is_composite_dof = true;
+            config.dof_index = 0;  // Not used for composite
+        }
+    } else if (node["dof_index"]) {
+        // Backward compatibility with old format
+        config.dof_index = node["dof_index"].as<int>(0);
+        config.is_composite_dof = false;
+    } else {
+        // Default to DOF 0 if neither specified
+        config.dof_index = 0;
+        config.is_composite_dof = false;
+    }
 
     // Load single torque value
     config.torque = node["torque"].as<double>(15.0);
@@ -170,10 +331,15 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
         config.cd_side = node["clinical_data"]["side"].as<std::string>("");
         config.cd_joint = node["clinical_data"]["joint"].as<std::string>("");
         config.cd_field = node["clinical_data"]["field"].as<std::string>("");
+        config.cd_neg = node["clinical_data"]["neg"].as<bool>(false);
+        config.cd_cutoff = node["clinical_data"]["cutoff"].as<double>(-1.0);
     }
 
     // Load uniform_search_group for grid search initialization
     config.uniform_search_group = node["uniform_search_group"].as<std::string>("");
+
+    // Load IK parameters for composite DOF
+    config.shank_scale = node["shank_scale"].as<double>(0.7);
 
     return config;
 }
@@ -250,7 +416,7 @@ int ContractureOptimizer::getJointIndex(
 }
 
 
-double ContractureOptimizer::computePassiveTorque(Character* character, int joint_idx, bool verbose) {
+double ContractureOptimizer::computePassiveTorque(Character* character, int joint_idx, bool verbose, int dof_offset) {
     if (!character) return 0.0;
     if (character->getMuscles().empty()) return 0.0;
 
@@ -261,10 +427,43 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
     int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
     int num_dofs = static_cast<int>(joint->getNumDofs());
 
-    double total_torque = 0.0;
     const auto& muscles = character->getMuscles();
-    int contributing_muscles = 0;
 
+    // For composite DOF (dof_offset >= 0), project torque onto global Y axis
+    if (dof_offset >= 0 && num_dofs == 3) {
+        // Get joint rotation to transform local torque to world frame
+        auto* body = joint->getChildBodyNode();
+        Eigen::Matrix3d joint_rot = body->getWorldTransform().linear();
+
+        double total_torque = 0.0;
+        for (auto& muscle : muscles) {
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            const auto& related_indices = muscle->related_dof_indices;
+
+            // Build 3D torque vector in joint-local frame
+            Eigen::Vector3d torque_local = Eigen::Vector3d::Zero();
+            for (size_t i = 0; i < related_indices.size(); ++i) {
+                int global_dof = related_indices[i];
+                int local_dof = global_dof - first_dof;
+                if (local_dof >= 0 && local_dof < 3) {
+                    torque_local[local_dof] = jtp[i];
+                }
+            }
+
+            // Transform to world frame and project onto global Y
+            Eigen::Vector3d torque_world = joint_rot * torque_local;
+            double contribution = torque_world.y();
+            total_torque += contribution;
+
+            if (verbose && std::abs(contribution) > 1e-6) {
+                LOG_INFO("    " << muscle->name << " Y-torque=" << contribution << " Nm");
+            }
+        }
+        return total_torque;
+    }
+
+    // Standard mode: sum all DOFs in joint
+    double total_torque = 0.0;
     for (auto& muscle : muscles) {
         Eigen::VectorXd jtp = muscle->GetRelatedJtp();
         const auto& related_indices = muscle->related_dof_indices;
@@ -277,18 +476,374 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
                     LOG_INFO("    " << muscle->name << " DOF " << global_dof
                              << " jtp=" << jtp[i] << " Nm");
                 }
-                contributing_muscles++;
             }
         }
     }
 
-    if (verbose) {
-        LOG_INFO("  Joint " << joint->getName() << " (idx=" << joint_idx
-                 << ", DOFs " << first_dof << "-" << (first_dof + num_dofs - 1) << "): "
-                 << contributing_muscles << " muscle contributions, total=" << total_torque << " Nm");
+    return total_torque;
+}
+
+
+Eigen::Vector3d ContractureOptimizer::computeAbdKneeAxis(
+    dart::dynamics::SkeletonPtr skeleton,
+    int hip_joint_idx) {
+
+    auto* hip_joint = skeleton->getJoint(hip_joint_idx);
+    if (!hip_joint) {
+        LOG_WARN("computeAbdKneeAxis: Hip joint not found");
+        return Eigen::Vector3d::UnitZ();
     }
 
-    return total_torque;
+    // Get hip joint center (femur body origin)
+    auto* femur_body = hip_joint->getChildBodyNode();
+    if (!femur_body) {
+        LOG_WARN("computeAbdKneeAxis: Femur body not found");
+        return Eigen::Vector3d::UnitZ();
+    }
+    Eigen::Vector3d hip_pos = femur_body->getWorldTransform().translation();
+
+    // Get knee joint center (child of femur)
+    if (femur_body->getNumChildJoints() == 0) {
+        LOG_WARN("computeAbdKneeAxis: Femur has no child joints");
+        return Eigen::Vector3d::UnitZ();
+    }
+    auto* knee_joint = femur_body->getChildJoint(0);
+    if (!knee_joint) {
+        LOG_WARN("computeAbdKneeAxis: Knee joint not found");
+        return Eigen::Vector3d::UnitZ();
+    }
+
+    auto* tibia_body = knee_joint->getChildBodyNode();
+    if (!tibia_body) {
+        LOG_WARN("computeAbdKneeAxis: Tibia body not found");
+        return Eigen::Vector3d::UnitZ();
+    }
+    Eigen::Vector3d knee_pos = tibia_body->getWorldTransform().translation();
+
+    // Hip-knee vector (world frame)
+    Eigen::Vector3d hip_knee = (knee_pos - hip_pos);
+    if (hip_knee.norm() < 1e-6) {
+        LOG_WARN("computeAbdKneeAxis: Hip and knee at same position");
+        return Eigen::Vector3d::UnitZ();
+    }
+    hip_knee.normalize();
+
+    // World Y axis
+    Eigen::Vector3d world_y = Eigen::Vector3d::UnitY();
+
+    // Rotation axis = cross product of world Y and hip-knee vector
+    // This gives the axis perpendicular to the plane of abduction measurement
+    Eigen::Vector3d axis_world = world_y.cross(hip_knee);
+    if (axis_world.norm() < 1e-6) {
+        // hip_knee is parallel to Y, use X axis as fallback
+        axis_world = Eigen::Vector3d::UnitX();
+    }
+    axis_world.normalize();
+
+    // Transform to joint-local frame for correct torque projection
+    Eigen::Matrix3d joint_rotation = femur_body->getWorldTransform().linear();
+    Eigen::Vector3d local_axis = joint_rotation.transpose() * axis_world;
+
+    return local_axis.normalized();
+}
+
+
+double ContractureOptimizer::computeKneeAngleForVerticalShank(
+    dart::dynamics::SkeletonPtr skeleton,
+    int hip_joint_idx,
+    const Eigen::Vector3d& hip_positions) {
+
+    auto* hip_joint = skeleton->getJoint(hip_joint_idx);
+    if (!hip_joint) return 0.0;
+
+    auto* femur_body = hip_joint->getChildBodyNode();
+    if (!femur_body) return 0.0;
+    if (femur_body->getNumChildJoints() == 0) return 0.0;
+
+    auto* knee_joint = femur_body->getChildJoint(0);
+    if (!knee_joint) return 0.0;
+
+    auto* tibia_body = knee_joint->getChildBodyNode();
+    if (!tibia_body) return 0.0;
+    if (tibia_body->getNumChildJoints() == 0) return 0.0;
+
+    auto* ankle_joint = tibia_body->getChildJoint(0);
+    if (!ankle_joint) return 0.0;
+    auto* talus_body = ankle_joint->getChildBodyNode();
+    if (!talus_body) return 0.0;
+
+    // Temporarily set hip positions (knee stays at current value, typically 0)
+    Eigen::VectorXd old_pos = skeleton->getPositions();
+    int hip_dof_start = static_cast<int>(hip_joint->getIndexInSkeleton(0));
+    skeleton->setPosition(hip_dof_start, hip_positions[0]);
+    skeleton->setPosition(hip_dof_start + 1, hip_positions[1]);
+    skeleton->setPosition(hip_dof_start + 2, hip_positions[2]);
+
+    // Get femur orientation after hip rotation
+    Eigen::Matrix3d R_femur = femur_body->getWorldTransform().linear();
+
+    // Get knee joint frame in world coordinates
+    Eigen::Matrix3d femur_to_knee = knee_joint->getTransformFromParentBodyNode().linear();
+    Eigen::Matrix3d knee_joint_frame = R_femur * femur_to_knee;
+
+    // Knee axis in world frame (local X-axis of knee joint = mediolateral axis)
+    Eigen::Vector3d knee_axis_world = knee_joint_frame.col(0);  // X column
+
+    // Initial shank direction at knee_angle=0: compute from actual joint positions
+    Eigen::Vector3d knee_pos = tibia_body->getWorldTransform().translation();
+    Eigen::Vector3d ankle_pos = talus_body->getWorldTransform().translation();
+    Eigen::Vector3d shank_init_world = (ankle_pos - knee_pos).normalized();
+
+    // Target shank direction: world -Y (vertical downward)
+    // In supine hip abduction: ankle at hip level, knee above hip by shank_length
+    // So shank points from knee (high) to ankle (low) = downward
+    Eigen::Vector3d shank_target_world = -Eigen::Vector3d::UnitY();
+
+    // Transform shank directions to knee joint frame for rotation computation
+    Eigen::Vector3d shank_init_joint = knee_joint_frame.transpose() * shank_init_world;
+    Eigen::Vector3d shank_target_joint = knee_joint_frame.transpose() * shank_target_world;
+
+    // Project both onto plane perpendicular to knee axis (X-axis in joint frame)
+    // In joint frame, knee axis is [1,0,0], so projection removes X component
+    Eigen::Vector3d init_proj(0, shank_init_joint.y(), shank_init_joint.z());
+    Eigen::Vector3d target_proj(0, shank_target_joint.y(), shank_target_joint.z());
+
+    double init_norm = init_proj.norm();
+    double target_norm = target_proj.norm();
+
+    if (init_norm < 1e-9 || target_norm < 1e-9) {
+        skeleton->setPositions(old_pos);
+        return 0.0;
+    }
+
+    init_proj /= init_norm;
+    target_proj /= target_norm;
+
+    // Angle between projections using atan2 for signed angle
+    // In 2D (Y,Z plane), angle from init to target
+    // Cross product (init × target): X component = init.y*target.z - init.z*target.y
+    double cos_angle = init_proj.dot(target_proj);
+    double sin_angle = init_proj.y() * target_proj.z() - init_proj.z() * target_proj.y();
+    double knee_angle = std::atan2(sin_angle, cos_angle);
+
+    // Knee can only flex (positive), not hyperextend (negative)
+    // If angle is negative, use the equivalent positive flexion: π + angle
+    if (knee_angle < 0) {
+        knee_angle = M_PI + knee_angle;
+    }
+
+    // Restore original positions
+    skeleton->setPositions(old_pos);
+
+    return knee_angle;
+}
+
+
+AbdKneePoseResult ContractureOptimizer::computeAbdKneePose(
+    dart::dynamics::SkeletonPtr skeleton,
+    int hip_joint_idx,
+    double rom_angle_deg,
+    bool is_left_leg,
+    double shank_scale) {
+
+    AbdKneePoseResult result;
+    result.hip_positions.setZero();
+    result.knee_angle = 0.0;
+    result.success = false;
+
+    double alpha = rom_angle_deg * M_PI / 180.0;
+
+    // Get joint references
+    auto* hip_joint = skeleton->getJoint(hip_joint_idx);
+    if (!hip_joint) {
+        LOG_WARN("computeAbdKneePose: Hip joint not found");
+        return result;
+    }
+
+    auto* femur_body = hip_joint->getChildBodyNode();
+    if (!femur_body) {
+        LOG_WARN("computeAbdKneePose: Femur body not found");
+        return result;
+    }
+
+    if (femur_body->getNumChildJoints() == 0) {
+        LOG_WARN("computeAbdKneePose: No knee joint found");
+        return result;
+    }
+
+    auto* knee_joint = femur_body->getChildJoint(0);
+    auto* tibia_body = knee_joint->getChildBodyNode();
+    if (!tibia_body) {
+        LOG_WARN("computeAbdKneePose: Tibia body not found");
+        return result;
+    }
+
+    // Get ankle joint for segment length calculation
+    if (tibia_body->getNumChildJoints() == 0) {
+        LOG_WARN("computeAbdKneePose: No ankle joint found");
+        return result;
+    }
+    auto* ankle_joint = tibia_body->getChildJoint(0);
+    auto* talus_body = ankle_joint->getChildBodyNode();
+    if (!talus_body) {
+        LOG_WARN("computeAbdKneePose: Talus body not found");
+        return result;
+    }
+
+    // Get segment lengths by computing distance between actual joint positions
+    // Save current positions
+    Eigen::VectorXd orig_pos = skeleton->getPositions();
+    skeleton->setPositions(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
+
+    // Get ACTUAL joint positions (not body origins, which have offsets)
+    // Joint position = parent_body_transform * joint->getTransformFromParentBodyNode().translation()
+    auto* pelvis_body = hip_joint->getParentBodyNode();
+    Eigen::Isometry3d pelvis_tf = pelvis_body->getWorldTransform();
+    Eigen::Isometry3d femur_tf = femur_body->getWorldTransform();
+    Eigen::Isometry3d tibia_tf = tibia_body->getWorldTransform();
+
+    Eigen::Vector3d hip_world = pelvis_tf * hip_joint->getTransformFromParentBodyNode().translation();
+    Eigen::Vector3d knee_world = femur_tf * knee_joint->getTransformFromParentBodyNode().translation();
+    Eigen::Vector3d ankle_world = tibia_tf * ankle_joint->getTransformFromParentBodyNode().translation();
+
+    // Restore original positions
+    skeleton->setPositions(orig_pos);
+
+    // Compute segment lengths from actual joint-to-joint distances
+    double thigh_length = (knee_world - hip_world).norm();
+    double shank_length = (ankle_world - knee_world).norm();
+
+    // Scale shank for IK geometry constraint
+    // (actual skeleton may have shank > thigh which violates abd_knee geometry)
+    shank_length *= shank_scale;
+
+    // Geometry constraint: with foot at pelvis level and shank vertical,
+    // the horizontal distance from hip to knee projection is:
+    // d = sqrt(thigh^2 - shank^2)
+    if (shank_length > thigh_length) {
+        LOG_WARN("computeAbdKneePose: Shank longer than thigh - invalid geometry");
+        return result;
+    }
+    double d = std::sqrt(thigh_length * thigh_length - shank_length * shank_length);
+
+    // Target thigh direction in world frame (supine pose):
+    // Shank is vertical (+Y), knee is ABOVE hip by shank_length
+    // Abduction angle alpha is measured from vertical to hip-ankle line
+    // Geometry:
+    //   x = ±shank * tan(alpha)  (lateral: +X for left leg, -X for right leg)
+    //   d² = thigh² - shank² = x² + z²  (horizontal projection constraint)
+    //   z = sqrt(d² - x²)  (forward displacement)
+    double sign = is_left_leg ? 1.0 : -1.0;
+    double x = sign * shank_length * std::tan(alpha);
+    double x_sq = x * x;
+    double d_sq = d * d;
+    if (x_sq > d_sq) {
+        LOG_WARN("computeAbdKneePose: Abduction angle too large - |x|=" << std::abs(x) << " > d=" << d);
+        return result;
+    }
+    double z = std::sqrt(d_sq - x_sq);
+
+    // Knee position relative to hip: (x, shank_length, z)
+    // Thigh direction = knee_pos / thigh_length
+    Eigen::Vector3d target_knee_rel(x, shank_length, z);  // relative to hip
+    Eigen::Vector3d target_thigh_world = target_knee_rel / thigh_length;  // Normalize
+
+    // Initial thigh direction in supine pose with hip DOFs at zero
+    // Compute from actual joint positions (not assuming local -Y)
+
+    // Save current pose and set hip to zero
+    Eigen::VectorXd saved_pos = skeleton->getPositions();
+    int hip_dof_start = static_cast<int>(hip_joint->getIndexInSkeleton(0));
+    skeleton->setPosition(hip_dof_start, 0.0);
+    skeleton->setPosition(hip_dof_start + 1, 0.0);
+    skeleton->setPosition(hip_dof_start + 2, 0.0);
+
+    // Get actual thigh direction from hip-to-knee vector (with hip DOFs at zero)
+    // Use the same knee position method as in VERIFY for consistency
+    Eigen::Isometry3d femur_tf_init = femur_body->getWorldTransform();
+    Eigen::Vector3d hip_pos_init = femur_tf_init.translation();
+    Eigen::Vector3d knee_pos_init = femur_tf_init * knee_joint->getTransformFromParentBodyNode().translation();
+    Eigen::Vector3d initial_thigh_world = (knee_pos_init - hip_pos_init).normalized();
+
+    // Get joint frame rotation in world coordinates
+    // The BallJoint rotation operates in the JOINT frame, not the parent body frame
+    // Transform chain: thigh_world = R_parent * R_parent_to_joint * R_hip * ... * thigh_local
+    // So we need: joint_frame = R_parent * R_parent_to_joint
+    Eigen::Matrix3d parent_rot = hip_joint->getParentBodyNode()->getWorldTransform().linear();
+    Eigen::Matrix3d parent_to_joint = hip_joint->getTransformFromParentBodyNode().linear();
+    Eigen::Matrix3d joint_frame = parent_rot * parent_to_joint;
+
+    // Transform thigh directions to joint frame
+    Eigen::Vector3d initial_thigh_joint = joint_frame.transpose() * initial_thigh_world;
+    Eigen::Vector3d target_thigh_joint = joint_frame.transpose() * target_thigh_world;
+
+    // Compute rotation in joint frame
+    // Step 1: Base rotation from initial_thigh to target_thigh (shortest path)
+    Eigen::Quaterniond q_base = Eigen::Quaterniond::FromTwoVectors(
+        initial_thigh_joint, target_thigh_joint);
+    Eigen::Matrix3d R_base = q_base.toRotationMatrix();
+
+    // Step 2: Compute twist angle around thigh axis to make knee axis horizontal
+    // Knee axis in joint frame (local X-axis of knee joint relative to femur)
+    Eigen::Matrix3d femur_to_knee = knee_joint->getTransformFromParentBodyNode().linear();
+    Eigen::Vector3d knee_axis_local = femur_to_knee.col(0);  // X column is rotation axis
+
+    // Transform knee axis to world frame after base rotation
+    // knee_axis_world = joint_frame * R_base * knee_axis_local
+    Eigen::Vector3d knee_axis_after_base = joint_frame * R_base * knee_axis_local;
+
+    // We need to twist around target_thigh_world to make knee_axis_final · Y = 0
+    // Using Rodrigues formula: k_rot = k*cos(θ) + (a×k)*sin(θ) + a*(a·k)*(1-cos(θ))
+    // where a = target_thigh_world, k = knee_axis_after_base
+    // Constraint: k_rot · Y = 0
+    Eigen::Vector3d a = target_thigh_world;
+    Eigen::Vector3d k = knee_axis_after_base;
+    Eigen::Vector3d y = Eigen::Vector3d::UnitY();
+
+    double A = k.dot(y);                        // k · Y
+    double B = (a.cross(k)).dot(y);             // (a × k) · Y
+    double C = a.dot(k);                        // a · k
+    double D = a.dot(y);                        // a · Y
+
+    // Equation: (A - C*D)*cos(θ) + B*sin(θ) + C*D = 0
+    double P = A - C * D;
+    double Q = B;
+    double R = C * D;
+
+    // Solve: P*cos(θ) + Q*sin(θ) = -R
+    // Solution: θ = atan2(Q, P) ± acos(-R / sqrt(P² + Q²))
+    double twist_angle = 0.0;
+    double denom = std::sqrt(P * P + Q * Q);
+    if (denom > 1e-9) {
+        double cos_val = -R / denom;
+        cos_val = std::max(-1.0, std::min(1.0, cos_val));  // Clamp to [-1, 1]
+        double phi = std::atan2(Q, P);
+        // Choose solution that gives smaller twist angle
+        double theta1 = phi + std::acos(cos_val);
+        double theta2 = phi - std::acos(cos_val);
+        twist_angle = (std::abs(theta1) < std::abs(theta2)) ? theta1 : theta2;
+    }
+
+    // Apply twist rotation: R_twist around target_thigh_world
+    Eigen::AngleAxisd twist(twist_angle, target_thigh_world);
+    Eigen::Matrix3d R_twist = twist.toRotationMatrix();
+
+    // Transform twist to joint frame and combine with base rotation
+    Eigen::Matrix3d R_twist_joint = joint_frame.transpose() * R_twist * joint_frame;
+    Eigen::Matrix3d R_hip_local = R_twist_joint * R_base;
+
+    // Convert to axis-angle using DART's BallJoint method
+    result.hip_positions = dart::dynamics::BallJoint::convertToPositions(R_hip_local);
+
+    // Restore saved positions before computing knee angle
+    skeleton->setPositions(saved_pos);
+
+    // Compute knee angle to keep shank vertical
+    result.knee_angle = computeKneeAngleForVerticalShank(
+        skeleton, hip_joint_idx, result.hip_positions);
+
+    result.success = true;
+    return result;
 }
 
 
@@ -320,9 +875,13 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
         }
 
         // Set ROM joint to clinical angle (single point, not sweep)
+        // For composite DOF, the pose from YAML is the final pose - no single-DOF override
         int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
-        double angle_rad = config.rom_angle * M_PI / 180.0;
-        positions[first_dof + config.dof_index] = angle_rad;
+        if (!config.is_composite_dof) {
+            double angle_rad = config.rom_angle * M_PI / 180.0;
+            positions[first_dof + config.dof_index] = angle_rad;
+        }
+        // For composite DOF, rom_angle is informational only - pose must be fully specified in YAML
 
         // Record single pose data point
         PoseData point;
@@ -331,6 +890,59 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
         point.q = positions;
         point.tau_obs = config.torque;
         point.weight = 1.0;
+
+        // Handle composite DOF types
+        if (config.is_composite_dof) {
+            point.use_composite_axis = true;
+
+            if (config.dof_type == "abd_knee") {
+                // Determine if left or right leg from joint name
+                bool is_left = (config.joint.find("L") != std::string::npos);
+
+                // IMPORTANT: Set skeleton to base pose BEFORE computing IK
+                // This ensures the pelvis supine rotation is applied
+                skeleton->setPositions(positions);
+
+                // Compute IK pose from clinical rom_angle
+                AbdKneePoseResult ik_result = computeAbdKneePose(
+                    skeleton, joint_idx, config.rom_angle, is_left, config.shank_scale);
+
+                if (ik_result.success) {
+                    // Apply hip joint positions (axis-angle)
+                    int hip_dof_start = static_cast<int>(joint->getIndexInSkeleton(0));
+                    positions[hip_dof_start] = ik_result.hip_positions[0];
+                    positions[hip_dof_start + 1] = ik_result.hip_positions[1];
+                    positions[hip_dof_start + 2] = ik_result.hip_positions[2];
+
+                    // Apply knee angle
+                    auto* femur_body = joint->getChildBodyNode();
+                    if (femur_body && femur_body->getNumChildJoints() > 0) {
+                        auto* knee_joint = femur_body->getChildJoint(0);
+                        int knee_dof_idx = static_cast<int>(knee_joint->getIndexInSkeleton(0));
+                        positions[knee_dof_idx] = ik_result.knee_angle;
+                    }
+
+                    // Update pose in PoseData
+                    point.q = positions;
+
+                } else {
+                    LOG_WARN("[Contracture] abd_knee IK failed for trial: " << config.name);
+                }
+
+                // Set pose and compute composite axis
+                skeleton->setPositions(positions);
+                point.composite_axis = computeAbdKneeAxis(skeleton, joint_idx);
+            } else {
+                // Set pose first to compute correct joint positions for axis calculation
+                skeleton->setPositions(positions);
+                LOG_WARN("[Contracture] Unknown composite DOF type: " << config.dof_type);
+                point.composite_axis = Eigen::Vector3d::UnitZ();
+            }
+        } else {
+            point.use_composite_axis = false;
+            point.composite_axis = Eigen::Vector3d::Zero();
+        }
+
         data.push_back(point);
     }
 
@@ -385,13 +997,8 @@ double ContractureOptimizer::findBestInitialRatio(
             muscles[m_idx]->RefreshMuscleParams();
         }
 
-        // Set skeleton pose
-        skeleton->setPositions(pose.q);
-
-        // Update muscle geometry
-        for (auto& muscle : muscles) {
-            muscle->UpdateGeometry();
-        }
+        // Set pose and update muscle geometry
+        setPoseAndUpdateGeometry(character, pose.q);
 
         // Compute passive torque
         double computed_torque = computePassiveTorque(character, pose.joint_idx);
@@ -459,35 +1066,64 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     // Initialize parameters (all ratios = 1.0)
     std::vector<double> x(num_groups, 1.0);
 
-    // Grid search for trials with uniform_search_group specified
-    for (size_t i = 0; i < rom_configs.size() && i < pose_data.size(); ++i) {
-        const auto& rom_config = rom_configs[i];
-        if (rom_config.uniform_search_group.empty()) continue;
+    // Build mapping from group_id to trial index (for passive torque computation)
+    std::map<int, size_t> group_to_trial = buildGroupToTrialMapping(rom_configs, pose_data);
 
-        // Find group_id for this uniform_search_group name
-        int target_group_id = findGroupIdByName(rom_config.uniform_search_group);
-        if (target_group_id < 0) {
-            LOG_INFO("[Contracture] Warning: uniform_search_group '"
-                     << rom_config.uniform_search_group << "' not found in muscle groups");
-            continue;
+    // Grid search initialization for trials with uniform_search_group specified
+    runGridSearchInitialization(character, rom_configs, pose_data, base_lm_contract, config, x);
+
+    // Build torque matrix BEFORE optimization: torque_matrix_before[group_id][trial_idx]
+    std::map<int, std::vector<double>> torque_matrix_before;
+    for (int g = 0; g < num_groups; ++g) {
+        torque_matrix_before[g].resize(pose_data.size());
+        for (size_t t = 0; t < pose_data.size(); ++t) {
+            torque_matrix_before[g][t] = computeGroupTorqueAtTrial(character, pose_data, g, t);
         }
-
-        // Find best initial ratio via grid search
-        double best_ratio = findBestInitialRatio(
-            character, pose_data[i], target_group_id, base_lm_contract, config);
-
-        x[target_group_id] = best_ratio;
-        LOG_INFO("[Contracture] Grid search for " << rom_config.uniform_search_group
-                 << ": best_ratio=" << best_ratio);
     }
 
     // Build Ceres problem
     ceres::Problem problem;
 
-    // Add residual blocks
+    // Add torque residual blocks
     for (const auto& pose : pose_data) {
         auto* cost = new TorqueResidual(character, pose, mMuscleGroups, base_lm_contract, num_groups);
         problem.AddResidualBlock(cost, nullptr, x.data());
+    }
+
+    // Ratio regularization: penalize deviation from ratio=1.0
+    if (config.lambdaRatioReg > 0.0) {
+        double sqrt_lambda = std::sqrt(config.lambdaRatioReg);
+        for (int g = 0; g < num_groups; ++g) {
+            auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<RatioRegCost>(
+                new RatioRegCost(g, sqrt_lambda));
+            reg_cost->AddParameterBlock(num_groups);
+            reg_cost->SetNumResiduals(1);
+            problem.AddResidualBlock(reg_cost, nullptr, x.data());
+        }
+        if (config.verbose) {
+            LOG_INFO("[Contracture] Ratio regularization: lambda=" << config.lambdaRatioReg);
+        }
+    }
+
+    // Torque regularization: penalize passive torque magnitude per group/trial
+    if (config.lambdaTorqueReg > 0.0) {
+        double sqrt_lambda = std::sqrt(config.lambdaTorqueReg);
+        for (int g = 0; g < num_groups; ++g) {
+            auto grp_it = mMuscleGroups.find(g);
+            if (grp_it == mMuscleGroups.end()) continue;
+
+            for (size_t t = 0; t < pose_data.size(); ++t) {
+                auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<TorqueRegCost>(
+                    new TorqueRegCost(character, pose_data[t], g,
+                                      grp_it->second, base_lm_contract, sqrt_lambda));
+                reg_cost->AddParameterBlock(num_groups);
+                reg_cost->SetNumResiduals(1);
+                problem.AddResidualBlock(reg_cost, nullptr, x.data());
+            }
+        }
+        if (config.verbose) {
+            LOG_INFO("[Contracture] Torque regularization: lambda=" << config.lambdaTorqueReg);
+        }
     }
 
     // Set bounds
@@ -504,18 +1140,49 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
         : ceres::SPARSE_NORMAL_CHOLESKY;
     options.function_tolerance = 1e-6;
     options.gradient_tolerance = 1e-8;
+    options.minimizer_progress_to_stdout = false;  // Disable Ceres verbosity
+
+    // Log initial parameters if verbose (table format: base_name | R | L)
+    if (config.verbose) {
+        logInitialParameterTable(x);
+    }
 
     // Solve
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 
-    if (config.verbose) {
-        LOG_INFO(summary.FullReport());
-    } else {
-        LOG_INFO("[ContractureOptimizer] " << summary.BriefReport());
+    // Apply optimized ratios to muscles
+    for (int g = 0; g < num_groups; ++g) {
+        auto grp_it = mMuscleGroups.find(g);
+        if (grp_it == mMuscleGroups.end()) continue;
+
+        for (int m_idx : grp_it->second) {
+            muscles[m_idx]->lm_contract = base_lm_contract[m_idx] * x[g];
+            muscles[m_idx]->RefreshMuscleParams();
+        }
+    }
+
+    // Build torque matrix AFTER optimization: torque_matrix_after[group_id][trial_idx]
+    std::map<int, std::vector<double>> torque_matrix_after;
+    for (int g = 0; g < num_groups; ++g) {
+        torque_matrix_after[g].resize(pose_data.size());
+        for (size_t t = 0; t < pose_data.size(); ++t) {
+            torque_matrix_after[g][t] = computeGroupTorqueAtTrial(character, pose_data, g, t);
+        }
     }
 
     // Build results
+    // Compute averaged ratios for biarticular muscles
+    std::map<int, double> averaged_ratios = computeBiarticularAverages(x, muscles, config.verbose);
+
+    // Log final parameters if verbose
+    if (config.verbose) {
+        logParameterTable("Final (after optimization)", x, rom_configs,
+                          &torque_matrix_before, &torque_matrix_after);
+        LOG_INFO("[Contracture] Iterations: " << summary.iterations.size()
+                    << ", Final cost: " << summary.final_cost);
+    }
+
     for (const auto& [group_id, muscle_ids] : mMuscleGroups) {
         MuscleGroupResult result;
 
@@ -526,7 +1193,15 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
 
         for (int m_idx : muscle_ids) {
             result.muscle_names.push_back(muscles[m_idx]->name);
-            double new_lm_contract = base_lm_contract[m_idx] * x[group_id];
+
+            // Use averaged ratio for biarticular muscles, group ratio otherwise
+            double ratio = x[group_id];
+            auto avg_it = averaged_ratios.find(m_idx);
+            if (avg_it != averaged_ratios.end()) {
+                ratio = avg_it->second;
+            }
+
+            double new_lm_contract = base_lm_contract[m_idx] * ratio;
             result.lm_contract_values.push_back(new_lm_contract);
         }
 
@@ -558,137 +1233,82 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
     const auto& muscles = character->getMuscles();
 
     // ============================================================
-    // 1. Capture BEFORE state (lm_contract per muscle in all groups)
+    // Pre-compute data once before outer iterations
+    // (includes BEFORE state capture, pose data, grid search)
     // ============================================================
-    std::map<int, double> lm_contract_before;
-    std::set<int> all_muscle_indices;
+    PreOptimizationData preOpt = preOptimization(character, rom_configs, config);
 
-    for (const auto& [group_id, muscle_ids] : mMuscleGroups) {
-        for (int m_idx : muscle_ids) {
-            lm_contract_before[m_idx] = muscles[m_idx]->lm_contract;
-            all_muscle_indices.insert(m_idx);
-        }
-    }
-
-    // ============================================================
-    // 2. Capture BEFORE passive torques per trial
-    // ============================================================
-    std::vector<PoseData> pose_data = buildPoseData(character, rom_configs);
-
-    for (size_t t = 0; t < rom_configs.size() && t < pose_data.size(); ++t) {
-        const auto& rom_config = rom_configs[t];
-        const auto& pose = pose_data[t];
-
-        TrialTorqueResult trial_result;
-        trial_result.trial_name = rom_config.name;
-        trial_result.joint = rom_config.joint;
-        trial_result.dof_index = rom_config.dof_index;
-        trial_result.observed_torque = rom_config.torque;
-        trial_result.pose = pose.q;
-
-        // Set pose
-        skeleton->setPositions(pose.q);
-        for (auto& m : muscles) {
-            m->UpdateGeometry();
-        }
-
-        // Compute BEFORE total passive torque
-        if (config.verbose) {
-            LOG_INFO("[Contracture] Trial '" << rom_config.name << "' BEFORE torque:");
-        }
-        trial_result.computed_torque_before = computePassiveTorque(character, pose.joint_idx, config.verbose);
-
-        // Per-muscle contribution BEFORE
-        auto* joint = skeleton->getJoint(pose.joint_idx);
-        int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
-
-        for (int m_idx : all_muscle_indices) {
-            auto* muscle = muscles[m_idx];
-            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
-            const auto& related_indices = muscle->related_dof_indices;
-
-            double contrib = 0.0;
-            for (size_t i = 0; i < related_indices.size(); ++i) {
-                if (related_indices[i] == first_dof + pose.joint_dof) {
-                    contrib = jtp[i];
-                    break;
-                }
-            }
-            trial_result.muscle_torques_before.push_back({muscle->name, contrib});
-            // Capture passive force (f_p * f0)
-            double passive_force = muscle->Getf_p() * muscle->f0;
-            trial_result.muscle_forces_before.push_back({muscle->name, passive_force});
-        }
-
-        result.trial_results.push_back(trial_result);
-    }
-
-    // ============================================================
-    // 3. Run optimization
-    // ============================================================
-    result.group_results = optimize(character, rom_configs, config);
-
-    if (result.group_results.empty()) {
-        std::cerr << "[ContractureOptimizer] Optimization failed" << std::endl;
+    if (preOpt.pose_data.empty()) {
+        std::cerr << "[ContractureOptimizer] No pose data loaded" << std::endl;
         return result;
     }
 
-    // Apply results to character
-    applyResults(character, result.group_results);
+    // Copy BEFORE trial results to result (captured in preOptimization)
+    result.trial_results = preOpt.trial_results_before;
 
     // ============================================================
-    // 4. Capture AFTER state (lm_contract per muscle)
+    // Run optimization (with outer iterations for biarticular convergence)
     // ============================================================
-    for (int m_idx : all_muscle_indices) {
+    for (int outer = 0; outer < config.outerIterations; ++outer) {
+        result.group_results = optimizeWithPrecomputed(character, rom_configs, config, preOpt);
+
+        if (result.group_results.empty()) {
+            std::cerr << "[ContractureOptimizer] Optimization failed at outer iteration "
+                      << (outer+1) << std::endl;
+            return result;
+        }
+
+        // Apply averaged results to muscles (next iteration sees these as base)
+        applyResults(character, result.group_results);
+
+        // Log progress: joint torque summary for each trial
+        std::cout << "[Outer " << (outer+1) << "/" << config.outerIterations << "]";
+        for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
+            const auto& pose = preOpt.pose_data[t];
+            setPoseAndUpdateGeometry(character, pose.q);
+            auto* joint = skeleton->getJoint(pose.joint_idx);
+            double torque = computePassiveTorque(character, pose.joint_idx, false);
+            std::cout << " " << joint->getName() << "[" << pose.joint_dof << "]="
+                      << std::fixed << std::setprecision(2) << torque << "Nm"
+                      << " (target=" << pose.tau_obs << ")";
+        }
+        std::cout << std::endl;
+    }
+
+    // Compute cumulative group ratios (mean of final/initial across muscles in group)
+    computeCumulativeGroupRatios(muscles, preOpt.lm_contract_before, result.group_results);
+
+    // ============================================================
+    // Capture AFTER state (lm_contract per muscle)
+    // ============================================================
+    for (int m_idx : preOpt.all_muscle_indices) {
         MuscleContractureResult m_result;
         m_result.muscle_name = muscles[m_idx]->name;
         m_result.muscle_idx = m_idx;
-        m_result.lm_contract_before = lm_contract_before[m_idx];
+        m_result.lm_contract_before = preOpt.lm_contract_before.at(m_idx);
         m_result.lm_contract_after = muscles[m_idx]->lm_contract;
         m_result.ratio = m_result.lm_contract_after / m_result.lm_contract_before;
         result.muscle_results.push_back(m_result);
     }
 
     // ============================================================
-    // 5. Capture AFTER passive torques per trial
+    // Capture AFTER passive torques per trial
     // ============================================================
-    for (size_t t = 0; t < result.trial_results.size() && t < pose_data.size(); ++t) {
+    for (size_t t = 0; t < result.trial_results.size() && t < preOpt.pose_data.size(); ++t) {
         auto& trial_result = result.trial_results[t];
-        const auto& pose = pose_data[t];
+        const auto& pose = preOpt.pose_data[t];
 
-        // Set pose
-        skeleton->setPositions(trial_result.pose);
-        for (auto& m : muscles) {
-            m->UpdateGeometry();
-        }
+        // Set pose and update muscle geometry
+        setPoseAndUpdateGeometry(character, trial_result.pose);
 
         // Compute AFTER total passive torque
-        if (config.verbose) {
-            LOG_INFO("[Contracture] Trial '" << trial_result.trial_name << "' AFTER torque:");
-        }
+        if (config.verbose) LOG_INFO("[Contracture] Trial '" << trial_result.trial_name << "' AFTER torque:");
         trial_result.computed_torque_after = computePassiveTorque(character, pose.joint_idx, config.verbose);
 
         // Per-muscle contribution AFTER
-        auto* joint = skeleton->getJoint(pose.joint_idx);
-        int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
-
-        for (int m_idx : all_muscle_indices) {
-            auto* muscle = muscles[m_idx];
-            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
-            const auto& related_indices = muscle->related_dof_indices;
-
-            double contrib = 0.0;
-            for (size_t i = 0; i < related_indices.size(); ++i) {
-                if (related_indices[i] == first_dof + pose.joint_dof) {
-                    contrib = jtp[i];
-                    break;
-                }
-            }
-            trial_result.muscle_torques_after.push_back({muscle->name, contrib});
-            // Capture passive force (f_p * f0)
-            double passive_force = muscle->Getf_p() * muscle->f0;
-            trial_result.muscle_forces_after.push_back({muscle->name, passive_force});
-        }
+        captureMuscleTorqueContributions(character, pose, preOpt.all_muscle_indices,
+                                         trial_result.muscle_torques_after,
+                                         trial_result.muscle_forces_after);
     }
 
     result.converged = true;
@@ -751,132 +1371,619 @@ std::map<int, std::vector<int>> ContractureOptimizer::findBiarticularMuscles() c
 }
 
 
-std::vector<MuscleGroupResult> ContractureOptimizer::optimizeIterative(
+// ============================================================
+// Private Helper Methods
+// ============================================================
+
+bool ContractureOptimizer::groupMatchesJoint(
+    const std::string& group_name,
+    const std::string& joint_name) const
+{
+    // Determine side from group name (_l or _r suffix)
+    bool group_is_left = (group_name.size() > 2 && group_name.substr(group_name.size() - 2) == "_l");
+    bool group_is_right = (group_name.size() > 2 && group_name.substr(group_name.size() - 2) == "_r");
+
+    // Determine side from joint name (ends with L or R)
+    bool joint_is_left = (!joint_name.empty() && joint_name.back() == 'L');
+    bool joint_is_right = (!joint_name.empty() && joint_name.back() == 'R');
+
+    // Side must match
+    if (group_is_left && !joint_is_left) return false;
+    if (group_is_right && !joint_is_right) return false;
+
+    // Match joint type to muscle group pattern
+    // Tibia* -> knee joint
+    if (joint_name.find("Tibia") != std::string::npos) {
+        return (group_name.find("knee") != std::string::npos);
+    }
+    // Femur* -> hip joint
+    if (joint_name.find("Femur") != std::string::npos) {
+        return (group_name.find("hip") != std::string::npos);
+    }
+    // Talus* -> ankle joint (plantarflexor, dorsiflexor)
+    if (joint_name.find("Talus") != std::string::npos) {
+        return (group_name.find("plantarflexor") != std::string::npos ||
+                group_name.find("dorsiflexor") != std::string::npos);
+    }
+    return false;
+}
+
+void ContractureOptimizer::setPoseAndUpdateGeometry(
     Character* character,
-    const std::vector<ROMTrialConfig>& rom_configs,
-    const IterativeConfig& config) {
+    const Eigen::VectorXd& q) const
+{
+    auto skeleton = character->getSkeleton();
+    skeleton->setPositions(q);
 
-    std::vector<MuscleGroupResult> results;
-
-    if (!character) {
-        std::cerr << "[ContractureOptimizer] No character provided" << std::endl;
-        return results;
+    for (auto& muscle : character->getMuscles()) {
+        muscle->UpdateGeometry();
     }
+}
 
-    if (mMuscleGroups.empty()) {
-        std::cerr << "[ContractureOptimizer] No muscle groups configured" << std::endl;
-        return results;
-    }
+double ContractureOptimizer::computeGroupTorqueAtTrial(
+    Character* character,
+    const std::vector<PoseData>& pose_data,
+    int group_id,
+    size_t trial_idx) const
+{
+    if (trial_idx >= pose_data.size()) return 0.0;
 
-    // Find biarticular muscles
-    auto biarticular = findBiarticularMuscles();
-    std::cout << "[ContractureOptimizer] Found " << biarticular.size()
-              << " biarticular muscles" << std::endl;
-
-    // Store original lm_contract values for restoration
+    const auto& pose = pose_data[trial_idx];
+    auto skeleton = character->getSkeleton();
     const auto& muscles = character->getMuscles();
-    std::map<int, double> original_lm_contract;
-    for (size_t i = 0; i < muscles.size(); ++i) {
-        original_lm_contract[static_cast<int>(i)] = muscles[i]->lm_contract;
-    }
 
-    // Current lm_contract baseline (gets updated after each iteration)
-    std::map<int, double> current_lm_contract = original_lm_contract;
+    // Set pose and update muscle geometry
+    setPoseAndUpdateGeometry(character, pose.q);
 
-    double max_ratio_change = std::numeric_limits<double>::max();
+    // Sum passive torques from muscles in this group at the trial's target DOF
+    auto* joint = skeleton->getJoint(pose.joint_idx);
+    int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+    int target_dof = first_dof + pose.joint_dof;
 
-    for (int iter = 0; iter < config.maxOuterIterations; ++iter) {
-        std::cout << "[ContractureOptimizer] Iteration " << (iter + 1)
-                  << "/" << config.maxOuterIterations << std::endl;
+    double group_torque = 0.0;
+    auto grp_it = mMuscleGroups.find(group_id);
+    if (grp_it != mMuscleGroups.end()) {
+        for (int m_idx : grp_it->second) {
+            auto* muscle = muscles[m_idx];
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            const auto& related_indices = muscle->related_dof_indices;
 
-        // Apply current baseline lm_contract values
-        for (const auto& [m_idx, lm] : current_lm_contract) {
-            muscles[m_idx]->lm_contract = lm;
-            muscles[m_idx]->RefreshMuscleParams();
-        }
-
-        // Run single optimization
-        results = optimize(character, rom_configs, config.baseConfig);
-
-        if (results.empty()) {
-            std::cerr << "[ContractureOptimizer] Optimization failed at iteration "
-                      << (iter + 1) << std::endl;
-            break;
-        }
-
-        // For biarticular muscles: average ratios across groups
-        max_ratio_change = 0.0;
-        std::map<int, double> muscle_avg_ratio;
-
-        for (const auto& [m_idx, group_ids] : biarticular) {
-            double sum_ratio = 0.0;
-            for (int gid : group_ids) {
-                sum_ratio += results[gid].ratio;
-            }
-            double avg_ratio = sum_ratio / static_cast<double>(group_ids.size());
-            muscle_avg_ratio[m_idx] = avg_ratio;
-
-            // Track max change for convergence
-            double old_lm = current_lm_contract[m_idx];
-            double new_lm = original_lm_contract[m_idx] * avg_ratio;
-            double ratio_change = std::abs(new_lm / old_lm - 1.0);
-            max_ratio_change = std::max(max_ratio_change, ratio_change);
-        }
-
-        std::cout << "[ContractureOptimizer] Max ratio change: " << max_ratio_change << std::endl;
-
-        // Update baseline for biarticular muscles
-        for (const auto& [m_idx, avg_ratio] : muscle_avg_ratio) {
-            current_lm_contract[m_idx] = original_lm_contract[m_idx] * avg_ratio;
-        }
-
-        // Also update non-biarticular muscles with their group ratio
-        for (const auto& result : results) {
-            for (size_t i = 0; i < result.muscle_names.size(); ++i) {
-                // Find muscle index by name
-                for (size_t m = 0; m < muscles.size(); ++m) {
-                    if (muscles[m]->name == result.muscle_names[i]) {
-                        int m_idx = static_cast<int>(m);
-                        // Only update if not biarticular (biarticular already updated)
-                        if (biarticular.find(m_idx) == biarticular.end()) {
-                            current_lm_contract[m_idx] = result.lm_contract_values[i];
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Check convergence
-        if (max_ratio_change < config.convergenceThreshold) {
-            std::cout << "[ContractureOptimizer] Converged at iteration " << (iter + 1)
-                      << " (change " << max_ratio_change << " < "
-                      << config.convergenceThreshold << ")" << std::endl;
-            break;
-        }
-    }
-
-    // Update final results with averaged lm_contract values for biarticular muscles
-    for (auto& result : results) {
-        for (size_t i = 0; i < result.muscle_names.size(); ++i) {
-            // Find muscle index
-            for (size_t m = 0; m < muscles.size(); ++m) {
-                if (muscles[m]->name == result.muscle_names[i]) {
-                    int m_idx = static_cast<int>(m);
-                    result.lm_contract_values[i] = current_lm_contract[m_idx];
+            for (size_t i = 0; i < related_indices.size(); ++i) {
+                if (related_indices[i] == target_dof) {
+                    group_torque += jtp[i];
                     break;
                 }
             }
         }
     }
+    return group_torque;
+}
 
-    // Apply final lm_contract values
-    for (const auto& [m_idx, lm] : current_lm_contract) {
-        muscles[m_idx]->lm_contract = lm;
-        muscles[m_idx]->RefreshMuscleParams();
+void ContractureOptimizer::computeCumulativeGroupRatios(
+    const std::vector<Muscle*>& muscles,
+    const std::map<int, double>& lm_contract_before,
+    std::vector<MuscleGroupResult>& group_results) const
+{
+    for (auto& grp : group_results) {
+        double sum_ratio = 0.0;
+        int count = 0;
+        for (const std::string& muscle_name : grp.muscle_names) {
+            // Find muscle index by name
+            for (size_t m = 0; m < muscles.size(); ++m) {
+                if (muscles[m]->name == muscle_name) {
+                    auto it = lm_contract_before.find(static_cast<int>(m));
+                    double initial = (it != lm_contract_before.end()) ? it->second : 1.0;
+                    double final_val = muscles[m]->lm_contract;
+                    sum_ratio += final_val / initial;
+                    count++;
+                    break;
+                }
+            }
+        }
+        grp.ratio = (count > 0) ? sum_ratio / count : 1.0;
+    }
+}
+
+void ContractureOptimizer::captureMuscleTorqueContributions(
+    Character* character,
+    const PoseData& pose,
+    const std::set<int>& muscle_indices,
+    std::vector<std::pair<std::string, double>>& out_torques,
+    std::vector<std::pair<std::string, double>>& out_forces) const
+{
+    auto skeleton = character->getSkeleton();
+    const auto& muscles = character->getMuscles();
+
+    auto* joint = skeleton->getJoint(pose.joint_idx);
+    int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+    int target_dof = first_dof + pose.joint_dof;
+
+    for (int m_idx : muscle_indices) {
+        auto* muscle = muscles[m_idx];
+        Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+        const auto& related_indices = muscle->related_dof_indices;
+
+        double contrib = 0.0;
+        for (size_t i = 0; i < related_indices.size(); ++i) {
+            if (related_indices[i] == target_dof) {
+                contrib = jtp[i];
+                break;
+            }
+        }
+        out_torques.push_back({muscle->name, contrib});
+
+        // Capture passive force (f_p * f0)
+        double passive_force = muscle->Getf_p() * muscle->f0;
+        out_forces.push_back({muscle->name, passive_force});
+    }
+}
+
+void ContractureOptimizer::runGridSearchInitialization(
+    Character* character,
+    const std::vector<ROMTrialConfig>& rom_configs,
+    const std::vector<PoseData>& pose_data,
+    const std::map<int, double>& base_lm_contract,
+    const Config& config,
+    std::vector<double>& x)
+{
+    for (size_t i = 0; i < rom_configs.size() && i < pose_data.size(); ++i) {
+        const auto& rom_config = rom_configs[i];
+        if (rom_config.uniform_search_group.empty()) continue;
+
+        // Find group_id for this uniform_search_group name
+        int target_group_id = findGroupIdByName(rom_config.uniform_search_group);
+        if (target_group_id < 0) {
+            LOG_INFO("[Contracture] Warning: uniform_search_group '"
+                     << rom_config.uniform_search_group << "' not found in muscle groups");
+            continue;
+        }
+
+        // Find best initial ratio via grid search
+        double best_ratio = findBestInitialRatio(
+            character, pose_data[i], target_group_id, base_lm_contract, config);
+
+        x[target_group_id] = best_ratio;
+        LOG_INFO("[Contracture] Grid search for " << rom_config.uniform_search_group
+                 << ": best_ratio=" << best_ratio);
+    }
+}
+
+std::map<int, double> ContractureOptimizer::computeBiarticularAverages(
+    const std::vector<double>& x,
+    const std::vector<Muscle*>& muscles,
+    bool verbose) const
+{
+    auto biarticular = findBiarticularMuscles();  // muscle_idx -> vector of group_ids
+    std::map<int, double> averaged_ratios;  // muscle_idx -> averaged ratio
+
+    bool biarticular_header_printed = false;
+
+    for (const auto& [m_idx, group_ids] : biarticular) {
+        // Only average "touched" groups (ratio != 1.0)
+        double sum = 0.0;
+        int touched_count = 0;
+        std::vector<std::string> group_details;
+
+        for (int gid : group_ids) {
+            auto name_it = mGroupNames.find(gid);
+            std::string gname = (name_it != mGroupNames.end()) ? name_it->second : "Group_" + std::to_string(gid);
+            std::ostringstream oss;
+            oss << gname << "=" << std::fixed << std::setprecision(4) << x[gid];
+
+            // Check if this group was touched (ratio != 1.0)
+            if (std::abs(x[gid] - 1.0) > 1e-6) {
+                sum += x[gid];
+                touched_count++;
+                oss << "*";  // Mark touched groups
+            }
+            group_details.push_back(oss.str());
+        }
+
+        // Average only touched values; if none touched, use 1.0
+        if (touched_count > 0) {
+            averaged_ratios[m_idx] = sum / static_cast<double>(touched_count);
+        } else {
+            averaged_ratios[m_idx] = 1.0;
+        }
+
+        // Only log muscles with 2+ touched groups (true biarticular conflicts)
+        if (verbose && touched_count >= 2) {
+            if (!biarticular_header_printed) {
+                LOG_INFO("[Contracture] Biarticular muscles (averaging 2+ touched groups):");
+                biarticular_header_printed = true;
+            }
+            std::ostringstream details;
+            for (size_t i = 0; i < group_details.size(); ++i) {
+                if (i > 0) details << ", ";
+                details << group_details[i];
+            }
+            LOG_INFO("  " << muscles[m_idx]->name << ": [" << details.str()
+                     << "] -> avg=" << std::fixed << std::setprecision(4) << averaged_ratios[m_idx]);
+        }
     }
 
-    std::cout << "[ContractureOptimizer] Iterative optimization complete" << std::endl;
+    return averaged_ratios;
+}
+
+void ContractureOptimizer::logParameterTable(
+    const std::string& title,
+    const std::vector<double>& x,
+    const std::vector<ROMTrialConfig>& rom_configs,
+    const std::map<int, std::vector<double>>* torque_before,
+    const std::map<int, std::vector<double>>* torque_after) const
+{
+    int num_groups = static_cast<int>(mMuscleGroups.size());
+
+    LOG_INFO("[Contracture] " << title << " parameters:");
+
+    // Find max group name length
+    size_t max_gname_len = 12;
+    for (int g = 0; g < num_groups; ++g) {
+        auto name_it = mGroupNames.find(g);
+        if (name_it != mGroupNames.end()) {
+            max_gname_len = std::max(max_gname_len, name_it->second.size());
+        }
+    }
+
+    // Build trial name list if torque matrices provided
+    std::vector<std::string> trial_names;
+    if (torque_before && torque_after) {
+        for (size_t t = 0; t < rom_configs.size(); ++t) {
+            trial_names.push_back(rom_configs[t].name);
+        }
+    }
+
+    // Print header
+    {
+        std::ostringstream hdr;
+        hdr << std::left << std::setw(max_gname_len) << "group" << " | ratio  ";
+        for (const auto& tname : trial_names) {
+            hdr << " | " << std::setw(std::max((size_t)11, tname.size())) << tname;
+        }
+        LOG_INFO(hdr.str());
+        LOG_INFO(std::string(hdr.str().size(), '-'));
+    }
+
+    // Print each group row
+    for (int g = 0; g < num_groups; ++g) {
+        auto name_it = mGroupNames.find(g);
+        std::string gname = (name_it != mGroupNames.end()) ? name_it->second : "Group_" + std::to_string(g);
+
+        std::ostringstream row;
+        row << std::left << std::setw(max_gname_len) << gname << " | "
+            << std::fixed << std::setprecision(4) << std::setw(6) << x[g];
+
+        // Add torque columns if matrices provided
+        if (torque_before && torque_after) {
+            for (size_t t = 0; t < trial_names.size(); ++t) {
+                auto it_bf = torque_before->find(g);
+                auto it_af = torque_after->find(g);
+                double bf = (it_bf != torque_before->end() && t < it_bf->second.size()) ? it_bf->second[t] : 0.0;
+                double af = (it_af != torque_after->end() && t < it_af->second.size()) ? it_af->second[t] : 0.0;
+
+                if (std::abs(bf) > 0.01 || std::abs(af) > 0.01) {
+                    std::ostringstream cell;
+                    cell << std::fixed << std::setprecision(1) << bf << "→" << af;
+                    row << " | " << std::setw(std::max((size_t)11, trial_names[t].size())) << cell.str();
+                } else {
+                    row << " | " << std::setw(std::max((size_t)11, trial_names[t].size())) << "-";
+                }
+            }
+        }
+        LOG_INFO(row.str());
+    }
+}
+
+std::map<int, size_t> ContractureOptimizer::buildGroupToTrialMapping(
+    const std::vector<ROMTrialConfig>& rom_configs,
+    const std::vector<PoseData>& pose_data) const
+{
+    std::map<int, size_t> group_to_trial;
+
+    // First pass: use uniform_search_group if specified
+    for (size_t i = 0; i < rom_configs.size() && i < pose_data.size(); ++i) {
+        const auto& rom_config = rom_configs[i];
+        if (rom_config.uniform_search_group.empty()) continue;
+
+        int target_group_id = findGroupIdByName(rom_config.uniform_search_group);
+        if (target_group_id >= 0) {
+            group_to_trial[target_group_id] = i;
+        }
+    }
+
+    // Second pass: infer from joint name for groups without mapping
+    for (const auto& [group_id, muscle_ids] : mMuscleGroups) {
+        if (group_to_trial.count(group_id)) continue;
+
+        auto name_it = mGroupNames.find(group_id);
+        if (name_it == mGroupNames.end()) continue;
+        const std::string& group_name = name_it->second;
+
+        for (size_t i = 0; i < rom_configs.size() && i < pose_data.size(); ++i) {
+            if (groupMatchesJoint(group_name, rom_configs[i].joint)) {
+                group_to_trial[group_id] = i;
+                break;
+            }
+        }
+    }
+
+    return group_to_trial;
+}
+
+void ContractureOptimizer::logInitialParameterTable(const std::vector<double>& x) const
+{
+    int num_groups = static_cast<int>(mMuscleGroups.size());
+
+    LOG_INFO("[Contracture] Initial parameters (after grid search):");
+
+    // Collect values by base name (strip _l/_r suffix)
+    std::map<std::string, std::pair<double, double>> init_table;  // base_name -> (R, L)
+    for (int g = 0; g < num_groups; ++g) {
+        auto name_it = mGroupNames.find(g);
+        std::string name = (name_it != mGroupNames.end()) ? name_it->second : "Group_" + std::to_string(g);
+
+        std::string base_name = name;
+        bool is_left = false, is_right = false;
+        if (name.size() > 2 && name.substr(name.size() - 2) == "_l") {
+            base_name = name.substr(0, name.size() - 2);
+            is_left = true;
+        } else if (name.size() > 2 && name.substr(name.size() - 2) == "_r") {
+            base_name = name.substr(0, name.size() - 2);
+            is_right = true;
+        }
+
+        if (init_table.find(base_name) == init_table.end()) {
+            init_table[base_name] = {1.0, 1.0};  // default R=1, L=1
+        }
+        if (is_right) init_table[base_name].first = x[g];
+        else if (is_left) init_table[base_name].second = x[g];
+        else init_table[base_name] = {x[g], x[g]};  // no suffix, same for both
+    }
+
+    // Find max base_name length for alignment
+    size_t max_len = 10;
+    for (const auto& [base, _] : init_table) {
+        max_len = std::max(max_len, base.size());
+    }
+
+    // Print header
+    std::ostringstream header;
+    header << std::left << std::setw(max_len) << "group" << " |    R    |    L";
+    LOG_INFO(header.str());
+    LOG_INFO(std::string(max_len + 20, '-'));
+
+    // Print rows
+    for (const auto& [base, vals] : init_table) {
+        std::ostringstream row;
+        row << std::left << std::setw(max_len) << base << " | "
+            << std::fixed << std::setprecision(4) << std::setw(7) << vals.first << " | "
+            << std::fixed << std::setprecision(4) << std::setw(7) << vals.second;
+        LOG_INFO(row.str());
+    }
+}
+
+ContractureOptimizer::PreOptimizationData ContractureOptimizer::preOptimization(
+    Character* character,
+    const std::vector<ROMTrialConfig>& rom_configs,
+    const Config& config)
+{
+    PreOptimizationData preOpt;
+
+    if (!character || mMuscleGroups.empty()) return preOpt;
+
+    const auto& muscles = character->getMuscles();
+    int num_groups = static_cast<int>(mMuscleGroups.size());
+
+    // ============================================================
+    // 1. Capture BEFORE state (lm_contract per muscle in all groups)
+    // ============================================================
+    for (const auto& [group_id, muscle_ids] : mMuscleGroups) {
+        for (int m_idx : muscle_ids) {
+            preOpt.lm_contract_before[m_idx] = muscles[m_idx]->lm_contract;
+            preOpt.all_muscle_indices.insert(m_idx);
+        }
+    }
+
+    // ============================================================
+    // 2. Build pose data (constant across iterations)
+    // ============================================================
+    preOpt.pose_data = buildPoseData(character, rom_configs);
+
+    // ============================================================
+    // 3. Capture BEFORE passive torques per trial
+    // ============================================================
+    for (size_t t = 0; t < rom_configs.size() && t < preOpt.pose_data.size(); ++t) {
+        const auto& rom_config = rom_configs[t];
+        const auto& pose = preOpt.pose_data[t];
+
+        TrialTorqueResult trial_result;
+        trial_result.trial_name = rom_config.name;
+        trial_result.joint = rom_config.joint;
+        trial_result.dof_index = rom_config.dof_index;
+        trial_result.observed_torque = rom_config.torque;
+        trial_result.pose = pose.q;
+
+        // Set pose and update muscle geometry
+        setPoseAndUpdateGeometry(character, pose.q);
+
+        // Compute BEFORE total passive torque
+        if (config.verbose) {
+            LOG_INFO("[Contracture] Trial '" << rom_config.name << "' BEFORE torque:");
+        }
+        trial_result.computed_torque_before = computePassiveTorque(character, pose.joint_idx, config.verbose);
+
+        // Per-muscle contribution BEFORE
+        captureMuscleTorqueContributions(character, pose, preOpt.all_muscle_indices,
+                                         trial_result.muscle_torques_before,
+                                         trial_result.muscle_forces_before);
+
+        preOpt.trial_results_before.push_back(trial_result);
+    }
+
+    // ============================================================
+    // 4. Build group-to-trial mapping (constant across iterations)
+    // ============================================================
+    preOpt.group_to_trial = buildGroupToTrialMapping(rom_configs, preOpt.pose_data);
+
+    // ============================================================
+    // 5. Initialize x and run grid search
+    // ============================================================
+    preOpt.initial_x.resize(num_groups, 1.0);
+    runGridSearchInitialization(character, rom_configs, preOpt.pose_data,
+                                preOpt.lm_contract_before, config, preOpt.initial_x);
+
+    // ============================================================
+    // 6. Log initial parameters
+    // ============================================================
+    if (config.verbose) {
+        logInitialParameterTable(preOpt.initial_x);
+    }
+
+    return preOpt;
+}
+
+std::vector<MuscleGroupResult> ContractureOptimizer::optimizeWithPrecomputed(
+    Character* character,
+    const std::vector<ROMTrialConfig>& rom_configs,
+    const Config& config,
+    const PreOptimizationData& preOpt)
+{
+    std::vector<MuscleGroupResult> results;
+
+    if (!character || mMuscleGroups.empty() || preOpt.pose_data.empty()) {
+        return results;
+    }
+
+    const auto& muscles = character->getMuscles();
+    int num_groups = static_cast<int>(mMuscleGroups.size());
+
+    // Capture current lm_contract as base (may differ from initial after previous iterations)
+    std::map<int, double> base_lm_contract;
+    for (size_t i = 0; i < muscles.size(); ++i) {
+        base_lm_contract[static_cast<int>(i)] = muscles[i]->lm_contract;
+    }
+
+    // Initialize parameters from preOpt (grid search results from first iteration)
+    std::vector<double> x = preOpt.initial_x;
+
+    // Build torque matrix BEFORE optimization: torque_matrix_before[group_id][trial_idx]
+    std::map<int, std::vector<double>> torque_matrix_before;
+    for (int g = 0; g < num_groups; ++g) {
+        torque_matrix_before[g].resize(preOpt.pose_data.size());
+        for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
+            torque_matrix_before[g][t] = computeGroupTorqueAtTrial(character, preOpt.pose_data, g, t);
+        }
+    }
+
+    // Build Ceres problem
+    ceres::Problem problem;
+
+    // Add torque residual blocks
+    for (const auto& pose : preOpt.pose_data) {
+        auto* cost = new TorqueResidual(character, pose, mMuscleGroups, base_lm_contract, num_groups);
+        problem.AddResidualBlock(cost, nullptr, x.data());
+    }
+
+    // Ratio regularization: penalize deviation from ratio=1.0
+    if (config.lambdaRatioReg > 0.0) {
+        double sqrt_lambda = std::sqrt(config.lambdaRatioReg);
+        for (int g = 0; g < num_groups; ++g) {
+            auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<RatioRegCost>(
+                new RatioRegCost(g, sqrt_lambda));
+            reg_cost->AddParameterBlock(num_groups);
+            reg_cost->SetNumResiduals(1);
+            problem.AddResidualBlock(reg_cost, nullptr, x.data());
+        }
+    }
+
+    // Torque regularization: penalize passive torque magnitude per group/trial
+    if (config.lambdaTorqueReg > 0.0) {
+        double sqrt_lambda = std::sqrt(config.lambdaTorqueReg);
+        for (int g = 0; g < num_groups; ++g) {
+            auto grp_it = mMuscleGroups.find(g);
+            if (grp_it == mMuscleGroups.end()) continue;
+
+            for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
+                auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<TorqueRegCost>(
+                    new TorqueRegCost(character, preOpt.pose_data[t], g,
+                                      grp_it->second, base_lm_contract, sqrt_lambda));
+                reg_cost->AddParameterBlock(num_groups);
+                reg_cost->SetNumResiduals(1);
+                problem.AddResidualBlock(reg_cost, nullptr, x.data());
+            }
+        }
+    }
+
+    // Set bounds
+    for (int g = 0; g < num_groups; ++g) {
+        problem.SetParameterLowerBound(x.data(), g, config.minRatio);
+        problem.SetParameterUpperBound(x.data(), g, config.maxRatio);
+    }
+
+    // Solver options
+    ceres::Solver::Options options;
+    options.max_num_iterations = config.maxIterations;
+    options.linear_solver_type = (num_groups < 20)
+        ? ceres::DENSE_QR
+        : ceres::SPARSE_NORMAL_CHOLESKY;
+    options.function_tolerance = 1e-6;
+    options.gradient_tolerance = 1e-8;
+    options.minimizer_progress_to_stdout = false;
+
+    // Solve
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+
+    // Apply optimized ratios to muscles
+    for (int g = 0; g < num_groups; ++g) {
+        auto grp_it = mMuscleGroups.find(g);
+        if (grp_it == mMuscleGroups.end()) continue;
+
+        for (int m_idx : grp_it->second) {
+            muscles[m_idx]->lm_contract = base_lm_contract[m_idx] * x[g];
+            muscles[m_idx]->RefreshMuscleParams();
+        }
+    }
+
+    // Build torque matrix AFTER optimization
+    std::map<int, std::vector<double>> torque_matrix_after;
+    for (int g = 0; g < num_groups; ++g) {
+        torque_matrix_after[g].resize(preOpt.pose_data.size());
+        for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
+            torque_matrix_after[g][t] = computeGroupTorqueAtTrial(character, preOpt.pose_data, g, t);
+        }
+    }
+
+    // Compute averaged ratios for biarticular muscles
+    std::map<int, double> averaged_ratios = computeBiarticularAverages(x, muscles, config.verbose);
+
+    // Log final parameters if verbose
+    if (config.verbose) {
+        logParameterTable("Final (after optimization)", x, rom_configs,
+                          &torque_matrix_before, &torque_matrix_after);
+        LOG_INFO("[Contracture] Iterations: " << summary.iterations.size()
+                    << ", Final cost: " << summary.final_cost);
+    }
+
+    // Build results
+    for (const auto& [group_id, muscle_ids] : mMuscleGroups) {
+        MuscleGroupResult result;
+
+        auto name_it = mGroupNames.find(group_id);
+        result.group_name = (name_it != mGroupNames.end()) ? name_it->second : "Group_" + std::to_string(group_id);
+        result.ratio = x[group_id];
+
+        for (int m_idx : muscle_ids) {
+            result.muscle_names.push_back(muscles[m_idx]->name);
+            // Use averaged ratio for biarticular muscles
+            double effective_ratio = (averaged_ratios.count(m_idx))
+                ? averaged_ratios[m_idx]
+                : x[group_id];
+            result.lm_contract_values.push_back(base_lm_contract[m_idx] * effective_ratio);
+        }
+
+        results.push_back(result);
+    }
 
     return results;
 }

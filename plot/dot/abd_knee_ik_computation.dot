@@ -1,0 +1,147 @@
+digraph AbdKneeIKComputation {
+    rankdir=TB;
+    node [shape=box, fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Title
+    labelloc="t";
+    label="abd_knee Composite DOF: IK Computation Flow";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    // Inputs
+    subgraph cluster_input {
+        label="Inputs";
+        style=rounded;
+        bgcolor="#e8f4e8";
+
+        rom_angle [label="rom_angle (deg)\nfrom clinical data"];
+        base_pose [label="Base Pose (YAML)\nPelvis: [-90,0,0, 0,0.5,0]\n(supine position)"];
+        skeleton [label="Skeleton\n(DART)"];
+    }
+
+    // Segment Length Computation
+    subgraph cluster_segments {
+        label="1. Segment Length Computation";
+        style=rounded;
+        bgcolor="#f4f4e8";
+
+        neutral_pose [label="Set skeleton to\nneutral pose (all zeros)"];
+        get_joints [label="Get world positions:\nhip, knee, ankle"];
+        calc_lengths [label="thigh_length = ||knee - hip||\nshank_length = ||ankle - knee||"];
+        calc_d [label="d = sqrt(thigh² - shank²)\n(horizontal distance)"];
+    }
+
+    // Target Thigh Direction
+    subgraph cluster_target {
+        label="2. Target Thigh Direction (World Frame)";
+        style=rounded;
+        bgcolor="#e8e8f4";
+
+        alpha [label="alpha = rom_angle * pi/180"];
+        sign [label="sign = is_left ? +1 : -1"];
+        calc_x [label="x = sign * shank * tan(alpha)\n(+X for left, -X for right)"];
+        calc_z [label="z = sqrt(d² - x²)\nwhere d² = thigh² - shank²"];
+        target_thigh [label="target_thigh_world:\n(x, shank, z) / thigh_length\n\nknee ABOVE hip by shank_length"];
+    }
+
+    // Initial Thigh Direction
+    subgraph cluster_initial {
+        label="3. Initial Thigh Direction";
+        style=rounded;
+        bgcolor="#f4e8f4";
+
+        set_base [label="Set skeleton to\nbase pose (supine)"];
+        zero_hip [label="Set hip DOFs to zero"];
+        get_joint_pos [label="Get joint world positions:\nhip_pos, knee_pos"];
+        initial_thigh [label="initial_thigh_world =\n(knee_pos - hip_pos).normalized()\n\n(actual geometry, not assumed -Y)"];
+    }
+
+    // Hip Rotation Computation
+    subgraph cluster_hip_rot {
+        label="4. Hip Rotation (Axis-Angle)";
+        style=rounded;
+        bgcolor="#f4f4e8";
+
+        quat_rotation [label="q = Quaternion::FromTwoVectors(\n    initial_thigh, target_thigh)"];
+        world_rot [label="R_world = q.toRotationMatrix()"];
+        parent_rot [label="parent_rot = pelvis.getWorldTransform().linear()"];
+        local_rot [label="R_hip_local = parent_rot^T * R_world * parent_rot"];
+        axis_angle [label="hip_positions =\nBallJoint::convertToPositions(R_hip_local)\n(3D axis-angle vector)"];
+    }
+
+    // Knee Angle Computation
+    subgraph cluster_knee {
+        label="5. Knee Angle for Vertical Shank";
+        style=rounded;
+        bgcolor="#e8f4f4";
+
+        apply_hip [label="Apply hip_positions\nto skeleton"];
+        get_femur_rot2 [label="R_femur = femur.getWorldTransform().linear()"];
+        knee_axis [label="knee_axis_world = R_femur * X_local\n(mediolateral axis)"];
+        get_shank_pos [label="Get knee_pos, ankle_pos\nfrom actual joint positions"];
+        shank_init [label="shank_init_world =\n(ankle_pos - knee_pos).normalized()"];
+        shank_target [label="shank_target_world = +Y_world\n(vertical)"];
+        project [label="Project both onto plane\nperpendicular to knee_axis"];
+        atan2 [label="knee_angle = atan2(\n    target.cross(init).dot(knee_axis),\n    init.dot(target))"];
+    }
+
+    // Output
+    subgraph cluster_output {
+        label="Output: AbdKneeResult";
+        style=rounded;
+        bgcolor="#e8f4e8";
+
+        result [label="hip_positions: Eigen::Vector3d\n(axis-angle for BallJoint)\n\nknee_angle: double\n(radians, positive = flexion)"];
+    }
+
+    // Flow connections - Input
+    rom_angle -> alpha;
+    base_pose -> set_base;
+    skeleton -> neutral_pose;
+
+    // Segment computation flow
+    neutral_pose -> get_joints;
+    get_joints -> calc_lengths;
+    calc_lengths -> calc_d;
+
+    // Target thigh flow
+    alpha -> calc_x;
+    sign -> calc_x;
+    calc_d -> calc_z;
+    calc_x -> calc_z;
+    calc_x -> target_thigh;
+    calc_z -> target_thigh;
+
+    // Initial thigh flow
+    set_base -> zero_hip;
+    zero_hip -> get_joint_pos;
+    get_joint_pos -> initial_thigh;
+
+    // Hip rotation flow
+    initial_thigh -> quat_rotation;
+    target_thigh -> quat_rotation;
+    quat_rotation -> world_rot;
+    world_rot -> local_rot;
+    parent_rot -> local_rot;
+    local_rot -> axis_angle;
+
+    // Knee angle flow
+    axis_angle -> apply_hip;
+    apply_hip -> get_femur_rot2;
+    get_femur_rot2 -> knee_axis;
+    apply_hip -> get_shank_pos;
+    get_shank_pos -> shank_init;
+    knee_axis -> project;
+    shank_init -> project;
+    shank_target -> project;
+    project -> atan2;
+
+    // Output
+    axis_angle -> result;
+    atan2 -> result;
+
+    // Layout hints
+    {rank=same; rom_angle; base_pose; skeleton;}
+    {rank=same; alpha; sign;}
+}

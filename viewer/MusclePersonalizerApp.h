@@ -143,6 +143,7 @@ private:
     bool mWaypointShowAfterEnergy = false;  // true=After, false=Before
     std::vector<int> mWaypointSortedIndices;  // Sorted index mapping
     bool mPlotLegendEast = true;  // true=East (right), false=West (left)
+    bool mPlotHideLegend = true; // Hide legend items
     int mPlotBarsPerChart = 3;    // Max number of bars per chart (for x-label readability)
 
     // ============================================================
@@ -162,6 +163,8 @@ private:
         std::string cd_side;    // "left" or "right"
         std::string cd_joint;   // "hip", "knee", "ankle"
         std::string cd_field;   // field name in rom.yaml
+        bool cd_neg = false;    // negate the angle
+        float cd_cutoff = -1.0f; // skip if |rom_angle| > cutoff (-1 means no cutoff)
         // resolved CD value (angle in degrees)
         std::optional<float> cd_value;
         // Manual ROM input (when cd_value unavailable)
@@ -187,6 +190,13 @@ private:
     float mContractureGridBegin = 0.7f;
     float mContractureGridEnd = 1.3f;
     float mContractureGridInterval = 0.1f;
+
+    // Regularization
+    float mContractureLambdaRatioReg = 0.1f;   // Penalize (ratio - 1.0)^2
+    float mContractureLambdaTorqueReg = 0.01f; // Penalize passive torque magnitude
+
+    // Outer iterations for biarticular convergence
+    int mContractureOuterIterations = 3;
 
     // Results (muscle groups detected after running optimization)
     struct MuscleGroupResult {
@@ -261,6 +271,7 @@ private:
     void drawClinicalDataSection();
     void drawCharacterLoadSection();
     void drawWeightApplicationSection();
+    void drawJointAngleSection();
     void drawWaypointOptimizationSection();
     void drawContractureEstimationSection();
     void drawRenderTab();

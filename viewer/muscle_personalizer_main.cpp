@@ -1,6 +1,7 @@
 #include "MusclePersonalizerApp.h"
 #include "SurgeryExecutor.h"
 #include "WaypointOptimizer.h"
+#include "ContractureOptimizer.h"
 #include "Character.h"
 #include "rm/global.hpp"
 #include <boost/program_options.hpp>
@@ -281,6 +282,97 @@ int runExportCLI(const std::string& skeletonPath,
     return 0;
 }
 
+// Command-line ROM config test for debugging IK computation
+int runTestROMCLI(const std::string& configPath,
+                   const std::string& romPath,
+                   double romAngle)
+{
+    // Load config
+    std::string resolvedConfig = rm::resolve(configPath);
+    YAML::Node config = YAML::LoadFile(resolvedConfig);
+
+    std::string skeletonPath = config["paths"]["skeleton_default"].as<std::string>();
+    std::string musclePath = config["paths"]["muscle_default"].as<std::string>();
+
+    std::cout << "[ROM-Test] Loading character..." << std::endl;
+    std::cout << "[ROM-Test]   Skeleton: " << skeletonPath << std::endl;
+    std::cout << "[ROM-Test]   Muscle: " << musclePath << std::endl;
+
+    // Create surgery executor and load character
+    auto executor = std::make_unique<PMuscle::SurgeryExecutor>("cli-rom-test");
+    executor->loadCharacter(skeletonPath, musclePath);
+
+    Character* character = executor->getCharacter();
+    if (!character) {
+        std::cerr << "[ROM-Test] Failed to load character" << std::endl;
+        return 1;
+    }
+
+    auto skeleton = character->getSkeleton();
+    std::cout << "[ROM-Test] Character loaded with " << skeleton->getNumDofs() << " DOFs" << std::endl;
+
+    // Load ROM config
+    std::cout << "[ROM-Test] Loading ROM config: " << romPath << std::endl;
+    PMuscle::ROMTrialConfig romConfig = PMuscle::ContractureOptimizer::loadROMConfig(
+        romPath, skeleton);
+
+    // Override rom_angle with CLI argument
+    romConfig.rom_angle = romAngle;
+
+    std::cout << "[ROM-Test] ROM Config:" << std::endl;
+    std::cout << "  Name: " << romConfig.name << std::endl;
+    std::cout << "  Joint: " << romConfig.joint << std::endl;
+    std::cout << "  DOF type: " << romConfig.dof_type << std::endl;
+    std::cout << "  ROM angle: " << romConfig.rom_angle << "°" << std::endl;
+    std::cout << "  Composite DOF: " << (romConfig.is_composite_dof ? "yes" : "no") << std::endl;
+
+    // Build pose data (this triggers IK computation for abd_knee)
+    PMuscle::ContractureOptimizer optimizer;
+    std::vector<PMuscle::ROMTrialConfig> configs = { romConfig };
+    auto poseData = optimizer.buildPoseData(character, configs);
+
+    if (poseData.empty()) {
+        std::cerr << "[ROM-Test] Failed to build pose data" << std::endl;
+        return 1;
+    }
+
+    std::cout << "[ROM-Test] Pose data built successfully" << std::endl;
+    std::cout << "[ROM-Test] Final pose (first 12 DOFs): " << poseData[0].q.head(12).transpose() << std::endl;
+
+    // Print all joints with their DOF indices
+    std::cout << "[ROM-Test] Skeleton joint structure:" << std::endl;
+    for (size_t i = 0; i < skeleton->getNumJoints(); ++i) {
+        auto* j = skeleton->getJoint(i);
+        int dof_start = (j->getNumDofs() > 0) ? static_cast<int>(j->getIndexInSkeleton(0)) : -1;
+        std::cout << "  Joint " << i << ": " << j->getName()
+                  << " DOFs=" << j->getNumDofs()
+                  << " start=" << dof_start << std::endl;
+        if (i > 10) {
+            std::cout << "  ..." << std::endl;
+            break;
+        }
+    }
+
+    // Print FemurL DOF indices
+    auto* femurL = skeleton->getJoint("FemurL");
+    if (femurL) {
+        int hip_start = static_cast<int>(femurL->getIndexInSkeleton(0));
+        std::cout << "[ROM-Test] FemurL DOF start: " << hip_start << std::endl;
+        std::cout << "[ROM-Test] FemurL values: ["
+                  << poseData[0].q[hip_start] << ", "
+                  << poseData[0].q[hip_start+1] << ", "
+                  << poseData[0].q[hip_start+2] << "]" << std::endl;
+    }
+    auto* tibiaL = skeleton->getJoint("TibiaL");
+    if (tibiaL) {
+        int knee_idx = static_cast<int>(tibiaL->getIndexInSkeleton(0));
+        std::cout << "[ROM-Test] TibiaL DOF idx: " << knee_idx
+                  << " value: " << poseData[0].q[knee_idx] << std::endl;
+    }
+
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     std::string configPath = "@data/config/muscle_personalizer.yaml";
@@ -289,6 +381,8 @@ int main(int argc, char** argv)
     std::string skeletonPath;
     std::string muscleFilePath;
     std::string outputName;
+    std::string romPath;
+    double romAngle = 45.0;
     bool verbose = false;
 
     // Parse command line arguments
@@ -310,7 +404,12 @@ int main(int argc, char** argv)
         ("muscle", po::value<std::string>(&muscleFilePath),
          "Input muscle path (for --export)")
         ("output,o", po::value<std::string>(&outputName),
-         "Output config name without extension (for --export)");
+         "Output config name without extension (for --export)")
+        ("test-rom", "Test ROM config IK computation in CLI mode")
+        ("rom", po::value<std::string>(&romPath),
+         "Path to ROM config YAML (for --test-rom)")
+        ("rom-angle", po::value<double>(&romAngle)->default_value(45.0),
+         "ROM angle in degrees (for --test-rom)");
 
     po::variables_map vm;
     try {
@@ -387,6 +486,15 @@ int main(int argc, char** argv)
             return 1;
         }
         return runExportCLI(skeletonPath, muscleFilePath, outputName);
+    }
+
+    // CLI mode for ROM config testing
+    if (vm.count("test-rom")) {
+        if (romPath.empty()) {
+            std::cerr << "Error: --rom is required for --test-rom mode" << std::endl;
+            return 1;
+        }
+        return runTestROMCLI(configPath, romPath, romAngle);
     }
 
     std::cout << "========================================" << std::endl;

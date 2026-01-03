@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <Eigen/Core>
 #include <dart/dynamics/dynamics.hpp>
 #include "Character.h"
@@ -27,7 +28,9 @@ struct ROMTrialConfig {
 
     // Target joint for ROM measurement
     std::string joint;
-    int dof_index = 0;
+    int dof_index = 0;              // Used when dof is integer (0, 1, 2)
+    std::string dof_type;           // Used when dof is string (e.g., "abd_knee")
+    bool is_composite_dof = false;  // True if dof_type is set
 
     // Single ROM measurement point
     double rom_angle = 0.0;    // ROM angle in degrees (from clinical data or manual)
@@ -37,9 +40,14 @@ struct ROMTrialConfig {
     std::string cd_side;       // "left" or "right"
     std::string cd_joint;      // "hip", "knee", "ankle"
     std::string cd_field;      // field name in patient rom.yaml
+    bool cd_neg = false;       // negate the angle from clinical data
+    double cd_cutoff = -1.0;   // skip if |rom_angle| > cutoff (-1 means no cutoff)
 
     // Grid search initialization
     std::string uniform_search_group;  // Target muscle group for grid search (e.g., "plantarflexor_l")
+
+    // IK parameters for composite DOF
+    double shank_scale = 0.7;  // Scale factor for shank length in abd_knee IK (default 0.7)
 };
 
 /**
@@ -51,6 +59,22 @@ struct PoseData {
     Eigen::VectorXd q;           // Full skeleton pose
     double tau_obs;              // Observed passive torque (Nm)
     double weight;               // Measurement weight
+
+    // Composite DOF fields
+    bool use_composite_axis = false;   // If true, use composite_axis instead of joint_dof
+    Eigen::Vector3d composite_axis;    // Normalized axis for torque projection (joint-local frame)
+};
+
+/**
+ * @brief Result of IK computation for abd_knee composite DOF
+ *
+ * Contains hip joint positions (axis-angle) and knee angle that produce
+ * the desired abduction angle while keeping shank vertical.
+ */
+struct AbdKneePoseResult {
+    Eigen::Vector3d hip_positions;  // Axis-angle for hip BallJoint
+    double knee_angle;              // Radians for knee RevoluteJoint
+    bool success;
 };
 
 /**
@@ -129,8 +153,16 @@ public:
         double gridSearchEnd = 1.3;
         double gridSearchInterval = 0.1;
 
+        // Regularization
+        double lambdaRatioReg = 0.0;   // Penalize (ratio - 1.0)^2 for each group
+        double lambdaTorqueReg = 0.0;  // Penalize passive torque magnitude per group/trial
+
+        // Outer iterations for biarticular convergence
+        int outerIterations = 1;       // Number of outer iterations (1 = single pass)
+
         Config() : maxIterations(100), minRatio(0.7), maxRatio(1.3),
-                   verbose(false) {}
+                   verbose(false), lambdaRatioReg(0.0), lambdaTorqueReg(0.0),
+                   outerIterations(1) {}
     };
 
     /**
@@ -246,9 +278,10 @@ public:
      *
      * @param character Character with muscles
      * @param joint_idx Joint index
+     * @param dof_offset If >= 0, only compute torque for this DOF offset within joint (e.g., 1 for Y-axis)
      * @return Total passive torque from all muscles
      */
-    static double computePassiveTorque(Character* character, int joint_idx, bool verbose = false);
+    static double computePassiveTorque(Character* character, int joint_idx, bool verbose = false, int dof_offset = -1);
 
     /**
      * @brief Build pose data from ROM configs for optimization
@@ -271,24 +304,6 @@ public:
      */
     std::map<int, std::vector<int>> findBiarticularMuscles() const;
 
-    /**
-     * @brief Run iterative optimization with biarticular muscle averaging
-     *
-     * For biarticular muscles (appearing in multiple groups), averages the
-     * optimized ratios across all groups containing them, then re-optimizes.
-     * Converges when max ratio change < convergenceThreshold.
-     *
-     * @param character Character with muscles to optimize
-     * @param rom_configs ROM trial configurations
-     * @param config Iterative optimization configuration
-     * @return Vector of results per muscle group (from final iteration)
-     */
-    std::vector<MuscleGroupResult> optimizeIterative(
-        Character* character,
-        const std::vector<ROMTrialConfig>& rom_configs,
-        const IterativeConfig& config = IterativeConfig()
-    );
-
 private:
     // Get joint index by name
     static int getJointIndex(
@@ -310,6 +325,128 @@ private:
 
     // Ceres cost functor
     struct TorqueResidual;
+
+    // ========== Composite DOF Helpers ==========
+
+    // Compute composite axis for abd_knee DOF type
+    // Axis is perpendicular to plane containing world Y and hip-knee vector
+    static Eigen::Vector3d computeAbdKneeAxis(
+        dart::dynamics::SkeletonPtr skeleton,
+        int hip_joint_idx);
+
+    // Compute IK pose for abd_knee composite DOF
+    // Given abduction angle, computes hip axis-angle and knee angle
+    // that produce the pose with shank vertical
+    static AbdKneePoseResult computeAbdKneePose(
+        dart::dynamics::SkeletonPtr skeleton,
+        int hip_joint_idx,
+        double rom_angle_deg,
+        bool is_left_leg,
+        double shank_scale = 0.7);
+
+    // Compute knee angle that makes shank point vertical (+Y)
+    // after hip is set to given axis-angle positions
+    static double computeKneeAngleForVerticalShank(
+        dart::dynamics::SkeletonPtr skeleton,
+        int hip_joint_idx,
+        const Eigen::Vector3d& hip_positions);
+
+    // ========== Refactored Helper Methods ==========
+
+    // Check if group name matches joint name pattern (side and joint type)
+    bool groupMatchesJoint(const std::string& group_name, const std::string& joint_name) const;
+
+    // Set skeleton pose and update all muscle geometry
+    void setPoseAndUpdateGeometry(Character* character, const Eigen::VectorXd& q) const;
+
+    // Compute group passive torque at a specific trial's joint
+    double computeGroupTorqueAtTrial(
+        Character* character,
+        const std::vector<PoseData>& pose_data,
+        int group_id,
+        size_t trial_idx) const;
+
+    // Log parameter table (initial or final) with optional torque matrices
+    void logParameterTable(
+        const std::string& title,
+        const std::vector<double>& x,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const std::map<int, std::vector<double>>* torque_before = nullptr,
+        const std::map<int, std::vector<double>>* torque_after = nullptr) const;
+
+    // Compute averaged ratios for biarticular muscles
+    std::map<int, double> computeBiarticularAverages(
+        const std::vector<double>& x,
+        const std::vector<Muscle*>& muscles,
+        bool verbose) const;
+
+    // Run grid search initialization for trials with uniform_search_group
+    void runGridSearchInitialization(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const std::vector<PoseData>& pose_data,
+        const std::map<int, double>& base_lm_contract,
+        const Config& config,
+        std::vector<double>& x);
+
+    // Capture per-muscle torque and force contributions at a pose
+    void captureMuscleTorqueContributions(
+        Character* character,
+        const PoseData& pose,
+        const std::set<int>& muscle_indices,
+        std::vector<std::pair<std::string, double>>& out_torques,
+        std::vector<std::pair<std::string, double>>& out_forces) const;
+
+    // Compute cumulative ratio per group from initial and final lm_contract
+    void computeCumulativeGroupRatios(
+        const std::vector<Muscle*>& muscles,
+        const std::map<int, double>& lm_contract_before,
+        std::vector<MuscleGroupResult>& group_results) const;
+
+    // ========== Pre-Optimization Helpers ==========
+
+    /**
+     * @brief Data computed once before outer iterations
+     *
+     * Contains pose data, group mappings, grid search results, and BEFORE state
+     * that can be reused across multiple optimization iterations.
+     */
+    struct PreOptimizationData {
+        // Pose and mapping data (constant across iterations)
+        std::vector<PoseData> pose_data;
+        std::map<int, size_t> group_to_trial;  // group_id -> trial index
+
+        // Grid search results
+        std::vector<double> initial_x;          // Initial ratios from grid search
+
+        // BEFORE state capture
+        std::map<int, double> lm_contract_before;  // Per-muscle lm_contract before any optimization
+        std::set<int> all_muscle_indices;          // All muscle indices in any group
+
+        // BEFORE passive torques per trial
+        std::vector<TrialTorqueResult> trial_results_before;
+    };
+
+    // Build group-to-trial mapping from ROM configs
+    std::map<int, size_t> buildGroupToTrialMapping(
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const std::vector<PoseData>& pose_data) const;
+
+    // Log initial parameters in R/L table format
+    void logInitialParameterTable(const std::vector<double>& x) const;
+
+    // Pre-compute data that's constant across outer iterations
+    PreOptimizationData preOptimization(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const Config& config);
+
+    // Optimization using pre-computed data (avoids redundant work)
+    std::vector<MuscleGroupResult> optimizeWithPrecomputed(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const Config& config,
+        const PreOptimizationData& preOpt);
 
     // Member variables
     std::map<int, std::vector<int>> mMuscleGroups;  // group_id -> muscle indices

@@ -1,0 +1,165 @@
+digraph AbdKneeIKCurrent {
+    rankdir=TB;
+    node [shape=box, fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9];
+
+    label="abd_knee IK: Current Implementation Flow";
+    labelloc="t";
+    fontsize=12;
+
+    // Inputs
+    subgraph cluster_input {
+        label="Inputs";
+        style=rounded;
+        bgcolor="#e8f4e8";
+
+        rom_angle [label="rom_angle (deg)\nfrom clinical data"];
+        base_pose [label="Base Pose (YAML)\nPelvis supine: [-90,0,0,0,0,0]"];
+        skeleton [label="Skeleton (DART)"];
+    }
+
+    // Step 1: Segment Lengths
+    subgraph cluster_segments {
+        label="1. Segment Length (at neutral pose)";
+        style=rounded;
+        bgcolor="#f4f4e8";
+
+        set_zero [label="skeleton->setPositions(zeros)"];
+        get_lengths [label="thigh = |knee - hip|\nshank = |ankle - knee|"];
+    }
+
+    // Step 2: Target Geometry
+    subgraph cluster_geometry {
+        label="2. Target Geometry";
+        style=rounded;
+        bgcolor="#e8e8f4";
+
+        calc_d [label="d = sqrt(thigh² - shank²)\n(horizontal distance)"];
+        calc_target [label="x = sign * shank * tan(alpha)\nz = sqrt(d² - x²)\ntarget_knee_rel = (x, shank, z)"];
+        target_thigh [label="target_thigh_world =\ntarget_knee_rel.normalized()"];
+    }
+
+    // Step 3: Initial Thigh
+    subgraph cluster_initial {
+        label="3. Initial Thigh Direction";
+        style=rounded;
+        bgcolor="#f4e8f4";
+
+        restore_pose [label="skeleton->setPositions(base_pose)\nSet hip DOFs to zero"];
+        get_joint_frame [label="joint_frame =\nparent_rot * parent_to_joint"];
+        initial_thigh [label="initial_thigh_world =\n(knee_joint_pos - hip_pos).normalized()"];
+    }
+
+    // Step 4: Base Rotation
+    subgraph cluster_base_rot {
+        label="4. Base Rotation (in joint frame)";
+        style=rounded;
+        bgcolor="#e8f4f4";
+
+        to_joint_frame [label="initial_thigh_joint = joint_frame.T * initial_thigh_world\ntarget_thigh_joint = joint_frame.T * target_thigh_world"];
+        base_quat [label="q_base = FromTwoVectors(\n  initial_thigh_joint,\n  target_thigh_joint)"];
+        R_base [label="R_base = q_base.toRotationMatrix()"];
+    }
+
+    // Step 5: Twist Correction
+    subgraph cluster_twist {
+        label="5. Twist Correction (make knee axis horizontal)";
+        style=rounded;
+        bgcolor="#fff4e8";
+
+        knee_axis_local [label="knee_axis_local =\nfemur_to_knee.col(0)"];
+        knee_axis_after [label="knee_axis_after_base =\njoint_frame * R_base * knee_axis_local"];
+        twist_eq [label="Solve: knee_axis_final.Y = 0\nP*cos(θ) + Q*sin(θ) = -R"];
+        twist_angle [label="twist_angle = atan2(Q,P) ± acos(-R/sqrt(P²+Q²))"];
+        R_twist [label="R_twist = AngleAxis(twist_angle, target_thigh_world)"];
+        combine [label="R_twist_joint = joint_frame.T * R_twist * joint_frame\nR_hip_local = R_twist_joint * R_base"];
+    }
+
+    // Step 6: Convert to Axis-Angle
+    subgraph cluster_convert {
+        label="6. Convert to DART Format";
+        style=rounded;
+        bgcolor="#f4f4f4";
+
+        convert [label="hip_positions = BallJoint::convertToPositions(R_hip_local)"];
+    }
+
+    // Step 7: Compute Knee Angle
+    subgraph cluster_knee {
+        label="7. Compute Knee Angle (in computeKneeAngleForVerticalShank)";
+        style=rounded;
+        bgcolor="#f8e8e8";
+
+        apply_hip [label="skeleton->setPosition(hip, hip_positions)"];
+        get_femur_rot [label="R_femur = femur_body->getWorldTransform().linear()"];
+        knee_frame [label="knee_joint_frame = R_femur * femur_to_knee"];
+        knee_axis_check [label="knee_axis_world = knee_joint_frame.col(0)\nSHOULD BE HORIZONTAL (Y≈0)\nBUT CURRENTLY Y≠0!"];
+        shank_dirs [label="shank_init = (ankle - knee).normalized()\nshank_target = -Y (vertical down)"];
+        project [label="Project onto plane ⟂ to knee_axis\nCompute angle between projections"];
+        knee_angle [label="knee_angle = atan2(sin, cos)\nIf negative: knee_angle = π + knee_angle"];
+    }
+
+    // Problem
+    subgraph cluster_problem {
+        label="PROBLEM";
+        style=rounded;
+        bgcolor="#ffcccc";
+
+        problem [label="R_femur from skeleton ≠ joint_frame * R_hip_local\n\nExpected: row0=[0.521, -0.648, -0.555]\nActual:   row0=[0.385, -0.646, -0.659]\n\nCause: joint_to_child transform not accounted for?\nOr BallJoint axis-angle conversion issue?"];
+    }
+
+    // Output
+    subgraph cluster_output {
+        label="Output";
+        style=rounded;
+        bgcolor="#e8f4e8";
+
+        result [label="AbdKneePoseResult:\nhip_positions (3D axis-angle)\nknee_angle (radians)"];
+        actual_shank [label="Actual shank_dir:\n[0.085, -0.987, -0.137]\nNot exactly -Y!"];
+    }
+
+    // Flow
+    rom_angle -> calc_d;
+    skeleton -> set_zero;
+    set_zero -> get_lengths;
+    get_lengths -> calc_d;
+    calc_d -> calc_target;
+    calc_target -> target_thigh;
+
+    base_pose -> restore_pose;
+    restore_pose -> get_joint_frame;
+    get_joint_frame -> initial_thigh;
+
+    initial_thigh -> to_joint_frame;
+    target_thigh -> to_joint_frame;
+    to_joint_frame -> base_quat;
+    base_quat -> R_base;
+
+    R_base -> knee_axis_after;
+    get_joint_frame -> knee_axis_after;
+    knee_axis_local -> knee_axis_after;
+    knee_axis_after -> twist_eq;
+    twist_eq -> twist_angle;
+    twist_angle -> R_twist;
+    R_twist -> combine;
+    R_base -> combine;
+
+    combine -> convert;
+    convert -> apply_hip;
+
+    apply_hip -> get_femur_rot;
+    get_femur_rot -> knee_frame;
+    knee_frame -> knee_axis_check;
+    knee_axis_check -> shank_dirs [style=dashed, color=red, label="axis not horizontal!"];
+    shank_dirs -> project;
+    project -> knee_angle;
+
+    knee_axis_check -> problem [style=dashed, color=red];
+    convert -> problem [style=dashed, color=red, label="mismatch"];
+
+    knee_angle -> result;
+    result -> actual_shank;
+
+    {rank=same; rom_angle; base_pose; skeleton;}
+    {rank=same; problem;}
+}
