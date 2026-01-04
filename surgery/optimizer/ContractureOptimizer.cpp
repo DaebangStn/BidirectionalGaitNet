@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <cmath>
 #include <set>
+#include <functional>
 
 namespace PMuscle {
 
@@ -429,29 +430,31 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
 
     const auto& muscles = character->getMuscles();
 
-    // For composite DOF (dof_offset >= 0), project torque onto global Y axis
+    // For composite DOF (dof_offset >= 0), compute physical torque about joint center
+    // and project onto global Y axis using cross product method
     if (dof_offset >= 0 && num_dofs == 3) {
-        // Get joint rotation to transform local torque to world frame
-        auto* body = joint->getChildBodyNode();
-        Eigen::Matrix3d joint_rot = body->getWorldTransform().linear();
+        auto* child_body = joint->getChildBodyNode();
+
+        // Get joint center in world coordinates
+        // Joint center is at the origin of the child body's parent transform
+        Eigen::Vector3d joint_center = child_body->getTransform().translation();
+
+        // Build set of descendant bodies (bodies affected by this joint)
+        std::set<dart::dynamics::BodyNode*> descendant_bodies;
+        std::function<void(dart::dynamics::BodyNode*)> collect_descendants;
+        collect_descendants = [&](dart::dynamics::BodyNode* bn) {
+            descendant_bodies.insert(bn);
+            for (size_t i = 0; i < bn->getNumChildBodyNodes(); ++i) {
+                collect_descendants(bn->getChildBodyNode(i));
+            }
+        };
+        collect_descendants(child_body);
 
         double total_torque = 0.0;
         for (auto& muscle : muscles) {
-            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
-            const auto& related_indices = muscle->related_dof_indices;
-
-            // Build 3D torque vector in joint-local frame
-            Eigen::Vector3d torque_local = Eigen::Vector3d::Zero();
-            for (size_t i = 0; i < related_indices.size(); ++i) {
-                int global_dof = related_indices[i];
-                int local_dof = global_dof - first_dof;
-                if (local_dof >= 0 && local_dof < 3) {
-                    torque_local[local_dof] = jtp[i];
-                }
-            }
-
-            // Transform to world frame and project onto global Y
-            Eigen::Vector3d torque_world = joint_rot * torque_local;
+            // Use cross-product based torque computation (correct for BallJoint)
+            Eigen::Vector3d torque_world = muscle->GetPassiveTorqueAboutPoint(
+                joint_center, &descendant_bodies);
             double contribution = torque_world.y();
             total_torque += contribution;
 
@@ -572,12 +575,16 @@ double ContractureOptimizer::computeKneeAngleForVerticalShank(
     auto* talus_body = ankle_joint->getChildBodyNode();
     if (!talus_body) return 0.0;
 
-    // Temporarily set hip positions (knee stays at current value, typically 0)
+    // Temporarily set hip positions and reset knee to 0 (neutral position)
     Eigen::VectorXd old_pos = skeleton->getPositions();
     int hip_dof_start = static_cast<int>(hip_joint->getIndexInSkeleton(0));
     skeleton->setPosition(hip_dof_start, hip_positions[0]);
     skeleton->setPosition(hip_dof_start + 1, hip_positions[1]);
     skeleton->setPosition(hip_dof_start + 2, hip_positions[2]);
+
+    // Reset knee to 0 - computation assumes neutral knee as starting point
+    int knee_dof_idx = static_cast<int>(knee_joint->getIndexInSkeleton(0));
+    skeleton->setPosition(knee_dof_idx, 0.0);
 
     // Get femur orientation after hip rotation
     Eigen::Matrix3d R_femur = femur_body->getWorldTransform().linear();

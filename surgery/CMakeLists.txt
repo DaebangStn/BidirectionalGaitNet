@@ -79,9 +79,8 @@ target_include_directories(physical_exam PRIVATE
 )
 
 target_link_libraries(physical_exam
-    ${Python3_LIBRARIES}
     tinyxml2::tinyxml2
-    GL GLU glut glad pybind11::embed glfw imgui
+    GL GLU glut glad glfw imgui
     sim
     surgery_optimizer
     dart-gui

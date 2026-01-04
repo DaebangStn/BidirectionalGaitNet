@@ -326,6 +326,7 @@ private:
     // Ceres cost functor
     struct TorqueResidual;
 
+public:
     // ========== Composite DOF Helpers ==========
 
     // Compute composite axis for abd_knee DOF type
@@ -351,6 +352,7 @@ private:
         int hip_joint_idx,
         const Eigen::Vector3d& hip_positions);
 
+private:
     // ========== Refactored Helper Methods ==========
 
     // Check if group name matches joint name pattern (side and joint type)

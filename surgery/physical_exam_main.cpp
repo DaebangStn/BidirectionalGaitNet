@@ -1,11 +1,9 @@
 #include "PhysicalExam.h"
 #include "Log.h"
-#include <pybind11/embed.h>
 #include <boost/program_options.hpp>
 #include <iostream>
 #include <string>
 
-namespace py = pybind11;
 namespace po = boost::program_options;
 
 int main(int argc, char** argv) {
@@ -49,11 +47,6 @@ int main(int argc, char** argv) {
         std::cout << "  " << argv[0] << " --headless @data/config/phys_exam.yaml\n";
         return 0;
     }
-
-    // Initialize Python interpreter
-    pybind11::scoped_interpreter guard{};
-    pybind11::module sys = pybind11::module::import("sys");
-    py::module_::import("numpy");
 
     // Create physical examination (ViewerAppBase handles GLFW/ImGui init)
     PMuscle::PhysicalExam exam(1920, 1080);

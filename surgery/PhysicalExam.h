@@ -38,6 +38,11 @@ struct AngleSweepTrialConfig {
     double angle_min;            // Radians
     double angle_max;            // Radians
     int num_steps;               // Number of sweep steps
+
+    // Composite DOF fields (e.g., abd_knee)
+    std::string dof_type;        // "abd_knee" for composite DOF (empty = simple DOF)
+    double shank_scale = 0.7;    // Scale factor for abd_knee IK
+    double angle_step = 1.0;     // Step size in degrees (for composite DOF sweep)
 };
 
 // Angle sweep data point (per-step recording)
@@ -165,6 +170,7 @@ public:
     std::map<std::string, Eigen::VectorXd> recordJointAngles(
         const std::vector<std::string>& joint_names);
     double getPassiveTorqueJoint(int joint_idx);  // Sum of passive torques at joint
+    double getPassiveTorqueJointGlobalY(Character* character, dart::dynamics::Joint* joint);  // Cross-product torque projected onto global Y
     double getPassiveTorqueJoint_forCharacter(Character* character, dart::dynamics::Joint* joint);  // Helper for specific character
 
     // Pose synchronization between main and standard characters
@@ -181,11 +187,12 @@ public:
     
     // Trial file management
     void scanTrialFiles();
+    TrialConfig parseTrialConfig(const YAML::Node& trial_node);
     void loadAndRunTrial(const std::string& trial_file_path);
 
     // Angle sweep trial execution (kinematic-only)
     void runAngleSweepTrial(const TrialConfig& trial);
-    void collectAngleSweepData(double angle, int joint_index);
+    void collectAngleSweepData(double angle, int joint_index, bool use_global_y = false);
     void setupTrackedMusclesForAngleSweep(const std::string& joint_name);
 
     // ROM analysis helpers

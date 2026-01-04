@@ -1,6 +1,7 @@
 #ifndef __MS_MUSCLE_H__
 #define __MS_MUSCLE_H__
 #include "dart/dart.hpp"
+#include <set>
 
 struct Anchor
 {
@@ -59,6 +60,24 @@ public:
 
 	Eigen::VectorXd GetRelatedJtA();
 	Eigen::VectorXd GetRelatedJtp();
+
+	/**
+	 * @brief Compute passive muscle torque about a joint center in world coordinates
+	 *
+	 * Uses cross product formula: T = Σ (r × F) where r is moment arm from joint
+	 * center to anchor, and F is the net muscle force at that anchor.
+	 *
+	 * This method correctly computes physical torque without exponential map
+	 * Jacobian transformation issues that affect GetRelatedJtp().
+	 *
+	 * @param joint_center World position of joint rotation center
+	 * @param descendant_bodies Only include anchors attached to bodies in this set.
+	 *                          If nullptr, includes all anchors.
+	 * @return Passive torque vector in world coordinates
+	 */
+	Eigen::Vector3d GetPassiveTorqueAboutPoint(
+		const Eigen::Vector3d& joint_center,
+		const std::set<dart::dynamics::BodyNode*>* descendant_bodies = nullptr);
 
 	std::vector<dart::dynamics::Joint *> GetRelatedJoints();
 	std::vector<dart::dynamics::BodyNode *> GetRelatedBodyNodes();

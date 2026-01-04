@@ -1,0 +1,22 @@
+# Trial: Hip abduction ROM sweep with knee flexed (abd_knee composite DOF)
+# Uses IK to compute full pose - sweeps until geometry constraint violated
+
+name: "femAbdd_k90_L"
+description: "Left hip abduction ROM with knee flexed (abd_knee composite DOF)"
+
+mode: "angle_sweep"
+
+# Supine pose: pelvis tilted back 90 degrees
+pose:
+  Pelvis: [-90, 0, 0, 0, 0.0, 0]
+  FemurL: [0, 0, 0]
+  TibiaL: 0
+  TalusL: [0, 0, 0]
+
+angle_sweep:
+  joint: "FemurL"
+  dof_type: "abd_knee"      # Composite DOF type - uses IK
+  shank_scale: 0.5          # Scale factor for shank length in IK
+  angle_min: 0              # Start angle (degrees)
+  angle_step: 1.0           # Step size in degrees
+  # No angle_max - sweep until IK fails (geometry constraint violated)

@@ -369,6 +369,66 @@ Eigen::VectorXd Muscle::GetRelatedJtp()
     return JtP_reduced;
 }
 
+Eigen::Vector3d Muscle::GetPassiveTorqueAboutPoint(
+    const Eigen::Vector3d& joint_center,
+    const std::set<dart::dynamics::BodyNode*>* descendant_bodies)
+{
+    // Compute passive muscle torque using cross product: T = Σ (r × F)
+    // This correctly computes physical torque without exponential map Jacobian issues
+
+    double f_p = Getf_p();  // Passive force magnitude
+    if (std::isnan(f_p)) {
+        LOG_WARN("GetPassiveTorqueAboutPoint: f_p is NaN for muscle " << name);
+        return Eigen::Vector3d::Zero();
+    }
+    if (std::abs(f_p) < 1e-12) {
+        return Eigen::Vector3d::Zero();
+    }
+
+    Eigen::Vector3d total_torque = Eigen::Vector3d::Zero();
+    int n = static_cast<int>(mAnchors.size());
+
+    for (int i = 0; i < n; ++i) {
+        // Check if this anchor should be included
+        if (descendant_bodies != nullptr) {
+            auto* bn = mAnchors[i]->bodynodes[0];
+            if (descendant_bodies->find(bn) == descendant_bodies->end()) {
+                continue;  // Skip anchors not on descendant bodies
+            }
+        }
+
+        // Compute net force at this anchor from adjacent segments
+        // Muscle tension pulls anchor toward adjacent anchors
+        Eigen::Vector3d force = Eigen::Vector3d::Zero();
+
+        // Force from segment toward anchor i+1
+        if (i < n - 1) {
+            Eigen::Vector3d dir = mCachedAnchorPositions[i + 1] - mCachedAnchorPositions[i];
+            double len = dir.norm();
+            if (len > 1e-9) {
+                force += f_p * (dir / len);
+            }
+        }
+
+        // Force from segment toward anchor i-1
+        if (i > 0) {
+            Eigen::Vector3d dir = mCachedAnchorPositions[i - 1] - mCachedAnchorPositions[i];
+            double len = dir.norm();
+            if (len > 1e-9) {
+                force += f_p * (dir / len);
+            }
+        }
+
+        // Moment arm from joint center to this anchor
+        Eigen::Vector3d r = mCachedAnchorPositions[i] - joint_center;
+
+        // Torque contribution: r × F
+        total_torque += r.cross(force);
+    }
+
+    return total_torque;
+}
+
 Eigen::MatrixXd Muscle::GetJacobianTranspose()
 {
     const auto &skel = mAnchors[0]->bodynodes[0]->getSkeleton();
@@ -397,15 +457,21 @@ std::pair<Eigen::VectorXd, Eigen::VectorXd> Muscle::GetForceJacobianAndPassive()
     for (int i = 0; i < mAnchors.size() - 1; i++)
     {
         Eigen::Vector3d dir = mCachedAnchorPositions[i + 1] - mCachedAnchorPositions[i];
-        dir.normalize();
-        force_dir[i] += dir;
+        double len = dir.norm();
+        if (len > 1e-9) {
+            dir /= len;
+            force_dir[i] += dir;
+        }
     }
 
     for (int i = 1; i < mAnchors.size(); i++)
     {
         Eigen::Vector3d dir = mCachedAnchorPositions[i - 1] - mCachedAnchorPositions[i];
-        dir.normalize();
-        force_dir[i] += dir;
+        double len = dir.norm();
+        if (len > 1e-9) {
+            dir /= len;
+            force_dir[i] += dir;
+        }
     }
 
     Eigen::VectorXd A(3 * mAnchors.size());

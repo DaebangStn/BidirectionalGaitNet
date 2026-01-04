@@ -4,6 +4,7 @@
 #include "rm/rm.hpp"
 #include "GLfunctions.h"
 #include "SurgeryScript.h"
+#include "optimizer/ContractureOptimizer.h"
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <iostream>
@@ -12,6 +13,8 @@
 #include <vector>
 #include <algorithm>
 #include <filesystem>
+#include <functional>
+#include <set>
 #include <chrono>
 #include <ctime>
 #include <imgui.h>
@@ -33,7 +36,7 @@ constexpr double BED_LENGTH = 2.5;     // Length (Z-axis): 2.5m
 constexpr double BED_POSITION_Y = 0.60; // Elevation above ground: 0.60m
 
 PhysicalExam::PhysicalExam(int width, int height)
-    : ViewerAppBase("MuscleSurgery", width, height)  // Base class handles GLFW/ImGui
+    : ViewerAppBase("Muscle Surgery", width, height)  // Base class handles GLFW/ImGui
     , SurgeryExecutor("physical_exam")
     , mControlPanelWidth(250)
     , mPlotPanelWidth(350)
@@ -458,13 +461,11 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     // Load standard character if paths are set
     if (!mStdSkeletonPath.empty()) {
         std::string resolved_std_skel = rm::resolve(mStdSkeletonPath);
-        LOG_INFO("Loading standard character skeleton: " << resolved_std_skel);
         
         mStdCharacter = new Character(resolved_std_skel, SKEL_COLLIDE_ALL);
         
         if (!mStdMusclePath.empty()) {
             std::string resolved_std_muscle = rm::resolve(mStdMusclePath);
-            LOG_INFO("Loading standard character muscle: " << resolved_std_muscle);
             mStdCharacter->setMuscles(resolved_std_muscle);
             
             if (mStdCharacter->getMuscles().size() > 0) {
@@ -670,6 +671,49 @@ double PhysicalExam::getPassiveTorqueJoint(int joint_idx) {
     return total_torque;
 }
 
+double PhysicalExam::getPassiveTorqueJointGlobalY(
+    Character* character, dart::dynamics::Joint* joint) {
+    // Compute physical passive torque about joint and project onto global Y axis
+    // Uses cross product (r × F) to correctly compute physical torque,
+    // avoiding exponential map Jacobian issues with BallJoint generalized forces
+    if (!character || !joint) return 0.0;
+    if (character->getMuscles().empty()) return 0.0;
+
+    int num_dofs = static_cast<int>(joint->getNumDofs());
+
+    // Only applies to 3-DOF joints (BallJoint)
+    if (num_dofs != 3) {
+        return getPassiveTorqueJoint_forCharacter(character, joint);  // Fallback
+    }
+
+    auto* child_body = joint->getChildBodyNode();
+    Eigen::Vector3d joint_center = child_body->getTransform().translation();
+
+    if (joint_center.hasNaN()) {
+        return 0.0;
+    }
+
+    // Build set of descendant bodies (bodies affected by this joint)
+    std::set<dart::dynamics::BodyNode*> descendant_bodies;
+    std::function<void(dart::dynamics::BodyNode*)> collect_descendants;
+    collect_descendants = [&](dart::dynamics::BodyNode* bn) {
+        descendant_bodies.insert(bn);
+        for (size_t i = 0; i < bn->getNumChildBodyNodes(); ++i) {
+            collect_descendants(bn->getChildBodyNode(i));
+        }
+    };
+    collect_descendants(child_body);
+
+    double total_torque = 0.0;
+    for (auto& muscle : character->getMuscles()) {
+        Eigen::Vector3d torque_world = muscle->GetPassiveTorqueAboutPoint(
+            joint_center, &descendant_bodies);
+        total_torque += torque_world.y();
+    }
+
+    return total_torque;
+}
+
 // Pose synchronization methods
 void PhysicalExam::setCharacterPose(const Eigen::VectorXd& positions) {
     if (mCharacter) {
@@ -729,10 +773,6 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     std::string _actTypeString = config["character"]["actuator"].as<std::string>();
     ActuatorType _actType = getActuatorType(_actTypeString);
 
-    LOG_INFO("Exam setting: " << mExamName);
-    if (!mExamDescription.empty()) {
-        LOG_INFO("Description: " << mExamDescription);
-    }
     // Set standard character paths from config before loading main character
     if (config["std_character"]) {
         mStdSkeletonPath = config["std_character"]["skeleton"].as<std::string>();
@@ -756,8 +796,36 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     mCurrentTrialIndex = -1;
     mTrialRunning = false;
     setPaused(true);
-    
-    LOG_INFO("Exam setting loaded: " << mExamName);
+
+    // Parse trials from config
+    mTrials.clear();
+    if (config["trials"]) {
+        for (const auto& trial_entry : config["trials"]) {
+            if (trial_entry["file"]) {
+                // Load trial from external file
+                std::string trial_file = trial_entry["file"].as<std::string>();
+                std::string resolved_trial = rm::resolve(trial_file);
+                try {
+                    YAML::Node trial_node = YAML::LoadFile(resolved_trial);
+                    TrialConfig trial = parseTrialConfig(trial_node);
+                    mTrials.push_back(trial);
+                    LOG_INFO("Loaded trial from file: " << trial.name);
+                } catch (const std::exception& e) {
+                    LOG_WARN("Failed to load trial file " << resolved_trial << ": " << e.what());
+                }
+            } else {
+                // Inline trial definition
+                try {
+                    TrialConfig trial = parseTrialConfig(trial_entry);
+                    mTrials.push_back(trial);
+                    LOG_INFO("Loaded inline trial: " << trial.name);
+                } catch (const std::exception& e) {
+                    LOG_WARN("Failed to parse inline trial: " << e.what());
+                }
+            }
+        }
+        LOG_INFO("Loaded " << mTrials.size() << " trial(s) from config");
+    }
 }
 
 void PhysicalExam::scanTrialFiles() {
@@ -811,96 +879,118 @@ void PhysicalExam::scanTrialFiles() {
     LOG_INFO("Scanned " << mAvailableTrialFiles.size() << " trial file(s) from " << resolved_dir);
 }
 
+TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
+    TrialConfig trial;
+
+    // Parse trial configuration
+    trial.name = trial_node["name"].as<std::string>();
+    trial.description = trial_node["description"] ?
+        trial_node["description"].as<std::string>() : "";
+
+    // Parse mode (default: force_sweep for backward compatibility)
+    std::string mode_str = trial_node["mode"] ?
+        trial_node["mode"].as<std::string>() : "force_sweep";
+    if (mode_str == "angle_sweep") {
+        trial.mode = TrialMode::ANGLE_SWEEP;
+    } else {
+        trial.mode = TrialMode::FORCE_SWEEP;
+    }
+
+    // Parse pose (values in degrees, converted to radians)
+    YAML::Node pose_node = trial_node["pose"];
+    for (YAML::const_iterator it = pose_node.begin(); it != pose_node.end(); ++it) {
+        std::string joint_name = it->first.as<std::string>();
+        bool is_root = (joint_name == "Pelvis");
+
+        if (it->second.IsSequence()) {
+            std::vector<double> values = it->second.as<std::vector<double>>();
+            Eigen::VectorXd angles(values.size());
+            for (size_t i = 0; i < values.size(); ++i) {
+                // For root joint: first 3 are rotations (convert), last 3 are translations (keep)
+                // For other joints: all are rotations (convert)
+                if (is_root && i >= 3) {
+                    angles[i] = values[i];  // Translation - keep as meters
+                } else {
+                    angles[i] = values[i] * M_PI / 180.0;  // Rotation - degrees to radians
+                }
+            }
+            trial.pose[joint_name] = angles;
+        } else {
+            Eigen::VectorXd angles(1);
+            angles[0] = it->second.as<double>() * M_PI / 180.0;  // Degrees to radians
+            trial.pose[joint_name] = angles;
+        }
+    }
+
+    // Parse mode-specific configuration
+    if (trial.mode == TrialMode::ANGLE_SWEEP) {
+        // Parse angle sweep configuration (angles in degrees, converted to radians)
+        YAML::Node angle_cfg = trial_node["angle_sweep"];
+        trial.angle_sweep.joint_name = angle_cfg["joint"].as<std::string>();
+        trial.angle_sweep.dof_index = angle_cfg["dof_index"] ?
+            angle_cfg["dof_index"].as<int>() : 0;
+        trial.angle_sweep.angle_min = angle_cfg["angle_min"].as<double>() * M_PI / 180.0;
+
+        // Composite DOF fields (e.g., abd_knee)
+        trial.angle_sweep.dof_type = angle_cfg["dof_type"] ?
+            angle_cfg["dof_type"].as<std::string>() : "";
+        trial.angle_sweep.shank_scale = angle_cfg["shank_scale"] ?
+            angle_cfg["shank_scale"].as<double>() : 0.7;
+        trial.angle_sweep.angle_step = angle_cfg["angle_step"] ?
+            angle_cfg["angle_step"].as<double>() : 1.0;
+
+        // For composite DOF, angle_max and num_steps are optional (sweep until IK fails)
+        if (!trial.angle_sweep.dof_type.empty()) {
+            trial.angle_sweep.angle_max = 0.0;  // Not used for composite DOF
+            trial.angle_sweep.num_steps = 0;    // Not used for composite DOF
+            LOG_INFO("Parsed composite DOF angle sweep: " << trial.name
+                      << " (joint: " << trial.angle_sweep.joint_name
+                      << ", dof_type: " << trial.angle_sweep.dof_type << ")");
+        } else {
+            trial.angle_sweep.angle_max = angle_cfg["angle_max"].as<double>() * M_PI / 180.0;
+            trial.angle_sweep.num_steps = angle_cfg["num_steps"].as<int>();
+            LOG_INFO("Parsed angle sweep trial: " << trial.name
+                      << " (joint: " << trial.angle_sweep.joint_name << ")");
+        }
+    } else {
+        // Parse force configuration (existing logic)
+        YAML::Node force_cfg = trial_node["force"];
+        trial.force_body_node = force_cfg["body_node"].as<std::string>();
+        std::vector<double> offset_vec = force_cfg["position_offset"].as<std::vector<double>>();
+        std::vector<double> dir_vec = force_cfg["direction"].as<std::vector<double>>();
+        trial.force_offset = Eigen::Vector3d(offset_vec[0], offset_vec[1], offset_vec[2]);
+        trial.force_direction = Eigen::Vector3d(dir_vec[0], dir_vec[1], dir_vec[2]);
+        trial.force_min = force_cfg["magnitude_min"].as<double>();
+        trial.force_max = force_cfg["magnitude_max"].as<double>();
+        trial.force_steps = force_cfg["magnitude_steps"].as<int>();
+        trial.settle_time = force_cfg["settle_time"].as<double>();
+
+        // Parse which joints to record (for data collection)
+        if (trial_node["recording"] && trial_node["recording"]["joints"]) {
+            trial.record_joints = trial_node["recording"]["joints"].as<std::vector<std::string>>();
+        }
+
+        LOG_INFO("Parsed force sweep trial: " << trial.name);
+    }
+
+    return trial;
+}
+
 void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
     if (!mExamSettingLoaded || !mCharacter) {
         LOG_ERROR("Cannot run trial: exam setting not loaded or character not available");
         return;
     }
-    
+
     if (mTrialRunning) {
         LOG_WARN("Trial already running, please wait for completion");
         return;
     }
-    
+
     try {
         // Load and parse trial YAML
         YAML::Node trial_node = YAML::LoadFile(trial_file_path);
-        
-        TrialConfig trial;
-        
-        // Parse trial configuration
-        trial.name = trial_node["name"].as<std::string>();
-        trial.description = trial_node["description"] ?
-            trial_node["description"].as<std::string>() : "";
-
-        // Parse mode (default: force_sweep for backward compatibility)
-        std::string mode_str = trial_node["mode"] ?
-            trial_node["mode"].as<std::string>() : "force_sweep";
-        if (mode_str == "angle_sweep") {
-            trial.mode = TrialMode::ANGLE_SWEEP;
-        } else {
-            trial.mode = TrialMode::FORCE_SWEEP;
-        }
-
-        // Parse pose (values in degrees, converted to radians)
-        YAML::Node pose_node = trial_node["pose"];
-        for (YAML::const_iterator it = pose_node.begin(); it != pose_node.end(); ++it) {
-            std::string joint_name = it->first.as<std::string>();
-            bool is_root = (joint_name == "Pelvis");
-
-            if (it->second.IsSequence()) {
-                std::vector<double> values = it->second.as<std::vector<double>>();
-                Eigen::VectorXd angles(values.size());
-                for (size_t i = 0; i < values.size(); ++i) {
-                    // For root joint: first 3 are rotations (convert), last 3 are translations (keep)
-                    // For other joints: all are rotations (convert)
-                    if (is_root && i >= 3) {
-                        angles[i] = values[i];  // Translation - keep as meters
-                    } else {
-                        angles[i] = values[i] * M_PI / 180.0;  // Rotation - degrees to radians
-                    }
-                }
-                trial.pose[joint_name] = angles;
-            } else {
-                Eigen::VectorXd angles(1);
-                angles[0] = it->second.as<double>() * M_PI / 180.0;  // Degrees to radians
-                trial.pose[joint_name] = angles;
-            }
-        }
-
-        // Parse mode-specific configuration
-        if (trial.mode == TrialMode::ANGLE_SWEEP) {
-            // Parse angle sweep configuration (angles in degrees, converted to radians)
-            YAML::Node angle_cfg = trial_node["angle_sweep"];
-            trial.angle_sweep.joint_name = angle_cfg["joint"].as<std::string>();
-            trial.angle_sweep.dof_index = angle_cfg["dof_index"] ?
-                angle_cfg["dof_index"].as<int>() : 0;
-            trial.angle_sweep.angle_min = angle_cfg["angle_min"].as<double>() * M_PI / 180.0;
-            trial.angle_sweep.angle_max = angle_cfg["angle_max"].as<double>() * M_PI / 180.0;
-            trial.angle_sweep.num_steps = angle_cfg["num_steps"].as<int>();
-
-            LOG_INFO("Loaded angle sweep trial: " << trial.name
-                      << " (joint: " << trial.angle_sweep.joint_name << ")");
-        } else {
-            // Parse force configuration (existing logic)
-            YAML::Node force_cfg = trial_node["force"];
-            trial.force_body_node = force_cfg["body_node"].as<std::string>();
-            std::vector<double> offset_vec = force_cfg["position_offset"].as<std::vector<double>>();
-            std::vector<double> dir_vec = force_cfg["direction"].as<std::vector<double>>();
-            trial.force_offset = Eigen::Vector3d(offset_vec[0], offset_vec[1], offset_vec[2]);
-            trial.force_direction = Eigen::Vector3d(dir_vec[0], dir_vec[1], dir_vec[2]);
-            trial.force_min = force_cfg["magnitude_min"].as<double>();
-            trial.force_max = force_cfg["magnitude_max"].as<double>();
-            trial.force_steps = force_cfg["magnitude_steps"].as<int>();
-            trial.settle_time = force_cfg["settle_time"].as<double>();
-
-            // Parse which joints to record (for data collection)
-            if (trial_node["recording"] && trial_node["recording"]["joints"]) {
-                trial.record_joints = trial_node["recording"]["joints"].as<std::vector<std::string>>();
-            }
-
-            LOG_INFO("Loaded force sweep trial: " << trial.name);
-        }
+        TrialConfig trial = parseTrialConfig(trial_node);
 
         // Create single-element trials vector and set current index
         mTrials.clear();
@@ -1188,10 +1278,20 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
     }
 }
 
-void PhysicalExam::collectAngleSweepData(double angle, int joint_index) {
+void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use_global_y) {
     AngleSweepDataPoint data;
     data.joint_angle = angle;
-    data.passive_torque_total = getPassiveTorqueJoint(joint_index);
+
+    auto skel = mCharacter->getSkeleton();
+    auto joint = skel->getJoint(joint_index);
+    data.passive_torque_total = use_global_y
+        ? getPassiveTorqueJointGlobalY(mCharacter, joint)
+        : getPassiveTorqueJoint(joint_index);
+
+    // Debug: check for NaN
+    if (std::isnan(data.passive_torque_total)) {
+        LOG_WARN("NaN detected in passive_torque_total at angle=" << angle << " rad, use_global_y=" << use_global_y);
+    }
     
     // Compute stiffness (dtau/dtheta) using backward difference
     size_t N = mAngleSweepData.size();
@@ -1236,10 +1336,12 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index) {
         auto std_skel = mStdCharacter->getSkeleton();
         auto main_skel = mCharacter->getSkeleton();
         auto main_joint = main_skel->getJoint(joint_index);
-        
-        // Compute passive torque for std character
-        std_data.passive_torque_total = getPassiveTorqueJoint_forCharacter(
-            mStdCharacter, std_skel->getJoint(main_joint->getName()));
+        auto std_joint = std_skel->getJoint(main_joint->getName());
+
+        // Compute passive torque for std character using same method as main character
+        std_data.passive_torque_total = use_global_y
+            ? getPassiveTorqueJointGlobalY(mStdCharacter, std_joint)
+            : getPassiveTorqueJoint_forCharacter(mStdCharacter, std_joint);
         
         // Compute stiffness for std
         size_t N_std = mStdAngleSweepData.size();
@@ -1412,36 +1514,110 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
     mAngleSweepData.clear();
     mStdAngleSweepData.clear();
 
-    // 5. Kinematic sweep loop (no physics settling - matches GUI sweep)
-    for (int step = 0; step <= trial.angle_sweep.num_steps; ++step) {
-        // Calculate target angle
-        double angle = trial.angle_sweep.angle_min +
-            (trial.angle_sweep.angle_max - trial.angle_sweep.angle_min) *
-            step / static_cast<double>(trial.angle_sweep.num_steps);
+    // 6. Kinematic sweep loop
+    if (trial.angle_sweep.dof_type == "abd_knee") {
+        // Composite DOF: sweep until IK fails (geometry constraint violated)
+        bool is_left = (trial.angle_sweep.joint_name.find("L") != std::string::npos);
+        int hip_joint_idx = static_cast<int>(joint->getJointIndexInSkeleton());
+        double angle_deg = trial.angle_sweep.angle_min * 180.0 / M_PI;  // Convert to degrees for IK
 
-        // Set swept joint to target angle
-        Eigen::VectorXd pos = joint->getPositions();
-        pos[trial.angle_sweep.dof_index] = angle;
-        setCharacterPose(joint->getName(), pos);
-
-        // Update muscle geometry (kinematic only - no physics step)
-        if (!mCharacter->getMuscles().empty()) {
-            mCharacter->getMuscleTuple();
+        // Get knee joint for setting knee angle
+        std::string knee_name = is_left ? "TibiaL" : "TibiaR";
+        auto knee_joint = skel->getJoint(knee_name);
+        if (!knee_joint) {
+            LOG_ERROR("Knee joint not found: " << knee_name);
+            return;
         }
-        if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
-            mStdCharacter->getMuscleTuple();
+        int knee_dof_idx = static_cast<int>(knee_joint->getIndexInSkeleton(0));
+        int hip_dof_start = static_cast<int>(joint->getIndexInSkeleton(0));
+
+        LOG_INFO("Starting abd_knee sweep from " << angle_deg << "° with step "
+                  << trial.angle_sweep.angle_step << "°");
+
+        while (true) {
+            // Compute IK pose for this abduction angle
+            auto ik_result = ContractureOptimizer::computeAbdKneePose(
+                skel, hip_joint_idx, angle_deg, is_left, trial.angle_sweep.shank_scale);
+
+            // Stop if IK failed (geometry constraint violated: |x| > d)
+            if (!ik_result.success) {
+                LOG_INFO("abd_knee sweep stopped at " << angle_deg << "° (IK limit reached)");
+                break;
+            }
+
+            // Apply hip axis-angle (3 DOFs)
+            Eigen::VectorXd pos = skel->getPositions();
+            pos.segment<3>(hip_dof_start) = ik_result.hip_positions;
+
+            // Apply knee angle
+            pos[knee_dof_idx] = ik_result.knee_angle;
+
+            // Set positions for main character
+            skel->setPositions(pos);
+
+            // Sync std character if exists
+            if (mStdCharacter) {
+                auto std_skel = mStdCharacter->getSkeleton();
+                auto std_joint = std_skel->getJoint(trial.angle_sweep.joint_name);
+                auto std_knee = std_skel->getJoint(knee_name);
+                if (std_joint && std_knee) {
+                    int std_hip_start = static_cast<int>(std_joint->getIndexInSkeleton(0));
+                    int std_knee_idx = static_cast<int>(std_knee->getIndexInSkeleton(0));
+                    Eigen::VectorXd std_pos = std_skel->getPositions();
+                    std_pos.segment<3>(std_hip_start) = ik_result.hip_positions;
+                    std_pos[std_knee_idx] = ik_result.knee_angle;
+                    std_skel->setPositions(std_pos);
+                }
+            }
+
+            // Update muscle geometry
+            if (!mCharacter->getMuscles().empty()) {
+                mCharacter->getMuscleTuple();
+            }
+            if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+                mStdCharacter->getMuscleTuple();
+            }
+
+            // Collect data point with global Y torque projection
+            double angle_rad = angle_deg * M_PI / 180.0;
+            collectAngleSweepData(angle_rad, mAngleSweepJointIdx, /*use_global_y=*/true);
+
+            angle_deg += trial.angle_sweep.angle_step;  // Increment by step size
         }
 
-        // Collect data point
-        collectAngleSweepData(angle, mAngleSweepJointIdx);
+        LOG_INFO("Collected " << mAngleSweepData.size() << " abd_knee sweep data points");
+    } else {
+        // Simple DOF: existing for-loop logic with num_steps
+        for (int step = 0; step <= trial.angle_sweep.num_steps; ++step) {
+            // Calculate target angle
+            double angle = trial.angle_sweep.angle_min +
+                (trial.angle_sweep.angle_max - trial.angle_sweep.angle_min) *
+                step / static_cast<double>(trial.angle_sweep.num_steps);
+
+            // Set swept joint to target angle
+            Eigen::VectorXd pos = joint->getPositions();
+            pos[trial.angle_sweep.dof_index] = angle;
+            setCharacterPose(joint->getName(), pos);
+
+            // Update muscle geometry (kinematic only - no physics step)
+            if (!mCharacter->getMuscles().empty()) {
+                mCharacter->getMuscleTuple();
+            }
+            if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+                mStdCharacter->getMuscleTuple();
+            }
+
+            // Collect data point
+            collectAngleSweepData(angle, mAngleSweepJointIdx);
+        }
+
+        LOG_INFO("Collected " << mAngleSweepData.size() << " angle sweep data points");
     }
 
-    LOG_INFO("Collected " << mAngleSweepData.size() << " angle sweep data points");
-
-    // 6. Append to exam HDF5
+    // 7. Append to exam HDF5
     appendTrialToHDF5(trial);
 
-    LOG_INFO("Angle sweep trial completed (" << trial.angle_sweep.num_steps + 1 << " steps)");
+    LOG_INFO("Angle sweep trial completed");
 }
 
 // ============================================================================
@@ -1762,6 +1938,11 @@ void PhysicalExam::runAllTrials() {
     if (!mExamSettingLoaded || mTrials.empty()) {
         LOG_ERROR("No exam setting loaded or no trials available");
         return;
+    }
+
+    // Initialize HDF5 output if needed
+    if (mExamOutputPath.empty()) {
+        initExamHDF5();
     }
 
     LOG_INFO("Running all " << mTrials.size() << " trials...");
@@ -2604,8 +2785,10 @@ void PhysicalExam::drawSaveMuscleConfigSection() {
     }
     filenameWithExt += extension;
 
-    std::string uriPath = std::string("@data/muscle/") + filenameWithExt;
-    std::string resolvedPath = rm::resolve(uriPath);
+    // For save destinations, resolve directory (not file) to avoid "not found" errors
+    std::string dirUri = "@data/muscle";
+    auto resolvedDir = rm::getManager().resolveDirCreate(dirUri);
+    std::string resolvedPath = (resolvedDir / filenameWithExt).string();
 
     // Save button (with debounce to prevent duplicate saves on double-click)
     if (ImGui::Button("Save##Muscle")) {
@@ -2685,8 +2868,10 @@ void PhysicalExam::drawSaveSkeletonConfigSection() {
     }
     filenameWithExt += extension;
 
-    std::string uriPath = std::string("@data/skeleton/") + filenameWithExt;
-    std::string resolvedPath = rm::resolve(uriPath);
+    // For save destinations, resolve directory (not file) to avoid "not found" errors
+    std::string dirUri = "@data/skeleton";
+    auto resolvedDir = rm::getManager().resolveDirCreate(dirUri);
+    std::string resolvedPath = (resolvedDir / filenameWithExt).string();
 
     // Save button (with debounce to prevent duplicate saves on double-click)
     if (ImGui::Button("Save##Skeleton")) {
@@ -4756,8 +4941,6 @@ void PhysicalExam::resetSkeleton() {
         return;
     }
 
-    LOG_INFO("[PhysicalExam] Resetting skeleton by reloading from XML...");
-
     // Store the actuator type before deletion
     ActuatorType actType = mCharacter->getActuatorType();
 
@@ -4767,12 +4950,8 @@ void PhysicalExam::resetSkeleton() {
     // FIRST: Ensure GPU has finished all pending rendering operations
     // This prevents GPU from accessing VBOs after we delete them
     glFinish();
-    LOG_INFO("[PhysicalExam] Synchronized with GPU (all operations completed)");
-
     // SECOND: Delete VBOs from GPU (now safe - GPU not using them)
     mShapeRenderer.clearCache();
-    LOG_INFO("[PhysicalExam] Cleared ShapeRenderer cache (deleted VBOs)");
-
     // THIRD: Remove skeleton from world (stops it from being rendered)
     if (mWorld) {
         mWorld->removeSkeleton(skel);
@@ -4782,7 +4961,6 @@ void PhysicalExam::resetSkeleton() {
     // FOURTH: Delete the character object
     delete mCharacter;
     mCharacter = nullptr;
-    LOG_INFO("[PhysicalExam] Deleted character object");
 
     // Reload character from stored XML paths
     if (mSkeletonPath.empty() || mMusclePath.empty()) {
@@ -4791,8 +4969,6 @@ void PhysicalExam::resetSkeleton() {
     }
 
     loadCharacter(mSkeletonPath, mMusclePath, actType);
-
-    LOG_INFO("[PhysicalExam] Skeleton reset complete");
 }
 
 void PhysicalExam::setPoseStanding() {
@@ -4811,8 +4987,6 @@ void PhysicalExam::setPoseStanding() {
         root_pos[4] = 0.98;  // Y position (height)
         setCharacterPose(root->getName(), root_pos);
     }
-
-    LOG_INFO("Pose: Standing");
 }
 
 void PhysicalExam::setPoseSupine() {
@@ -4833,8 +5007,6 @@ void PhysicalExam::setPoseSupine() {
         root_pos[4] = 0.1;  // Table height - index 4 is Y translation
         setCharacterPose(root->getName(), root_pos);
     }
-
-    LOG_INFO("Pose: Supine (laying on back)");
 }
 
 void PhysicalExam::setPoseProne() {
@@ -5648,6 +5820,13 @@ void PhysicalExam::renderMusclePlots() {
         // Use trial's angle sweep range
         angle_min = mTrials[mCurrentTrialIndex].angle_sweep.angle_min;
         angle_max = mTrials[mCurrentTrialIndex].angle_sweep.angle_max;
+
+        // For composite DOF (e.g., abd_knee), angle_max is not set in config
+        // Use actual data range instead
+        if (std::abs(angle_max - angle_min) < 1e-6 && !mAngleSweepData.empty()) {
+            angle_min = mAngleSweepData.front().joint_angle;
+            angle_max = mAngleSweepData.back().joint_angle;
+        }
     } else {
         // Fall back to mSweepConfig (for manual GUI sweeps)
         angle_min = mSweepConfig.angle_min;
