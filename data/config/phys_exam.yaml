@@ -1,16 +1,13 @@
-# Test Angle Sweep Trial
-# Simple exam config to test the angle sweep functionality
-
-name: "angle_sweep_test"
-description: "Test angle sweep trial implementation"
+name: "exam"
+description: "Physical examination"
 
 character:
   skeleton: "@data/skeleton/base.xml"
-  # skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
-  # skeleton: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
-  # muscle: "@pid:12964246/gait/pre/muscle/personalized.yaml"
-  # muscle: "@pid:30157774/gait/pre/muscle/personalized.yaml"
   muscle: "@data/muscle/base_vas.yaml"
+  # skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
+  # muscle: "@pid:12964246/gait/pre/muscle/personalized.yaml"
+  # skeleton: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
+  # muscle: "@pid:30157774/gait/pre/muscle/personalized.yaml"
   actuator: "mass_lower"
 
 std_character:
@@ -20,4 +17,4 @@ std_character:
   muscle: "@data/muscle/base_vas.yaml"
 
 trials:
-  - file: "@data/config/trials/femAbdd_k90_L.yaml"
+  # - file: "@data/config/rom/femAbdd_k90_L.yaml"

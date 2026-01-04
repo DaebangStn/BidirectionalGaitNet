@@ -34,7 +34,13 @@ struct ROMTrialConfig {
 
     // Single ROM measurement point
     double rom_angle = 0.0;    // ROM angle in degrees (from clinical data or manual)
-    double torque = 15.0;      // Observed passive torque at ROM limit (Nm)
+    double torque_cutoff = 15.0;  // Cutoff torque for determining ROM limit (Nm)
+
+    // Exam sweep parameters (for PhysicalExam angle sweeps)
+    double angle_min = -90.0;  // Sweep min angle in degrees
+    double angle_max = 90.0;   // Sweep max angle in degrees
+    int num_steps = 100;       // Number of sweep steps
+    double angle_step = 1.0;   // Step size for composite DOF (degrees)
 
     // Clinical data reference (for patient data linking)
     std::string cd_side;       // "left" or "right"

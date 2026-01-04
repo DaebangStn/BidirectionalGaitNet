@@ -3,20 +3,33 @@ description: "Right knee passive extension ROM with hip flexed 90 degrees"
 
 # 1. Base pose
 pose:
-  Pelvis: [-90, 0, 0, 0, 0.5, 0]
+  Pelvis: [-90, 0, 0, 0, 0.0, 0]
   FemurR: [-90, 0, 0]
   TibiaR: 0
   TalusR: [0, 0, 0]
+  FemurL: [0, 0, 0]
+  TibiaL: 0
+  TalusL: [0, 0, 0]
 
 # 2. Moving joint and DOF
 joint: "TibiaR"
 dof_index: 0
 
-# 3. Torque at ROM limit (Nm) - dummy value for now
-torque: 15.0
+# 3. Torque cutoff for ROM limit (Nm)
+torque_cutoff: -15.0
 
-# 4. Clinical data reference (ROM angle only)
+# 4. Exam sweep parameters (for PhysicalExam)
+exam:
+  alias: "knee/popliteal/right"
+  angle_min: -5
+  angle_max: 130
+  num_steps: 100
+
+# 5. Clinical data reference (ROM angle only)
 clinical_data:
   side: right
   joint: knee
   field: popliteal_bilateral
+
+# 6. Target muscle group for grid search initialization
+uniform_search_group: "knee_flexor_r"

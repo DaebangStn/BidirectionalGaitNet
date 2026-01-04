@@ -1,9 +1,12 @@
-name: "ankleDorsi_k90_L"
+name: "dorsi_k90_L"
 description: "Left ankle dorsiflexion ROM with knee flexed 90 degrees"
 
 # 1. Base pose
 pose:
   Pelvis: [0, 0, 0, 0, 0.0, 0]
+  FemurR: [0, 0, 0]
+  TibiaR: 0
+  TalusR: [0, 0, 0]
   FemurL: [-90, 0, 0]
   TibiaL: 90
   TalusL: [0, 0, 0]
@@ -12,15 +15,22 @@ pose:
 joint: "TalusL"
 dof_index: 0
 
-# 3. Torque at ROM limit (Nm) - dummy value for now
-torque: 15.0
+# 3. Torque cutoff for ROM limit (Nm)
+torque_cutoff: 5.0
 
-# 4. Clinical data reference (ROM angle only)
+# 4. Exam sweep parameters (for PhysicalExam)
+exam:
+  alias: "ankle/dorsiflexion_knee90/left"
+  angle_min: -50
+  angle_max: 0
+  num_steps: 100
+
+# 5. Clinical data reference (ROM angle only)
 clinical_data:
   side: left
   joint: ankle
   field: dorsiflexion_knee90_r2
   neg: true
 
-# 5. Target muscle group for grid search initialization
+# 6. Target muscle group for grid search initialization
 uniform_search_group: "plantarflexor_l"

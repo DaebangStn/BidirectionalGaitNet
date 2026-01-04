@@ -1,0 +1,36 @@
+name: "abd_k90_L"
+description: "Left hip abduction ROM test"
+
+# 1. Base pose
+pose:
+  Pelvis: [-90, 0, 0, 0, 0.0, 0]
+  FemurR: [0, 0, 0]
+  TibiaR: 0
+  TalusR: [0, 0, 0]
+  FemurL: [0, 0, 0]
+  TibiaL: 0
+  TalusL: [0, 0, 0]
+
+# 2. Moving joint and DOF
+joint: "FemurL"
+dof: abd_knee
+shank_scale: 0.5  # Scale factor for shank length in IK (for geometry constraint)
+
+# 3. Torque cutoff for ROM limit (Nm)
+torque_cutoff: 15.0
+
+# 4. Exam sweep parameters (for PhysicalExam)
+exam:
+  alias: "hip/abduction_knee90/left"
+  angle_min: 0
+  angle_step: 1.0
+  # No angle_max - sweep until IK fails (geometry constraint violated)
+
+# 5. Clinical data reference (ROM angle only)
+clinical_data:
+  side: left
+  joint: hip
+  field: abduction_flex90_r2
+
+# 6. Target muscle group for grid search initialization
+uniform_search_group: "hip_adductor_l"

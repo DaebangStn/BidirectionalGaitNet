@@ -321,11 +321,21 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
         config.is_composite_dof = false;
     }
 
-    // Load single torque value
-    config.torque = node["torque"].as<double>(15.0);
+    // Load torque cutoff value (renamed from torque)
+    config.torque_cutoff = node["torque_cutoff"].as<double>(
+        node["torque"].as<double>(15.0));  // Backward compat: try old "torque" key
 
     // ROM angle defaults to 0 - populated later from clinical data or manual input
     config.rom_angle = 0.0;
+
+    // Load exam sweep parameters (for PhysicalExam)
+    if (node["exam"]) {
+        auto exam = node["exam"];
+        config.angle_min = exam["angle_min"].as<double>(-90.0);
+        config.angle_max = exam["angle_max"].as<double>(90.0);
+        config.num_steps = exam["num_steps"].as<int>(100);
+        config.angle_step = exam["angle_step"].as<double>(1.0);
+    }
 
     // Load clinical_data reference
     if (node["clinical_data"]) {
@@ -895,7 +905,7 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
         point.joint_idx = joint_idx;
         point.joint_dof = config.dof_index;
         point.q = positions;
-        point.tau_obs = config.torque;
+        point.tau_obs = config.torque_cutoff;
         point.weight = 1.0;
 
         // Handle composite DOF types
@@ -1807,7 +1817,7 @@ ContractureOptimizer::PreOptimizationData ContractureOptimizer::preOptimization(
         trial_result.trial_name = rom_config.name;
         trial_result.joint = rom_config.joint;
         trial_result.dof_index = rom_config.dof_index;
-        trial_result.observed_torque = rom_config.torque;
+        trial_result.observed_torque = rom_config.torque_cutoff;
         trial_result.pose = pose.q;
 
         // Set pose and update muscle geometry

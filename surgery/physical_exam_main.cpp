@@ -63,8 +63,6 @@ int main(int argc, char** argv) {
             exam.runAllTrials();
             LOG_INFO("Headless mode completed.");
         } else {
-            LOG_INFO("Exam setting loaded. Starting in paused state.");
-            LOG_INFO("Use 'Start Next Trial' button to begin trials.");
             exam.startLoop();  // ViewerAppBase handles main loop
         }
     } catch (const std::exception& e) {
