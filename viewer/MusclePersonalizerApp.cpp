@@ -15,8 +15,7 @@ namespace fs = std::filesystem;
 
 MusclePersonalizerApp::MusclePersonalizerApp(const std::string& configPath)
     : ViewerAppBase("Muscle Personalizer", 1920, 1080),
-      mConfigPath(configPath),
-      mResultsPanelWidth(450)
+      mConfigPath(configPath)
 {
     // Adjust camera for muscle personalizer (slightly different defaults)
     mCamera.eye = Eigen::Vector3d(0.0, 0.0, 3.0);
@@ -126,21 +125,8 @@ void MusclePersonalizerApp::drawUI()
 
 void MusclePersonalizerApp::loadRenderConfigImpl()
 {
-    // Load muscle_personalizer section from render.yaml (Template Method hook)
     // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
-    try {
-        std::string renderResolved = rm::resolve("render.yaml");
-        YAML::Node renderConfig = YAML::LoadFile(renderResolved);
-
-        if (renderConfig["muscle_personalizer"]) {
-            auto mp = renderConfig["muscle_personalizer"];
-            if (mp["control_panel_width"]) mControlPanelWidth = mp["control_panel_width"].as<int>();
-            if (mp["results_panel_width"]) mResultsPanelWidth = mp["results_panel_width"].as<int>();
-        }
-    }
-    catch (const std::exception& e) {
-        LOG_ERROR("[MusclePersonalizer] Failed to load render.yaml: " << e.what());
-    }
+    // Uses inherited mControlPanelWidth and mPlotPanelWidth from geometry.control/plot
 
     // Load app-specific settings from muscle_personalizer.yaml
     try {
@@ -417,7 +403,7 @@ void MusclePersonalizerApp::drawLeftPanel()
 
 void MusclePersonalizerApp::drawRightPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(mResultsPanelWidth, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Data##Panel", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
@@ -1203,7 +1189,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 ImGui::BeginTooltip();
                 ImGui::Text("Description: %s", trial.description.c_str());
                 ImGui::Text("Joint: %s (DOF %d)", trial.joint.c_str(), trial.dof_index);
-                ImGui::Text("Torque: %.1f Nm", trial.torque);
+                ImGui::Text("Torque Cutoff: %.1f Nm", trial.torque_cutoff);
                 if (!trial.cd_side.empty()) {
                     ImGui::Separator();
                     ImGui::Text("Clinical Data: %s.%s.%s",
@@ -2380,7 +2366,17 @@ void MusclePersonalizerApp::scanROMConfigs()
                     trial.description = config["description"].as<std::string>("");
                     trial.joint = config["joint"].as<std::string>("");
                     trial.dof_index = config["dof_index"].as<int>(0);
-                    trial.torque = config["torque"].as<float>(15.0f);
+                    // Torque cutoff (backward compat: try old "torque" key)
+                    trial.torque_cutoff = config["torque_cutoff"].as<float>(
+                        config["torque"].as<float>(15.0f));
+
+                    // Parse exam section for sweep params
+                    if (config["exam"]) {
+                        auto exam = config["exam"];
+                        trial.angle_min = exam["angle_min"].as<float>(-90.0f);
+                        trial.angle_max = exam["angle_max"].as<float>(90.0f);
+                        trial.num_steps = exam["num_steps"].as<int>(100);
+                    }
 
                     // Parse clinical_data section
                     if (config["clinical_data"]) {
@@ -2424,9 +2420,14 @@ void MusclePersonalizerApp::applyDefaultROMValues()
         // Ankle
         {"dorsiflexion_knee0_r2", 10.0f},    // Dorsiflexion with knee extended
         {"dorsiflexion_knee90_r2", 20.0f},   // Dorsiflexion with knee flexed
+        {"plantarflexion", 50.0f},
         // Hip
+        {"extension_staheli", 15.0f},         // Hip extension
         {"abduction_ext_r2", 45.0f},         // Hip abduction
+        {"abduction_flex90_r2", 45.0f},         // Hip abduction
+        {"adduction_r2", 25.0f},         // Hip abduction
         {"internal_rotation", 45.0f},        // Hip internal rotation
+        {"external_rotation", 45.0f},        // Hip external rotation
         // Knee
         {"popliteal_bilateral", 70.0f},      // Popliteal angle (hamstring tightness)
     };

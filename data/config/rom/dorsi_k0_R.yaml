@@ -1,18 +1,18 @@
-name: "dorsi_k0_L"
-description: "Left ankle dorsiflexion ROM with knee extended"
+name: "dorsi_k0_R"
+description: "Right ankle dorsiflexion ROM with knee extended"
 
 # 1. Base pose
 pose:
   Pelvis: [0, 0, 0, 0, 0.0, 0]
-  FemurR: [0, 0, 0]
-  TibiaR: 0
-  TalusR: [0, 0, 0]
   FemurL: [0, 0, 0]
   TibiaL: 0
   TalusL: [0, 0, 0]
+  FemurR: [0, 0, 0]
+  TibiaR: 0
+  TalusR: [0, 0, 0]
 
 # 2. Moving joint and DOF
-joint: "TalusL"
+joint: "TalusR"
 dof_index: 0
 
 # 3. Torque cutoff for ROM limit (Nm)
@@ -20,17 +20,18 @@ torque_cutoff: 5.0
 
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:
-  alias: "ankle/dorsiflexion_knee0/left"
+  alias: "ankle/dorsiflexion_knee0/right"
   angle_min: -50
   angle_max: 0
   num_steps: 100
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
-  side: left
+  side: right
   joint: ankle
   field: dorsiflexion_knee0_r2
   neg: true
 
 # 6. Target muscle group for grid search initialization
-uniform_search_group: "plantarflexor_l"
+uniform_search_group: "plantarflexor_r"
+

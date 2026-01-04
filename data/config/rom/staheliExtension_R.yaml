@@ -1,9 +1,9 @@
-name: "dorsi_k0_L"
-description: "Left ankle dorsiflexion ROM with knee extended"
+name: "staheliExtension_R"
+description: "Right hip extension Staheli test"
 
 # 1. Base pose
 pose:
-  Pelvis: [0, 0, 0, 0, 0.0, 0]
+  Pelvis: [90, 0, 0, 0, 0.0, 0]
   FemurR: [0, 0, 0]
   TibiaR: 0
   TalusR: [0, 0, 0]
@@ -12,25 +12,26 @@ pose:
   TalusL: [0, 0, 0]
 
 # 2. Moving joint and DOF
-joint: "TalusL"
+joint: "FemurR"
 dof_index: 0
 
 # 3. Torque cutoff for ROM limit (Nm)
-torque_cutoff: 5.0
+torque_cutoff: 15.0
 
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:
-  alias: "ankle/dorsiflexion_knee0/left"
-  angle_min: -50
-  angle_max: 0
+  alias: "hip/staheli_extension/right"
+  angle_min: -40
+  angle_max: 10
   num_steps: 100
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
-  side: left
-  joint: ankle
-  field: dorsiflexion_knee0_r2
+  side: right
+  joint: hip
+  field: extension_staheli
   neg: true
-
+  
 # 6. Target muscle group for grid search initialization
-uniform_search_group: "plantarflexor_l"
+uniform_search_group: "hip_flexor_r"
+  

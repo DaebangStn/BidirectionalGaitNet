@@ -1,0 +1,34 @@
+name: "extRot_R"
+description: "Right hip external rotation ROM test"
+
+# 1. Base pose
+pose:
+  Pelvis: [90, 0, 0, 0, 0.0, 0]
+  FemurR: [0, 0, 0]
+  TibiaR: 90
+  TalusR: [0, 0, 0]
+  FemurL: [0, 0, 0]
+  TibiaL: 0
+  TalusL: [0, 0, 0]
+
+# 2. Moving joint and DOF
+joint: "FemurR"
+dof_index: 1
+
+# 3. Torque cutoff for ROM limit (Nm)
+torque_cutoff: 15.0
+
+# 4. Exam sweep parameters (for PhysicalExam)
+exam:
+  alias: "hip/external_rotation/right"
+  angle_min: -90
+  angle_max: 0
+  num_steps: 100
+
+# 5. Clinical data reference (ROM angle only)
+clinical_data:
+  side: right
+  joint: hip
+  field: external_rotation
+
+uniform_search_group: "hip_medial_rotator_r"

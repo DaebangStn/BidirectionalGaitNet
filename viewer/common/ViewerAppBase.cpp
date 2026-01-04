@@ -342,9 +342,7 @@ void ViewerAppBase::resize(int width, int height)
 
 void ViewerAppBase::keyPress(int key, int scancode, int action, int mods)
 {
-    // Skip if ImGui wants keyboard input
-    if (ImGui::GetIO().WantCaptureKeyboard) return;
-
+    // Note: ImGui keyboard guard is in keyCallback (static callback)
     if (action == GLFW_PRESS) {
         switch (key) {
             case GLFW_KEY_1:
@@ -415,6 +413,9 @@ void ViewerAppBase::scrollCallback(GLFWwindow* window, double xoffset, double yo
 
 void ViewerAppBase::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
+    // Skip if ImGui wants keyboard input (protects all derived classes)
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
+
     auto* app = static_cast<ViewerAppBase*>(glfwGetWindowUserPointer(window));
     if (app) app->keyPress(key, scancode, action, mods);
 }

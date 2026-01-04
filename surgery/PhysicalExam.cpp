@@ -5,6 +5,7 @@
 #include "GLfunctions.h"
 #include "SurgeryScript.h"
 #include "optimizer/ContractureOptimizer.h"
+#include "common/imgui_common.h"
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <iostream>
@@ -38,10 +39,6 @@ constexpr double BED_POSITION_Y = 0.60; // Elevation above ground: 0.60m
 PhysicalExam::PhysicalExam(int width, int height)
     : ViewerAppBase("Muscle Surgery", width, height)  // Base class handles GLFW/ImGui
     , SurgeryExecutor("physical_exam")
-    , mControlPanelWidth(250)
-    , mPlotPanelWidth(350)
-    , mPhysicalExamControlPanelWidth(400)
-    , mPhysicalExamDataPanelWidth(400)
     , mForceMagnitude(0.0)
     , mForceX(0.0f)
     , mForceY(1.0f)
@@ -195,25 +192,8 @@ PhysicalExam::~PhysicalExam() {
 }
 
 void PhysicalExam::loadRenderConfigImpl() {
-    // Load physical_exam section from render.yaml (Template Method hook)
     // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
-    try {
-        std::string resolved_path = rm::resolve("render.yaml");
-        YAML::Node config = YAML::LoadFile(resolved_path);
-
-        // Load physical_exam panel widths
-        if (config["physical_exam"]) {
-            if (config["physical_exam"]["control_panel_width"])
-                mPhysicalExamControlPanelWidth = config["physical_exam"]["control_panel_width"].as<int>();
-            if (config["physical_exam"]["data_panel_width"])
-                mPhysicalExamDataPanelWidth = config["physical_exam"]["data_panel_width"].as<int>();
-
-            LOG_INFO("[PhysicalExam] Loaded config - Control: " << mPhysicalExamControlPanelWidth
-                     << ", Data: " << mPhysicalExamDataPanelWidth);
-        }
-    } catch (const std::exception& e) {
-        LOG_WARN("[PhysicalExam] Could not load render.yaml: " << e.what());
-    }
+    // Uses inherited mControlPanelWidth and mPlotPanelWidth from geometry.control/plot
 }
 
 void PhysicalExam::onInitialize() {
@@ -304,8 +284,6 @@ void PhysicalExam::onInitialize() {
     // Initialize skeleton/muscle browse lists
     scanSkeletonFilesForBrowse();
     scanMuscleFilesForBrowse();
-
-    LOG_INFO("Physical Examination initialized");
 }
 
 void PhysicalExam::onFrameStart() {
@@ -338,6 +316,34 @@ void PhysicalExam::onFrameStart() {
             }
             mSweepRunning = false;
             LOG_INFO("Sweep completed. Collected " << mAngleSweepData.size() << " data points");
+
+            // Add GUI sweep results to trial buffer for visualization
+            if (!mAngleSweepData.empty()) {
+                TrialDataBuffer buffer;
+                buffer.trial_name = mCurrentSweepName;
+                buffer.trial_description = "Manual GUI sweep";
+                buffer.timestamp = std::chrono::system_clock::now();
+                buffer.angle_sweep_data = mAngleSweepData;
+                buffer.std_angle_sweep_data = mStdAngleSweepData;
+                buffer.tracked_muscles = mAngleSweepTrackedMuscles;
+                buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+                // Convert JointSweepConfig to AngleSweepTrialConfig
+                buffer.config.joint_name = joint->getName();
+                buffer.config.dof_index = mSweepConfig.dof_index;
+                buffer.config.angle_min = mSweepConfig.angle_min;
+                buffer.config.angle_max = mSweepConfig.angle_max;
+                buffer.config.num_steps = mSweepConfig.num_steps;
+                // torque_cutoff uses default (15.0) for GUI sweep
+                buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
+                buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
+                if (!mStdAngleSweepData.empty()) {
+                    buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+                }
+                buffer.base_pose = mCharacter->getSkeleton()->getPositions();  // Store full skeleton pose
+                addTrialToBuffer(buffer);
+                // Select the newly added buffer
+                mSelectedBufferIndex = static_cast<int>(mTrialBuffers.size()) - 1;
+            }
         }
 
         if (glfwGetKey(mWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
@@ -526,8 +532,6 @@ void PhysicalExam::applyPosePreset(const std::map<std::string, Eigen::VectorXd>&
 
     // Store as initial pose for reset
     mInitialPose = joint_angles;
-
-    LOG_INFO("Pose preset applied");
 }
 
 void PhysicalExam::applyForce(const std::string& body_node,
@@ -833,12 +837,12 @@ void PhysicalExam::scanTrialFiles() {
     
     mAvailableTrialFiles.clear();
     
-    // Resolve the trials directory URI using resolveDir for directories
-    std::string trials_dir_uri = "@data/config/trials";
-    std::filesystem::path resolved_path = rm::getManager().resolveDir(trials_dir_uri);
+    // Resolve the ROM config directory URI using resolveDir for directories
+    std::string rom_dir_uri = "@data/config/rom";
+    std::filesystem::path resolved_path = rm::getManager().resolveDir(rom_dir_uri);
     
     if (resolved_path.empty() || !fs::exists(resolved_path) || !fs::is_directory(resolved_path)) {
-        LOG_WARN("Trial directory not found: " << trials_dir_uri);
+        LOG_WARN("ROM config directory not found: " << rom_dir_uri);
         return;
     }
     
@@ -876,7 +880,7 @@ void PhysicalExam::scanTrialFiles() {
                   return a.name < b.name;
               });
     
-    LOG_INFO("Scanned " << mAvailableTrialFiles.size() << " trial file(s) from " << resolved_dir);
+    LOG_INFO("Scanned " << mAvailableTrialFiles.size() << " ROM config file(s) from " << resolved_dir);
 }
 
 TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
@@ -886,15 +890,6 @@ TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
     trial.name = trial_node["name"].as<std::string>();
     trial.description = trial_node["description"] ?
         trial_node["description"].as<std::string>() : "";
-
-    // Parse mode (default: force_sweep for backward compatibility)
-    std::string mode_str = trial_node["mode"] ?
-        trial_node["mode"].as<std::string>() : "force_sweep";
-    if (mode_str == "angle_sweep") {
-        trial.mode = TrialMode::ANGLE_SWEEP;
-    } else {
-        trial.mode = TrialMode::FORCE_SWEEP;
-    }
 
     // Parse pose (values in degrees, converted to radians)
     YAML::Node pose_node = trial_node["pose"];
@@ -922,38 +917,62 @@ TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
         }
     }
 
-    // Parse mode-specific configuration
-    if (trial.mode == TrialMode::ANGLE_SWEEP) {
-        // Parse angle sweep configuration (angles in degrees, converted to radians)
-        YAML::Node angle_cfg = trial_node["angle_sweep"];
-        trial.angle_sweep.joint_name = angle_cfg["joint"].as<std::string>();
-        trial.angle_sweep.dof_index = angle_cfg["dof_index"] ?
-            angle_cfg["dof_index"].as<int>() : 0;
-        trial.angle_sweep.angle_min = angle_cfg["angle_min"].as<double>() * M_PI / 180.0;
+    // Detect format: unified ROM format vs old trial format
+    // Unified ROM format has top-level "joint" and "exam" section
+    // Old format has "mode" and "angle_sweep" or "force" section
+    bool is_unified_format = trial_node["joint"] && trial_node["exam"];
 
-        // Composite DOF fields (e.g., abd_knee)
-        trial.angle_sweep.dof_type = angle_cfg["dof_type"] ?
-            angle_cfg["dof_type"].as<std::string>() : "";
-        trial.angle_sweep.shank_scale = angle_cfg["shank_scale"] ?
-            angle_cfg["shank_scale"].as<double>() : 0.7;
-        trial.angle_sweep.angle_step = angle_cfg["angle_step"] ?
-            angle_cfg["angle_step"].as<double>() : 1.0;
+    if (is_unified_format) {
+        // Parse unified ROM config format
+        trial.mode = TrialMode::ANGLE_SWEEP;
 
-        // For composite DOF, angle_max and num_steps are optional (sweep until IK fails)
-        if (!trial.angle_sweep.dof_type.empty()) {
-            trial.angle_sweep.angle_max = 0.0;  // Not used for composite DOF
-            trial.angle_sweep.num_steps = 0;    // Not used for composite DOF
-            LOG_INFO("Parsed composite DOF angle sweep: " << trial.name
-                      << " (joint: " << trial.angle_sweep.joint_name
-                      << ", dof_type: " << trial.angle_sweep.dof_type << ")");
+        // Parse top-level joint and DOF
+        trial.angle_sweep.joint_name = trial_node["joint"].as<std::string>();
+
+        // Handle dof_index or dof (for composite DOF like abd_knee)
+        if (trial_node["dof_index"]) {
+            trial.angle_sweep.dof_index = trial_node["dof_index"].as<int>();
+            trial.angle_sweep.dof_type = "";  // Simple DOF
+        } else if (trial_node["dof"]) {
+            // Composite DOF (e.g., "abd_knee")
+            trial.angle_sweep.dof_type = trial_node["dof"].as<std::string>();
+            trial.angle_sweep.dof_index = 0;  // Not used for composite DOF
         } else {
-            trial.angle_sweep.angle_max = angle_cfg["angle_max"].as<double>() * M_PI / 180.0;
-            trial.angle_sweep.num_steps = angle_cfg["num_steps"].as<int>();
-            LOG_INFO("Parsed angle sweep trial: " << trial.name
-                      << " (joint: " << trial.angle_sweep.joint_name << ")");
+            trial.angle_sweep.dof_index = 0;  // Default
+            trial.angle_sweep.dof_type = "";
         }
-    } else {
-        // Parse force configuration (existing logic)
+
+        // Parse exam section for sweep parameters
+        YAML::Node exam_node = trial_node["exam"];
+        trial.angle_sweep.angle_min = exam_node["angle_min"].as<double>(-90.0) * M_PI / 180.0;
+        trial.angle_sweep.angle_max = exam_node["angle_max"].as<double>(90.0) * M_PI / 180.0;
+        trial.angle_sweep.num_steps = exam_node["num_steps"].as<int>(100);
+        trial.angle_sweep.angle_step = exam_node["angle_step"].as<double>(1.0);
+        trial.angle_sweep.shank_scale = exam_node["shank_scale"].as<double>(0.7);
+        if (exam_node["alias"]) {
+            trial.angle_sweep.alias = exam_node["alias"].as<std::string>();
+        }
+
+        // Parse torque_cutoff (with backward compat for old "torque" key)
+        trial.torque_cutoff = trial_node["torque_cutoff"].as<double>(
+            trial_node["torque"].as<double>(15.0));
+
+        // For composite DOF, num_steps is not used (sweep until IK fails)
+        if (!trial.angle_sweep.dof_type.empty()) {
+            trial.angle_sweep.num_steps = 0;
+            LOG_INFO("Parsed ROM config (composite DOF): " << trial.name
+                      << " (joint: " << trial.angle_sweep.joint_name
+                      << ", dof: " << trial.angle_sweep.dof_type
+                      << ", torque_cutoff: " << trial.torque_cutoff << " Nm)");
+        } else {
+            LOG_INFO("Parsed ROM config: " << trial.name
+                      << " (joint: " << trial.angle_sweep.joint_name
+                      << ", dof_index: " << trial.angle_sweep.dof_index
+                      << ", torque_cutoff: " << trial.torque_cutoff << " Nm)");
+        }
+    } else if (trial_node["force"]) {
+        // Parse force configuration (legacy format)
+        trial.mode = TrialMode::FORCE_SWEEP;
         YAML::Node force_cfg = trial_node["force"];
         trial.force_body_node = force_cfg["body_node"].as<std::string>();
         std::vector<double> offset_vec = force_cfg["position_offset"].as<std::vector<double>>();
@@ -971,6 +990,9 @@ TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
         }
 
         LOG_INFO("Parsed force sweep trial: " << trial.name);
+    } else {
+        // Unknown format - log warning
+        LOG_WARN("Unknown trial config format for: " << trial.name);
     }
 
     return trial;
@@ -1007,10 +1029,31 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
         
         // Run the trial
         runCurrentTrial();
-        
+
+        // Buffer the trial results for visualization
+        if (!mAngleSweepData.empty() && trial.mode == TrialMode::ANGLE_SWEEP) {
+            TrialDataBuffer buffer;
+            buffer.trial_name = trial.name;
+            buffer.trial_description = trial.description;
+            buffer.alias = trial.angle_sweep.alias;
+            buffer.timestamp = std::chrono::system_clock::now();
+            buffer.angle_sweep_data = mAngleSweepData;
+            buffer.std_angle_sweep_data = mStdAngleSweepData;
+            buffer.tracked_muscles = mAngleSweepTrackedMuscles;
+            buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+            buffer.config = trial.angle_sweep;
+            buffer.torque_cutoff = trial.torque_cutoff;
+            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
+            buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
+            buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+            buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+            addTrialToBuffer(buffer);
+            LOG_INFO("Trial '" << trial.name << "' buffered for visualization");
+        }
+
         mTrialRunning = false;
         LOG_INFO("Trial completed. Results saved to: " << mExamOutputPath);
-        
+
     } catch (const std::exception& e) {
         LOG_ERROR("Failed to load and run trial from " << trial_file_path << ": " << e.what());
         mTrialRunning = false;
@@ -1038,10 +1081,30 @@ void PhysicalExam::startNextTrial() {
     mTrialRunning = true;
     mCurrentForceStep = 0;
     mRecordedData.clear();
-    
+
     // Run the trial
     runCurrentTrial();
-    
+
+    // Buffer the trial results for visualization
+    const TrialConfig& trial = mTrials[mCurrentTrialIndex];
+    if (!mAngleSweepData.empty() && trial.mode == TrialMode::ANGLE_SWEEP) {
+        TrialDataBuffer buffer;
+        buffer.trial_name = trial.name;
+        buffer.trial_description = trial.description;
+        buffer.alias = trial.angle_sweep.alias;
+        buffer.timestamp = std::chrono::system_clock::now();
+        buffer.angle_sweep_data = mAngleSweepData;
+        buffer.std_angle_sweep_data = mStdAngleSweepData;
+        buffer.tracked_muscles = mAngleSweepTrackedMuscles;
+        buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+        buffer.config = trial.angle_sweep;
+        buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
+        buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+        buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+        addTrialToBuffer(buffer);
+        LOG_INFO("Trial '" << trial.name << "' buffered for visualization");
+    }
+
     mTrialRunning = false;
     LOG_INFO("Trial completed. Results saved to: " << mExamOutputPath);
 }
@@ -1093,8 +1156,8 @@ void PhysicalExam::runCurrentTrial() {
         mRecordedData.push_back(data);
     }
 
-    // Append to exam HDF5
-    appendTrialToHDF5(trial);
+    // Disabled: use manual export button instead
+    // appendTrialToHDF5(trial);
 }
 
 void PhysicalExam::runExamination(const std::string& config_path) {
@@ -1254,9 +1317,6 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
         }
     }
 
-    LOG_INFO("Angle sweep: Tracking " << mAngleSweepTrackedMuscles.size()
-              << " muscles crossing joint " << joint_name);
-
     // Setup standard character muscles
     if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
         mStdAngleSweepTrackedMuscles.clear();
@@ -1272,8 +1332,6 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
                     mStdAngleSweepTrackedMuscles.push_back(muscle->GetName());
                 }
             }
-            LOG_INFO("Standard character: " << mStdAngleSweepTrackedMuscles.size()
-                      << " muscles crossing joint " << joint_name);
         }
     }
 }
@@ -1460,6 +1518,34 @@ ROMMetrics PhysicalExam::computeROMMetrics(
     return metrics;
 }
 
+std::vector<double> PhysicalExam::computeCutoffAngles(
+    const std::vector<AngleSweepDataPoint>& data,
+    double torque_cutoff) const {
+
+    std::vector<double> crossings;
+    if (data.size() < 2) return crossings;
+
+    for (size_t i = 1; i < data.size(); ++i) {
+        double tau0 = data[i-1].passive_torque_total;
+        double tau1 = data[i].passive_torque_total;
+        double ang0 = data[i-1].joint_angle;
+        double ang1 = data[i].joint_angle;
+
+        // Check if cutoff is crossed between points (signed)
+        // Crossing occurs if (tau0 - cutoff) and (tau1 - cutoff) have opposite signs
+        double d0 = tau0 - torque_cutoff;
+        double d1 = tau1 - torque_cutoff;
+
+        if (d0 * d1 < 0) {  // Sign change = crossing
+            // Linear interpolation: find t where tau = cutoff
+            double t = d0 / (d0 - d1);
+            double crossing_angle = ang0 + t * (ang1 - ang0);
+            crossings.push_back(crossing_angle * 180.0 / M_PI);  // degrees
+        }
+    }
+    return crossings;
+}
+
 std::vector<double> PhysicalExam::normalizeXAxis(
     const std::vector<double>& x_data_deg,
     double rom_min_deg, double rom_max_deg) const {
@@ -1488,7 +1574,7 @@ std::vector<double> PhysicalExam::normalizeXAxis(
 }
 
 void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
-    LOG_INFO("Running angle sweep trial: " << trial.name);
+    LOG_VERBOSE("Running angle sweep trial: " << trial.name);
 
     // Set current sweep name for plot titles
     mCurrentSweepName = trial.name;
@@ -1555,18 +1641,26 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
             // Set positions for main character
             skel->setPositions(pos);
 
-            // Sync std character if exists
+            // Compute IK independently for std character if exists
             if (mStdCharacter) {
                 auto std_skel = mStdCharacter->getSkeleton();
                 auto std_joint = std_skel->getJoint(trial.angle_sweep.joint_name);
                 auto std_knee = std_skel->getJoint(knee_name);
                 if (std_joint && std_knee) {
+                    int std_hip_idx = static_cast<int>(std_skel->getIndexOf(std_joint));
                     int std_hip_start = static_cast<int>(std_joint->getIndexInSkeleton(0));
                     int std_knee_idx = static_cast<int>(std_knee->getIndexInSkeleton(0));
-                    Eigen::VectorXd std_pos = std_skel->getPositions();
-                    std_pos.segment<3>(std_hip_start) = ik_result.hip_positions;
-                    std_pos[std_knee_idx] = ik_result.knee_angle;
-                    std_skel->setPositions(std_pos);
+
+                    // Compute IK independently for std character
+                    auto std_ik_result = ContractureOptimizer::computeAbdKneePose(
+                        std_skel, std_hip_idx, angle_deg, is_left, trial.angle_sweep.shank_scale);
+
+                    if (std_ik_result.success) {
+                        Eigen::VectorXd std_pos = std_skel->getPositions();
+                        std_pos.segment<3>(std_hip_start) = std_ik_result.hip_positions;
+                        std_pos[std_knee_idx] = std_ik_result.knee_angle;
+                        std_skel->setPositions(std_pos);
+                    }
                 }
             }
 
@@ -1585,7 +1679,7 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
             angle_deg += trial.angle_sweep.angle_step;  // Increment by step size
         }
 
-        LOG_INFO("Collected " << mAngleSweepData.size() << " abd_knee sweep data points");
+        LOG_VERBOSE("Collected " << mAngleSweepData.size() << " abd_knee sweep data points");
     } else {
         // Simple DOF: existing for-loop logic with num_steps
         for (int step = 0; step <= trial.angle_sweep.num_steps; ++step) {
@@ -1611,13 +1705,11 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
             collectAngleSweepData(angle, mAngleSweepJointIdx);
         }
 
-        LOG_INFO("Collected " << mAngleSweepData.size() << " angle sweep data points");
+        LOG_VERBOSE("Collected " << mAngleSweepData.size() << " angle sweep data points");
     }
 
-    // 7. Append to exam HDF5
-    appendTrialToHDF5(trial);
-
-    LOG_INFO("Angle sweep trial completed");
+    // 7. Disabled: use manual export button instead
+    // appendTrialToHDF5(trial);
 }
 
 // ============================================================================
@@ -1934,6 +2026,81 @@ void PhysicalExam::appendTrialToHDF5(const TrialConfig& trial) {
     }
 }
 
+void PhysicalExam::exportTrialBuffersToHDF5() {
+    if (mTrialBuffers.empty()) {
+        LOG_WARN("No trial buffers to export");
+        return;
+    }
+
+    // Generate output path with timestamp
+    std::string outputDir = mOutputDir.empty() ? "./results" : mOutputDir;
+    std::filesystem::create_directories(outputDir);
+
+    auto now = std::chrono::system_clock::now();
+    auto time_t_val = std::chrono::system_clock::to_time_t(now);
+    std::tm* tm = std::localtime(&time_t_val);
+    char timeBuf[32];
+    std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", tm);
+
+    std::string outputPath = outputDir + "/trial_buffers_" + timeBuf + ".h5";
+
+    try {
+        // Create HDF5 file
+        H5::H5File file(outputPath, H5F_ACC_TRUNC);
+        H5::DataSpace scalar(H5S_SCALAR);
+        H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+
+        // Write root-level attributes
+        std::string timestamp(timeBuf);
+        H5::Attribute timeAttr = file.createAttribute("timestamp", strType, scalar);
+        timeAttr.write(strType, timestamp);
+
+        int numTrials = static_cast<int>(mTrialBuffers.size());
+        H5::Attribute numAttr = file.createAttribute("num_trials", H5::PredType::NATIVE_INT, scalar);
+        numAttr.write(H5::PredType::NATIVE_INT, &numTrials);
+
+        // Export each buffer
+        for (const auto& buffer : mTrialBuffers) {
+            // Create trial group
+            H5::Group trialGroup = file.createGroup("/" + buffer.trial_name);
+
+            // Write trial attributes
+            H5::Attribute modeAttr = trialGroup.createAttribute("trial_mode", strType, scalar);
+            modeAttr.write(strType, std::string("angle_sweep"));
+
+            H5::Attribute descAttr = trialGroup.createAttribute("description", strType, scalar);
+            descAttr.write(strType, buffer.trial_description);
+
+            // Create TrialConfig from buffer.config for writeAngleSweepData
+            TrialConfig trial;
+            trial.name = buffer.trial_name;
+            trial.description = buffer.trial_description;
+            trial.mode = TrialMode::ANGLE_SWEEP;
+            trial.angle_sweep = buffer.config;
+
+            // Write main character data
+            if (!buffer.angle_sweep_data.empty()) {
+                H5::Group mainGroup = trialGroup.createGroup("main_character");
+                writeAngleSweepDataForCharacter(mainGroup, trial,
+                    buffer.angle_sweep_data, buffer.tracked_muscles);
+            }
+
+            // Write standard character data
+            if (!buffer.std_angle_sweep_data.empty()) {
+                H5::Group stdGroup = trialGroup.createGroup("std_character");
+                writeAngleSweepDataForCharacter(stdGroup, trial,
+                    buffer.std_angle_sweep_data, buffer.std_tracked_muscles);
+            }
+        }
+
+        file.close();
+        LOG_INFO("Exported " << mTrialBuffers.size() << " trial buffers to: " << outputPath);
+
+    } catch (const H5::Exception& e) {
+        LOG_ERROR("HDF5 error exporting buffers: " << e.getCDetailMsg());
+    }
+}
+
 void PhysicalExam::runAllTrials() {
     if (!mExamSettingLoaded || mTrials.empty()) {
         LOG_ERROR("No exam setting loaded or no trials available");
@@ -1967,7 +2134,7 @@ void PhysicalExam::runAllTrials() {
 void PhysicalExam::drawLeftPanel() {
     // Left panel - matches GLFWApp layout
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(mPhysicalExamControlPanelWidth, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Controls##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     if (ImGui::BeginTabBar("LeftPanelTabs")) {
@@ -1976,13 +2143,13 @@ void PhysicalExam::drawLeftPanel() {
             drawClinicalDataSection();
             drawCharacterLoadSection();
             drawPosePresetsSection();
+            drawJointControlSection();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Exam")) {
             ImGui::BeginChild("ExamScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             drawForceApplicationSection();
-            drawJointControlSection();
             drawJointAngleSweepSection();
             drawTrialManagementSection();
             ImGui::EndChild();
@@ -2010,7 +2177,7 @@ void PhysicalExam::drawLeftPanel() {
 
 void PhysicalExam::drawRightPanel() {
     // Right panel - matches GLFWApp layout
-    ImGui::SetNextWindowSize(ImVec2(mPhysicalExamDataPanelWidth, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Visualization & Data", nullptr,
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0),
@@ -2093,9 +2260,143 @@ void PhysicalExam::drawBasicTabContent() {
 }
 
 void PhysicalExam::drawSweepTabContent() {
+    // ========================================================================
+    // Trial Buffer Selection Section
+    // ========================================================================
+    if (mTrialBuffers.empty()) {
+        ImGui::TextDisabled("No trial data buffered");
+        ImGui::TextWrapped("Run trials from the Trial Management section to generate data");
+        return;
+    }
+
+    if (collapsingHeaderWithControls("Trial Buffer Selection")) {
+        ImGui::Indent();
+
+        // Filter input
+        static char bufferFilterText[256] = "";
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##BufferFilter", "Filter buffers...", bufferFilterText, sizeof(bufferFilterText));
+
+        // Build filtered items for ListBox
+        std::vector<std::string> buffer_labels;
+        std::vector<int> filteredIndices;  // Map filtered index -> original index
+        std::string filterLower = bufferFilterText;
+        std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+
+        for (size_t i = 0; i < mTrialBuffers.size(); ++i) {
+            const auto& buf = mTrialBuffers[i];
+
+            // Check filter match (case-insensitive)
+            if (!filterLower.empty()) {
+                std::string nameLower = buf.trial_name;
+                std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+                if (nameLower.find(filterLower) == std::string::npos) {
+                    continue;  // Skip non-matching items
+                }
+            }
+
+            // Format: "[index] trial_name (ROM angle°)"
+            std::ostringstream oss;
+            oss << "[" << i << "] " << buf.trial_name << " (";
+            if (!buf.cutoff_angles.empty()) {
+                oss << std::fixed << std::setprecision(1) << buf.cutoff_angles[0] << "°";
+            } else {
+                oss << "N/A";
+            }
+            oss << ")";
+            buffer_labels.push_back(oss.str());
+            filteredIndices.push_back(static_cast<int>(i));
+        }
+
+        // Convert to const char* array for ImGui
+        std::vector<const char*> items;
+        for (const auto& label : buffer_labels) {
+            items.push_back(label.c_str());
+        }
+
+        // Find current selection in filtered list
+        int filteredSelection = -1;
+        for (size_t i = 0; i < filteredIndices.size(); ++i) {
+            if (filteredIndices[i] == mSelectedBufferIndex) {
+                filteredSelection = static_cast<int>(i);
+                break;
+            }
+        }
+
+        // ListBox for buffer selection
+        ImGui::Text("Buffered Trials (%zu / %zu):", filteredIndices.size(), mTrialBuffers.size());
+        int prev_filtered_selection = filteredSelection;
+        if (ImGui::ListBox("##TrialBuffers", &filteredSelection,
+                           items.data(), static_cast<int>(items.size()),
+                           std::min(3, static_cast<int>(items.size())))) {
+            // Selection changed - map back to original index
+            if (filteredSelection != prev_filtered_selection && filteredSelection >= 0 &&
+                filteredSelection < static_cast<int>(filteredIndices.size())) {
+                int newOriginalIndex = filteredIndices[filteredSelection];
+                if (newOriginalIndex != mSelectedBufferIndex) {
+                    mSelectedBufferIndex = newOriginalIndex;
+                    loadBufferForVisualization(mSelectedBufferIndex);
+                }
+            }
+        }
+
+        // Show selected buffer info
+        if (mSelectedBufferIndex >= 0 && mSelectedBufferIndex < static_cast<int>(mTrialBuffers.size())) {
+            const auto& selected = mTrialBuffers[mSelectedBufferIndex];
+            ImGui::Separator();
+
+            // Collapsible tree node for buffer details
+            std::string nodeLabel = "Selected: " + selected.trial_name;
+            if (ImGui::TreeNodeEx(nodeLabel.c_str())) {
+                if (!selected.trial_description.empty()) {
+                    ImGui::TextWrapped("Description: %s", selected.trial_description.c_str());
+                }
+                ImGui::Text("Data Points: %zu (main) / %zu (std)",
+                           selected.angle_sweep_data.size(),
+                           selected.std_angle_sweep_data.size());
+                ImGui::Text("Muscles: %zu (main) / %zu (std)",
+                           selected.tracked_muscles.size(),
+                           selected.std_tracked_muscles.size());
+                ImGui::Text("Torque Cutoff: %.1f Nm", selected.torque_cutoff);
+
+                // Timestamp formatting
+                auto time_t = std::chrono::system_clock::to_time_t(selected.timestamp);
+                std::tm* tm = std::localtime(&time_t);
+                char time_buf[64];
+                std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm);
+                ImGui::Text("Recorded: %s", time_buf);
+
+                ImGui::TreePop();
+            }
+
+            // Remove button (outside tree node)
+            ImGui::Spacing();
+            if (ImGui::Button("Remove Selected Buffer")) {
+                removeTrialBuffer(mSelectedBufferIndex);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear All Buffers")) {
+                clearTrialBuffers();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Export to HDF")) {
+                exportTrialBuffersToHDF5();
+            }
+        }
+
+        ImGui::Unindent();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // ========================================================================
+    // Check if data is loaded for plotting
+    // ========================================================================
     if (mAngleSweepData.empty()) {
-        ImGui::TextDisabled("No sweep data available");
-        ImGui::TextWrapped("Run a joint angle sweep from the control panel to generate plots");
+        ImGui::TextDisabled("No sweep data loaded for visualization");
+        ImGui::TextWrapped("Select a trial buffer above to visualize its data");
         return;
     }
 
@@ -2193,8 +2494,112 @@ void PhysicalExam::drawSweepTabContent() {
 }
 
 void PhysicalExam::drawEtcTabContent() {
+    // ROM summary table
+    if (ImGui::CollapsingHeader("ROM Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawROMSummaryTable();
+    }
+
+    ImGui::Separator();
+
     // Posture control graphs
     drawGraphPanel();
+}
+
+void PhysicalExam::drawROMSummaryTable() {
+    // Define expected ROM structure in display order: hip -> knee -> ankle
+    static const std::vector<std::pair<std::string, std::vector<std::string>>> expectedROMs = {
+        {"hip", {"abduction_knee0", "abduction_knee90", "adduction",
+                 "external_rotation", "internal_rotation", "staheli_extension"}},
+        {"knee", {"popliteal"}},
+        {"ankle", {"dorsiflexion_knee0", "dorsiflexion_knee90", "plantarflexion"}}
+    };
+
+    // ROMEntry: nullopt = no trial, NaN = trial exists but no ROM, value = ROM data
+    struct ROMEntry {
+        std::optional<double> left;   // nullopt = no trial ("-"), NaN = no ROM ("N/A")
+        std::optional<double> right;
+    };
+
+    // Initialize with all expected measurements (nullopt = no trial)
+    std::map<std::string, std::map<std::string, ROMEntry>> grouped;
+    for (const auto& [joint, measurements] : expectedROMs) {
+        for (const auto& meas : measurements) {
+            grouped[joint][meas] = ROMEntry{};  // Both left and right are nullopt
+        }
+    }
+
+    // Fill in from trial buffers
+    for (const auto& buf : mTrialBuffers) {
+        if (buf.alias.empty()) continue;
+
+        // Parse alias: "joint/measurement/side"
+        std::vector<std::string> parts;
+        std::istringstream iss(buf.alias);
+        std::string part;
+        while (std::getline(iss, part, '/')) {
+            parts.push_back(part);
+        }
+        if (parts.size() != 3) continue;
+
+        std::string joint = parts[0];
+        std::string measurement = parts[1];
+        std::string side = parts[2];
+
+        // Trial exists: set value or NaN (if no cutoff angle)
+        double value = buf.cutoff_angles.empty() ? std::numeric_limits<double>::quiet_NaN() : buf.cutoff_angles[0];
+
+        if (side == "left") {
+            grouped[joint][measurement].left = value;
+        } else if (side == "right") {
+            grouped[joint][measurement].right = value;
+        }
+    }
+
+    // Helper lambda to render cell
+    auto renderCell = [](const std::optional<double>& val) {
+        if (!val.has_value()) {
+            // No trial exists
+            ImGui::TextDisabled("-");
+        } else if (std::isnan(*val)) {
+            // Trial exists but no ROM data
+            ImGui::TextDisabled("N/A");
+        } else {
+            // Has ROM value
+            ImGui::Text("%.1f", *val);
+        }
+    };
+
+    // Render table
+    if (ImGui::BeginTable("ROMSummary", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Measurement", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableHeadersRow();
+
+        // Iterate in defined order
+        for (const auto& [joint, measurements] : expectedROMs) {
+            // Joint header row
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", joint.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TableNextColumn();
+
+            for (const auto& meas : measurements) {
+                const auto& entry = grouped[joint][meas];
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  %s", meas.c_str());
+
+                ImGui::TableNextColumn();
+                renderCell(entry.left);
+
+                ImGui::TableNextColumn();
+                renderCell(entry.right);
+            }
+        }
+        ImGui::EndTable();
+    }
 }
 
 // ============================================================================
@@ -5813,24 +6218,22 @@ void PhysicalExam::renderMusclePlots() {
         mXAxisMode = XAxisMode::NORMALIZED;
     }
 
-    // Determine angle range: use trial's range if available, otherwise use mSweepConfig
-    double angle_min, angle_max;
-    if (mCurrentTrialIndex >= 0 && mCurrentTrialIndex < static_cast<int>(mTrials.size()) &&
-        mTrials[mCurrentTrialIndex].mode == TrialMode::ANGLE_SWEEP) {
-        // Use trial's angle sweep range
-        angle_min = mTrials[mCurrentTrialIndex].angle_sweep.angle_min;
-        angle_max = mTrials[mCurrentTrialIndex].angle_sweep.angle_max;
+    // Require a valid buffer for visualization
+    if (mSelectedBufferIndex < 0 || mSelectedBufferIndex >= static_cast<int>(mTrialBuffers.size())) {
+        ImGui::TextDisabled("No trial buffer selected");
+        return;
+    }
 
-        // For composite DOF (e.g., abd_knee), angle_max is not set in config
-        // Use actual data range instead
-        if (std::abs(angle_max - angle_min) < 1e-6 && !mAngleSweepData.empty()) {
-            angle_min = mAngleSweepData.front().joint_angle;
-            angle_max = mAngleSweepData.back().joint_angle;
-        }
-    } else {
-        // Fall back to mSweepConfig (for manual GUI sweeps)
-        angle_min = mSweepConfig.angle_min;
-        angle_max = mSweepConfig.angle_max;
+    // Get angle range from selected buffer's config
+    const auto& buffer = mTrialBuffers[mSelectedBufferIndex];
+    double angle_min = buffer.config.angle_min;
+    double angle_max = buffer.config.angle_max;
+
+    // For composite DOF (e.g., abd_knee), angle range may not be set in config
+    // Use actual data range instead
+    if (std::abs(angle_max - angle_min) < 1e-6 && !mAngleSweepData.empty()) {
+        angle_min = mAngleSweepData.front().joint_angle;
+        angle_max = mAngleSweepData.back().joint_angle;
     }
 
     // Compute ROM metrics for both characters (needed for normalization)
@@ -5949,19 +6352,32 @@ void PhysicalExam::renderMusclePlots() {
                 }
                 ImGui::TableHeadersRow();
 
-                // ROM row
+                // Sweep Range row (angle_min/angle_max from config)
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Text("ROM");
+                ImGui::Text("Sweep Range");
                 ImGui::TableNextColumn();
-                ImGui::Text("%.2f deg [%.1f° to %.1f°]", main_metrics.rom_deg,
+                ImGui::Text("%.1f° to %.1f°", angle_min * 180.0 / M_PI, angle_max * 180.0 / M_PI);
+                if (has_std) {
+                    ImGui::TableNextColumn();
+                    ImGui::Text("(same)");
+                    ImGui::TableNextColumn();
+                    ImGui::Text("-");
+                }
+
+                // Joint ROM row (angle where torque meets cutoff)
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Joint ROM");
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f° [%.1f° to %.1f°]", main_metrics.rom_deg,
                     main_metrics.rom_min_angle, main_metrics.rom_max_angle);
                 if (has_std) {
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f deg [%.1f° to %.1f°]", std_metrics.rom_deg,
+                    ImGui::Text("%.2f° [%.1f° to %.1f°]", std_metrics.rom_deg,
                         std_metrics.rom_min_angle, std_metrics.rom_max_angle);
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f deg", main_metrics.rom_deg - std_metrics.rom_deg);
+                    ImGui::Text("%.2f°", main_metrics.rom_deg - std_metrics.rom_deg);
                 }
 
                 // Peak Stiffness row
@@ -6306,6 +6722,180 @@ void PhysicalExam::clearSweepData() {
 }
 
 // ============================================================================
+// Multi-Trial Buffer Management
+// ============================================================================
+
+void PhysicalExam::addTrialToBuffer(const TrialDataBuffer& buffer) {
+    // FIFO eviction if at mMaxTrialBuffers limit
+    while (static_cast<int>(mTrialBuffers.size()) >= mMaxTrialBuffers) {
+        LOG_WARN("Buffer limit reached, removing oldest trial: "
+                  << mTrialBuffers.front().trial_name);
+        mTrialBuffers.erase(mTrialBuffers.begin());
+
+        // Adjust selected index if needed
+        if (mSelectedBufferIndex > 0) {
+            mSelectedBufferIndex--;
+        } else if (mSelectedBufferIndex == 0) {
+            mSelectedBufferIndex = -1;
+        }
+    }
+
+    mTrialBuffers.push_back(buffer);
+    LOG_INFO("Added trial to buffer: " << buffer.trial_name
+              << " (total: " << mTrialBuffers.size() << ")");
+}
+
+void PhysicalExam::loadBufferForVisualization(int buffer_index) {
+    if (buffer_index < 0 || buffer_index >= static_cast<int>(mTrialBuffers.size())) {
+        LOG_WARN("Invalid buffer index: " << buffer_index);
+        return;
+    }
+
+    const auto& buffer = mTrialBuffers[buffer_index];
+
+    // Load buffer data into current working data for plotting
+    mAngleSweepData = buffer.angle_sweep_data;
+    mStdAngleSweepData = buffer.std_angle_sweep_data;
+    mAngleSweepTrackedMuscles = buffer.tracked_muscles;
+    mStdAngleSweepTrackedMuscles = buffer.std_tracked_muscles;
+    mCurrentSweepName = buffer.trial_name;
+
+    // Apply base pose to character and std character
+    if (buffer.base_pose.size() > 0 && mCharacter) {
+        mCharacter->getSkeleton()->setPositions(buffer.base_pose);
+        if (mStdCharacter) {
+            mStdCharacter->getSkeleton()->setPositions(buffer.base_pose);
+        }
+    }
+
+    // Initialize muscle visibility for any new muscles
+    for (const auto& muscle : mAngleSweepTrackedMuscles) {
+        if (mMuscleVisibility.find(muscle) == mMuscleVisibility.end()) {
+            mMuscleVisibility[muscle] = true;
+        }
+    }
+
+    mSelectedBufferIndex = buffer_index;
+    LOG_INFO("Loaded buffer for visualization: " << buffer.trial_name);
+}
+
+void PhysicalExam::removeTrialBuffer(int buffer_index) {
+    if (buffer_index < 0 || buffer_index >= static_cast<int>(mTrialBuffers.size())) {
+        return;
+    }
+
+    std::string name = mTrialBuffers[buffer_index].trial_name;
+    mTrialBuffers.erase(mTrialBuffers.begin() + buffer_index);
+
+    // Adjust selected index
+    if (mSelectedBufferIndex >= static_cast<int>(mTrialBuffers.size())) {
+        mSelectedBufferIndex = static_cast<int>(mTrialBuffers.size()) - 1;
+    }
+
+    // If removed the selected one, load new selection or clear
+    if (mSelectedBufferIndex >= 0) {
+        loadBufferForVisualization(mSelectedBufferIndex);
+    } else {
+        mAngleSweepData.clear();
+        mStdAngleSweepData.clear();
+    }
+
+    LOG_INFO("Removed trial buffer: " << name);
+}
+
+void PhysicalExam::clearTrialBuffers() {
+    mTrialBuffers.clear();
+    mSelectedBufferIndex = -1;
+    mAngleSweepData.clear();
+    mStdAngleSweepData.clear();
+    mAngleSweepTrackedMuscles.clear();
+    mStdAngleSweepTrackedMuscles.clear();
+    LOG_INFO("All trial buffers cleared");
+}
+
+void PhysicalExam::runSelectedTrials() {
+    if (!mExamSettingLoaded || !mCharacter) {
+        LOG_ERROR("Cannot run trials: exam setting not loaded or character not available");
+        return;
+    }
+
+    if (mTrialRunning) {
+        LOG_WARN("Trials already running");
+        return;
+    }
+
+    // Collect selected trial file paths
+    std::vector<std::string> selected_paths;
+    for (size_t i = 0; i < mTrialMultiSelectStates.size(); ++i) {
+        if (mTrialMultiSelectStates[i] && i < mAvailableTrialFiles.size()) {
+            selected_paths.push_back(mAvailableTrialFiles[i].file_path);
+        }
+    }
+
+    if (selected_paths.empty()) {
+        LOG_WARN("No trials selected");
+        return;
+    }
+
+    LOG_INFO("Running " << selected_paths.size() << " selected trials");
+    mTrialRunning = true;
+
+    for (const auto& path : selected_paths) {
+        try {
+            std::string resolved_path = rm::resolve(path);
+            YAML::Node trial_node = YAML::LoadFile(resolved_path);
+            TrialConfig trial = parseTrialConfig(trial_node);
+
+            // Clear current working data
+            mTrials.clear();
+            mTrials.push_back(trial);
+            mCurrentTrialIndex = 0;
+            mRecordedData.clear();
+
+            // Run the trial (populates mAngleSweepData, mStdAngleSweepData)
+            runCurrentTrial();
+
+            // Create buffer from completed trial
+            TrialDataBuffer buffer;
+            buffer.trial_name = trial.name;
+            buffer.trial_description = trial.description;
+            buffer.alias = trial.angle_sweep.alias;
+            buffer.timestamp = std::chrono::system_clock::now();
+            buffer.angle_sweep_data = mAngleSweepData;
+            buffer.std_angle_sweep_data = mStdAngleSweepData;
+            buffer.tracked_muscles = mAngleSweepTrackedMuscles;
+            buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+            buffer.config = trial.angle_sweep;
+            buffer.torque_cutoff = trial.torque_cutoff;
+            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
+            buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
+            if (!mStdAngleSweepData.empty()) {
+                buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+            }
+            buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+
+            // Add to buffer with limit enforcement
+            addTrialToBuffer(buffer);
+
+            LOG_VERBOSE("Trial '" << trial.name << "' completed and buffered");
+
+        } catch (const std::exception& e) {
+            LOG_ERROR("Failed to run trial from " << path << ": " << e.what());
+        }
+    }
+
+    mTrialRunning = false;
+
+    // Auto-select the last run buffer if enabled
+    if (mAutoSelectNewBuffer && !mTrialBuffers.empty()) {
+        mSelectedBufferIndex = static_cast<int>(mTrialBuffers.size()) - 1;
+        loadBufferForVisualization(mSelectedBufferIndex);
+    }
+
+    LOG_INFO("All selected trials completed. " << mTrialBuffers.size() << " buffers available");
+}
+
+// ============================================================================
 // Character Loading (Browse & Rebuild) Section Methods
 // ============================================================================
 
@@ -6361,25 +6951,6 @@ void PhysicalExam::drawCharacterLoadSection() {
             }
         }
 
-        // Patient skeleton controls
-        if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
-            if (!mBrowseCharacterPID.empty()) {
-                ImGui::SameLine();
-                ImGui::Text("(%s)", mBrowseCharacterPID.c_str());
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Pre##skel", mBrowseSkeletonPreOp)) {
-                    if (!mBrowseSkeletonPreOp) { mBrowseSkeletonPreOp = true; skelChanged = true; }
-                }
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Post##skel", !mBrowseSkeletonPreOp)) {
-                    if (mBrowseSkeletonPreOp) { mBrowseSkeletonPreOp = false; skelChanged = true; }
-                }
-            } else {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
-            }
-        }
-
         if (skelChanged) {
             scanSkeletonFilesForBrowse();
             mBrowseSkeletonPath.clear();
@@ -6388,7 +6959,7 @@ void PhysicalExam::drawCharacterLoadSection() {
         // Skeleton file list
         std::string skelPrefix = "@data/skeleton/";
         if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            std::string prePost = mBrowseSkeletonPreOp ? "pre" : "post";
+            std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
             skelPrefix = "@pid:" + mBrowseCharacterPID + "/gait/" + prePost + "/skeleton/";
         }
 
@@ -6423,25 +6994,6 @@ void PhysicalExam::drawCharacterLoadSection() {
             }
         }
 
-        // Patient muscle controls
-        if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
-            if (!mBrowseCharacterPID.empty()) {
-                ImGui::SameLine();
-                ImGui::Text("(%s)", mBrowseCharacterPID.c_str());
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Pre##muscle", mBrowseMusclePreOp)) {
-                    if (!mBrowseMusclePreOp) { mBrowseMusclePreOp = true; muscleChanged = true; }
-                }
-                ImGui::SameLine();
-                if (ImGui::RadioButton("Post##muscle", !mBrowseMusclePreOp)) {
-                    if (mBrowseMusclePreOp) { mBrowseMusclePreOp = false; muscleChanged = true; }
-                }
-            } else {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
-            }
-        }
-
         if (muscleChanged) {
             scanMuscleFilesForBrowse();
             mBrowseMusclePath.clear();
@@ -6450,7 +7002,7 @@ void PhysicalExam::drawCharacterLoadSection() {
         // Muscle file list
         std::string musclePrefix = "@data/muscle/";
         if (mBrowseMuscleDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            std::string prePost = mBrowseMusclePreOp ? "pre" : "post";
+            std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
             musclePrefix = "@pid:" + mBrowseCharacterPID + "/gait/" + prePost + "/muscle/";
         }
 
@@ -6487,7 +7039,7 @@ void PhysicalExam::scanSkeletonFilesForBrowse() {
             // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/skeleton/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string prePost = mBrowseSkeletonPreOp ? "pre" : "post";
+                std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
                 skelDir = pidRoot / mBrowseCharacterPID / "gait" / prePost / "skeleton";
 
                 // Create directory if it doesn't exist
@@ -6528,7 +7080,7 @@ void PhysicalExam::scanMuscleFilesForBrowse() {
             // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/muscle/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string prePost = mBrowseMusclePreOp ? "pre" : "post";
+                std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
                 muscleDir = pidRoot / mBrowseCharacterPID / "gait" / prePost / "muscle";
 
                 // Create directory if it doesn't exist
@@ -7231,73 +7783,87 @@ void PhysicalExam::drawTrialManagementSection() {
 
         ImGui::Separator();
 
-        // Trial list box
+        // Build trial names list for FilterableChecklist
         if (mAvailableTrialFiles.empty()) {
-            ImGui::TextDisabled("No trial files found in data/config/trials");
+            ImGui::TextDisabled("No trial files found in data/config/rom");
         } else {
-            // Create array of C-style strings for list box
-            std::vector<const char*> trial_names;
-            for (const auto& trial_file : mAvailableTrialFiles) {
-                trial_names.push_back(trial_file.name.c_str());
+            std::vector<std::string> trialNames;
+            trialNames.reserve(mAvailableTrialFiles.size());
+            for (const auto& file : mAvailableTrialFiles) {
+                trialNames.push_back(file.name);
             }
-            
-            // List box
-            int list_height = std::min(static_cast<int>(mAvailableTrialFiles.size()), 2) * 2.5;
-            if (ImGui::ListBox("##TrialList", &mSelectedTrialFileIndex, 
-                               trial_names.data(), static_cast<int>(trial_names.size()), 
-                               list_height)) {
-                // Selection changed
-            }
-            
+
+            // Use FilterableChecklist for trial selection
+            static char trialFilterBuffer[256] = "";
+            ImGuiCommon::FilterableChecklist(
+                "##TrialSelect",
+                trialNames,
+                mTrialMultiSelectStates,
+                trialFilterBuffer,
+                sizeof(trialFilterBuffer),
+                150.0f
+            );
+
             ImGui::Separator();
-            
-            // Run Selected Trial button
-            bool canRunTrial = (mSelectedTrialFileIndex >= 0 && 
-                               mSelectedTrialFileIndex < static_cast<int>(mAvailableTrialFiles.size()) &&
-                               mExamSettingLoaded && 
-                               !mTrialRunning);
-            
-            if (!canRunTrial) {
-                ImGui::BeginDisabled();
+
+            // Run Selected Trials button
+            int selectedCount = static_cast<int>(std::count(mTrialMultiSelectStates.begin(),
+                                          mTrialMultiSelectStates.end(), true));
+
+            bool canRunTrials = (selectedCount > 0 && mExamSettingLoaded && !mTrialRunning);
+
+            if (!canRunTrials) ImGui::BeginDisabled();
+
+            std::string btnLabel = "Run " + std::to_string(selectedCount) + " Trial(s)";
+            if (ImGui::Button(btnLabel.c_str(), ImVec2(120, 0))) {
+                runSelectedTrials();
             }
-            
-            if (ImGui::Button("Run Selected Trial", ImVec2(180, 40))) {
-                if (mSelectedTrialFileIndex >= 0 && 
-                    mSelectedTrialFileIndex < static_cast<int>(mAvailableTrialFiles.size())) {
-                    loadAndRunTrial(mAvailableTrialFiles[mSelectedTrialFileIndex].file_path);
-                }
-            }
-            
-            if (!canRunTrial) {
+
+            if (!canRunTrials) {
                 ImGui::EndDisabled();
                 if (ImGui::IsItemHovered()) {
-                    if (mSelectedTrialFileIndex < 0) {
-                        ImGui::SetTooltip("Select a trial from the list");
+                    if (selectedCount == 0) {
+                        ImGui::SetTooltip("Select at least one trial");
                     } else if (!mExamSettingLoaded) {
                         ImGui::SetTooltip("Load an exam setting first");
                     } else if (mTrialRunning) {
-                        ImGui::SetTooltip("Trial is currently running");
+                        ImGui::SetTooltip("Trials are currently running");
                     }
                 }
             }
-            
+
             ImGui::SameLine();
-            if (ImGui::Button("Reset Trials", ImVec2(120, 40))) {
+            if (ImGui::Button("Reset Trials", ImVec2(120, 0))) {
                 mCurrentTrialIndex = -1;
                 mTrialRunning = false;
                 mRecordedData.clear();
                 mTrials.clear();
                 LOG_INFO("Trials reset");
             }
-            
+
             // Show current trial status if running
-            if (mTrialRunning && mCurrentTrialIndex >= 0 && 
+            if (mTrialRunning && mCurrentTrialIndex >= 0 &&
                 mCurrentTrialIndex < static_cast<int>(mTrials.size())) {
                 ImGui::Separator();
-                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Running: %s", 
+                ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Running: %s",
                                   mTrials[mCurrentTrialIndex].name.c_str());
             }
         }
+
+        // Buffer management section
+        ImGui::Separator();
+        ImGui::Text("Trial Buffers: %zu / %d", mTrialBuffers.size(), mMaxTrialBuffers);
+
+        if (!mTrialBuffers.empty()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear Buffers")) {
+                clearTrialBuffers();
+            }
+        }
+
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputInt("Max Buffers", &mMaxTrialBuffers);
+        mMaxTrialBuffers = std::clamp(mMaxTrialBuffers, 1, 100);
     }
 }
 

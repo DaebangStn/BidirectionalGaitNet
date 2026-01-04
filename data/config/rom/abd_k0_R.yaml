@@ -1,5 +1,5 @@
-name: "dorsi_k0_L"
-description: "Left ankle dorsiflexion ROM with knee extended"
+name: "abd_k0_R"
+description: "Right hip abduction ROM test with knee extended"
 
 # 1. Base pose
 pose:
@@ -12,25 +12,24 @@ pose:
   TalusL: [0, 0, 0]
 
 # 2. Moving joint and DOF
-joint: "TalusL"
-dof_index: 0
+joint: "FemurR"
+dof_index: 2
 
 # 3. Torque cutoff for ROM limit (Nm)
-torque_cutoff: 5.0
+torque_cutoff: 15.0
 
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:
-  alias: "ankle/dorsiflexion_knee0/left"
-  angle_min: -50
+  alias: "hip/abduction_knee0/right"
+  angle_min: -60
   angle_max: 0
   num_steps: 100
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
-  side: left
-  joint: ankle
-  field: dorsiflexion_knee0_r2
-  neg: true
+  side: right
+  joint: hip
+  field: abduction_ext_r2
 
 # 6. Target muscle group for grid search initialization
-uniform_search_group: "plantarflexor_l"
+uniform_search_group: "hip_adductor_r"

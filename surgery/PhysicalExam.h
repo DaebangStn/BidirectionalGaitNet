@@ -7,6 +7,7 @@
 #include <string>
 #include <optional>
 #include <memory>
+#include <chrono>
 #include <H5Cpp.h>
 #include <implot.h>
 #include "dart/dart.hpp"
@@ -43,6 +44,9 @@ struct AngleSweepTrialConfig {
     std::string dof_type;        // "abd_knee" for composite DOF (empty = simple DOF)
     double shank_scale = 0.7;    // Scale factor for abd_knee IK
     double angle_step = 1.0;     // Step size in degrees (for composite DOF sweep)
+
+    // Hierarchical alias for ROM summary (e.g., "hip/abduction_knee0/left")
+    std::string alias;
 };
 
 // Angle sweep data point (per-step recording)
@@ -111,16 +115,35 @@ struct TrialConfig {
 
     // Angle sweep parameters (used when mode == ANGLE_SWEEP)
     AngleSweepTrialConfig angle_sweep;
+    double torque_cutoff = 15.0;  // Cutoff torque for ROM limit (Nm)
 
     // Recording
     std::vector<std::string> record_joints;  // Used by force sweep
     std::string output_file;
-};
+};;
 
 // Trial file info (cached from directory scan)
 struct TrialFileInfo {
     std::string file_path;  // Full resolved path
     std::string name;       // Trial name (from YAML "name" field, used for display)
+};
+
+// Buffered trial data (for multi-trial management)
+struct TrialDataBuffer {
+    std::string trial_name;
+    std::string trial_description;
+    std::string alias;  // Hierarchical path for ROM summary (e.g., "hip/abduction_knee0/left")
+    std::chrono::system_clock::time_point timestamp;
+    std::vector<AngleSweepDataPoint> angle_sweep_data;
+    std::vector<AngleSweepDataPoint> std_angle_sweep_data;
+    std::vector<std::string> tracked_muscles;
+    std::vector<std::string> std_tracked_muscles;
+    AngleSweepTrialConfig config;
+    double torque_cutoff = 15.0;  // Cutoff torque for ROM limit (Nm)
+    std::vector<double> cutoff_angles;  // Angles where torque crosses cutoff (degrees)
+    ROMMetrics rom_metrics;
+    ROMMetrics std_rom_metrics;
+    Eigen::VectorXd base_pose;  // Full skeleton pose for character positioning
 };
 
 class PhysicalExam : public ViewerAppBase, public SurgeryExecutor {
@@ -190,6 +213,13 @@ public:
     TrialConfig parseTrialConfig(const YAML::Node& trial_node);
     void loadAndRunTrial(const std::string& trial_file_path);
 
+    // Multi-trial buffer management
+    void runSelectedTrials();                         // Run all selected trials
+    void addTrialToBuffer(const TrialDataBuffer& buffer);  // Add trial to buffer with limit enforcement
+    void loadBufferForVisualization(int buffer_index);     // Load buffer data for plotting
+    void removeTrialBuffer(int buffer_index);              // Remove specific buffer
+    void clearTrialBuffers();                              // Clear all buffers
+
     // Angle sweep trial execution (kinematic-only)
     void runAngleSweepTrial(const TrialConfig& trial);
     void collectAngleSweepData(double angle, int joint_index, bool use_global_y = false);
@@ -197,6 +227,8 @@ public:
 
     // ROM analysis helpers
     ROMMetrics computeROMMetrics(const std::vector<AngleSweepDataPoint>& data) const;
+    std::vector<double> computeCutoffAngles(const std::vector<AngleSweepDataPoint>& data,
+                                            double torque_cutoff) const;
     std::vector<double> normalizeXAxis(const std::vector<double>& x_data_deg,
                                        double rom_min_deg, double rom_max_deg) const;
 
@@ -204,6 +236,7 @@ public:
     std::string extractPidFromPath(const std::string& path) const;
     void initExamHDF5();
     void appendTrialToHDF5(const TrialConfig& trial);
+    void exportTrialBuffersToHDF5();
     void writeAngleSweepData(H5::Group& group, const TrialConfig& trial);
     void writeAngleSweepDataForCharacter(
         H5::Group& group, 
@@ -248,6 +281,7 @@ public:
     void drawBasicTabContent();
     void drawSweepTabContent();
     void drawEtcTabContent();
+    void drawROMSummaryTable();
 
     // Surgery Panel Sections
     void drawDistributePassiveForceSection();
@@ -329,12 +363,6 @@ private:
     bool mShowTrialNameInPlots;  // Toggle for showing trial name in plot titles
     std::string mCurrentSweepName;  // Current sweep name (trial name or "GUI Sweep")
 
-    // Panel dimensions (GLFW/ImGui window is inherited from ViewerAppBase)
-    int mControlPanelWidth;
-    int mPlotPanelWidth;
-    int mPhysicalExamControlPanelWidth;
-    int mPhysicalExamDataPanelWidth;
-
     // Camera state (mCamera inherited from ViewerAppBase)
     bool mCameraMoving = false;  // True while camera is being manipulated
 
@@ -413,6 +441,13 @@ private:
     // Trial file scanning
     std::vector<TrialFileInfo> mAvailableTrialFiles;
     int mSelectedTrialFileIndex;
+    std::vector<bool> mTrialMultiSelectStates;  // Multi-select states for trial files
+
+    // Multi-trial buffer management
+    std::vector<TrialDataBuffer> mTrialBuffers;  // All buffered trial data
+    int mSelectedBufferIndex = -1;               // Currently selected buffer for plotting
+    int mMaxTrialBuffers = 20;                   // Maximum buffered trials (memory management)
+    bool mAutoSelectNewBuffer = true;            // Auto-select newly run trial for viewing
 
     // Angle sweep trial data
     std::vector<AngleSweepDataPoint> mAngleSweepData;
@@ -538,8 +573,6 @@ private:
     // Independent source selection for skeleton and muscle
     CharacterDataSource mBrowseSkeletonDataSource = CharacterDataSource::DefaultData;
     CharacterDataSource mBrowseMuscleDataSource = CharacterDataSource::DefaultData;
-    bool mBrowseSkeletonPreOp = true;   // true = pre, false = post
-    bool mBrowseMusclePreOp = true;     // true = pre, false = post
     std::string mBrowseCharacterPID;    // PID from navigator (shared)
 
     std::vector<std::string> mBrowseSkeletonCandidates;

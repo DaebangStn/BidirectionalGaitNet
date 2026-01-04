@@ -67,8 +67,7 @@ private:
     // Configuration
     // ============================================================
     std::string mConfigPath;
-    // mDefaultOpenPanels and mControlPanelWidth inherited from ViewerAppBase
-    int mResultsPanelWidth;
+    // mDefaultOpenPanels, mControlPanelWidth, mPlotPanelWidth inherited from ViewerAppBase
 
     // ============================================================
     // Resource Manager and PID Navigator
@@ -158,7 +157,11 @@ private:
         std::string filePath;
         std::string joint;      // e.g., "TibiaL"
         int dof_index = 0;      // e.g., 0
-        float torque = 15.0f;   // Nm at ROM limit
+        float torque_cutoff = 15.0f;   // Cutoff torque for ROM limit (Nm)
+        // Exam sweep parameters (for PhysicalExam)
+        float angle_min = -90.0f;
+        float angle_max = 90.0f;
+        int num_steps = 100;
         // clinical_data link
         std::string cd_side;    // "left" or "right"
         std::string cd_joint;   // "hip", "knee", "ankle"

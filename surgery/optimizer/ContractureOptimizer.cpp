@@ -321,11 +321,21 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
         config.is_composite_dof = false;
     }
 
-    // Load single torque value
-    config.torque = node["torque"].as<double>(15.0);
+    // Load torque cutoff value (renamed from torque)
+    config.torque_cutoff = node["torque_cutoff"].as<double>(
+        node["torque"].as<double>(15.0));  // Backward compat: try old "torque" key
 
     // ROM angle defaults to 0 - populated later from clinical data or manual input
     config.rom_angle = 0.0;
+
+    // Load exam sweep parameters (for PhysicalExam)
+    if (node["exam"]) {
+        auto exam = node["exam"];
+        config.angle_min = exam["angle_min"].as<double>(-90.0);
+        config.angle_max = exam["angle_max"].as<double>(90.0);
+        config.num_steps = exam["num_steps"].as<int>(100);
+        config.angle_step = exam["angle_step"].as<double>(1.0);
+    }
 
     // Load clinical_data reference
     if (node["clinical_data"]) {
@@ -556,90 +566,42 @@ double ContractureOptimizer::computeKneeAngleForVerticalShank(
     int hip_joint_idx,
     const Eigen::Vector3d& hip_positions) {
 
+    // Get joint references
     auto* hip_joint = skeleton->getJoint(hip_joint_idx);
     if (!hip_joint) return 0.0;
-
     auto* femur_body = hip_joint->getChildBodyNode();
-    if (!femur_body) return 0.0;
-    if (femur_body->getNumChildJoints() == 0) return 0.0;
-
+    if (!femur_body || femur_body->getNumChildJoints() == 0) return 0.0;
     auto* knee_joint = femur_body->getChildJoint(0);
     if (!knee_joint) return 0.0;
-
     auto* tibia_body = knee_joint->getChildBodyNode();
-    if (!tibia_body) return 0.0;
-    if (tibia_body->getNumChildJoints() == 0) return 0.0;
-
+    if (!tibia_body || tibia_body->getNumChildJoints() == 0) return 0.0;
     auto* ankle_joint = tibia_body->getChildJoint(0);
     if (!ankle_joint) return 0.0;
-    auto* talus_body = ankle_joint->getChildBodyNode();
-    if (!talus_body) return 0.0;
 
-    // Temporarily set hip positions and reset knee to 0 (neutral position)
+    // Save positions
     Eigen::VectorXd old_pos = skeleton->getPositions();
     int hip_dof_start = static_cast<int>(hip_joint->getIndexInSkeleton(0));
+    int knee_dof_idx = static_cast<int>(knee_joint->getIndexInSkeleton(0));
+
+    // Apply hip rotation, set knee to 0
     skeleton->setPosition(hip_dof_start, hip_positions[0]);
     skeleton->setPosition(hip_dof_start + 1, hip_positions[1]);
     skeleton->setPosition(hip_dof_start + 2, hip_positions[2]);
-
-    // Reset knee to 0 - computation assumes neutral knee as starting point
-    int knee_dof_idx = static_cast<int>(knee_joint->getIndexInSkeleton(0));
     skeleton->setPosition(knee_dof_idx, 0.0);
 
-    // Get femur orientation after hip rotation
-    Eigen::Matrix3d R_femur = femur_body->getWorldTransform().linear();
+    // Get shank direction at knee=0 using joint positions directly
+    Eigen::Vector3d knee_pos = (knee_joint->getParentBodyNode()->getWorldTransform() *
+                                knee_joint->getTransformFromParentBodyNode()).translation();
+    Eigen::Vector3d ankle_pos = (ankle_joint->getParentBodyNode()->getWorldTransform() *
+                                 ankle_joint->getTransformFromParentBodyNode()).translation();
+    Eigen::Vector3d shank_init = (ankle_pos - knee_pos).normalized();
 
-    // Get knee joint frame in world coordinates
-    Eigen::Matrix3d femur_to_knee = knee_joint->getTransformFromParentBodyNode().linear();
-    Eigen::Matrix3d knee_joint_frame = R_femur * femur_to_knee;
+    // Compute angle to vertical (-Y) using dot product
+    Eigen::Vector3d shank_target = -Eigen::Vector3d::UnitY();
+    double cos_angle = shank_init.dot(shank_target);
+    double knee_angle = std::acos(cos_angle);
 
-    // Knee axis in world frame (local X-axis of knee joint = mediolateral axis)
-    Eigen::Vector3d knee_axis_world = knee_joint_frame.col(0);  // X column
-
-    // Initial shank direction at knee_angle=0: compute from actual joint positions
-    Eigen::Vector3d knee_pos = tibia_body->getWorldTransform().translation();
-    Eigen::Vector3d ankle_pos = talus_body->getWorldTransform().translation();
-    Eigen::Vector3d shank_init_world = (ankle_pos - knee_pos).normalized();
-
-    // Target shank direction: world -Y (vertical downward)
-    // In supine hip abduction: ankle at hip level, knee above hip by shank_length
-    // So shank points from knee (high) to ankle (low) = downward
-    Eigen::Vector3d shank_target_world = -Eigen::Vector3d::UnitY();
-
-    // Transform shank directions to knee joint frame for rotation computation
-    Eigen::Vector3d shank_init_joint = knee_joint_frame.transpose() * shank_init_world;
-    Eigen::Vector3d shank_target_joint = knee_joint_frame.transpose() * shank_target_world;
-
-    // Project both onto plane perpendicular to knee axis (X-axis in joint frame)
-    // In joint frame, knee axis is [1,0,0], so projection removes X component
-    Eigen::Vector3d init_proj(0, shank_init_joint.y(), shank_init_joint.z());
-    Eigen::Vector3d target_proj(0, shank_target_joint.y(), shank_target_joint.z());
-
-    double init_norm = init_proj.norm();
-    double target_norm = target_proj.norm();
-
-    if (init_norm < 1e-9 || target_norm < 1e-9) {
-        skeleton->setPositions(old_pos);
-        return 0.0;
-    }
-
-    init_proj /= init_norm;
-    target_proj /= target_norm;
-
-    // Angle between projections using atan2 for signed angle
-    // In 2D (Y,Z plane), angle from init to target
-    // Cross product (init × target): X component = init.y*target.z - init.z*target.y
-    double cos_angle = init_proj.dot(target_proj);
-    double sin_angle = init_proj.y() * target_proj.z() - init_proj.z() * target_proj.y();
-    double knee_angle = std::atan2(sin_angle, cos_angle);
-
-    // Knee can only flex (positive), not hyperextend (negative)
-    // If angle is negative, use the equivalent positive flexion: π + angle
-    if (knee_angle < 0) {
-        knee_angle = M_PI + knee_angle;
-    }
-
-    // Restore original positions
+    // Restore positions
     skeleton->setPositions(old_pos);
 
     return knee_angle;
@@ -702,16 +664,13 @@ AbdKneePoseResult ContractureOptimizer::computeAbdKneePose(
     Eigen::VectorXd orig_pos = skeleton->getPositions();
     skeleton->setPositions(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
 
-    // Get ACTUAL joint positions (not body origins, which have offsets)
-    // Joint position = parent_body_transform * joint->getTransformFromParentBodyNode().translation()
-    auto* pelvis_body = hip_joint->getParentBodyNode();
-    Eigen::Isometry3d pelvis_tf = pelvis_body->getWorldTransform();
-    Eigen::Isometry3d femur_tf = femur_body->getWorldTransform();
-    Eigen::Isometry3d tibia_tf = tibia_body->getWorldTransform();
-
-    Eigen::Vector3d hip_world = pelvis_tf * hip_joint->getTransformFromParentBodyNode().translation();
-    Eigen::Vector3d knee_world = femur_tf * knee_joint->getTransformFromParentBodyNode().translation();
-    Eigen::Vector3d ankle_world = tibia_tf * ankle_joint->getTransformFromParentBodyNode().translation();
+    // Get joint world positions directly using joint transforms
+    Eigen::Vector3d hip_world = (hip_joint->getParentBodyNode()->getWorldTransform() *
+                                 hip_joint->getTransformFromParentBodyNode()).translation();
+    Eigen::Vector3d knee_world = (knee_joint->getParentBodyNode()->getWorldTransform() *
+                                  knee_joint->getTransformFromParentBodyNode()).translation();
+    Eigen::Vector3d ankle_world = (ankle_joint->getParentBodyNode()->getWorldTransform() *
+                                   ankle_joint->getTransformFromParentBodyNode()).translation();
 
     // Restore original positions
     skeleton->setPositions(orig_pos);
@@ -766,10 +725,11 @@ AbdKneePoseResult ContractureOptimizer::computeAbdKneePose(
     skeleton->setPosition(hip_dof_start + 2, 0.0);
 
     // Get actual thigh direction from hip-to-knee vector (with hip DOFs at zero)
-    // Use the same knee position method as in VERIFY for consistency
-    Eigen::Isometry3d femur_tf_init = femur_body->getWorldTransform();
-    Eigen::Vector3d hip_pos_init = femur_tf_init.translation();
-    Eigen::Vector3d knee_pos_init = femur_tf_init * knee_joint->getTransformFromParentBodyNode().translation();
+    // Use joint world positions directly
+    Eigen::Vector3d hip_pos_init = (hip_joint->getParentBodyNode()->getWorldTransform() *
+                                    hip_joint->getTransformFromParentBodyNode()).translation();
+    Eigen::Vector3d knee_pos_init = (knee_joint->getParentBodyNode()->getWorldTransform() *
+                                     knee_joint->getTransformFromParentBodyNode()).translation();
     Eigen::Vector3d initial_thigh_world = (knee_pos_init - hip_pos_init).normalized();
 
     // Get joint frame rotation in world coordinates
@@ -791,13 +751,15 @@ AbdKneePoseResult ContractureOptimizer::computeAbdKneePose(
     Eigen::Matrix3d R_base = q_base.toRotationMatrix();
 
     // Step 2: Compute twist angle around thigh axis to make knee axis horizontal
-    // Knee axis in joint frame (local X-axis of knee joint relative to femur)
-    Eigen::Matrix3d femur_to_knee = knee_joint->getTransformFromParentBodyNode().linear();
-    Eigen::Vector3d knee_axis_local = femur_to_knee.col(0);  // X column is rotation axis
+    // Apply base rotation to skeleton to get knee axis directly from skeleton state
+    Eigen::Vector3d base_hip_pos = dart::dynamics::BallJoint::convertToPositions(R_base);
+    skeleton->setPosition(hip_dof_start, base_hip_pos[0]);
+    skeleton->setPosition(hip_dof_start + 1, base_hip_pos[1]);
+    skeleton->setPosition(hip_dof_start + 2, base_hip_pos[2]);
 
-    // Transform knee axis to world frame after base rotation
-    // knee_axis_world = joint_frame * R_base * knee_axis_local
-    Eigen::Vector3d knee_axis_after_base = joint_frame * R_base * knee_axis_local;
+    // Get knee axis directly from skeleton state (more reliable than manual transform chain)
+    Eigen::Matrix3d femur_to_knee = knee_joint->getTransformFromParentBodyNode().linear();
+    Eigen::Vector3d knee_axis_after_base = (femur_body->getWorldTransform().linear() * femur_to_knee.col(0)).normalized();
 
     // We need to twist around target_thigh_world to make knee_axis_final · Y = 0
     // Using Rodrigues formula: k_rot = k*cos(θ) + (a×k)*sin(θ) + a*(a·k)*(1-cos(θ))
@@ -895,7 +857,7 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
         point.joint_idx = joint_idx;
         point.joint_dof = config.dof_index;
         point.q = positions;
-        point.tau_obs = config.torque;
+        point.tau_obs = config.torque_cutoff;
         point.weight = 1.0;
 
         // Handle composite DOF types
@@ -1807,7 +1769,7 @@ ContractureOptimizer::PreOptimizationData ContractureOptimizer::preOptimization(
         trial_result.trial_name = rom_config.name;
         trial_result.joint = rom_config.joint;
         trial_result.dof_index = rom_config.dof_index;
-        trial_result.observed_torque = rom_config.torque;
+        trial_result.observed_torque = rom_config.torque_cutoff;
         trial_result.pose = pose.q;
 
         // Set pose and update muscle geometry
