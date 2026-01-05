@@ -28,11 +28,14 @@ public:
     // Main UI rendering
     void drawSurgeryPanel(bool* show_panel, int window_height);
 
+    // Draw just the content (for embedding in another application's tab)
+    void drawSurgeryContent();
+
     // Update character reference (needed when character is reloaded)
     void setCharacter(Character* character);
 
     // Surgery operation overrides (with cache invalidation)
-    bool editAnchorPosition(const std::string& muscle, int anchor_index, 
+    bool editAnchorPosition(const std::string& muscle, int anchor_index,
                            const Eigen::Vector3d& position) override;
     bool editAnchorWeights(const std::string& muscle, int anchor_index,
                           const std::vector<double>& weights) override;
@@ -41,8 +44,24 @@ public:
     bool removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index,
                                  int bodynode_index) override;
     bool removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex) override;
-    bool copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, 
+    bool copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex,
                            const std::string& toMuscle) override;
+
+    // FDO surgery operation overrides (with cache invalidation)
+    bool rotateJointOffset(const std::string& joint_name, const Eigen::Vector3d& axis,
+                          double angle, bool preserve_position = false) override;
+    bool rotateAnchorPoints(const std::string& muscle_name, int ref_anchor_index,
+                           const Eigen::Vector3d& search_direction,
+                           const Eigen::Vector3d& rotation_axis, double angle) override;
+    void exportSkeleton(const std::string& path) override;
+
+    // FDO combined surgery
+    bool executeFDO(const std::string& ref_muscle, int ref_anchor_index,
+                   const Eigen::Vector3d& search_dir, const Eigen::Vector3d& rot_axis,
+                   double angle);
+
+    // Reset skeleton
+    void resetSkeleton();
 
     // Script recording
     bool isRecording() const { return mRecordingSurgery; }
@@ -57,7 +76,17 @@ public:
     std::string getReferenceMuscle() const { return mAnchorReferenceMuscle; }
     int getReferenceAnchorIndex() const { return mSelectedReferenceAnchorIndex; }
 
+    // Getters for FDO visualization
+    std::string getRotateAnchorMuscle() const { return mSelectedRotateAnchorMuscle; }
+    int getRotateAnchorIndex() const { return mSelectedRotateAnchorIndex; }
+    Eigen::Vector3f getRotateAnchorSearchDir() const {
+        return Eigen::Vector3f(mRotateAnchorSearchDir[0], mRotateAnchorSearchDir[1], mRotateAnchorSearchDir[2]);
+    }
+
 private:
+    // Tab content rendering
+    void drawScriptTabContent();
+
     // UI section rendering
     void drawScriptControlsSection();
     void drawResetMusclesSection();
@@ -65,7 +94,16 @@ private:
     void drawRelaxPassiveForceSection();
     void drawAnchorManipulationSection();
     void drawSaveMuscleConfigSection();
-    
+
+    // FDO UI sections
+    void drawRotateJointOffsetSection();
+    void drawRotateAnchorPointsSection();
+    void drawFDOCombinedSection();
+
+    // Save/Reset skeleton sections
+    void drawResetSkeletonSection();
+    void drawSaveSkeletonConfigSection();
+
     // Script preview popup
     void showScriptPreview();
     void executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops);
@@ -111,6 +149,31 @@ private:
     std::string mAnchorReferenceMuscle;
     int mSelectedCandidateAnchorIndex;
     int mSelectedReferenceAnchorIndex;
+
+    // Rotate Joint Offset section (FDO)
+    char mRotateJointComboBuffer[128];
+    std::string mSelectedRotateJoint;
+    float mRotateJointAxis[3];
+    float mRotateJointAngleDeg;
+    bool mRotateJointPreservePosition;
+
+    // Rotate Anchor Points section (FDO)
+    char mRotateAnchorMuscleComboBuffer[128];
+    char mRotateAnchorMuscleFilterBuffer[128];
+    std::string mSelectedRotateAnchorMuscle;
+    int mSelectedRotateAnchorIndex;
+    float mRotateAnchorSearchDir[3];
+    float mRotateAnchorRotAxis[3];
+    float mRotateAnchorAngleDeg;
+
+    // FDO Combined Mode
+    bool mFDOMode;
+    std::string mSelectedFDOTargetBodynode;
+    char mFDOBodynodeFilterBuffer[128];
+
+    // Save Skeleton section
+    char mSaveSkeletonFilename[64];
+    bool mSaveAsYAML;  // Format toggle for muscle/skeleton save
 };
 
 } // namespace PMuscle

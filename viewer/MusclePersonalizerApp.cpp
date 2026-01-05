@@ -320,45 +320,93 @@ void MusclePersonalizerApp::drawMuscles()
         }
     }
 
-    for (size_t i = 0; i < muscles.size(); i++) {
-        // Skip if muscle is not selected
-        if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
+    if (mShowAnchorPoints) {
+        // Anchor points mode: disable lighting for line/point rendering
+        glDisable(GL_LIGHTING);
+        glLineWidth(1.5f);
 
-        auto muscle = muscles[i];
-        muscle->UpdateGeometry();
+        for (size_t i = 0; i < muscles.size(); i++) {
+            if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
-        Eigen::Vector4d color;
+            auto muscle = muscles[i];
+            muscle->UpdateGeometry();
+            auto& anchors = muscle->GetAnchors();
 
-        // Highlight selected muscle in bright green
-        if (!highlightedMuscle.empty() && muscle->name == highlightedMuscle) {
-            color = Eigen::Vector4d(0.2, 1.0, 0.2, 1.0);  // Bright green
-        } else if (mColorByContracture && muscle->lmt_base > 0) {
-            // Contracture ratio: < 1.0 means shortened, > 1.0 means lengthened
-            double ratio = muscle->lmt_ref / muscle->lmt_base;
-            // Clamp to [0.7, 1.3] range and normalize to [0, 1]
-            double t = std::clamp((ratio - 0.7) / 0.6, 0.0, 1.0);
-
-            // Colormap: Blue (contracted) -> Cyan -> Green -> Yellow -> Red (lengthened)
-            if (t < 0.25) {
-                double s = t / 0.25;
-                color = Eigen::Vector4d(0.0, s, 1.0, 0.85);  // Blue to Cyan
-            } else if (t < 0.5) {
-                double s = (t - 0.25) / 0.25;
-                color = Eigen::Vector4d(0.0, 1.0, 1.0 - s, 0.85);  // Cyan to Green
-            } else if (t < 0.75) {
-                double s = (t - 0.5) / 0.25;
-                color = Eigen::Vector4d(s, 1.0, 0.0, 0.85);  // Green to Yellow
-            } else {
-                double s = (t - 0.75) / 0.25;
-                color = Eigen::Vector4d(1.0, 1.0 - s, 0.0, 0.85);  // Yellow to Red
+            // Draw muscle path as line strip
+            glColor4f(0.8f, 0.2f, 0.6f, 0.85f);  // Magenta color for path
+            glBegin(GL_LINE_STRIP);
+            for (auto& anchor : anchors) {
+                Eigen::Vector3d pos = anchor->GetPoint();
+                glVertex3f(pos[0], pos[1], pos[2]);
             }
-        } else {
-            // Default: Fluorescent magenta/pink for high visibility
-            color = Eigen::Vector4d(1.0, 0.2, 0.6, 0.85);
+            glEnd();
+
+            // Draw anchor points and connections to bodynodes
+            for (auto& anchor : anchors) {
+                Eigen::Vector3d anchorPos = anchor->GetPoint();
+
+                // Lines to bodynodes
+                if (!anchor->bodynodes.empty()) {
+                    glColor4f(0.0f, 0.8f, 0.0f, 0.6f);
+                    glBegin(GL_LINES);
+                    for (auto& bodynode : anchor->bodynodes) {
+                        Eigen::Vector3d bnPos = bodynode->getWorldTransform().translation();
+                        glVertex3f(anchorPos[0], anchorPos[1], anchorPos[2]);
+                        glVertex3f(bnPos[0], bnPos[1], bnPos[2]);
+                    }
+                    glEnd();
+                }
+
+                // Anchor point sphere (green)
+                glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
+                GUI::DrawSphere(anchorPos, 0.004);
+            }
         }
 
-        glColor4dv(color.data());
-        mShapeRenderer.renderMuscle(muscle, -1.0);
+        glLineWidth(1.0f);
+        glEnable(GL_LIGHTING);
+    } else {
+        // Default muscle rendering
+        for (size_t i = 0; i < muscles.size(); i++) {
+            // Skip if muscle is not selected
+            if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
+
+            auto muscle = muscles[i];
+            muscle->UpdateGeometry();
+
+            Eigen::Vector4d color;
+
+            // Highlight selected muscle in bright green
+            if (!highlightedMuscle.empty() && muscle->name == highlightedMuscle) {
+                color = Eigen::Vector4d(0.2, 1.0, 0.2, 1.0);  // Bright green
+            } else if (mColorByContracture && muscle->lmt_base > 0) {
+                // Contracture ratio: < 1.0 means shortened, > 1.0 means lengthened
+                double ratio = muscle->lmt_ref / muscle->lmt_base;
+                // Clamp to [0.7, 1.3] range and normalize to [0, 1]
+                double t = std::clamp((ratio - 0.7) / 0.6, 0.0, 1.0);
+
+                // Colormap: Blue (contracted) -> Cyan -> Green -> Yellow -> Red (lengthened)
+                if (t < 0.25) {
+                    double s = t / 0.25;
+                    color = Eigen::Vector4d(0.0, s, 1.0, 0.85);  // Blue to Cyan
+                } else if (t < 0.5) {
+                    double s = (t - 0.25) / 0.25;
+                    color = Eigen::Vector4d(0.0, 1.0, 1.0 - s, 0.85);  // Cyan to Green
+                } else if (t < 0.75) {
+                    double s = (t - 0.5) / 0.25;
+                    color = Eigen::Vector4d(s, 1.0, 0.0, 0.85);  // Green to Yellow
+                } else {
+                    double s = (t - 0.75) / 0.25;
+                    color = Eigen::Vector4d(1.0, 1.0 - s, 0.0, 0.85);  // Yellow to Red
+                }
+            } else {
+                // Default: Fluorescent magenta/pink for high visibility
+                color = Eigen::Vector4d(1.0, 0.2, 0.6, 0.85);
+            }
+
+            glColor4dv(color.data());
+            mShapeRenderer.renderMuscle(muscle, -1.0);
+        }
     }
 
     glEnable(GL_LIGHTING);
@@ -1251,142 +1299,148 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
 void MusclePersonalizerApp::drawRenderTab()
 {
     // Character selection toggle
-    if (ImGui::CollapsingHeader("Character", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::RadioButton("Subject", !mRenderReferenceCharacter)) {
-            mRenderReferenceCharacter = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Reference", mRenderReferenceCharacter)) {
-            mRenderReferenceCharacter = true;
-        }
-        if (!mRenderReferenceCharacter) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Rendering subject (patient) character");
-        } else {
-            ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Rendering reference (standard) character");
-        }
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Character");
+    ImGui::Separator();
+    if (ImGui::RadioButton("Subject", !mRenderReferenceCharacter)) {
+        mRenderReferenceCharacter = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Reference", mRenderReferenceCharacter)) {
+        mRenderReferenceCharacter = true;
+    }
+    if (!mRenderReferenceCharacter) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Rendering subject (patient) character");
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Rendering reference (standard) character");
     }
 
     // Skeleton Rendering
-    if (ImGui::CollapsingHeader("Skeleton", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Render Mode:");
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Skeleton");
+    ImGui::Separator();
+    ImGui::Text("Render Mode:");
+    ImGui::Indent();
+    if (ImGui::RadioButton("Mesh##skel", mRenderMode == RenderMode::Mesh)) {
+        mRenderMode = RenderMode::Mesh;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Primitive##skel", mRenderMode == RenderMode::Primitive)) {
+        mRenderMode = RenderMode::Primitive;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Wireframe##skel", mRenderMode == RenderMode::Wireframe)) {
+        mRenderMode = RenderMode::Wireframe;
+    }
+    ImGui::Unindent();
+
+    // Muscle Rendering
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Muscles");
+    ImGui::Separator();
+    ImGui::Checkbox("Show Muscles", &mRenderMuscles);
+    ImGui::Checkbox("Color by Contracture", &mColorByContracture);
+    ImGui::Checkbox("Show Anchor Points", &mShowAnchorPoints);
+
+    if (mColorByContracture) {
+        ImGui::Separator();
+        ImGuiCommon::ColorBarLegend("Contracture Ratio", 0.7f, 1.3f, "(contracted)", "(lengthened)");
+    }
+
+    // Muscle selection
+    if (mRenderMuscles && mExecutor && mExecutor->getCharacter()) {
+        ImGui::Separator();
+        auto muscles = mExecutor->getCharacter()->getMuscles();
+        ImGuiCommon::MuscleSelector("##MuscleList", muscles, mMuscleSelectionStates,
+                                    mMuscleFilterText, sizeof(mMuscleFilterText), 200.0f);
+    }
+
+    // Ground
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Ground");
+    ImGui::Separator();
+    ImGui::Checkbox("Show Ground Grid", &mRenderGround);
+    if (mRenderGround) {
+        ImGui::Text("Ground Mode:");
         ImGui::Indent();
-        if (ImGui::RadioButton("Mesh##skel", mRenderMode == RenderMode::Mesh)) {
-            mRenderMode = RenderMode::Mesh;
+        if (ImGui::RadioButton("Wireframe##ground", mGroundMode == GroundMode::Wireframe)) {
+            mGroundMode = GroundMode::Wireframe;
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton("Primitive##skel", mRenderMode == RenderMode::Primitive)) {
-            mRenderMode = RenderMode::Primitive;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Wireframe##skel", mRenderMode == RenderMode::Wireframe)) {
-            mRenderMode = RenderMode::Wireframe;
+        if (ImGui::RadioButton("Solid##ground", mGroundMode == GroundMode::Solid)) {
+            mGroundMode = GroundMode::Solid;
         }
         ImGui::Unindent();
     }
 
-    // Muscle Rendering
-    if (ImGui::CollapsingHeader("Muscles", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("Show Muscles", &mRenderMuscles);
-        ImGui::Checkbox("Color by Contracture", &mColorByContracture);
-
-        if (mColorByContracture) {
-            ImGui::Separator();
-            ImGuiCommon::ColorBarLegend("Contracture Ratio", 0.7f, 1.3f, "(contracted)", "(lengthened)");
-        }
-
-        // Muscle selection
-        if (mRenderMuscles && mExecutor && mExecutor->getCharacter()) {
-            ImGui::Separator();
-            auto muscles = mExecutor->getCharacter()->getMuscles();
-            ImGuiCommon::MuscleSelector("##MuscleList", muscles, mMuscleSelectionStates,
-                                        mMuscleFilterText, sizeof(mMuscleFilterText), 200.0f);
-        }
-    }
-
-    // Ground
-    if (ImGui::CollapsingHeader("Ground", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("Show Ground Grid", &mRenderGround);
-        if (mRenderGround) {
-            ImGui::Text("Ground Mode:");
-            ImGui::Indent();
-            if (ImGui::RadioButton("Wireframe##ground", mGroundMode == GroundMode::Wireframe)) {
-                mGroundMode = GroundMode::Wireframe;
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Solid##ground", mGroundMode == GroundMode::Solid)) {
-                mGroundMode = GroundMode::Solid;
-            }
-            ImGui::Unindent();
-        }
-    }
-
     // Camera
-    if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
-        float zoom = static_cast<float>(mCamera.zoom);
-        if (ImGui::SliderFloat("Zoom", &zoom, 0.1f, 5.0f)) {
-            mCamera.zoom = zoom;
-        }
-        float persp = static_cast<float>(mCamera.persp);
-        if (ImGui::SliderFloat("FOV", &persp, 20.0f, 90.0f)) {
-            mCamera.persp = persp;
-        }
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Camera");
+    ImGui::Separator();
+    float zoom = static_cast<float>(mCamera.zoom);
+    if (ImGui::SliderFloat("Zoom", &zoom, 0.1f, 5.0f)) {
+        mCamera.zoom = zoom;
+    }
+    float persp = static_cast<float>(mCamera.persp);
+    if (ImGui::SliderFloat("FOV", &persp, 20.0f, 90.0f)) {
+        mCamera.persp = persp;
+    }
 
-        ImGui::Separator();
-        if (ImGui::Button("Reset Camera")) {
-            resetCamera();
-            // Apply MusclePersonalizer-specific camera defaults
-            mCamera.eye = Eigen::Vector3d(0.0, 0.0, 3.0);
-            mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Front View")) {
-            mCamera.trackball = dart::gui::Trackball();
-            mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
-            mCamera.zoom = 1.0;
-        }
-        if (ImGui::Button("Side View")) {
-            mCamera.trackball = dart::gui::Trackball();
-            mCamera.trackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-            mCamera.trackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-            mCamera.trackball.startBall(mWidth / 2, mHeight / 2);
-            mCamera.trackball.updateBall(mWidth / 2 + mWidth * 0.25, mHeight / 2);
-            mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
-            mCamera.zoom = 1.0;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Top View")) {
-            mCamera.trackball = dart::gui::Trackball();
-            mCamera.trackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
-            mCamera.trackball.setRadius(std::min(mWidth, mHeight) * 0.4);
-            mCamera.trackball.startBall(mWidth / 2, mHeight / 2);
-            mCamera.trackball.updateBall(mWidth / 2, mHeight / 2 - mHeight * 0.25);
-            mCamera.trans = Eigen::Vector3d(0.0, 0.0, 0.0);
-            mCamera.zoom = 1.0;
-        }
+    ImGui::Separator();
+    if (ImGui::Button("Reset Camera")) {
+        resetCamera();
+        // Apply MusclePersonalizer-specific camera defaults
+        mCamera.eye = Eigen::Vector3d(0.0, 0.0, 3.0);
+        mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Front View")) {
+        mCamera.trackball = dart::gui::Trackball();
+        mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
+        mCamera.zoom = 1.0;
+    }
+    if (ImGui::Button("Side View")) {
+        mCamera.trackball = dart::gui::Trackball();
+        mCamera.trackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
+        mCamera.trackball.setRadius(std::min(mWidth, mHeight) * 0.4);
+        mCamera.trackball.startBall(mWidth / 2, mHeight / 2);
+        mCamera.trackball.updateBall(mWidth / 2 + mWidth * 0.25, mHeight / 2);
+        mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
+        mCamera.zoom = 1.0;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Top View")) {
+        mCamera.trackball = dart::gui::Trackball();
+        mCamera.trackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
+        mCamera.trackball.setRadius(std::min(mWidth, mHeight) * 0.4);
+        mCamera.trackball.startBall(mWidth / 2, mHeight / 2);
+        mCamera.trackball.updateBall(mWidth / 2, mHeight / 2 - mHeight * 0.25);
+        mCamera.trans = Eigen::Vector3d(0.0, 0.0, 0.0);
+        mCamera.zoom = 1.0;
     }
 
     // Plot Settings
-    if (ImGui::CollapsingHeader("Plot", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SetNextItemWidth(100);
-        ImGui::InputFloat("Plot Height", &mPlotHeight, 10.0f, 50.0f, "%.0f");
-        ImGui::Checkbox("Hide Legend", &mPlotHideLegend);
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Plot");
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputFloat("Plot Height", &mPlotHeight, 10.0f, 50.0f, "%.0f");
+    ImGui::Checkbox("Hide Legend", &mPlotHideLegend);
 
-        // Legend position
-        ImGui::Text("Legend:");
-        ImGui::SameLine();
-        int legendPos = mPlotLegendEast ? 1 : 0;
-        if (ImGui::RadioButton("West (Left)", &legendPos, 0)) {
-            mPlotLegendEast = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("East (Right)", &legendPos, 1)) {
-            mPlotLegendEast = true;
-        }
-
-        ImGui::SetNextItemWidth(100);
-        ImGui::InputInt("Bars per Chart", &mPlotBarsPerChart);
-        mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
+    // Legend position
+    ImGui::Text("Legend:");
+    ImGui::SameLine();
+    int legendPos = mPlotLegendEast ? 1 : 0;
+    if (ImGui::RadioButton("West (Left)", &legendPos, 0)) {
+        mPlotLegendEast = false;
     }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("East (Right)", &legendPos, 1)) {
+        mPlotLegendEast = true;
+    }
+
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputInt("Bars per Chart", &mPlotBarsPerChart);
+    mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
 }
 
 void MusclePersonalizerApp::drawResultsSection()
@@ -2416,21 +2470,25 @@ void MusclePersonalizerApp::applyDefaultROMValues()
 {
     // Hardcoded default ROM values for each clinical data field
     // Format: cd_field -> default angle in degrees
+    // Moon, Seung Jun, et al. "Normative values of physical examinations commonly used for cerebral palsy." Yonsei medical journal 58.6 (2017): 1170-1176.
     static const std::map<std::string, float> defaultROMValues = {
-        // Ankle
-        {"dorsiflexion_knee0_r2", 10.0f},    // Dorsiflexion with knee extended
-        {"dorsiflexion_knee90_r2", 20.0f},   // Dorsiflexion with knee flexed
-        {"plantarflexion", 50.0f},
+        // Ankle (mean of 13–50y normals)
+        {"dorsiflexion_knee0_r2",  11.5f},   // knee extended
+        {"dorsiflexion_knee90_r2", 19.7f},   // knee flexed 90°
+        {"plantarflexion",         47.8f},
+    
         // Hip
-        {"extension_staheli", 15.0f},         // Hip extension
-        {"abduction_ext_r2", 45.0f},         // Hip abduction
-        {"abduction_flex90_r2", 45.0f},         // Hip abduction
-        {"adduction_r2", 25.0f},         // Hip abduction
-        {"internal_rotation", 45.0f},        // Hip internal rotation
-        {"external_rotation", 45.0f},        // Hip external rotation
+        {"extension_staheli",      18.6f},   // magnitude of mean (-18.6° extension)
+        {"abduction_ext_r2",       47.7f},
+        {"abduction_flex90_r2",    55.0f},
+        {"adduction_r2",           30.9f},
+        {"external_rotation",      41.5f},
+        {"internal_rotation",      39.6f},
+    
         // Knee
-        {"popliteal_bilateral", 70.0f},      // Popliteal angle (hamstring tightness)
+        {"popliteal_bilateral",    24.6f},
     };
+    
 
     int applied = 0;
     for (auto& trial : mROMTrials) {

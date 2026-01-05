@@ -282,38 +282,6 @@ public:
     void drawSweepTabContent();
     void drawEtcTabContent();
     void drawROMSummaryTable();
-
-    // Surgery Panel Sections
-    void drawDistributePassiveForceSection();
-    void drawRelaxPassiveForceSection();
-    void drawSaveMuscleConfigSection();
-    void drawSaveSkeletonConfigSection();
-    void drawAnchorManipulationSection();
-    void drawRotateJointOffsetSection();
-    void drawRotateAnchorPointsSection();
-    void drawFDOCombinedSection();
-
-    // Surgery operations with GUI-specific logic (override base class)
-    bool removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex) override;
-    bool copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle) override;
-    bool editAnchorPosition(const std::string& muscle, int anchor_index, const Eigen::Vector3d& position) override;
-    bool editAnchorWeights(const std::string& muscle, int anchor_index, const std::vector<double>& weights) override;
-    bool addBodyNodeToAnchor(const std::string& muscle, int anchor_index, const std::string& bodynode_name, double weight) override;
-    bool removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index, int bodynode_index) override;
-    bool rotateJointOffset(const std::string& joint_name, const Eigen::Vector3d& axis, double angle, bool preserve_position = false) override;
-    bool rotateAnchorPoints(const std::string& muscle_name, int ref_anchor_index,
-                           const Eigen::Vector3d& search_direction,
-                           const Eigen::Vector3d& rotation_axis, double angle) override;
-
-    // Surgery script recording and execution
-    void startRecording();
-    void stopRecording();
-    void exportRecording(const std::string& filepath);
-    void recordOperation(std::unique_ptr<SurgeryOperation> op);
-    void loadSurgeryScript();
-    void executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops);
-    void showScriptPreview();
-
     void drawGround();
     void drawSkeleton(const dart::dynamics::SkeletonPtr& skel);
     void drawSingleBodyNode(const dart::dynamics::BodyNode* bn, const Eigen::Vector4d& color);
@@ -499,61 +467,8 @@ private:
     char mMuscleFilterText[32];
     std::vector<bool> mMuscleSelectionStates;
 
-    // Surgery Panel
-    char mSaveMuscleFilename[64];   // Buffer for save muscle config filename
-    char mSaveSkeletonFilename[64]; // Buffer for save skeleton config filename
-    bool mSavingMuscle;              // Flag to prevent duplicate saves
-
-    // Distribute Passive Force section
-    std::string mDistributeRefMuscle;                // Reference muscle name
-    std::map<std::string, bool> mDistributeSelection; // Selected modifying muscles
-    char mDistributeFilterBuffer[32];               // Filter text for muscle search
-
-    // Relax Passive Force section
-    std::map<std::string, bool> mRelaxSelection;     // Selected muscles to relax
-    char mRelaxFilterBuffer[32];                    // Filter text for muscle search
-
-    // Anchor Manipulation section
-    char mAnchorCandidateFilterBuffer[32];          // Filter text for candidate muscle search
-    char mAnchorReferenceFilterBuffer[32];          // Filter text for reference muscle search
-    std::string mAnchorCandidateMuscle;              // Selected candidate muscle name
-    std::string mAnchorReferenceMuscle;              // Selected reference muscle name
-    int mSelectedCandidateAnchorIndex;               // Selected candidate anchor index for operations
-    int mSelectedReferenceAnchorIndex;               // Selected reference anchor index for copying
-
-    // Rotate Joint Offset section (FDO)
-    char mRotateJointComboBuffer[128];               // Buffer for joint selection combo
-    std::string mSelectedRotateJoint;                 // Selected joint name
-    float mRotateJointAxis[3];                        // Rotation axis vector
-    float mRotateJointAngleDeg;                       // Angle in degrees
-    bool mRotateJointPreservePosition;                // Preserve joint position (rotate orientation only)
-
-    // Rotate Anchor Points section (FDO)
-    char mRotateAnchorMuscleComboBuffer[128];        // Buffer for muscle selection combo
-    char mRotateAnchorMuscleFilterBuffer[128];       // Filter buffer for muscle search
-    std::string mSelectedRotateAnchorMuscle;          // Selected muscle name
-    int mSelectedRotateAnchorIndex;                   // Selected anchor index
-    float mRotateAnchorSearchDir[3];                  // Search direction vector
-    float mRotateAnchorRotAxis[3];                    // Rotation axis vector
-    float mRotateAnchorAngleDeg;                      // Angle in degrees
-
-    // FDO Combined Mode (joint + anchor rotation)
-    bool mFDOMode;                                    // FDO combined surgery mode toggle
-    std::string mSelectedFDOTargetBodynode;           // Target bodynode for FDO
-    char mFDOBodynodeFilterBuffer[128];               // Filter buffer for FDO bodynode search
-
     // Sweep restore option
     bool mSweepRestorePosition;                      // Whether to restore position after sweep
-
-    // Surgery script recording and execution
-    bool mRecordingSurgery;                          // Is recording active?
-    std::vector<std::unique_ptr<SurgeryOperation>> mRecordedOperations;  // Recorded operations
-    std::string mRecordingScriptPath;                // Default path for saving recording
-    std::string mLoadScriptPath;                     // Path for loading script
-    char mRecordingPathBuffer[256];                  // Buffer for recording path input
-    char mLoadPathBuffer[256];                       // Buffer for load path input
-    std::vector<std::unique_ptr<SurgeryOperation>> mLoadedScript;  // Loaded script for preview
-    bool mShowScriptPreview;                         // Show script preview popup
 
     // Pose preset methods
     void setPoseStanding();
@@ -564,6 +479,11 @@ private:
     // UI helpers
     // mDefaultOpenPanels and isPanelDefaultOpen() inherited from ViewerAppBase
     bool collapsingHeaderWithControls(const std::string& title);
+
+    // ============================================================
+    // Surgery Panel (embedded surgery UI)
+    // ============================================================
+    std::unique_ptr<SurgeryPanel> mSurgeryPanel;
 
     // ============================================================
     // PID Navigator and Character Loading (Browse & Rebuild)

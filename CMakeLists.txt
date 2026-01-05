@@ -44,7 +44,7 @@ set(CMAKE_C_FLAGS_RELEASE "-O3 -march=native -funroll-loops -flto=30")
 
 # Common packages
 set(Python3_EXECUTABLE $ENV{CONDA_PREFIX}/bin/python)
-set(Python3_INCLUDE_DIRS $ENV{CONDA_PREFIX}/include/python3.8)
+set(Python3_INCLUDE_DIRS $ENV{CONDA_PREFIX}/include/python3.10)
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 message(STATUS "Python3_INCLUDE_DIRS: ${Python3_INCLUDE_DIRS}")
 message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")

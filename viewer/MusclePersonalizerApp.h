@@ -225,6 +225,7 @@ private:
     // ============================================================
     bool mRenderMuscles = true;
     bool mColorByContracture = false;
+    bool mShowAnchorPoints = false;  // Show anchor points instead of muscle cylinders
     bool mRenderReferenceCharacter = false;  // Toggle between subject and reference
     float mMuscleLabelFontSize = 14.0f;
     float mPlotHeight = 400.0f;  // Height of length curve plots
