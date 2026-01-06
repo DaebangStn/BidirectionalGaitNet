@@ -38,13 +38,9 @@ static void drawOutlinedText(ImDrawList* drawList, ImFont* font, float fontSize,
 // Constructor / Destructor
 // =============================================================================
 
-C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath,
-                                 const std::string& configPath)
+C3DProcessorApp::C3DProcessorApp(const std::string& configPath)
     : ViewerAppBase("C3D Processor", 1280, 720)
-    , mSkeletonPath(skeletonPath)
-    , mMarkerConfigPath(markerPath)
-    , mInitialMarkerPath(markerPath)
-    , mFittingConfigPath(configPath)
+    , mConfigPath(configPath)
     , mC3DReader(nullptr)
     , mMotion(nullptr)
     , mRenderC3DMarkers(true)
@@ -60,6 +56,9 @@ C3DProcessorApp::C3DProcessorApp(const std::string& skeletonPath, const std::str
     , mPlotHideLegend(false)
 {
     std::memset(mMarkerSearchFilter, 0, sizeof(mMarkerSearchFilter));
+
+    // Load configuration from YAML file (sets paths and rendering options)
+    loadConfig();
 
     // Initialize graph data buffer
     mGraphData = new CBufferData<double>();
@@ -164,6 +163,91 @@ C3DProcessorApp::~C3DProcessorApp()
     // Base class handles GLFW/ImGui cleanup
 }
 
+void C3DProcessorApp::loadConfig()
+{
+    // Load all configuration from the unified YAML file
+    std::string resolved_path = rm::resolve(mConfigPath);
+    LOG_INFO("[C3DProcessor] Loading config from: " << resolved_path);
+
+    try {
+        YAML::Node config = YAML::LoadFile(resolved_path);
+
+        // Character configuration
+        if (config["character"]) {
+            auto character = config["character"];
+            mSkeletonPath = character["skeleton"].as<std::string>();
+            mMarkerConfigPath = character["marker"].as<std::string>();
+            mInitialMarkerPath = mMarkerConfigPath;
+        } else {
+            // Defaults if not specified
+            mSkeletonPath = "@data/skeleton/base.yaml";
+            mMarkerConfigPath = "@data/marker/static.xml";
+            mInitialMarkerPath = mMarkerConfigPath;
+        }
+
+        // Fitting configuration
+        if (config["fitting"]) {
+            auto fitting = config["fitting"];
+            if (fitting["config"]) mFittingConfigPath = fitting["config"].as<std::string>();
+            if (fitting["static_config"]) mStaticConfigPath = fitting["static_config"].as<std::string>();
+        } else {
+            mFittingConfigPath = "@data/config/skeleton_fitting.yaml";
+        }
+
+        // Rendering configuration
+        if (config["rendering"]) {
+            auto rendering = config["rendering"];
+
+            // Startup behavior
+            if (rendering["autoload_first"]) mAutoloadFirstC3D = rendering["autoload_first"].as<bool>();
+
+            // Render mode
+            if (rendering["mode"]) {
+                std::string mode = rendering["mode"].as<std::string>();
+                if (mode == "mesh") mRenderMode = RenderMode::Mesh;
+                else if (mode == "primitive") mRenderMode = RenderMode::Primitive;
+                else if (mode == "wireframe") mRenderMode = RenderMode::Wireframe;
+            }
+
+            // Motion character offset
+            if (rendering["motion_char_offset"]) {
+                auto offset = rendering["motion_char_offset"];
+                if (offset.IsSequence() && offset.size() == 3) {
+                    mMotionCharacterOffset.x() = offset[0].as<double>();
+                    mMotionCharacterOffset.y() = offset[1].as<double>();
+                    mMotionCharacterOffset.z() = offset[2].as<double>();
+                }
+            }
+
+            // Character visibility
+            if (rendering["free_character"]) mRenderFreeCharacter = rendering["free_character"].as<bool>();
+            if (rendering["motion_character"]) mRenderMotionCharacter = rendering["motion_character"].as<bool>();
+            if (rendering["motion_char_markers"]) mRenderMotionCharMarkers = rendering["motion_char_markers"].as<bool>();
+
+            // Marker visibility
+            if (rendering["c3d_markers"]) mRenderC3DMarkers = rendering["c3d_markers"].as<bool>();
+            if (rendering["skeleton_markers"]) mRenderExpectedMarkers = rendering["skeleton_markers"].as<bool>();
+            if (rendering["joint_positions"]) mRenderJointPositions = rendering["joint_positions"].as<bool>();
+            if (rendering["marker_labels"]) mRenderMarkerIndices = rendering["marker_labels"].as<bool>();
+            if (rendering["marker_label_font_size"]) mMarkerLabelFontSize = rendering["marker_label_font_size"].as<float>();
+            if (rendering["marker_alpha"]) mMarkerAlpha = rendering["marker_alpha"].as<float>();
+
+            // Axis visualization
+            if (rendering["world_axis"]) mRenderWorldAxis = rendering["world_axis"].as<bool>();
+            if (rendering["skeleton_axis"]) mRenderSkeletonAxis = rendering["skeleton_axis"].as<bool>();
+            if (rendering["axis_length"]) mAxisLength = rendering["axis_length"].as<float>();
+        }
+
+        LOG_INFO("[C3DProcessor] Config loaded - skeleton: " << mSkeletonPath
+                 << ", marker: " << mMarkerConfigPath
+                 << ", fitting: " << mFittingConfigPath);
+
+    } catch (const std::exception& e) {
+        LOG_ERROR("[C3DProcessor] Failed to load config from " << resolved_path << ": " << e.what());
+        throw;
+    }
+}
+
 // =============================================================================
 // ViewerAppBase Overrides
 // =============================================================================
@@ -229,56 +313,8 @@ void C3DProcessorApp::updateCamera()
 
 void C3DProcessorApp::loadRenderConfigImpl()
 {
-    // Load c3d section from render.yaml (Template Method hook)
-    // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
-    try {
-        std::string resolved_path = rm::resolve("render.yaml");
-        YAML::Node config = YAML::LoadFile(resolved_path);
-
-        if (config["c3d"]) {
-            auto c3d = config["c3d"];
-
-            // Auto-load first C3D at startup
-            if (c3d["autoload_first"]) mAutoloadFirstC3D = c3d["autoload_first"].as<bool>();
-
-            if (c3d["motion_char_offset"]) {
-                auto offset = c3d["motion_char_offset"];
-                if (offset.IsSequence() && offset.size() == 3) {
-                    mMotionCharacterOffset.x() = offset[0].as<double>();
-                    mMotionCharacterOffset.y() = offset[1].as<double>();
-                    mMotionCharacterOffset.z() = offset[2].as<double>();
-                }
-            }
-
-            // Render mode
-            if (c3d["mode"]) {
-                std::string mode = c3d["mode"].as<std::string>();
-                if (mode == "mesh") mRenderMode = RenderMode::Mesh;
-                else if (mode == "primitive") mRenderMode = RenderMode::Primitive;
-                else if (mode == "wireframe") mRenderMode = RenderMode::Wireframe;
-            }
-
-            // Character visibility
-            if (c3d["free_character"]) mRenderFreeCharacter = c3d["free_character"].as<bool>();
-            if (c3d["motion_character"]) mRenderMotionCharacter = c3d["motion_character"].as<bool>();
-            if (c3d["motion_char_markers"]) mRenderMotionCharMarkers = c3d["motion_char_markers"].as<bool>();
-
-            // Marker visibility
-            if (c3d["c3d_markers"]) mRenderC3DMarkers = c3d["c3d_markers"].as<bool>();
-            if (c3d["skeleton_markers"]) mRenderExpectedMarkers = c3d["skeleton_markers"].as<bool>();
-            if (c3d["joint_positions"]) mRenderJointPositions = c3d["joint_positions"].as<bool>();
-            if (c3d["marker_labels"]) mRenderMarkerIndices = c3d["marker_labels"].as<bool>();
-            if (c3d["marker_label_font_size"]) mMarkerLabelFontSize = c3d["marker_label_font_size"].as<float>();
-            if (c3d["marker_alpha"]) mMarkerAlpha = c3d["marker_alpha"].as<float>();
-
-            // Axis visualization
-            if (c3d["world_axis"]) mRenderWorldAxis = c3d["world_axis"].as<bool>();
-            if (c3d["skeleton_axis"]) mRenderSkeletonAxis = c3d["skeleton_axis"].as<bool>();
-            if (c3d["axis_length"]) mAxisLength = c3d["axis_length"].as<float>();
-        }
-    } catch (const std::exception& e) {
-        LOG_WARN("[C3DProcessor] Could not load render.yaml: " << e.what());
-    }
+    // All configuration is now loaded from the unified config file in loadConfig()
+    // Common config (geometry, default_open_panels) is still loaded by ViewerAppBase from render.yaml
 }
 
 // isPanelDefaultOpen() is inherited from ViewerAppBase

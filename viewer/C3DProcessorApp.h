@@ -68,8 +68,7 @@ struct C3DViewerState
 class C3DProcessorApp : public ViewerAppBase
 {
 public:
-    C3DProcessorApp(const std::string& skeletonPath, const std::string& markerPath,
-                    const std::string& configPath = "@data/config/skeleton_fitting.yaml");
+    explicit C3DProcessorApp(const std::string& configPath = "@data/config/c3d_processor.yaml");
     ~C3DProcessorApp() override;
 
     void loadC3DFile(const std::string& path);
@@ -84,6 +83,10 @@ protected:
     void keyPress(int key, int scancode, int action, int mods) override;
 
 private:
+    // === Configuration ===
+    std::string mConfigPath;  // Main config file path
+    void loadConfig();        // Load all settings from config file
+
     // === Window position (from config) ===
     int mWindowXPos = 0, mWindowYPos = 0;
 

@@ -917,10 +917,10 @@ void Character::setMusclesXML(std::string path, bool meshLbsWeight)
     {
         std::string name = unit->Attribute("name");
         double f0 = std::stod(unit->Attribute("f0"));
-        double lm = std::stod(unit->Attribute("lm"));
-        double lt = std::stod(unit->Attribute("lt"));
+        double lm_contract = std::stod(unit->Attribute("lm_contract"));
+        double lt_rel = std::stod(unit->Attribute("lt_rel"));
 
-        Muscle *muscle_elem = new Muscle(name, f0, lm, lt);
+        Muscle *muscle_elem = new Muscle(name, f0, lm_contract, lt_rel);
 
         bool isValid = true;
         int num_waypoints = 0;

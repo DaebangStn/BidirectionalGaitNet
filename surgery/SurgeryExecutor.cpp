@@ -1996,6 +1996,97 @@ bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, dou
     return true;
 }
 
+bool SurgeryExecutor::mirrorAnchorPositions(const std::vector<std::string>& muscleBaseNames) {
+    if (!mCharacter) {
+        LOG_ERROR("[Surgery] No character loaded!");
+        return false;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+
+    // Get pelvis X as symmetry plane
+    auto* pelvis = skel->getBodyNode("Pelvis");
+    if (!pelvis) {
+        LOG_ERROR("[Surgery] Pelvis body node not found!");
+        return false;
+    }
+    double symmetryX = pelvis->getTransform().translation().x();
+
+    auto& muscles = mCharacter->getMuscles();
+
+    // Build L/R muscle map
+    std::map<std::string, Muscle*> leftMuscles, rightMuscles;
+    for (auto* m : muscles) {
+        if (m->name.size() > 2 && m->name[1] == '_') {
+            std::string base = m->name.substr(2);
+            if (m->name[0] == 'L') leftMuscles[base] = m;
+            else if (m->name[0] == 'R') rightMuscles[base] = m;
+        }
+    }
+
+    int mirrored = 0;
+    for (auto& [base, leftM] : leftMuscles) {
+        auto it = rightMuscles.find(base);
+        if (it == rightMuscles.end()) continue;
+
+        // Filter by muscleBaseNames if provided
+        if (!muscleBaseNames.empty()) {
+            if (std::find(muscleBaseNames.begin(), muscleBaseNames.end(), base) == muscleBaseNames.end())
+                continue;
+        }
+
+        Muscle* rightM = it->second;
+        auto& leftAnchors = leftM->GetAnchors();
+        auto& rightAnchors = rightM->GetAnchors();
+
+        if (leftAnchors.size() != rightAnchors.size()) {
+            LOG_WARN("[Surgery] Anchor count mismatch for " << base << ": L=" << leftAnchors.size() << ", R=" << rightAnchors.size());
+            continue;
+        }
+
+        for (size_t i = 0; i < leftAnchors.size(); i++) {
+            // Get global positions
+            Eigen::Vector3d leftGlobal = leftAnchors[i]->GetPoint();
+            Eigen::Vector3d rightGlobal = rightAnchors[i]->GetPoint();
+
+            // Mirror right global across symmetry plane (pelvis X)
+            Eigen::Vector3d rightMirrored = rightGlobal;
+            rightMirrored.x() = 2.0 * symmetryX - rightGlobal.x();
+
+            // Average the global positions
+            Eigen::Vector3d avgGlobal = (leftGlobal + rightMirrored) / 2.0;
+
+            // New left global = average
+            Eigen::Vector3d newLeftGlobal = avgGlobal;
+
+            // New right global = mirror of average across symmetry plane
+            Eigen::Vector3d newRightGlobal = avgGlobal;
+            newRightGlobal.x() = 2.0 * symmetryX - avgGlobal.x();
+
+            // Convert back to local positions for each body node
+            auto& lpos = leftAnchors[i]->local_positions;
+            auto& rpos = rightAnchors[i]->local_positions;
+            auto& lbns = leftAnchors[i]->bodynodes;
+            auto& rbns = rightAnchors[i]->bodynodes;
+
+            for (size_t j = 0; j < lpos.size(); j++) {
+                lpos[j] = lbns[j]->getTransform().inverse() * newLeftGlobal;
+            }
+            for (size_t j = 0; j < rpos.size(); j++) {
+                rpos[j] = rbns[j]->getTransform().inverse() * newRightGlobal;
+            }
+        }
+
+        leftM->SetMuscle();
+        rightM->SetMuscle();
+        mirrored++;
+        LOG_INFO("[Surgery] Mirrored anchor positions for " << base);
+    }
+
+    LOG_INFO("[Surgery] Mirrored " << mirrored << " muscle pair(s) (symmetry X=" << symmetryX << ")");
+    return mirrored > 0;
+}
+
 bool SurgeryExecutor::optimizeWaypoints(const std::vector<std::string>& muscle_names,
                                         const std::string& /* hdf_motion_path - deprecated */,
                                         const WaypointOptimizer::Config& config,

@@ -1,0 +1,18 @@
+name: "exam_debug"
+description: "Debug exam for L/R symmetry verification"
+
+character:
+  skeleton: "@data/skeleton/base.yaml"
+  muscle: "@data/muscle/base.yaml"
+  actuator: "mass_lower"
+
+std_character:
+  skeleton: "@data/skeleton/base.yaml"
+  muscle: "@data/muscle/base.yaml"
+
+# Run all rotation trials to verify L/R symmetry
+trials:
+  - file: "@data/config/rom/extRot_L.yaml"
+  - file: "@data/config/rom/extRot_R.yaml"
+  - file: "@data/config/rom/intRot_L.yaml"
+  - file: "@data/config/rom/intRot_R.yaml"

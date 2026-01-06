@@ -145,6 +145,31 @@ PhysicalExam::~PhysicalExam() {
 void PhysicalExam::loadRenderConfigImpl() {
     // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
     // Uses inherited mControlPanelWidth and mPlotPanelWidth from geometry.control/plot
+
+    // Load normative ROM values from render.yaml
+    try {
+        std::string resolved_path = rm::resolve("render.yaml");
+        YAML::Node config = YAML::LoadFile(resolved_path);
+
+        if (config["normative_rom"]) {
+            auto normative = config["normative_rom"];
+            // Iterate over joints (hip, knee, ankle)
+            for (auto joint_it = normative.begin(); joint_it != normative.end(); ++joint_it) {
+                std::string joint = joint_it->first.as<std::string>();
+                auto measurements = joint_it->second;
+                // Iterate over measurements
+                for (auto meas_it = measurements.begin(); meas_it != measurements.end(); ++meas_it) {
+                    std::string measurement = meas_it->first.as<std::string>();
+                    double value = meas_it->second.as<double>();
+                    std::string key = joint + "/" + measurement;
+                    mNormativeROM[key] = value;
+                }
+            }
+            LOG_INFO("[PhysicalExam] Loaded " << mNormativeROM.size() << " normative ROM values");
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN("[PhysicalExam] Could not load normative ROM from render.yaml: " << e.what());
+    }
 }
 
 void PhysicalExam::onInitialize() {
@@ -670,6 +695,29 @@ double PhysicalExam::getPassiveTorqueJointGlobalY(
         total_torque += torque_world.y();
     }
 
+    return total_torque;
+}
+
+double PhysicalExam::getPassiveTorqueJointDof(
+    Character* character, dart::dynamics::Joint* joint, int dof_index) {
+    if (!character || !joint) return 0.0;
+    if (character->getMuscles().empty()) return 0.0;
+
+    // Get the skeleton DOF index for this specific joint DOF
+    int skel_dof_idx = joint->getIndexInSkeleton(dof_index);
+
+    double total_torque = 0.0;
+    for (auto& muscle : character->getMuscles()) {
+        Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+        const auto& related_indices = muscle->related_dof_indices;
+
+        for (size_t i = 0; i < related_indices.size(); ++i) {
+            if (related_indices[i] == skel_dof_idx) {
+                total_torque += jtp[i];
+                break;  // Only one contribution per muscle per DOF
+            }
+        }
+    }
     return total_torque;
 }
 
@@ -1297,9 +1345,10 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
 
     auto skel = mCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_index);
+    // Use DOF-specific torque for simple sweeps (symmetric), global Y for composite DOFs
     data.passive_torque_total = use_global_y
         ? getPassiveTorqueJointGlobalY(mCharacter, joint)
-        : getPassiveTorqueJoint(joint_index);
+        : getPassiveTorqueJointDof(mCharacter, joint, mSweepConfig.dof_index);
 
     // Debug: check for NaN
     if (std::isnan(data.passive_torque_total)) {
@@ -1336,10 +1385,27 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
         Eigen::VectorXd jtp = muscle->GetRelatedJtp();
         std::vector<double> jtp_vec(jtp.data(), jtp.data() + jtp.size());
         data.muscle_jtp[muscle_name] = jtp_vec;
+
+        // Extract jtp at swept DOF specifically for debugging
+        int skel_dof_idx = joint->getIndexInSkeleton(mSweepConfig.dof_index);
+        double jtp_at_swept_dof = 0.0;
+        const auto& related_indices = muscle->related_dof_indices;
+        for (size_t j = 0; j < related_indices.size(); ++j) {
+            if (related_indices[j] == skel_dof_idx) {
+                jtp_at_swept_dof = jtp[j];
+                break;
+            }
+        }
+        data.muscle_jtp_dof[muscle_name] = jtp_at_swept_dof;
     }
 
     mAngleSweepData.push_back(data);
-    
+
+    // Copy second point's stiffness to first point (first point has no backward diff)
+    if (mAngleSweepData.size() >= 2) {
+        mAngleSweepData[0].passive_torque_stiffness = mAngleSweepData[1].passive_torque_stiffness;
+    }
+
     // Collect standard character data if available
     if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
         AngleSweepDataPoint std_data;
@@ -1354,7 +1420,7 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
         // Compute passive torque for std character using same method as main character
         std_data.passive_torque_total = use_global_y
             ? getPassiveTorqueJointGlobalY(mStdCharacter, std_joint)
-            : getPassiveTorqueJoint_forCharacter(mStdCharacter, std_joint);
+            : getPassiveTorqueJointDof(mStdCharacter, std_joint, mSweepConfig.dof_index);
         
         // Compute stiffness for std
         size_t N_std = mStdAngleSweepData.size();
@@ -1375,16 +1441,33 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
         for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
             Muscle* muscle = mStdCharacter->getMuscleByName(muscle_name);
             if (!muscle) continue;
-            
+
             std_data.muscle_fp[muscle_name] = muscle->Getf_p();
             std_data.muscle_lm_norm[muscle_name] = muscle->lm_norm;
-            
+
             Eigen::VectorXd jtp = muscle->GetRelatedJtp();
             std::vector<double> jtp_vec(jtp.data(), jtp.data() + jtp.size());
             std_data.muscle_jtp[muscle_name] = jtp_vec;
+
+            // Extract jtp at swept DOF specifically for debugging
+            int std_skel_dof_idx = std_joint->getIndexInSkeleton(mSweepConfig.dof_index);
+            double jtp_at_swept_dof = 0.0;
+            const auto& related_indices = muscle->related_dof_indices;
+            for (size_t j = 0; j < related_indices.size(); ++j) {
+                if (related_indices[j] == std_skel_dof_idx) {
+                    jtp_at_swept_dof = jtp[j];
+                    break;
+                }
+            }
+            std_data.muscle_jtp_dof[muscle_name] = jtp_at_swept_dof;
         }
-        
+
         mStdAngleSweepData.push_back(std_data);
+
+        // Copy second point's stiffness to first point for std character
+        if (mStdAngleSweepData.size() == 2) {
+            mStdAngleSweepData[0].passive_torque_stiffness = mStdAngleSweepData[1].passive_torque_stiffness;
+        }
     }
 }
 
@@ -1775,7 +1858,7 @@ void PhysicalExam::writeAngleSweepDataForCharacter(
 
     // Prepare buffers
     std::vector<float> angles(N), passiveTorques(N), passiveTorqueStiffness(N);
-    std::vector<float> muscleFp(N * M), muscleLmNorm(N * M), muscleJtpMag(N * M);
+    std::vector<float> muscleFp(N * M), muscleLmNorm(N * M), muscleJtpMag(N * M), muscleJtpDof(N * M);
 
     for (size_t i = 0; i < N; ++i) {
         const auto& d = data[i];
@@ -1794,6 +1877,10 @@ void PhysicalExam::writeAngleSweepDataForCharacter(
                 jtpMag = std::sqrt(jtpMag);
             }
             muscleJtpMag[i*M + m] = static_cast<float>(jtpMag);
+
+            // Per-muscle jtp at swept DOF only
+            double jtpDof = d.muscle_jtp_dof.count(name) ? d.muscle_jtp_dof.at(name) : 0.0;
+            muscleJtpDof[i*M + m] = static_cast<float>(jtpDof);
         }
     }
 
@@ -1822,6 +1909,9 @@ void PhysicalExam::writeAngleSweepDataForCharacter(
 
     H5::DataSet jtpDs = group.createDataSet("muscle_jtp_mag", H5::PredType::NATIVE_FLOAT, space2);
     jtpDs.write(muscleJtpMag.data(), H5::PredType::NATIVE_FLOAT);
+
+    H5::DataSet jtpDofDs = group.createDataSet("muscle_jtp_dof", H5::PredType::NATIVE_FLOAT, space2);
+    jtpDofDs.write(muscleJtpDof.data(), H5::PredType::NATIVE_FLOAT);
 
     // Write muscle names
     H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
@@ -2079,7 +2169,35 @@ void PhysicalExam::runAllTrials() {
 
         runCurrentTrial();
 
+        // Buffer the trial results
+        const TrialConfig& trial = mTrials[mCurrentTrialIndex];
+        if (!mAngleSweepData.empty() && trial.mode == TrialMode::ANGLE_SWEEP) {
+            TrialDataBuffer buffer;
+            buffer.trial_name = trial.name;
+            buffer.trial_description = trial.description;
+            buffer.alias = trial.angle_sweep.alias;
+            buffer.timestamp = std::chrono::system_clock::now();
+            buffer.angle_sweep_data = mAngleSweepData;
+            buffer.std_angle_sweep_data = mStdAngleSweepData;
+            buffer.tracked_muscles = mAngleSweepTrackedMuscles;
+            buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+            buffer.config = trial.angle_sweep;
+            buffer.torque_cutoff = trial.torque_cutoff;
+            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
+            buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
+            if (!mStdAngleSweepData.empty()) {
+                buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+            }
+            buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+            addTrialToBuffer(buffer);
+        }
+
         mTrialRunning = false;
+    }
+
+    // Export buffers to HDF5
+    if (!mTrialBuffers.empty()) {
+        exportTrialBuffersToHDF5();
     }
 
     LOG_INFO("All trials complete. Results saved to: " << mExamOutputPath);
@@ -2284,7 +2402,7 @@ void PhysicalExam::drawSweepTabContent() {
         int prev_filtered_selection = filteredSelection;
         if (ImGui::ListBox("##TrialBuffers", &filteredSelection,
                            items.data(), static_cast<int>(items.size()),
-                           std::min(3, static_cast<int>(items.size())))) {
+                           std::min(7, static_cast<int>(items.size())))) {
             // Selection changed - map back to original index
             if (filteredSelection != prev_filtered_selection && filteredSelection >= 0 &&
                 filteredSelection < static_cast<int>(filteredIndices.size())) {
@@ -2511,8 +2629,9 @@ void PhysicalExam::drawROMSummaryTable() {
         }
     }
 
-    // Helper lambda to render cell
-    auto renderCell = [](const std::optional<double>& val) {
+    // Helper lambda to render cell with normative comparison
+    // Returns color based on deviation from normative value
+    auto renderCellWithComparison = [](const std::optional<double>& val, double normative) {
         if (!val.has_value()) {
             // No trial exists
             ImGui::TextDisabled("-");
@@ -2520,16 +2639,31 @@ void PhysicalExam::drawROMSummaryTable() {
             // Trial exists but no ROM data
             ImGui::TextDisabled("N/A");
         } else {
-            // Has ROM value
-            ImGui::Text("%.1f", *val);
+            // Has ROM value - color based on deviation from normative
+            double diff = *val - normative;
+            double diff_pct = std::abs(diff) / normative * 100.0;
+
+            ImVec4 color;
+            if (diff_pct <= 10.0) {
+                // Within 10%: green (normal)
+                color = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
+            } else if (diff_pct <= 25.0) {
+                // 10-25%: yellow (mild deviation)
+                color = ImVec4(0.9f, 0.9f, 0.3f, 1.0f);
+            } else {
+                // >25%: red (significant deviation)
+                color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+            }
+            ImGui::TextColored(color, "%.1f", *val);
         }
     };
 
-    // Render table
-    if (ImGui::BeginTable("ROMSummary", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    // Render table with Normative column
+    if (ImGui::BeginTable("ROMSummary", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Measurement", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("Normative", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, 70.0f);
         ImGui::TableHeadersRow();
 
         // Iterate in defined order
@@ -2540,18 +2674,54 @@ void PhysicalExam::drawROMSummaryTable() {
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", joint.c_str());
             ImGui::TableNextColumn();
             ImGui::TableNextColumn();
+            ImGui::TableNextColumn();
 
             for (const auto& meas : measurements) {
                 const auto& entry = grouped[joint][meas];
+                std::string normKey = joint + "/" + meas;
+
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("  %s", meas.c_str());
 
+                // Normative value column
                 ImGui::TableNextColumn();
-                renderCell(entry.left);
+                auto normIt = mNormativeROM.find(normKey);
+                double normative = 0.0;
+                if (normIt != mNormativeROM.end()) {
+                    normative = normIt->second;
+                    ImGui::TextDisabled("%.1f", normative);
+                } else {
+                    ImGui::TextDisabled("-");
+                }
 
+                // Left value with color comparison
                 ImGui::TableNextColumn();
-                renderCell(entry.right);
+                if (normIt != mNormativeROM.end()) {
+                    renderCellWithComparison(entry.left, normative);
+                } else {
+                    if (!entry.left.has_value()) {
+                        ImGui::TextDisabled("-");
+                    } else if (std::isnan(*entry.left)) {
+                        ImGui::TextDisabled("N/A");
+                    } else {
+                        ImGui::Text("%.1f", *entry.left);
+                    }
+                }
+
+                // Right value with color comparison
+                ImGui::TableNextColumn();
+                if (normIt != mNormativeROM.end()) {
+                    renderCellWithComparison(entry.right, normative);
+                } else {
+                    if (!entry.right.has_value()) {
+                        ImGui::TextDisabled("-");
+                    } else if (std::isnan(*entry.right)) {
+                        ImGui::TextDisabled("N/A");
+                    } else {
+                        ImGui::Text("%.1f", *entry.right);
+                    }
+                }
             }
         }
         ImGui::EndTable();
@@ -4666,10 +4836,11 @@ void PhysicalExam::renderMusclePlots() {
             // Get selected joint info
             auto selected_joint = skel->getJoint(mSelectedPlotJointIndex);
             std::string joint_name = selected_joint->getName();
-            int joint_first_dof = selected_joint->getIndexInSkeleton(0) - root_dofs;
+            int joint_dof_start = selected_joint->getIndexInSkeleton(0);  // Full skeleton index
             int num_dofs = selected_joint->getNumDofs();
+            int joint_dof_end = joint_dof_start + num_dofs;  // One past last DOF
 
-            // Plot each muscle's contribution to this joint (magnitude across all DOFs)
+            // Plot each muscle's contribution to this joint (magnitude across joint DOFs only)
             std::string plot_title = "Per-Muscle Passive Torque: " + joint_name;
             if (ImPlot::BeginPlot(plot_title.c_str(), ImVec2(-1, 400), plot_flags)) {
                 ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
@@ -4680,22 +4851,27 @@ void PhysicalExam::renderMusclePlots() {
                     auto vis_it = mMuscleVisibility.find(muscle_name);
                     if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
 
+                    // Get muscle to access its DOF mapping
+                    Muscle* muscle = mCharacter->getMuscleByName(muscle_name);
+                    if (!muscle) continue;
+                    const std::vector<int>& related_dof_indices = muscle->related_dof_indices;
+
                     // Build magnitude data from mAngleSweepData
                     std::vector<double> magnitude_data;
                     magnitude_data.reserve(mAngleSweepData.size());
-                    
+
                     for (const auto& pt : mAngleSweepData) {
                         auto it = pt.muscle_jtp.find(muscle_name);
                         if (it != pt.muscle_jtp.end()) {
                             const std::vector<double>& jtp_vec = it->second;
-                            // Compute magnitude across DOFs for this joint
+                            // Compute magnitude across DOFs for this joint only
                             double mag_squared = 0.0;
-                            for (size_t i = 0; i < jtp_vec.size(); ++i) {
-                                // Check if this DOF belongs to the selected joint
-                                // Note: jtp_vec contains torques for all related DOFs
-                                // We need to select only the DOFs for this joint
-                                // This is a simplified version - may need adjustment based on DOF mapping
-                                mag_squared += jtp_vec[i] * jtp_vec[i];
+                            for (size_t i = 0; i < jtp_vec.size() && i < related_dof_indices.size(); ++i) {
+                                int dof_idx = related_dof_indices[i];
+                                // Only include torques for DOFs belonging to the selected joint
+                                if (dof_idx >= joint_dof_start && dof_idx < joint_dof_end) {
+                                    mag_squared += jtp_vec[i] * jtp_vec[i];
+                                }
                             }
                             magnitude_data.push_back(std::sqrt(mag_squared));
                         } else {
@@ -4763,11 +4939,20 @@ void PhysicalExam::loadBufferForVisualization(int buffer_index) {
     mStdAngleSweepTrackedMuscles = buffer.std_tracked_muscles;
     mCurrentSweepName = buffer.trial_name;
 
-    // Apply base pose to character and std character
+    // Apply base pose to character and std character (only if DOF count matches)
     if (buffer.base_pose.size() > 0 && mCharacter) {
-        mCharacter->getSkeleton()->setPositions(buffer.base_pose);
-        if (mStdCharacter) {
-            mStdCharacter->getSkeleton()->setPositions(buffer.base_pose);
+        auto skel = mCharacter->getSkeleton();
+        if (buffer.base_pose.size() == skel->getNumDofs()) {
+            skel->setPositions(buffer.base_pose);
+            if (mStdCharacter) {
+                auto stdSkel = mStdCharacter->getSkeleton();
+                if (buffer.base_pose.size() == stdSkel->getNumDofs()) {
+                    stdSkel->setPositions(buffer.base_pose);
+                }
+            }
+        } else {
+            LOG_WARN("Buffer base_pose DOF count (" << buffer.base_pose.size()
+                     << ") doesn't match skeleton (" << skel->getNumDofs() << "), skipping pose restore");
         }
     }
 

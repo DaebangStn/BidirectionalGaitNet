@@ -221,11 +221,62 @@ private:
     int mContractureChartPage = 0;  // Shared pagination for muscle charts
 
     // ============================================================
+    // Tool 4: Symmetry Analysis (UI state)
+    // ============================================================
+    struct SymmetryPairInfo {
+        std::string base_name;      // e.g., "Adductor_Brevis"
+        std::string left_name;      // e.g., "L_Adductor_Brevis"
+        std::string right_name;     // e.g., "R_Adductor_Brevis"
+        bool is_symmetric;          // true if all anchors within threshold
+        std::vector<bool> anchor_symmetric;  // Per-anchor symmetry status
+        std::vector<double> anchor_diffs;    // Max diff per anchor
+    };
+    std::vector<SymmetryPairInfo> mSymmetryPairs;
+    int mSymmetrySelectedIdx = -1;  // Index into mSymmetryPairs
+    char mSymmetryFilter[64] = "";
+    float mSymmetryThreshold = 0.001f;  // Threshold for position difference (meters)
+
+    // Highlighted muscles for 3D rendering (from symmetry tab)
+    std::string mSymmetryHighlightLeft;
+    std::string mSymmetryHighlightRight;
+
+    // Skeleton symmetry analysis
+    struct SkeletonSymmetryPairInfo {
+        std::string base_name;      // e.g., "Femur", "Tibia"
+        std::string left_name;      // e.g., "FemurL"
+        std::string right_name;     // e.g., "FemurR"
+        bool is_symmetric;
+        // Joint DOF comparison
+        Eigen::VectorXd left_dofs;
+        Eigen::VectorXd right_dofs;
+        double joint_diff;          // Max DOF difference
+        // BodyNode position comparison (world position)
+        Eigen::Vector3d left_bn_pos;   // BodyNode world position
+        Eigen::Vector3d right_bn_pos;  // BodyNode world position
+        double bn_pos_diff;            // BodyNode position difference (with x mirroring)
+        // Joint position comparison (world position)
+        Eigen::Vector3d left_joint_pos;   // Joint world position
+        Eigen::Vector3d right_joint_pos;  // Joint world position
+        double joint_pos_diff;            // Joint position difference (with x mirroring)
+        // Relative transforms (TransformFromParentBodyNode)
+        Eigen::Vector3d left_parent_to_joint;   // Translation from parent to joint
+        Eigen::Vector3d right_parent_to_joint;  // Translation from parent to joint
+        double parent_to_joint_diff;            // Difference (with x mirroring)
+        // Relative transforms (TransformFromChildBodyNode)
+        Eigen::Vector3d left_child_to_joint;    // Translation from child to joint
+        Eigen::Vector3d right_child_to_joint;   // Translation from child to joint
+        double child_to_joint_diff;             // Difference (with x mirroring)
+    };
+    std::vector<SkeletonSymmetryPairInfo> mSkeletonSymmetryPairs;
+    int mSkeletonSymmetrySelectedIdx = -1;
+    int mSymmetrySubTab = 0;  // 0 = Skeleton, 1 = Muscle
+
+    // ============================================================
     // Rendering Flags
     // ============================================================
     bool mRenderMuscles = true;
     bool mColorByContracture = false;
-    bool mShowAnchorPoints = false;  // Show anchor points instead of muscle cylinders
+    bool mShowAnchorPoints = true;  // Show anchor points instead of muscle cylinders
     bool mRenderReferenceCharacter = false;  // Toggle between subject and reference
     float mMuscleLabelFontSize = 14.0f;
     float mPlotHeight = 400.0f;  // Height of length curve plots
@@ -252,8 +303,8 @@ private:
     // ============================================================
     // Export Config
     // ============================================================
-    char mExportSkeletonName[64] = "personalized";
-    char mExportMuscleName[64] = "personalized";
+    char mExportSkeletonName[64] = "base_rom";
+    char mExportMuscleName[64] = "base_rom";
 
     // ============================================================
     // Initialization
@@ -284,6 +335,12 @@ private:
     void drawResultsSection();
     void drawWaypointCurvesTab();
     void drawContractureResultsTab();
+    void drawSymmetryTab();           // Right panel: status/analysis display
+    void drawSkeletonSymmetrySubTab();  // Skeleton symmetry sub-tab
+    void drawMuscleSymmetrySubTab();    // Muscle symmetry sub-tab
+    void drawSymmetryOperationsSection();  // Left panel: mirror operations
+    void computeSymmetryPairs();  // Rebuild mSymmetryPairs from current muscles
+    void computeSkeletonSymmetryPairs();  // Rebuild mSkeletonSymmetryPairs
 
     // ============================================================
     // Tool Operations (delegate to SurgeryExecutor)

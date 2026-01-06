@@ -70,6 +70,10 @@ public:
     // Muscle weakening
     virtual bool weakenMuscles(const std::vector<std::string>& muscles, double strength_ratio);
 
+    // Mirror anchor positions between L_/R_ muscle pairs
+    // If muscleBaseNames is empty, mirrors all pairs
+    virtual bool mirrorAnchorPositions(const std::vector<std::string>& muscleBaseNames = {});
+
     // Waypoint optimization using Ceres solver
     // Optimizes muscle waypoint positions to preserve force directions and length-angle curves
     // reference_character: Character with reference muscles (ideal behavior from standard character)

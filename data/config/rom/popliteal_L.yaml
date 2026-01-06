@@ -16,7 +16,7 @@ joint: "TibiaL"
 dof_index: 0
 
 # 3. Torque cutoff for ROM limit (Nm)
-torque_cutoff: -15.0
+torque_cutoff: 15.0
 
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:

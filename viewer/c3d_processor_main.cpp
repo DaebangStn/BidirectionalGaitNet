@@ -10,25 +10,27 @@ int main(int argc, char** argv)
     po::options_description desc("C3D Processor - Standalone C3D motion capture processing application\n\nOptions");
     desc.add_options()
         ("help,h", "Show this help message")
-        ("skeleton,s", po::value<std::string>()->default_value("@data/skeleton/base.yaml"),
-            "Skeleton XML path (supports @data/ URI scheme)")
-        ("marker,m", po::value<std::string>()->default_value("@data/marker/static.xml"),
-            "Marker configuration XML/YAML path (supports @data/ URI scheme)")
-        ("config,c", po::value<std::string>()->default_value("@data/config/skeleton_fitting.yaml"),
-            "Skeleton fitting config YAML path (supports @data/ URI scheme)");
+        ("config", po::value<std::string>()->default_value("@data/config/c3d_processor.yaml"),
+            "Configuration YAML path (supports @data/ URI scheme)");
+
+    // Allow positional argument for config path
+    po::positional_options_description positional;
+    positional.add("config", 1);
 
     po::variables_map vm;
 
     try {
-        po::store(po::parse_command_line(argc, argv, desc), vm);
+        po::store(po::command_line_parser(argc, argv)
+                      .options(desc)
+                      .positional(positional)
+                      .run(), vm);
 
         if (vm.count("help")) {
             std::cout << desc << std::endl;
             std::cout << "\nUsage examples:\n"
-                      << "  c3d_processor                    # Uses default skeleton, marker, and fitting config\n"
-                      << "  c3d_processor -m data/marker/static.xml\n"
-                      << "  c3d_processor -c @data/config/skeleton_fitting.yaml\n"
-                      << "  c3d_processor -s @data/skeleton/base.yaml\n"
+                      << "  c3d_processor                                    # Uses default config\n"
+                      << "  c3d_processor @data/config/c3d_processor.yaml    # Positional argument\n"
+                      << "  c3d_processor @pid:12345/gait/pre/c3d_config.yaml\n"
                       << "\nControls:\n"
                       << "  Space         Play/Pause\n"
                       << "  R             Reset to frame 0\n"
@@ -55,14 +57,12 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::string skeletonPath = vm["skeleton"].as<std::string>();
-    std::string markerPath = vm["marker"].as<std::string>();
     std::string configPath = vm["config"].as<std::string>();
 
-    LOG_INFO("[C3DProcessor] Starting with skeleton: " << skeletonPath << ", marker: " << markerPath << ", config: " << configPath);
+    LOG_INFO("[C3DProcessor] Starting with config: " << configPath);
 
     try {
-        C3DProcessorApp app(skeletonPath, markerPath, configPath);
+        C3DProcessorApp app(configPath);
         app.startLoop();
     } catch (const std::exception& e) {
         LOG_ERROR("[C3DProcessor] Fatal error: " << e.what());

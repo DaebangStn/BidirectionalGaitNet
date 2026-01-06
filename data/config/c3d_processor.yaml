@@ -1,0 +1,39 @@
+name: "c3d_processor"
+description: "C3D motion capture processing application"
+
+# Character and marker configuration
+character:
+  skeleton: "@data/skeleton/base.yaml"
+  marker: "@data/marker/static.xml"
+
+# Skeleton fitting configuration
+fitting:
+  config: "@data/config/skeleton_fitting.yaml"
+  static_config: "@data/config/static_fitting.yaml"
+
+# Rendering options (previously in render.yaml c3d section)
+rendering:
+  # Startup behavior
+  autoload_first: false
+
+  # Render mode: "mesh", "primitive", or "wireframe"
+  mode: "wireframe"
+
+  # Character visibility
+  free_character: true
+  motion_character: true
+  motion_char_offset: [0.0, 0.0, 0.0]
+  motion_char_markers: false
+
+  # Marker visibility
+  c3d_markers: true
+  skeleton_markers: true
+  joint_positions: false
+  marker_labels: false
+  marker_label_font_size: 16.0
+  marker_alpha: 0.6
+
+  # Axis visualization
+  world_axis: false
+  skeleton_axis: false
+  axis_length: 0.3

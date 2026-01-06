@@ -10,8 +10,8 @@ paths:
   rom_config_dir: "@data/config/rom"
   hdf_motions_dir: "@data/motions"
   skeleton_default: "@data/skeleton/base.yaml"
-  # skeleton_default: "@data/skeleton/gmfcs3.yaml"
   muscle_default: "@data/muscle/base.yaml"
+  # skeleton_default: "@data/skeleton/gmfcs3.yaml"
   # Reference character for waypoint optimization (standard/ideal muscle behavior)
   reference_skeleton: "@data/skeleton/base.yaml"
   reference_muscle: "@data/muscle/base.yaml"

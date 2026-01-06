@@ -56,7 +56,8 @@ struct AngleSweepDataPoint {
     double passive_torque_stiffness;                       // Passive stiffness (dtau/dtheta, Nm/rad)
     std::map<std::string, double> muscle_fp;               // Per-muscle passive force
     std::map<std::string, double> muscle_lm_norm;          // Per-muscle normalized length
-    std::map<std::string, std::vector<double>> muscle_jtp; // Per-muscle joint torques
+    std::map<std::string, std::vector<double>> muscle_jtp; // Per-muscle joint torques (all related DOFs)
+    std::map<std::string, double> muscle_jtp_dof;          // Per-muscle jtp at swept DOF only
 };
 
 // ROM (Range of Motion) metrics computed from angle sweep data
@@ -192,9 +193,10 @@ public:
     // Recording
     std::map<std::string, Eigen::VectorXd> recordJointAngles(
         const std::vector<std::string>& joint_names);
-    double getPassiveTorqueJoint(int joint_idx);  // Sum of passive torques at joint
+    double getPassiveTorqueJoint(int joint_idx);  // Sum of passive torques at joint (all DOFs)
     double getPassiveTorqueJointGlobalY(Character* character, dart::dynamics::Joint* joint);  // Cross-product torque projected onto global Y
     double getPassiveTorqueJoint_forCharacter(Character* character, dart::dynamics::Joint* joint);  // Helper for specific character
+    double getPassiveTorqueJointDof(Character* character, dart::dynamics::Joint* joint, int dof_index);  // Torque at specific DOF only
 
     // Pose synchronization between main and standard characters
     void setCharacterPose(const Eigen::VectorXd& positions);  // Sets positions for both main and std characters
@@ -416,6 +418,10 @@ private:
     int mSelectedBufferIndex = -1;               // Currently selected buffer for plotting
     int mMaxTrialBuffers = 20;                   // Maximum buffered trials (memory management)
     bool mAutoSelectNewBuffer = true;            // Auto-select newly run trial for viewing
+
+    // Normative ROM values (loaded from render.yaml)
+    // Key: "joint/measurement" (e.g., "hip/abduction_knee0"), Value: degrees
+    std::map<std::string, double> mNormativeROM;
 
     // Angle sweep trial data
     std::vector<AngleSweepDataPoint> mAngleSweepData;

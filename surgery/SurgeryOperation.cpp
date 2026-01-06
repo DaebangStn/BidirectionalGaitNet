@@ -678,5 +678,39 @@ std::unique_ptr<SurgeryOperation> OptimizeWaypointsOp::fromYAML(const YAML::Node
                                                   lambda_length_curve, fix_origin_insertion);
 }
 
+// ============================================================================
+// MirrorAnchorPositionsOp
+// ============================================================================
+
+bool MirrorAnchorPositionsOp::execute(SurgeryExecutor* executor) {
+    return executor->mirrorAnchorPositions(mMuscles);
+}
+
+YAML::Node MirrorAnchorPositionsOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "mirror_anchor_positions";
+    if (!mMuscles.empty()) {
+        node["muscles"] = mMuscles;
+    }
+    return node;
+}
+
+std::string MirrorAnchorPositionsOp::getDescription() const {
+    if (mMuscles.empty()) {
+        return "Mirror anchor positions for all L/R muscle pairs";
+    }
+    std::ostringstream oss;
+    oss << "Mirror anchor positions for " << mMuscles.size() << " muscle pair(s)";
+    return oss.str();
+}
+
+std::unique_ptr<SurgeryOperation> MirrorAnchorPositionsOp::fromYAML(const YAML::Node& node) {
+    if (node["muscles"]) {
+        auto muscles = node["muscles"].as<std::vector<std::string>>();
+        return std::make_unique<MirrorAnchorPositionsOp>(muscles);
+    }
+    return std::make_unique<MirrorAnchorPositionsOp>();
+}
+
 } // namespace PMuscle
 

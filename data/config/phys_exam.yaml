@@ -2,8 +2,8 @@ name: "exam"
 description: "Physical examination"
 
 character:
-  skeleton: "@data/skeleton/base.xml"
-  muscle: "@data/muscle/base_vas.yaml"
+  skeleton: "@data/skeleton/base.yaml"
+  muscle: "@data/muscle/base.yaml"
   # skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
   # muscle: "@pid:12964246/gait/pre/muscle/personalized.yaml"
   # skeleton: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
@@ -13,8 +13,8 @@ character:
 std_character:
   # skeleton: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"
   # skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
-  skeleton: "@data/skeleton/base.xml"
-  muscle: "@data/muscle/base_vas.yaml"
+  skeleton: "@data/skeleton/base.yaml"
+  muscle: "@data/muscle/base.yaml"
 
 trials:
   # - file: "@data/config/rom/femAbdd_k90_L.yaml"

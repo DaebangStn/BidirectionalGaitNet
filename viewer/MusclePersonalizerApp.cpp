@@ -224,6 +224,10 @@ void MusclePersonalizerApp::loadCharacter()
 
         // Refresh muscle list
         refreshMuscleList();
+
+        // Compute symmetry pairs for the new character
+        computeSymmetryPairs();
+        computeSkeletonSymmetryPairs();
     }
     catch (const std::exception& e) {
         LOG_ERROR("[MusclePersonalizer] Failed to load character: " << e.what());
@@ -320,10 +324,13 @@ void MusclePersonalizerApp::drawMuscles()
         }
     }
 
+    // Get highlighted muscles from symmetry tab (L/R pair)
+    std::string symHighlightL = mSymmetryHighlightLeft;
+    std::string symHighlightR = mSymmetryHighlightRight;
+
     if (mShowAnchorPoints) {
         // Anchor points mode: disable lighting for line/point rendering
         glDisable(GL_LIGHTING);
-        glLineWidth(1.5f);
 
         for (size_t i = 0; i < muscles.size(); i++) {
             if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
@@ -332,8 +339,23 @@ void MusclePersonalizerApp::drawMuscles()
             muscle->UpdateGeometry();
             auto& anchors = muscle->GetAnchors();
 
+            // Check if this muscle is highlighted by symmetry tab
+            bool isSymmetryHighlighted = (!symHighlightL.empty() &&
+                (muscle->name == symHighlightL || muscle->name == symHighlightR));
+
+            // Set line width (thicker for symmetry highlight)
+            if (isSymmetryHighlighted) {
+                glLineWidth(3.0f);
+            } else {
+                glLineWidth(1.5f);
+            }
+
             // Draw muscle path as line strip
-            glColor4f(0.8f, 0.2f, 0.6f, 0.85f);  // Magenta color for path
+            if (isSymmetryHighlighted) {
+                glColor4f(0.2f, 0.4f, 1.0f, 1.0f);  // Blue for symmetry highlight
+            } else {
+                glColor4f(0.8f, 0.2f, 0.6f, 0.85f);  // Magenta color for path
+            }
             glBegin(GL_LINE_STRIP);
             for (auto& anchor : anchors) {
                 Eigen::Vector3d pos = anchor->GetPoint();
@@ -347,7 +369,11 @@ void MusclePersonalizerApp::drawMuscles()
 
                 // Lines to bodynodes
                 if (!anchor->bodynodes.empty()) {
-                    glColor4f(0.0f, 0.8f, 0.0f, 0.6f);
+                    if (isSymmetryHighlighted) {
+                        glColor4f(0.3f, 0.5f, 1.0f, 0.8f);  // Light blue for connections
+                    } else {
+                        glColor4f(0.0f, 0.8f, 0.0f, 0.6f);
+                    }
                     glBegin(GL_LINES);
                     for (auto& bodynode : anchor->bodynodes) {
                         Eigen::Vector3d bnPos = bodynode->getWorldTransform().translation();
@@ -357,9 +383,14 @@ void MusclePersonalizerApp::drawMuscles()
                     glEnd();
                 }
 
-                // Anchor point sphere (green)
-                glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
-                GUI::DrawSphere(anchorPos, 0.004);
+                // Anchor point sphere
+                if (isSymmetryHighlighted) {
+                    glColor4f(0.2f, 0.4f, 1.0f, 1.0f);  // Blue for symmetry highlight
+                    GUI::DrawSphere(anchorPos, 0.006);  // Slightly larger
+                } else {
+                    glColor4f(0.0f, 1.0f, 0.0f, 1.0f);  // Green
+                    GUI::DrawSphere(anchorPos, 0.004);
+                }
             }
         }
 
@@ -376,8 +407,14 @@ void MusclePersonalizerApp::drawMuscles()
 
             Eigen::Vector4d color;
 
-            // Highlight selected muscle in bright green
-            if (!highlightedMuscle.empty() && muscle->name == highlightedMuscle) {
+            // Check if this muscle is highlighted by symmetry tab
+            bool isSymmetryHighlighted = (!symHighlightL.empty() &&
+                (muscle->name == symHighlightL || muscle->name == symHighlightR));
+
+            // Priority: Symmetry highlight (blue) > Waypoint highlight (green) > Contracture > Default
+            if (isSymmetryHighlighted) {
+                color = Eigen::Vector4d(0.2, 0.4, 1.0, 1.0);  // Blue for symmetry
+            } else if (!highlightedMuscle.empty() && muscle->name == highlightedMuscle) {
                 color = Eigen::Vector4d(0.2, 1.0, 0.2, 1.0);  // Bright green
             } else if (mColorByContracture && muscle->lmt_base > 0) {
                 // Contracture ratio: < 1.0 means shortened, > 1.0 means lengthened
@@ -427,6 +464,7 @@ void MusclePersonalizerApp::drawLeftPanel()
             drawClinicalDataSection();
             drawCharacterLoadSection();
             drawWeightApplicationSection();
+            drawSymmetryOperationsSection();
             drawJointAngleSection();
 
             ImGui::EndTabItem();
@@ -462,6 +500,10 @@ void MusclePersonalizerApp::drawRightPanel()
         }
         if (ImGui::BeginTabItem("Contracture")) {
             drawContractureResultsTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Symmetry")) {
+            drawSymmetryTab();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Exports")) {
@@ -1193,7 +1235,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::InputText("Filter##ROM", mROMFilter, sizeof(mROMFilter));
 
         // ROM selection list - display "TC name - CD value"
-        ImGui::BeginChild("ROMList", ImVec2(0, 150), true);
+        ImGui::BeginChild("ROMList", ImVec2(0, 250), true);
         for (size_t i = 0; i < mROMTrials.size(); ++i) {
             auto& trial = mROMTrials[i];
 
@@ -3249,6 +3291,691 @@ void MusclePersonalizerApp::drawContractureResultsTab()
                 "Error: Before %.2f Nm, After %.2f Nm", error_before, error_after);
         }
     }
+}
+
+// ============================================================
+// Symmetry Analysis
+// ============================================================
+
+void MusclePersonalizerApp::computeSymmetryPairs()
+{
+    mSymmetryPairs.clear();
+    mSymmetrySelectedIdx = -1;
+    mSymmetryHighlightLeft.clear();
+    mSymmetryHighlightRight.clear();
+
+    Character* character = nullptr;
+    if (mExecutor && mExecutor->getCharacter()) {
+        character = mExecutor->getCharacter();
+    }
+    if (!character) return;
+
+    auto skel = character->getSkeleton();
+    if (!skel) return;
+
+    // Get pelvis X as symmetry plane (same as mirrorAnchorPositions)
+    auto* pelvis = skel->getBodyNode("Pelvis");
+    double symmetryX = 0.0;
+    if (pelvis) {
+        symmetryX = pelvis->getTransform().translation().x();
+    }
+
+    auto& muscles = character->getMuscles();
+    std::map<std::string, Muscle*> leftMuscles, rightMuscles;
+
+    // Group muscles by side (L_ prefix or R_ prefix)
+    for (auto* m : muscles) {
+        if (m->name.size() > 2 && m->name[1] == '_') {
+            std::string base = m->name.substr(2);
+            if (m->name[0] == 'L') {
+                leftMuscles[base] = m;
+            } else if (m->name[0] == 'R') {
+                rightMuscles[base] = m;
+            }
+        }
+    }
+
+    // Build pairs by matching base names
+    for (auto& [base, leftM] : leftMuscles) {
+        auto it = rightMuscles.find(base);
+        if (it == rightMuscles.end()) continue;
+
+        Muscle* rightM = it->second;
+        SymmetryPairInfo info;
+        info.base_name = base;
+        info.left_name = leftM->name;
+        info.right_name = rightM->name;
+
+        auto& leftAnchors = leftM->GetAnchors();
+        auto& rightAnchors = rightM->GetAnchors();
+
+        // Check anchor count
+        if (leftAnchors.size() != rightAnchors.size()) {
+            info.is_symmetric = false;
+            // Mark all as asymmetric with large diff
+            for (size_t i = 0; i < std::max(leftAnchors.size(), rightAnchors.size()); i++) {
+                info.anchor_symmetric.push_back(false);
+                info.anchor_diffs.push_back(999.0);
+            }
+        } else {
+            info.is_symmetric = true;
+            for (size_t i = 0; i < leftAnchors.size(); i++) {
+                // Get global positions using Anchor::GetPoint()
+                Eigen::Vector3d leftGlobal = leftAnchors[i]->GetPoint();
+                Eigen::Vector3d rightGlobal = rightAnchors[i]->GetPoint();
+
+                // Mirror right global across pelvis X symmetry plane
+                Eigen::Vector3d rightMirrored = rightGlobal;
+                rightMirrored.x() = 2.0 * symmetryX - rightGlobal.x();
+
+                // Calculate difference in global space
+                double diff = (leftGlobal - rightMirrored).norm();
+
+                info.anchor_diffs.push_back(diff);
+                bool anchorSym = diff <= mSymmetryThreshold;
+                info.anchor_symmetric.push_back(anchorSym);
+                if (!anchorSym) {
+                    info.is_symmetric = false;
+                }
+            }
+        }
+        mSymmetryPairs.push_back(info);
+    }
+
+    // Sort by base_name for consistent ordering
+    std::sort(mSymmetryPairs.begin(), mSymmetryPairs.end(),
+              [](const SymmetryPairInfo& a, const SymmetryPairInfo& b) {
+                  return a.base_name < b.base_name;
+              });
+}
+
+void MusclePersonalizerApp::drawSymmetryTab()
+{
+    // Sub-tabs for Skeleton and Muscle symmetry
+    if (ImGui::BeginTabBar("SymmetrySubTabs")) {
+        if (ImGui::BeginTabItem("Skeleton")) {
+            mSymmetrySubTab = 0;
+            drawSkeletonSymmetrySubTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Muscle")) {
+            mSymmetrySubTab = 1;
+            drawMuscleSymmetrySubTab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void MusclePersonalizerApp::computeSkeletonSymmetryPairs()
+{
+    mSkeletonSymmetryPairs.clear();
+    mSkeletonSymmetrySelectedIdx = -1;
+
+    Character* character = nullptr;
+    if (mExecutor && mExecutor->getCharacter()) {
+        character = mExecutor->getCharacter();
+    }
+    if (!character) return;
+
+    auto skel = character->getSkeleton();
+    std::map<std::string, dart::dynamics::BodyNode*> leftNodes, rightNodes;
+
+    // Group bodynodes by L/R suffix
+    for (size_t i = 0; i < skel->getNumBodyNodes(); i++) {
+        auto bn = skel->getBodyNode(i);
+        std::string name = bn->getName();
+        if (name.empty()) continue;
+        char lastChar = name.back();
+        if (lastChar == 'L') {
+            leftNodes[name.substr(0, name.size()-1)] = bn;
+        } else if (lastChar == 'R') {
+            rightNodes[name.substr(0, name.size()-1)] = bn;
+        }
+    }
+
+    // Helper lambda for x-mirrored comparison
+    auto mirrorX = [](const Eigen::Vector3d& v) -> Eigen::Vector3d {
+        return Eigen::Vector3d(-v.x(), v.y(), v.z());
+    };
+
+    // Build pairs
+    for (auto& [base, leftBN] : leftNodes) {
+        auto it = rightNodes.find(base);
+        if (it == rightNodes.end()) continue;
+
+        auto rightBN = it->second;
+        SkeletonSymmetryPairInfo info;
+        info.base_name = base;
+        info.left_name = leftBN->getName();
+        info.right_name = rightBN->getName();
+
+        // Get BodyNode world positions
+        info.left_bn_pos = leftBN->getWorldTransform().translation();
+        info.right_bn_pos = rightBN->getWorldTransform().translation();
+        info.bn_pos_diff = (info.left_bn_pos - mirrorX(info.right_bn_pos)).norm();
+
+        // Get joints
+        auto leftJoint = leftBN->getParentJoint();
+        auto rightJoint = rightBN->getParentJoint();
+
+        info.joint_diff = 0.0;
+        info.joint_pos_diff = 0.0;
+        info.parent_to_joint_diff = 0.0;
+        info.child_to_joint_diff = 0.0;
+        info.left_joint_pos.setZero();
+        info.right_joint_pos.setZero();
+        info.left_parent_to_joint.setZero();
+        info.right_parent_to_joint.setZero();
+        info.left_child_to_joint.setZero();
+        info.right_child_to_joint.setZero();
+
+        if (leftJoint && rightJoint) {
+            // Joint DOFs
+            info.left_dofs = leftJoint->getPositions();
+            info.right_dofs = rightJoint->getPositions();
+            if (info.left_dofs.size() == info.right_dofs.size()) {
+                for (int i = 0; i < info.left_dofs.size(); i++) {
+                    double diff = std::abs(info.left_dofs[i] - info.right_dofs[i]);
+                    info.joint_diff = std::max(info.joint_diff, diff);
+                }
+            }
+
+            // Joint world position (use joint's world transform)
+            // Joint position can be computed from parent bodynode + TransformFromParentBodyNode
+            auto leftParentBN = leftJoint->getParentBodyNode();
+            auto rightParentBN = rightJoint->getParentBodyNode();
+
+            if (leftParentBN && rightParentBN) {
+                Eigen::Isometry3d leftParentToJoint = leftJoint->getTransformFromParentBodyNode();
+                Eigen::Isometry3d rightParentToJoint = rightJoint->getTransformFromParentBodyNode();
+
+                // Joint world position = parent world transform * parentToJoint
+                info.left_joint_pos = (leftParentBN->getWorldTransform() * leftParentToJoint).translation();
+                info.right_joint_pos = (rightParentBN->getWorldTransform() * rightParentToJoint).translation();
+                info.joint_pos_diff = (info.left_joint_pos - mirrorX(info.right_joint_pos)).norm();
+
+                // Store relative transform translations
+                info.left_parent_to_joint = leftParentToJoint.translation();
+                info.right_parent_to_joint = rightParentToJoint.translation();
+                info.parent_to_joint_diff = (info.left_parent_to_joint - mirrorX(info.right_parent_to_joint)).norm();
+            }
+
+            // TransformFromChildBodyNode
+            Eigen::Isometry3d leftChildToJoint = leftJoint->getTransformFromChildBodyNode();
+            Eigen::Isometry3d rightChildToJoint = rightJoint->getTransformFromChildBodyNode();
+            info.left_child_to_joint = leftChildToJoint.translation();
+            info.right_child_to_joint = rightChildToJoint.translation();
+            info.child_to_joint_diff = (info.left_child_to_joint - mirrorX(info.right_child_to_joint)).norm();
+        }
+
+        // Use maximum of all position differences for symmetry check
+        double maxDiff = std::max({info.bn_pos_diff, info.joint_pos_diff,
+                                   info.parent_to_joint_diff, info.child_to_joint_diff});
+        info.is_symmetric = (maxDiff <= mSymmetryThreshold);
+        mSkeletonSymmetryPairs.push_back(info);
+    }
+
+    // Sort by base_name
+    std::sort(mSkeletonSymmetryPairs.begin(), mSkeletonSymmetryPairs.end(),
+              [](const SkeletonSymmetryPairInfo& a, const SkeletonSymmetryPairInfo& b) {
+                  return a.base_name < b.base_name;
+              });
+}
+
+void MusclePersonalizerApp::drawSkeletonSymmetrySubTab()
+{
+    // Threshold controls
+    ImGui::Text("Threshold:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    if (ImGui::InputFloat("##SkelSymThreshold", &mSymmetryThreshold, 0.0001f, 0.001f, "%.4f")) {
+        mSymmetryThreshold = std::max(0.0001f, mSymmetryThreshold);
+        computeSkeletonSymmetryPairs();
+    }
+    ImGui::SameLine();
+    ImGui::Text("m");
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh##SkelSym")) {
+        computeSkeletonSymmetryPairs();
+    }
+
+    ImGui::Separator();
+
+    // Statistics
+    int asymmetricCount = 0;
+    for (const auto& pair : mSkeletonSymmetryPairs) {
+        if (!pair.is_symmetric) asymmetricCount++;
+    }
+    int totalPairs = static_cast<int>(mSkeletonSymmetryPairs.size());
+    float percentage = totalPairs > 0 ? (asymmetricCount * 100.0f / totalPairs) : 0.0f;
+
+    if (asymmetricCount > 0) {
+        ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f),
+            "Asymmetric: %d / %d (%.1f%%)", asymmetricCount, totalPairs, percentage);
+    } else {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            "All symmetric: %d pairs", totalPairs);
+    }
+
+    ImGui::Separator();
+
+    // BodyNode pairs listbox
+    ImGui::Text("BodyNode Pairs:");
+    float listHeight = 200.0f;
+    if (ImGui::BeginListBox("##SkelSymList", ImVec2(-FLT_MIN, listHeight))) {
+        for (int i = 0; i < static_cast<int>(mSkeletonSymmetryPairs.size()); i++) {
+            const auto& pair = mSkeletonSymmetryPairs[i];
+
+            // Color based on symmetry status
+            ImVec4 color = pair.is_symmetric
+                ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f)   // Green for symmetric
+                : ImVec4(0.9f, 0.2f, 0.2f, 1.0f);  // Red for asymmetric
+
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+
+            bool isSelected = (mSkeletonSymmetrySelectedIdx == i);
+            if (ImGui::Selectable(pair.base_name.c_str(), isSelected)) {
+                mSkeletonSymmetrySelectedIdx = i;
+            }
+
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndListBox();
+    }
+
+    ImGui::Separator();
+
+    // Selected pair details
+    if (mSkeletonSymmetrySelectedIdx >= 0 && mSkeletonSymmetrySelectedIdx < static_cast<int>(mSkeletonSymmetryPairs.size())) {
+        const auto& pair = mSkeletonSymmetryPairs[mSkeletonSymmetrySelectedIdx];
+
+        ImGui::Text("Selected: %s", pair.base_name.c_str());
+        ImGui::Text("  L: %s   R: %s", pair.left_name.c_str(), pair.right_name.c_str());
+
+        ImGui::Separator();
+
+        // Scrollable details
+        float detailsHeight = std::min(500.0f, ImGui::GetContentRegionAvail().y - 10);
+        if (ImGui::BeginChild("SkelSymDetails", ImVec2(0, detailsHeight), true)) {
+            ImGui::SetWindowFontScale(1.3f);
+
+            // Helper lambda to get color based on diff value
+            auto getDiffColor = [this](double diff) -> ImVec4 {
+                if (diff <= mSymmetryThreshold) {
+                    return ImVec4(0.2f, 0.8f, 0.2f, 1.0f);  // Green
+                } else {
+                    return ImVec4(0.9f, 0.4f, 0.4f, 1.0f);  // Red
+                }
+            };
+
+            // =============================================
+            // 1. BodyNode World Positions
+            // =============================================
+            ImGui::Text("BodyNode World Positions:");
+            ImVec4 bnColor = getDiffColor(pair.bn_pos_diff);
+            ImGui::TextColored(bnColor, "  L: (%.4f, %.4f, %.4f)",
+                pair.left_bn_pos.x(), pair.left_bn_pos.y(), pair.left_bn_pos.z());
+            ImGui::TextColored(bnColor, "  R: (%.4f, %.4f, %.4f)",
+                pair.right_bn_pos.x(), pair.right_bn_pos.y(), pair.right_bn_pos.z());
+            ImGui::TextColored(bnColor, "  R mirrored: (%.4f, %.4f, %.4f)",
+                -pair.right_bn_pos.x(), pair.right_bn_pos.y(), pair.right_bn_pos.z());
+            ImGui::TextColored(getDiffColor(pair.bn_pos_diff), "  Diff: %.6f m", pair.bn_pos_diff);
+
+            ImGui::Separator();
+
+            // =============================================
+            // 2. Joint World Positions
+            // =============================================
+            ImGui::Text("Joint World Positions:");
+            ImVec4 jointPosColor = getDiffColor(pair.joint_pos_diff);
+            ImGui::TextColored(jointPosColor, "  L: (%.4f, %.4f, %.4f)",
+                pair.left_joint_pos.x(), pair.left_joint_pos.y(), pair.left_joint_pos.z());
+            ImGui::TextColored(jointPosColor, "  R: (%.4f, %.4f, %.4f)",
+                pair.right_joint_pos.x(), pair.right_joint_pos.y(), pair.right_joint_pos.z());
+            ImGui::TextColored(jointPosColor, "  R mirrored: (%.4f, %.4f, %.4f)",
+                -pair.right_joint_pos.x(), pair.right_joint_pos.y(), pair.right_joint_pos.z());
+            ImGui::TextColored(getDiffColor(pair.joint_pos_diff), "  Diff: %.6f m", pair.joint_pos_diff);
+
+            ImGui::Separator();
+
+            // =============================================
+            // 3. TransformFromParentBodyNode (relative)
+            // =============================================
+            ImGui::Text("Parent-to-Joint Transform (tx):");
+            ImVec4 parentColor = getDiffColor(pair.parent_to_joint_diff);
+            ImGui::TextColored(parentColor, "  L: (%.4f, %.4f, %.4f)",
+                pair.left_parent_to_joint.x(), pair.left_parent_to_joint.y(), pair.left_parent_to_joint.z());
+            ImGui::TextColored(parentColor, "  R: (%.4f, %.4f, %.4f)",
+                pair.right_parent_to_joint.x(), pair.right_parent_to_joint.y(), pair.right_parent_to_joint.z());
+            ImGui::TextColored(parentColor, "  R mirrored: (%.4f, %.4f, %.4f)",
+                -pair.right_parent_to_joint.x(), pair.right_parent_to_joint.y(), pair.right_parent_to_joint.z());
+            ImGui::TextColored(getDiffColor(pair.parent_to_joint_diff), "  Diff: %.6f m", pair.parent_to_joint_diff);
+
+            ImGui::Separator();
+
+            // =============================================
+            // 4. TransformFromChildBodyNode (relative)
+            // =============================================
+            ImGui::Text("Child-to-Joint Transform (tx):");
+            ImVec4 childColor = getDiffColor(pair.child_to_joint_diff);
+            ImGui::TextColored(childColor, "  L: (%.4f, %.4f, %.4f)",
+                pair.left_child_to_joint.x(), pair.left_child_to_joint.y(), pair.left_child_to_joint.z());
+            ImGui::TextColored(childColor, "  R: (%.4f, %.4f, %.4f)",
+                pair.right_child_to_joint.x(), pair.right_child_to_joint.y(), pair.right_child_to_joint.z());
+            ImGui::TextColored(childColor, "  R mirrored: (%.4f, %.4f, %.4f)",
+                -pair.right_child_to_joint.x(), pair.right_child_to_joint.y(), pair.right_child_to_joint.z());
+            ImGui::TextColored(getDiffColor(pair.child_to_joint_diff), "  Diff: %.6f m", pair.child_to_joint_diff);
+
+            ImGui::Separator();
+
+            // =============================================
+            // 5. Joint DOF comparison
+            // =============================================
+            ImGui::Text("Joint DOFs:");
+            if (pair.left_dofs.size() > 0) {
+                std::string lDofsStr = "  L: [";
+                for (int i = 0; i < pair.left_dofs.size(); i++) {
+                    if (i > 0) lDofsStr += ", ";
+                    lDofsStr += std::to_string(pair.left_dofs[i]).substr(0, 7);
+                }
+                lDofsStr += "]";
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", lDofsStr.c_str());
+
+                std::string rDofsStr = "  R: [";
+                for (int i = 0; i < pair.right_dofs.size(); i++) {
+                    if (i > 0) rDofsStr += ", ";
+                    rDofsStr += std::to_string(pair.right_dofs[i]).substr(0, 7);
+                }
+                rDofsStr += "]";
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", rDofsStr.c_str());
+
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "  Max DOF diff: %.6f rad", pair.joint_diff);
+            } else {
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "  (No DOFs)");
+            }
+
+            ImGui::SetWindowFontScale(1.0f);
+        }
+        ImGui::EndChild();
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Select a bodynode pair to view details");
+    }
+}
+
+void MusclePersonalizerApp::drawMuscleSymmetrySubTab()
+{
+    // Get character for accessing muscle data
+    Character* character = nullptr;
+    if (mExecutor && mExecutor->getCharacter()) {
+        character = mExecutor->getCharacter();
+    }
+
+    // Filter and threshold controls
+    ImGui::Text("Filter:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::InputText("##SymFilter", mSymmetryFilter, sizeof(mSymmetryFilter))) {
+        // Filter changed - no action needed, filtering is done during display
+    }
+    ImGui::SameLine();
+    ImGui::Text("Threshold:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    if (ImGui::InputFloat("##SymThreshold", &mSymmetryThreshold, 0.0001f, 0.001f, "%.4f")) {
+        mSymmetryThreshold = std::max(0.0001f, mSymmetryThreshold);
+        computeSymmetryPairs();  // Recompute with new threshold
+    }
+    ImGui::SameLine();
+    ImGui::Text("m");
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh##Sym")) {
+        computeSymmetryPairs();
+    }
+
+    ImGui::Separator();
+
+    // Statistics
+    int asymmetricCount = 0;
+    for (const auto& pair : mSymmetryPairs) {
+        if (!pair.is_symmetric) asymmetricCount++;
+    }
+    int totalPairs = static_cast<int>(mSymmetryPairs.size());
+    float percentage = totalPairs > 0 ? (asymmetricCount * 100.0f / totalPairs) : 0.0f;
+
+    if (asymmetricCount > 0) {
+        ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f),
+            "Asymmetric: %d / %d (%.1f%%)", asymmetricCount, totalPairs, percentage);
+    } else {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            "All symmetric: %d pairs", totalPairs);
+    }
+
+    ImGui::Separator();
+
+    // Muscle pairs listbox
+    ImGui::Text("Muscle Pairs:");
+    float listHeight = 250.0f;
+    if (ImGui::BeginListBox("##SymmetryList", ImVec2(-FLT_MIN, listHeight))) {
+        std::string filterLower = mSymmetryFilter;
+        std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+
+        for (int i = 0; i < static_cast<int>(mSymmetryPairs.size()); i++) {
+            const auto& pair = mSymmetryPairs[i];
+
+            // Apply filter
+            if (!filterLower.empty()) {
+                std::string nameLower = pair.base_name;
+                std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+                if (nameLower.find(filterLower) == std::string::npos) continue;
+            }
+
+            // Color based on symmetry status
+            ImVec4 color = pair.is_symmetric
+                ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f)   // Green for symmetric
+                : ImVec4(0.9f, 0.2f, 0.2f, 1.0f);  // Red for asymmetric
+
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+
+            bool isSelected = (mSymmetrySelectedIdx == i);
+            if (ImGui::Selectable(pair.base_name.c_str(), isSelected)) {
+                mSymmetrySelectedIdx = i;
+                // Update highlight for 3D rendering
+                mSymmetryHighlightLeft = pair.left_name;
+                mSymmetryHighlightRight = pair.right_name;
+            }
+
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndListBox();
+    }
+
+    ImGui::Separator();
+
+    // Selected pair details
+    if (mSymmetrySelectedIdx >= 0 && mSymmetrySelectedIdx < static_cast<int>(mSymmetryPairs.size())) {
+        const auto& selectedPair = mSymmetryPairs[mSymmetrySelectedIdx];
+
+        ImGui::Text("Selected: %s", selectedPair.base_name.c_str());
+        ImGui::Text("  L: %s", selectedPair.left_name.c_str());
+        ImGui::Text("  R: %s", selectedPair.right_name.c_str());
+
+        ImGui::Separator();
+        ImGui::Text("Anchor Comparison:");
+
+        // Get muscle pointers for position display
+        Muscle* leftM = character ? character->getMuscleByName(selectedPair.left_name) : nullptr;
+        Muscle* rightM = character ? character->getMuscleByName(selectedPair.right_name) : nullptr;
+
+        if (leftM && rightM) {
+            auto& leftAnchors = leftM->GetAnchors();
+            auto& rightAnchors = rightM->GetAnchors();
+
+            // Scrollable region for anchor details
+            float anchorListHeight = std::min(500.0f, ImGui::GetContentRegionAvail().y - 20);
+            if (ImGui::BeginChild("AnchorDetails", ImVec2(0, anchorListHeight), true)) {
+                // Increase font size for anchor comparison
+                ImGui::SetWindowFontScale(1.4f);
+
+                for (size_t i = 0; i < selectedPair.anchor_diffs.size(); i++) {
+                    bool anchorSym = selectedPair.anchor_symmetric[i];
+                    double diff = selectedPair.anchor_diffs[i];
+
+                    // Anchor header with status
+                    if (anchorSym) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+                            "Anchor %zu: OK", i);
+                    } else {
+                        ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f),
+                            "Anchor %zu: DIFF (%.4f m)", i, diff);
+                    }
+
+                    // Show positions and bodynode names if available
+                    if (i < leftAnchors.size() && i < rightAnchors.size()) {
+                        auto& lpos = leftAnchors[i]->local_positions;
+                        auto& rpos = rightAnchors[i]->local_positions;
+                        auto& lbodies = leftAnchors[i]->bodynodes;
+                        auto& rbodies = rightAnchors[i]->bodynodes;
+
+                        for (size_t j = 0; j < std::max(lpos.size(), rpos.size()); j++) {
+                            ImVec4 textColor = anchorSym
+                                ? ImVec4(0.7f, 0.7f, 0.7f, 1.0f)   // Gray for matching
+                                : ImVec4(0.9f, 0.4f, 0.4f, 1.0f);  // Red for different
+
+                            if (j < lpos.size()) {
+                                std::string lBodyName = (j < lbodies.size() && lbodies[j])
+                                    ? lbodies[j]->getName() : "?";
+                                ImGui::TextColored(textColor, "    L[%zu] %s: (%.4f, %.4f, %.4f)",
+                                    j, lBodyName.c_str(), lpos[j].x(), lpos[j].y(), lpos[j].z());
+                            }
+                            if (j < rpos.size()) {
+                                std::string rBodyName = (j < rbodies.size() && rbodies[j])
+                                    ? rbodies[j]->getName() : "?";
+                                // Show mirrored value for comparison
+                                ImGui::TextColored(textColor, "    R[%zu] %s: (%.4f, %.4f, %.4f) -> mirrored: (%.4f, %.4f, %.4f)",
+                                    j, rBodyName.c_str(), rpos[j].x(), rpos[j].y(), rpos[j].z(),
+                                    -rpos[j].x(), rpos[j].y(), rpos[j].z());
+                            }
+                        }
+                    }
+
+                    if (i < selectedPair.anchor_diffs.size() - 1) {
+                        ImGui::Separator();
+                    }
+                }
+
+                // Reset font scale
+                ImGui::SetWindowFontScale(1.0f);
+            }
+            ImGui::EndChild();
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Muscle data not available");
+        }
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Select a muscle pair to view details");
+    }
+
+    // Clear highlight button
+    if (!mSymmetryHighlightLeft.empty()) {
+        ImGui::Separator();
+        if (ImGui::Button("Clear 3D Highlight")) {
+            mSymmetrySelectedIdx = -1;
+            mSymmetryHighlightLeft.clear();
+            mSymmetryHighlightRight.clear();
+        }
+    }
+}
+
+// ============================================================
+// Symmetry Operations Section (Left Panel)
+// ============================================================
+void MusclePersonalizerApp::drawSymmetryOperationsSection()
+{
+    if (!mExecutor || !mExecutor->getCharacter()) {
+        ImGui::TextDisabled("Load character first");
+        return;
+    }
+
+    // Refresh button
+    if (ImGui::Button("Refresh Symmetry Analysis")) {
+        computeSymmetryPairs();
+    }
+
+    ImGui::Separator();
+
+    // Statistics summary
+    int asymmetricCount = 0;
+    std::vector<std::string> asymmetricBaseNames;
+    for (const auto& pair : mSymmetryPairs) {
+        if (!pair.is_symmetric) {
+            asymmetricBaseNames.push_back(pair.base_name);
+            asymmetricCount++;
+        }
+    }
+    int totalPairs = static_cast<int>(mSymmetryPairs.size());
+    float percentage = totalPairs > 0 ? (asymmetricCount * 100.0f / totalPairs) : 0.0f;
+
+    if (asymmetricCount > 0) {
+        ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f),
+            "Asymmetric: %d / %d (%.1f%%)", asymmetricCount, totalPairs, percentage);
+    } else if (totalPairs > 0) {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            "All symmetric: %d pairs", totalPairs);
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No muscle pairs found");
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Mirror Operations:");
+    ImGui::TextWrapped("Averages Y/Z values directly. For X: averages abs values and preserves original signs.");
+
+    ImGui::Spacing();
+
+    // Mirror selected pair (from right panel selection)
+    bool hasSelection = mSymmetrySelectedIdx >= 0 && mSymmetrySelectedIdx < static_cast<int>(mSymmetryPairs.size());
+
+    if (hasSelection) {
+        const auto& selectedPair = mSymmetryPairs[mSymmetrySelectedIdx];
+        ImGui::Text("Selected: %s", selectedPair.base_name.c_str());
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Select pair in Symmetry tab (right panel)");
+    }
+
+    ImGui::BeginDisabled(!hasSelection);
+    if (ImGui::Button("Mirror Selected Pair", ImVec2(-1, 25))) {
+        if (hasSelection) {
+            const auto& selectedPair = mSymmetryPairs[mSymmetrySelectedIdx];
+            std::vector<std::string> toMirror = {selectedPair.base_name};
+            if (mExecutor->mirrorAnchorPositions(toMirror)) {
+                computeSymmetryPairs();  // Refresh after mirroring
+            }
+        }
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+
+    // Mirror all asymmetric pairs
+    ImGui::BeginDisabled(asymmetricCount == 0);
+    char mirrorAsymLabel[64];
+    snprintf(mirrorAsymLabel, sizeof(mirrorAsymLabel), "Mirror All Asymmetric (%d)", asymmetricCount);
+    if (ImGui::Button(mirrorAsymLabel, ImVec2(-1, 25))) {
+        if (!asymmetricBaseNames.empty()) {
+            if (mExecutor->mirrorAnchorPositions(asymmetricBaseNames)) {
+                computeSymmetryPairs();  // Refresh after mirroring
+            }
+        }
+    }
+    ImGui::EndDisabled();
+
+    // Mirror all pairs
+    ImGui::BeginDisabled(totalPairs == 0);
+    if (ImGui::Button("Mirror All Pairs", ImVec2(-1, 25))) {
+        if (mExecutor->mirrorAnchorPositions({})) {
+            computeSymmetryPairs();  // Refresh after mirroring
+        }
+    }
+    ImGui::EndDisabled();
 }
 
 // isPanelDefaultOpen() is inherited from ViewerAppBase

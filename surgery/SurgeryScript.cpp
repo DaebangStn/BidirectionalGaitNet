@@ -139,6 +139,8 @@ std::unique_ptr<SurgeryOperation> SurgeryScript::createOperation(const YAML::Nod
         return WeakenMuscleOp::fromYAML(node);
     } else if (type == "apply_pose_preset") {
         return ApplyPosePresetOp::fromYAML(node);
+    } else if (type == "mirror_anchor_positions") {
+        return MirrorAnchorPositionsOp::fromYAML(node);
     } else {
         LOG_ERROR("[SurgeryScript] Unknown operation type: " << type);
         return nullptr;

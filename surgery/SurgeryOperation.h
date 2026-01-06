@@ -379,5 +379,28 @@ private:
     bool mFixOriginInsertion;                  // Fix first and last anchors
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MirrorAnchorPositionsOp - Symmetrize anchor positions between L_/R_ pairs
+// ═══════════════════════════════════════════════════════════════════════════
+class MirrorAnchorPositionsOp : public SurgeryOperation {
+public:
+    // Mirror all L_/R_ pairs
+    MirrorAnchorPositionsOp() : mMuscles({}) {}
+
+    // Mirror specific muscles (base names without L_/R_ prefix)
+    explicit MirrorAnchorPositionsOp(const std::vector<std::string>& muscleBaseNames)
+        : mMuscles(muscleBaseNames) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "mirror_anchor_positions"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::vector<std::string> mMuscles;  // Base names (empty = all pairs)
+};
+
 } // namespace PMuscle
 
