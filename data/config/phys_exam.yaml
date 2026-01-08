@@ -3,7 +3,7 @@ description: "Physical examination"
 
 character:
   skeleton: "@data/skeleton/base.yaml"
-  muscle: "@data/muscle/base.yaml"
+  muscle: "@data/muscle/base_rom.yaml"
   # skeleton: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
   # muscle: "@pid:12964246/gait/pre/muscle/personalized.yaml"
   # skeleton: "@pid:30157774/gait/pre/skeleton/dynamic.yaml"

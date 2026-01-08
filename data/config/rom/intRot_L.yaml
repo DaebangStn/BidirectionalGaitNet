@@ -32,4 +32,3 @@ clinical_data:
   field: internal_rotation
   neg: true
   
-uniform_search_group: "hip_lateral_rotator_l"

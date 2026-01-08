@@ -196,6 +196,36 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
                 mContractureGridEnd = gs["end"].as<float>(1.3f);
                 mContractureGridInterval = gs["interval"].as<float>(0.1f);
             }
+
+            // Parse default ROM trials to pre-select
+            mDefaultSelectedROMTrials.clear();
+            if (ce["default_rom_trials"]) {
+                for (const auto& trial : ce["default_rom_trials"]) {
+                    mDefaultSelectedROMTrials.push_back(trial.as<std::string>());
+                }
+            }
+
+            // Parse grid search mapping (trial-to-groups)
+            mGridSearchMapping.clear();
+            if (ce["grid_search_mapping"]) {
+                for (const auto& entry : ce["grid_search_mapping"]) {
+                    PMuscle::GridSearchMapping mapping;
+                    if (entry["trials"]) {
+                        for (const auto& t : entry["trials"]) {
+                            mapping.trials.push_back(t.as<std::string>());
+                        }
+                    }
+                    if (entry["groups"]) {
+                        for (const auto& g : entry["groups"]) {
+                            mapping.groups.push_back(g.as<std::string>());
+                        }
+                    }
+                    if (!mapping.trials.empty() && !mapping.groups.empty()) {
+                        mGridSearchMapping.push_back(mapping);
+                    }
+                }
+                LOG_INFO("[MusclePersonalizer] Loaded " << mGridSearchMapping.size() << " grid search mappings");
+            }
         }
 
         LOG_INFO("[MusclePersonalizer] App config loaded from " << resolved);
@@ -228,6 +258,7 @@ void MusclePersonalizerApp::loadCharacter()
         // Compute symmetry pairs for the new character
         computeSymmetryPairs();
         computeSkeletonSymmetryPairs();
+        computeMuscleParamsSymmetryPairs();
     }
     catch (const std::exception& e) {
         LOG_ERROR("[MusclePersonalizer] Failed to load character: " << e.what());
@@ -1336,6 +1367,68 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
 
     ImGui::Separator();
     if (ImGui::Button("Estimate Contracture Parameters", ImVec2(-1, 0))) runContractureEstimation();
+
+    // Display brief optimization result summary
+    if (mContractureOptResult.has_value() && !mContractureOptResult->trial_results.empty()) {
+        ImGui::Spacing();
+
+        // Calculate success rate (error <= 5%)
+        int successCount = 0;
+        int totalCount = static_cast<int>(mContractureOptResult->trial_results.size());
+        for (const auto& trial : mContractureOptResult->trial_results) {
+            double error_pct = 0.0;
+            if (std::abs(trial.observed_torque) > 1e-6) {
+                error_pct = std::abs(trial.computed_torque_after - trial.observed_torque)
+                          / std::abs(trial.observed_torque) * 100.0;
+            }
+            if (error_pct <= 5.0) successCount++;
+        }
+        float successRate = totalCount > 0 ? (successCount * 100.0f / totalCount) : 0.0f;
+
+        // Display header with success rate
+        ImVec4 rateColor = (successRate >= 100.0f)
+            ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f)   // Green if 100%
+            : ImVec4(0.9f, 0.6f, 0.2f, 1.0f);  // Orange otherwise
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Outer %d/%d]",
+            mContractureOuterIterations, mContractureOuterIterations);
+        ImGui::SameLine();
+        ImGui::TextColored(rateColor, "Success: %d/%d (%.0f%%)", successCount, totalCount, successRate);
+
+        // Display each trial result with wrapping
+        float availableWidth = ImGui::GetContentRegionAvail().x;
+        float currentX = 0.0f;
+
+        for (const auto& trial : mContractureOptResult->trial_results) {
+            // Calculate error percentage
+            double error_pct = 0.0;
+            if (std::abs(trial.observed_torque) > 1e-6) {
+                error_pct = std::abs(trial.computed_torque_after - trial.observed_torque)
+                          / std::abs(trial.observed_torque) * 100.0;
+            }
+
+            // Red if error > 5%, green otherwise
+            ImVec4 color = (error_pct > 5.0)
+                ? ImVec4(0.9f, 0.3f, 0.3f, 1.0f)   // Red
+                : ImVec4(0.3f, 0.9f, 0.3f, 1.0f);  // Green
+
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s[%d]=%.2f(%.2f)",
+                trial.joint.c_str(), trial.dof_index,
+                trial.computed_torque_after, trial.observed_torque);
+
+            // Calculate text width for wrapping
+            float textWidth = ImGui::CalcTextSize(buf).x + ImGui::GetStyle().ItemSpacing.x;
+            if (currentX + textWidth > availableWidth && currentX > 0) {
+                // Wrap to next line
+                currentX = 0.0f;
+            } else if (currentX > 0) {
+                ImGui::SameLine();
+            }
+
+            ImGui::TextColored(color, "%s", buf);
+            currentX += textWidth;
+        }
+    }
 }
 
 void MusclePersonalizerApp::drawRenderTab()
@@ -2388,6 +2481,9 @@ void MusclePersonalizerApp::runContractureEstimation()
         return;
     }
 
+    // Set grid search mapping for joint multi-group optimization
+    optimizer.setGridSearchMapping(mGridSearchMapping);
+
     // Configure optimization
     PMuscle::ContractureOptimizer::Config optConfig;
     optConfig.maxIterations = mContractureMaxIterations;
@@ -2500,6 +2596,15 @@ void MusclePersonalizerApp::scanROMConfigs()
 
         // Apply default ROM values for any trials without patient data
         applyDefaultROMValues();
+
+        // Apply default selection from config
+        if (!mDefaultSelectedROMTrials.empty()) {
+            for (auto& trial : mROMTrials) {
+                trial.selected = std::find(mDefaultSelectedROMTrials.begin(),
+                                           mDefaultSelectedROMTrials.end(),
+                                           trial.name) != mDefaultSelectedROMTrials.end();
+            }
+        }
 
         LOG_INFO("[MusclePersonalizer] Found " << mROMTrials.size() << " ROM configs" );
     }
@@ -2900,8 +3005,17 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
     ImGui::Separator();
 
+    // Chart visibility checkboxes
+    ImGui::Checkbox("lm_contract", &mShowLmContractChart);
+    ImGui::SameLine();
+    ImGui::Checkbox("Torque", &mShowTorqueChart);
+    ImGui::SameLine();
+    ImGui::Checkbox("Force", &mShowForceChart);
+    ImGui::SameLine();
+    ImGui::Checkbox("Group Torque", &mShowGroupTorqueChart);
+
     // ===== Chart 1: lm_contract before/after for selected group =====
-    if (mContractureSelectedGroupIdx >= 0 &&
+    if (mShowLmContractChart && mContractureSelectedGroupIdx >= 0 &&
         mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
 
         const auto& grp = result.group_results[mContractureSelectedGroupIdx];
@@ -2946,7 +3060,7 @@ void MusclePersonalizerApp::drawContractureResultsTab()
                 y_min = std::min(y_min, std::min(page_before[i], page_after[i]));
                 y_max = std::max(y_max, std::max(page_before[i], page_after[i]));
             }
-            double y_margin = (y_max - y_min) * 0.1;
+            double y_margin = (y_max - y_min) * 0.2;  // 20% margin for text labels
             y_min -= y_margin;
             y_max += y_margin;
 
@@ -2983,9 +3097,19 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
                 ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
                 ImPlot::PlotBars("Before", x_before.data(), page_before.data(), n, bar_width);
+                for (int i = 0; i < n; ++i) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%.3f", page_before[i]);
+                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, -5));
+                }
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
                 ImPlot::PlotBars("After", x_after.data(), page_after.data(), n, bar_width);
+                for (int i = 0; i < n; ++i) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%.3f", page_after[i]);
+                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, -5));
+                }
 
                 ImPlot::EndPlot();
             }
@@ -2997,7 +3121,7 @@ void MusclePersonalizerApp::drawContractureResultsTab()
     ImGui::Spacing();
 
     // ===== Chart 2: Per-muscle passive torque at selected trial pose =====
-    if (mContractureSelectedTrialIdx >= 0 &&
+    if (mShowTorqueChart && mContractureSelectedTrialIdx >= 0 &&
         mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size()) &&
         mContractureSelectedGroupIdx >= 0 &&
         mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
@@ -3048,7 +3172,7 @@ void MusclePersonalizerApp::drawContractureResultsTab()
                 y_min = std::min(y_min, std::min(page_before[i], page_after[i]));
                 y_max = std::max(y_max, std::max(page_before[i], page_after[i]));
             }
-            double y_margin = (y_max - y_min) * 0.1;
+            double y_margin = (y_max - y_min) * 0.2;  // 20% margin for text labels
             y_min -= y_margin;
             y_max += y_margin;
 
@@ -3072,9 +3196,19 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
                 ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
                 ImPlot::PlotBars("Before", x_before.data(), page_before.data(), n, bar_width);
+                for (int i = 0; i < n; ++i) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%.1f", page_before[i]);
+                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, -5));
+                }
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
                 ImPlot::PlotBars("After", x_after.data(), page_after.data(), n, bar_width);
+                for (int i = 0; i < n; ++i) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%.1f", page_after[i]);
+                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, -5));
+                }
 
                 ImPlot::EndPlot();
             }
@@ -3086,7 +3220,7 @@ void MusclePersonalizerApp::drawContractureResultsTab()
     ImGui::Spacing();
 
     // ===== Chart 3: Per-muscle passive force at selected trial pose =====
-    if (mContractureSelectedTrialIdx >= 0 &&
+    if (mShowForceChart && mContractureSelectedTrialIdx >= 0 &&
         mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size()) &&
         mContractureSelectedGroupIdx >= 0 &&
         mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
@@ -3137,7 +3271,7 @@ void MusclePersonalizerApp::drawContractureResultsTab()
                 y_min = std::min(y_min, std::min(page_before[i], page_after[i]));
                 y_max = std::max(y_max, std::max(page_before[i], page_after[i]));
             }
-            double y_margin = (y_max - y_min) * 0.1;
+            double y_margin = (y_max - y_min) * 0.2;  // 20% margin for text labels
             y_min -= y_margin;
             y_max += y_margin;
 
@@ -3162,9 +3296,19 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
                 ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.4f, 0.8f, 0.8f));
                 ImPlot::PlotBars("Before", x_before.data(), page_before.data(), n, bar_width);
+                for (int i = 0; i < n; ++i) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%.1f", page_before[i]);
+                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, -5));
+                }
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
                 ImPlot::PlotBars("After", x_after.data(), page_after.data(), n, bar_width);
+                for (int i = 0; i < n; ++i) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%.1f", page_after[i]);
+                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, -5));
+                }
 
                 ImPlot::EndPlot();
             }
@@ -3176,7 +3320,7 @@ void MusclePersonalizerApp::drawContractureResultsTab()
     ImGui::Spacing();
 
     // ===== Chart 3.5: Group total passive torque (sum of muscles in group) =====
-    if (mContractureSelectedTrialIdx >= 0 &&
+    if (mShowGroupTorqueChart && mContractureSelectedTrialIdx >= 0 &&
         mContractureSelectedTrialIdx < static_cast<int>(result.trial_results.size()) &&
         mContractureSelectedGroupIdx >= 0 &&
         mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
@@ -3391,16 +3535,21 @@ void MusclePersonalizerApp::computeSymmetryPairs()
 
 void MusclePersonalizerApp::drawSymmetryTab()
 {
-    // Sub-tabs for Skeleton and Muscle symmetry
+    // Sub-tabs for Skeleton, Muscle waypoint, and Muscle parameter symmetry
     if (ImGui::BeginTabBar("SymmetrySubTabs")) {
         if (ImGui::BeginTabItem("Skeleton")) {
             mSymmetrySubTab = 0;
             drawSkeletonSymmetrySubTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Muscle")) {
+        if (ImGui::BeginTabItem("Waypoint")) {
             mSymmetrySubTab = 1;
             drawMuscleSymmetrySubTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Params")) {
+            mSymmetrySubTab = 2;
+            drawMuscleParamsSymmetrySubTab();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -3886,6 +4035,220 @@ void MusclePersonalizerApp::drawMuscleSymmetrySubTab()
     }
 }
 
+void MusclePersonalizerApp::computeMuscleParamsSymmetryPairs()
+{
+    mMuscleParamSymmetryPairs.clear();
+    mMuscleParamSymmetrySelectedIdx = -1;
+
+    Character* character = nullptr;
+    if (mExecutor && mExecutor->getCharacter()) {
+        character = mExecutor->getCharacter();
+    }
+    if (!character) return;
+
+    auto& muscles = character->getMuscles();
+
+    // Group muscles by L_/R_ prefix
+    std::map<std::string, Muscle*> leftMuscles, rightMuscles;
+    for (auto* m : muscles) {
+        const std::string& name = m->name;
+        if (name.size() < 2) continue;
+        if (name.substr(0, 2) == "L_") {
+            leftMuscles[name.substr(2)] = m;
+        } else if (name.substr(0, 2) == "R_") {
+            rightMuscles[name.substr(2)] = m;
+        }
+    }
+
+    // Helper to compute percentage difference
+    auto pctDiff = [](double a, double b) -> double {
+        double avg = (std::abs(a) + std::abs(b)) / 2.0;
+        if (avg < 1e-9) return 0.0;
+        return std::abs(a - b) / avg * 100.0;
+    };
+
+    // Build pairs
+    for (auto& [baseName, leftM] : leftMuscles) {
+        auto it = rightMuscles.find(baseName);
+        if (it == rightMuscles.end()) continue;
+
+        Muscle* rightM = it->second;
+
+        MuscleParamSymmetryPairInfo info;
+        info.base_name = baseName;
+        info.left_name = leftM->name;
+        info.right_name = rightM->name;
+
+        // Get parameter values
+        info.left_f0 = leftM->f0;
+        info.right_f0 = rightM->f0;
+        info.left_lm_contract = leftM->lm_contract;
+        info.right_lm_contract = rightM->lm_contract;
+        info.left_lt_rel = leftM->lt_rel;
+        info.right_lt_rel = rightM->lt_rel;
+
+        // Compute percentage differences
+        info.f0_diff_pct = pctDiff(info.left_f0, info.right_f0);
+        info.lm_contract_diff_pct = pctDiff(info.left_lm_contract, info.right_lm_contract);
+        info.lt_rel_diff_pct = pctDiff(info.left_lt_rel, info.right_lt_rel);
+
+        info.max_diff_pct = std::max({info.f0_diff_pct, info.lm_contract_diff_pct, info.lt_rel_diff_pct});
+        info.is_symmetric = (info.max_diff_pct <= mMuscleParamSymmetryThreshold);
+
+        mMuscleParamSymmetryPairs.push_back(info);
+    }
+
+    // Sort by base_name
+    std::sort(mMuscleParamSymmetryPairs.begin(), mMuscleParamSymmetryPairs.end(),
+              [](const auto& a, const auto& b) { return a.base_name < b.base_name; });
+}
+
+void MusclePersonalizerApp::drawMuscleParamsSymmetrySubTab()
+{
+    // Threshold controls
+    ImGui::Text("Threshold:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    if (ImGui::InputFloat("##ParamSymThreshold", &mMuscleParamSymmetryThreshold, 1.0f, 5.0f, "%.1f%%")) {
+        mMuscleParamSymmetryThreshold = std::max(0.1f, mMuscleParamSymmetryThreshold);
+        computeMuscleParamsSymmetryPairs();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh##ParamSym")) {
+        computeMuscleParamsSymmetryPairs();
+    }
+    ImGui::SameLine();
+    ImGui::Text("Filter:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150);
+    ImGui::InputText("##ParamSymFilter", mMuscleParamSymmetryFilter, sizeof(mMuscleParamSymmetryFilter));
+
+    ImGui::Separator();
+
+    // Statistics
+    int asymmetricCount = 0;
+    for (const auto& pair : mMuscleParamSymmetryPairs) {
+        if (!pair.is_symmetric) asymmetricCount++;
+    }
+    int totalPairs = static_cast<int>(mMuscleParamSymmetryPairs.size());
+    float percentage = totalPairs > 0 ? (asymmetricCount * 100.0f / totalPairs) : 0.0f;
+
+    if (asymmetricCount > 0) {
+        ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f),
+            "Asymmetric: %d / %d (%.1f%%)", asymmetricCount, totalPairs, percentage);
+    } else {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
+            "All symmetric: %d pairs", totalPairs);
+    }
+
+    ImGui::Separator();
+
+    // Muscle pairs listbox
+    ImGui::Text("Muscle Pairs (by max param diff):");
+    float listHeight = 200.0f;
+    if (ImGui::BeginListBox("##ParamSymmetryList", ImVec2(-FLT_MIN, listHeight))) {
+        // Sort by max_diff_pct descending for display
+        std::vector<size_t> sortedIndices(mMuscleParamSymmetryPairs.size());
+        std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+        std::sort(sortedIndices.begin(), sortedIndices.end(),
+            [this](size_t a, size_t b) {
+                return mMuscleParamSymmetryPairs[a].max_diff_pct > mMuscleParamSymmetryPairs[b].max_diff_pct;
+            });
+
+        // Convert filter to lowercase for case-insensitive matching
+        std::string filterLower = mMuscleParamSymmetryFilter;
+        std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+
+        for (size_t idx : sortedIndices) {
+            const auto& pair = mMuscleParamSymmetryPairs[idx];
+
+            // Apply filter
+            if (!filterLower.empty()) {
+                std::string nameLower = pair.base_name;
+                std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+                if (nameLower.find(filterLower) == std::string::npos) continue;
+            }
+
+            // Color based on symmetry status
+            ImVec4 color = pair.is_symmetric
+                ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f)   // Green for symmetric
+                : ImVec4(0.9f, 0.2f, 0.2f, 1.0f);  // Red for asymmetric
+
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+
+            char label[128];
+            snprintf(label, sizeof(label), "%s (%.1f%%)", pair.base_name.c_str(), pair.max_diff_pct);
+
+            bool isSelected = (mMuscleParamSymmetrySelectedIdx == static_cast<int>(idx));
+            if (ImGui::Selectable(label, isSelected)) {
+                mMuscleParamSymmetrySelectedIdx = static_cast<int>(idx);
+                // Update highlight for 3D rendering
+                mSymmetryHighlightLeft = pair.left_name;
+                mSymmetryHighlightRight = pair.right_name;
+            }
+
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndListBox();
+    }
+
+    ImGui::Separator();
+
+    // Selected pair details
+    if (mMuscleParamSymmetrySelectedIdx >= 0 &&
+        mMuscleParamSymmetrySelectedIdx < static_cast<int>(mMuscleParamSymmetryPairs.size())) {
+        const auto& pair = mMuscleParamSymmetryPairs[mMuscleParamSymmetrySelectedIdx];
+
+        ImGui::Text("Selected: %s", pair.base_name.c_str());
+        ImGui::Text("  L: %s", pair.left_name.c_str());
+        ImGui::Text("  R: %s", pair.right_name.c_str());
+
+        ImGui::Separator();
+
+        // Parameter comparison table
+        ImGui::SetWindowFontScale(1.2f);
+        if (ImGui::BeginTable("ParamCompare", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn("Diff %", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableHeadersRow();
+
+            auto drawRow = [&](const char* name, double left, double right, double diff_pct) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", name);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.4f", left);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.4f", right);
+                ImGui::TableNextColumn();
+                ImVec4 color = (diff_pct <= mMuscleParamSymmetryThreshold)
+                    ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f)
+                    : ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+                ImGui::TextColored(color, "%.1f", diff_pct);
+            };
+
+            drawRow("f0", pair.left_f0, pair.right_f0, pair.f0_diff_pct);
+            drawRow("lm_contract", pair.left_lm_contract, pair.right_lm_contract, pair.lm_contract_diff_pct);
+            drawRow("lt_rel", pair.left_lt_rel, pair.right_lt_rel, pair.lt_rel_diff_pct);
+
+            ImGui::EndTable();
+        }
+        ImGui::SetWindowFontScale(1.0f);
+    }
+
+    // Clear highlight button
+    if (!mSymmetryHighlightLeft.empty()) {
+        ImGui::Separator();
+        if (ImGui::Button("Clear 3D Highlight##ParamSym")) {
+            mMuscleParamSymmetrySelectedIdx = -1;
+            mSymmetryHighlightLeft.clear();
+            mSymmetryHighlightRight.clear();
+        }
+    }
+}
+
 // ============================================================
 // Symmetry Operations Section (Left Panel)
 // ============================================================
@@ -3899,6 +4262,7 @@ void MusclePersonalizerApp::drawSymmetryOperationsSection()
     // Refresh button
     if (ImGui::Button("Refresh Symmetry Analysis")) {
         computeSymmetryPairs();
+        computeMuscleParamsSymmetryPairs();
     }
 
     ImGui::Separator();

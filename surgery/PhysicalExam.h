@@ -47,6 +47,7 @@ struct AngleSweepTrialConfig {
 
     // Hierarchical alias for ROM summary (e.g., "hip/abduction_knee0/left")
     std::string alias;
+    bool neg = false;  // Negate ROM value for display (e.g., dorsiflexion stored as negative)
 };
 
 // Angle sweep data point (per-step recording)
@@ -134,6 +135,7 @@ struct TrialDataBuffer {
     std::string trial_name;
     std::string trial_description;
     std::string alias;  // Hierarchical path for ROM summary (e.g., "hip/abduction_knee0/left")
+    bool neg = false;   // Negate ROM value for display
     std::chrono::system_clock::time_point timestamp;
     std::vector<AngleSweepDataPoint> angle_sweep_data;
     std::vector<AngleSweepDataPoint> std_angle_sweep_data;

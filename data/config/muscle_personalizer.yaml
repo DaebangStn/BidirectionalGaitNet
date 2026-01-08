@@ -57,6 +57,80 @@ contracture_estimation:
     end: 1.3
     interval: 0.1
 
+  # Grid search mapping: maps ROM trials (list) to muscle groups (list)
+  # For joint multi-group optimization, multiple trials search multiple groups simultaneously
+  # NOTE: Each muscle group appears in exactly ONE mapping (no duplicates)
+  grid_search_mapping:
+    # ============ ANKLE ============
+    # Ankle dorsiflexion - tests plantarflexor tightness
+    # k0 = knee extended (stretches gastrocnemius), k90 = knee flexed (isolates soleus)
+    - trials: [dorsi_k0_L, dorsi_k90_L]
+      groups: [plantarflexor_l, knee_ankle_biart_l]
+    - trials: [dorsi_k0_R, dorsi_k90_R]
+      groups: [plantarflexor_r, knee_ankle_biart_r]
+
+    # Ankle plantarflexion - tests dorsiflexor tightness
+    - trials: [plantar_L]
+      groups: [dorsiflexor_l]
+    - trials: [plantar_R]
+      groups: [dorsiflexor_r]
+
+    # ============ HIP FLEXION/EXTENSION ============
+    # Staheli extension test (Thomas test) - tests hip flexor tightness
+    # Includes iliopsoas (monoarticular) and rectus femoris, sartorius (biarticular)
+    - trials: [staheliExtension_L]
+      groups: [hip_flexor_l, rectus_femoris_biart_l, sartorius_biart_l]
+    - trials: [staheliExtension_R]
+      groups: [hip_flexor_r, rectus_femoris_biart_r, sartorius_biart_r]
+
+    # ============ HIP ROTATION ============
+    # Internal rotation tests lateral rotator tightness
+    - trials: [intRot_L]
+      groups: [hip_lateral_rotator_l]
+    - trials: [intRot_R]
+      groups: [hip_lateral_rotator_r]
+
+    # ============ HIP ABDUCTION/ADDUCTION/EXTERNAL ROTATION ============
+    # Hip abductors (Gluteus Medius, Minimus, TFL) also provide medial rotation
+    # Joint search: add (abductor tightness) + extRot (medial rotator tightness)
+    - trials: [add_L, extRot_L]
+      groups: [hip_abductor_l]
+    - trials: [add_R, extRot_R]
+      groups: [hip_abductor_r]
+
+    # Hip abduction - tests hip adductor tightness
+    # k0 = knee extended (stretches gracilis), k90 = knee flexed (isolates monoarticular)
+    - trials: [abd_k0_L, abd_k90_L]
+      groups: [hip_adductor_l, gracilis_biart_l]
+    - trials: [abd_k0_R, abd_k90_R]
+      groups: [hip_adductor_r, gracilis_biart_r]
+
+    # ============ KNEE ============
+    # Popliteal angle - tests hamstring tightness (with hip flexed 90°)
+    # Primarily stretches biarticular hamstrings, also monoarticular knee flexors
+    - trials: [popliteal_L]
+      groups: [hamstring_biart_l, knee_flexor_l]
+    - trials: [popliteal_R]
+      groups: [hamstring_biart_r, knee_flexor_r]
+
+    # ============ UNMAPPED GROUPS ============
+    # The following groups have no dedicated ROM test:
+    # - hip_extensor_l/r (gluteus maximus) - could add hip flexion ROM test
+    # - knee_extensor_l/r (vasti) - could add knee flexion ROM test
+
+  # Default ROM trials to select (empty = none selected)
+  default_rom_trials:
+    # - "dorsi_k0_L"
+    # - "dorsi_k0_R"
+    # - "dorsi_k90_L"
+    # - "dorsi_k90_R"
+    # - "plantar_L"
+    # - "plantar_R"
+    # - "popliteal_L"
+    # - "popliteal_R"
+    - "add_L"
+    - "add_R"
+
 # Muscle visualization
 visualization:
   color_by_contracture: true

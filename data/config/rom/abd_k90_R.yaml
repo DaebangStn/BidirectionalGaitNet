@@ -32,5 +32,3 @@ clinical_data:
   joint: hip
   field: abduction_flex90_r2
 
-# 6. Target muscle group for grid search initialization
-uniform_search_group: "hip_adductor_r"

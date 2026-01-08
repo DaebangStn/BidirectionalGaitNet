@@ -32,6 +32,4 @@ clinical_data:
   field: extension_staheli
   neg: true
 
-# 6. Target muscle group for grid search initialization
-uniform_search_group: "hip_flexor_l"
   

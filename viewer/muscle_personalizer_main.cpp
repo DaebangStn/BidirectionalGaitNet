@@ -409,7 +409,10 @@ int main(int argc, char** argv)
         ("rom", po::value<std::string>(&romPath),
          "Path to ROM config YAML (for --test-rom)")
         ("rom-angle", po::value<double>(&romAngle)->default_value(45.0),
-         "ROM angle in degrees (for --test-rom)");
+         "ROM angle in degrees (for --test-rom or --contracture)")
+        ("contracture", "Run contracture optimization in CLI mode")
+        ("rom-configs", po::value<std::vector<std::string>>()->multitoken(),
+         "Paths to ROM config YAML files (for --contracture)");
 
     po::variables_map vm;
     try {
@@ -495,6 +498,100 @@ int main(int argc, char** argv)
             return 1;
         }
         return runTestROMCLI(configPath, romPath, romAngle);
+    }
+
+    // CLI mode for contracture optimization (L/R symmetry verification)
+    if (vm.count("contracture")) {
+        if (!vm.count("rom-configs") || vm["rom-configs"].as<std::vector<std::string>>().empty()) {
+            std::cerr << "Error: --rom-configs is required for --contracture mode" << std::endl;
+            return 1;
+        }
+
+        auto romConfigs = vm["rom-configs"].as<std::vector<std::string>>();
+        std::cout << "[Contracture CLI] Loading " << romConfigs.size() << " ROM configs" << std::endl;
+
+        // Load config
+        std::string resolvedConfig = rm::resolve(configPath);
+        YAML::Node config = YAML::LoadFile(resolvedConfig);
+        std::string skelPath = config["paths"]["skeleton_default"].as<std::string>();
+        std::string muscPath = config["paths"]["muscle_default"].as<std::string>();
+        std::string muscleGroupsPath = config["paths"]["muscle_groups"].as<std::string>("@data/config/muscle_groups.yaml");
+
+        // Load character
+        auto executor = std::make_unique<PMuscle::SurgeryExecutor>("cli-contracture");
+        executor->loadCharacter(skelPath, muscPath);
+        Character* character = executor->getCharacter();
+        if (!character) {
+            std::cerr << "[Contracture CLI] Failed to load character" << std::endl;
+            return 1;
+        }
+        auto skeleton = character->getSkeleton();
+        std::cout << "[Contracture CLI] Character loaded: " << character->getMuscles().size() << " muscles" << std::endl;
+
+        // Load ROM trial configs
+        std::vector<PMuscle::ROMTrialConfig> trials;
+        for (const auto& romConfigPath : romConfigs) {
+            auto trial = PMuscle::ContractureOptimizer::loadROMConfig(romConfigPath, skeleton);
+            // Use rom_angle from YAML (typically set via clinical_data or manual)
+            // For testing, set a fixed ROM angle
+            trial.rom_angle = romAngle;
+            trials.push_back(trial);
+            std::cout << "[Contracture CLI] Loaded: " << trial.name
+                      << " (joint=" << trial.joint << ", dof=" << trial.dof_index
+                      << ", rom=" << trial.rom_angle << "°)" << std::endl;
+        }
+
+        // Load muscle groups
+        PMuscle::ContractureOptimizer optimizer;
+        int numGroups = optimizer.loadMuscleGroups(muscleGroupsPath, character);
+        std::cout << "[Contracture CLI] Loaded " << numGroups << " muscle groups" << std::endl;
+
+        // Load grid search mapping from config
+        auto ce = config["contracture_estimation"];
+        if (ce && ce["grid_search_mapping"]) {
+            std::vector<PMuscle::GridSearchMapping> gridSearchMapping;
+            for (const auto& entry : ce["grid_search_mapping"]) {
+                PMuscle::GridSearchMapping mapping;
+                if (entry["trials"]) {
+                    for (const auto& t : entry["trials"]) {
+                        mapping.trials.push_back(t.as<std::string>());
+                    }
+                }
+                if (entry["groups"]) {
+                    for (const auto& g : entry["groups"]) {
+                        mapping.groups.push_back(g.as<std::string>());
+                    }
+                }
+                if (!mapping.trials.empty() && !mapping.groups.empty()) {
+                    gridSearchMapping.push_back(mapping);
+                }
+            }
+            optimizer.setGridSearchMapping(gridSearchMapping);
+            std::cout << "[Contracture CLI] Loaded " << gridSearchMapping.size() << " grid search mappings" << std::endl;
+        }
+
+        // Configure optimizer
+        PMuscle::ContractureOptimizer::Config optConfig;
+        optConfig.maxIterations = 50;
+        optConfig.minRatio = 0.7;
+        optConfig.maxRatio = 1.3;
+        optConfig.verbose = verbose;
+        optConfig.outerIterations = 1;
+
+        // Run optimization
+        std::cout << "\n[Contracture CLI] Running optimization..." << std::endl;
+        auto results = optimizer.optimize(character, trials, optConfig);
+
+        // Print results
+        std::cout << "\n========== CONTRACTURE OPTIMIZATION RESULTS ==========" << std::endl;
+        std::cout << std::fixed << std::setprecision(4);
+        for (const auto& gr : results) {
+            std::cout << "  " << std::setw(25) << std::left << gr.group_name
+                      << " ratio=" << gr.ratio << std::endl;
+        }
+        std::cout << "======================================================" << std::endl;
+
+        return 0;
     }
 
     std::cout << "========================================" << std::endl;

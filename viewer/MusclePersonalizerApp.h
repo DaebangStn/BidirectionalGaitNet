@@ -177,6 +177,7 @@ private:
     };
     std::vector<ROMTrialInfo> mROMTrials;
     char mROMFilter[64] = "";
+    std::vector<std::string> mDefaultSelectedROMTrials;  // Default trials to pre-select
 
     // Patient ROM data (from @pid:{pid}/rom.yaml)
     std::map<std::string, std::optional<float>> mPatientROMValues;  // "side.joint.field" -> value
@@ -193,6 +194,9 @@ private:
     float mContractureGridBegin = 0.7f;
     float mContractureGridEnd = 1.3f;
     float mContractureGridInterval = 0.1f;
+
+    // Grid search mapping (trial-to-groups)
+    std::vector<PMuscle::GridSearchMapping> mGridSearchMapping;
 
     // Regularization
     float mContractureLambdaRatioReg = 0.1f;   // Penalize (ratio - 1.0)^2
@@ -219,6 +223,10 @@ private:
     char mContractureGroupFilter[64] = "";
     char mContractureTrialFilter[64] = "";
     int mContractureChartPage = 0;  // Shared pagination for muscle charts
+    bool mShowLmContractChart = true;
+    bool mShowTorqueChart = false;
+    bool mShowForceChart = false;
+    bool mShowGroupTorqueChart = false;
 
     // ============================================================
     // Tool 4: Symmetry Analysis (UI state)
@@ -269,7 +277,28 @@ private:
     };
     std::vector<SkeletonSymmetryPairInfo> mSkeletonSymmetryPairs;
     int mSkeletonSymmetrySelectedIdx = -1;
-    int mSymmetrySubTab = 0;  // 0 = Skeleton, 1 = Muscle
+    int mSymmetrySubTab = 0;  // 0 = Skeleton, 1 = Muscle, 2 = Parameters
+
+    // Muscle parameter symmetry analysis
+    struct MuscleParamSymmetryPairInfo {
+        std::string base_name;      // e.g., "Adductor_Brevis"
+        std::string left_name;      // e.g., "L_Adductor_Brevis"
+        std::string right_name;     // e.g., "R_Adductor_Brevis"
+        bool is_symmetric;          // true if all params within threshold
+        // Parameter values
+        double left_f0, right_f0;
+        double left_lm_contract, right_lm_contract;
+        double left_lt_rel, right_lt_rel;
+        // Differences (percentage)
+        double f0_diff_pct;
+        double lm_contract_diff_pct;
+        double lt_rel_diff_pct;
+        double max_diff_pct;        // Maximum of all diffs
+    };
+    std::vector<MuscleParamSymmetryPairInfo> mMuscleParamSymmetryPairs;
+    int mMuscleParamSymmetrySelectedIdx = -1;
+    float mMuscleParamSymmetryThreshold = 0.1f;  // 0.1% threshold
+    char mMuscleParamSymmetryFilter[64] = "";
 
     // ============================================================
     // Rendering Flags
@@ -338,9 +367,11 @@ private:
     void drawSymmetryTab();           // Right panel: status/analysis display
     void drawSkeletonSymmetrySubTab();  // Skeleton symmetry sub-tab
     void drawMuscleSymmetrySubTab();    // Muscle symmetry sub-tab
+    void drawMuscleParamsSymmetrySubTab();  // Muscle parameter symmetry sub-tab
     void drawSymmetryOperationsSection();  // Left panel: mirror operations
     void computeSymmetryPairs();  // Rebuild mSymmetryPairs from current muscles
     void computeSkeletonSymmetryPairs();  // Rebuild mSkeletonSymmetryPairs
+    void computeMuscleParamsSymmetryPairs();  // Rebuild mMuscleParamSymmetryPairs
 
     // ============================================================
     // Tool Operations (delegate to SurgeryExecutor)

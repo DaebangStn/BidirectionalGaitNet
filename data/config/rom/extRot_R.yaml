@@ -31,4 +31,3 @@ clinical_data:
   joint: hip
   field: external_rotation
 
-uniform_search_group: "hip_medial_rotator_r"

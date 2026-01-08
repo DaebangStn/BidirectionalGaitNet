@@ -32,5 +32,3 @@ clinical_data:
   field: dorsiflexion_knee0_r2
   neg: true
 
-# 6. Target muscle group for grid search initialization
-uniform_search_group: "plantarflexor_l"

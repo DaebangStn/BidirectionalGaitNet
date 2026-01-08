@@ -838,11 +838,20 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
         double lm = m->lm_contract;
         double lt = m->lt_rel;
 
+        // Safety check: lm_contract must be positive (minimum 0.01)
+        // Zero or negative values indicate a bug in the optimization pipeline
+        if (lm < 0.01) {
+            LOG_ERROR("[Surgery] BUG: Muscle " << name << " has invalid lm_contract: " << lm
+                      << " - This indicates muscles not in any group lost their values. "
+                      << "Setting to 1.0 as fallback.");
+            lm = 1.0;  // Safe fallback to prevent downstream errors
+        }
+
         // Start muscle entry with properties
         mfs << "  - {name: " << name
             << ", f0: " << std::fixed << std::setprecision(2) << f0
-            << ", lm_contract: " << std::fixed << std::setprecision(2) << lm
-            << ", lt_rel: " << std::fixed << std::setprecision(2) << lt << "," << std::endl;
+            << ", lm_contract: " << std::fixed << std::setprecision(5) << lm
+            << ", lt_rel: " << std::fixed << std::setprecision(5) << lt << "," << std::endl;
 
         // Waypoints array (flow style)
         mfs << "     waypoints: [" << std::endl;

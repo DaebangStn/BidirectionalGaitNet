@@ -42,10 +42,15 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
         auto muscles = character_->getMuscles();
         std::vector<double> old_lm_contract(muscles.size());
 
+        // Save ALL muscle lm_contract values before modification
+        // (critical: non-group muscles must be preserved during restore)
+        for (size_t i = 0; i < muscles.size(); ++i) {
+            old_lm_contract[i] = muscles[i]->lm_contract;
+        }
+
         for (const auto& [group_id, muscle_ids] : muscle_groups_) {
             double ratio = parameters[0][group_id];
             for (int m_idx : muscle_ids) {
-                old_lm_contract[m_idx] = muscles[m_idx]->lm_contract;
 
                 auto it = base_lm_contract_.find(m_idx);
                 double base = (it != base_lm_contract_.end()) ? it->second : muscles[m_idx]->lm_contract;
@@ -64,9 +69,11 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
         }
 
         // Compute predicted passive torque
-        // For composite axis (abd_knee), use Y-axis DOF (offset 1)
-        int dof_offset = pose_.use_composite_axis ? 1 : -1;
-        double tau_pred = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset);
+        // For composite axis (abd_knee): use Y-axis projection with dof_offset=1
+        // For simple DOF: use specific DOF filtering with pose_.joint_dof
+        int dof_offset = pose_.use_composite_axis ? 1 : pose_.joint_dof;
+        bool use_global_y = pose_.use_composite_axis;
+        double tau_pred = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset, use_global_y);
 
         // Restore original lm_contract values
         for (size_t i = 0; i < muscles.size(); ++i) {
@@ -101,7 +108,7 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
                 for (auto& muscle : muscles) {
                     muscle->UpdateGeometry();
                 }
-                double tau_plus = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset);
+                double tau_plus = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset, use_global_y);
 
                 // Restore
                 for (size_t i = 0; i < muscles.size(); ++i) {
@@ -346,8 +353,7 @@ ROMTrialConfig ContractureOptimizer::loadROMConfig(
         config.cd_cutoff = node["clinical_data"]["cutoff"].as<double>(-1.0);
     }
 
-    // Load uniform_search_group for grid search initialization
-    config.uniform_search_group = node["uniform_search_group"].as<std::string>("");
+    // Note: uniform_search_group removed - now using centralized grid_search_mapping
 
     // Load IK parameters for composite DOF
     config.shank_scale = node["shank_scale"].as<double>(0.7);
@@ -427,7 +433,8 @@ int ContractureOptimizer::getJointIndex(
 }
 
 
-double ContractureOptimizer::computePassiveTorque(Character* character, int joint_idx, bool verbose, int dof_offset) {
+double ContractureOptimizer::computePassiveTorque(Character* character, int joint_idx, bool verbose,
+                                                  int dof_offset, bool use_global_y) {
     if (!character) return 0.0;
     if (character->getMuscles().empty()) return 0.0;
 
@@ -440,13 +447,12 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
 
     const auto& muscles = character->getMuscles();
 
-    // For composite DOF (dof_offset >= 0), compute physical torque about joint center
-    // and project onto global Y axis using cross product method
-    if (dof_offset >= 0 && num_dofs == 3) {
+    // Mode 1: Global Y-axis projection (for abd_knee composite DOF)
+    // Compute physical torque about joint center and project onto global Y axis
+    if (dof_offset >= 0 && use_global_y && num_dofs == 3) {
         auto* child_body = joint->getChildBodyNode();
 
         // Get joint center in world coordinates
-        // Joint center is at the origin of the child body's parent transform
         Eigen::Vector3d joint_center = child_body->getTransform().translation();
 
         // Build set of descendant bodies (bodies affected by this joint)
@@ -462,7 +468,6 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
 
         double total_torque = 0.0;
         for (auto& muscle : muscles) {
-            // Use cross-product based torque computation (correct for BallJoint)
             Eigen::Vector3d torque_world = muscle->GetPassiveTorqueAboutPoint(
                 joint_center, &descendant_bodies);
             double contribution = torque_world.y();
@@ -475,7 +480,30 @@ double ContractureOptimizer::computePassiveTorque(Character* character, int join
         return total_torque;
     }
 
-    // Standard mode: sum all DOFs in joint
+    // Mode 2: Specific DOF only (for simple single-DOF sweeps)
+    // Filter to only the specified DOF, ensuring L/R symmetry
+    if (dof_offset >= 0 && !use_global_y) {
+        int target_dof = first_dof + dof_offset;
+        double total_torque = 0.0;
+        for (auto& muscle : muscles) {
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            const auto& related_indices = muscle->related_dof_indices;
+
+            for (size_t i = 0; i < related_indices.size(); ++i) {
+                if (related_indices[i] == target_dof) {
+                    total_torque += jtp[i];
+                    if (verbose && std::abs(jtp[i]) > 1e-6) {
+                        LOG_INFO("    " << muscle->name << " DOF " << target_dof
+                                 << " jtp=" << jtp[i] << " Nm");
+                    }
+                    break;  // Only one contribution per muscle per DOF
+                }
+            }
+        }
+        return total_torque;
+    }
+
+    // Mode 3: Sum all DOFs in joint (default, for backward compatibility)
     double total_torque = 0.0;
     for (auto& muscle : muscles) {
         Eigen::VectorXd jtp = muscle->GetRelatedJtp();
@@ -969,8 +997,10 @@ double ContractureOptimizer::findBestInitialRatio(
         // Set pose and update muscle geometry
         setPoseAndUpdateGeometry(character, pose.q);
 
-        // Compute passive torque
-        double computed_torque = computePassiveTorque(character, pose.joint_idx);
+        // Compute passive torque (use specific DOF for symmetry)
+        int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
+        bool use_global_y = pose.use_composite_axis;
+        double computed_torque = computePassiveTorque(character, pose.joint_idx, false, dof_offset, use_global_y);
         double error = std::abs(computed_torque - pose.tau_obs);
 
         if (config.verbose) {
@@ -1038,8 +1068,8 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     // Build mapping from group_id to trial index (for passive torque computation)
     std::map<int, size_t> group_to_trial = buildGroupToTrialMapping(rom_configs, pose_data);
 
-    // Grid search initialization for trials with uniform_search_group specified
-    runGridSearchInitialization(character, rom_configs, pose_data, base_lm_contract, config, x);
+    // Grid search initialization using centralized mapping
+    runGridSearchInitialization(character, rom_configs, pose_data, base_lm_contract, config, mGridSearchMapping, x);
 
     // Build torque matrix BEFORE optimization: torque_matrix_before[group_id][trial_idx]
     std::map<int, std::vector<double>> torque_matrix_before;
@@ -1219,7 +1249,7 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
     // Run optimization (with outer iterations for biarticular convergence)
     // ============================================================
     for (int outer = 0; outer < config.outerIterations; ++outer) {
-        result.group_results = optimizeWithPrecomputed(character, rom_configs, config, preOpt);
+        result.group_results = optimizeWithPrecomputed(character, rom_configs, config, preOpt, outer);
 
         if (result.group_results.empty()) {
             std::cerr << "[ContractureOptimizer] Optimization failed at outer iteration "
@@ -1236,7 +1266,9 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
             const auto& pose = preOpt.pose_data[t];
             setPoseAndUpdateGeometry(character, pose.q);
             auto* joint = skeleton->getJoint(pose.joint_idx);
-            double torque = computePassiveTorque(character, pose.joint_idx, false);
+            int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
+            bool use_global_y = pose.use_composite_axis;
+            double torque = computePassiveTorque(character, pose.joint_idx, false, dof_offset, use_global_y);
             std::cout << " " << joint->getName() << "[" << pose.joint_dof << "]="
                       << std::fixed << std::setprecision(2) << torque << "Nm"
                       << " (target=" << pose.tau_obs << ")";
@@ -1272,7 +1304,11 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
 
         // Compute AFTER total passive torque
         if (config.verbose) LOG_INFO("[Contracture] Trial '" << trial_result.trial_name << "' AFTER torque:");
-        trial_result.computed_torque_after = computePassiveTorque(character, pose.joint_idx, config.verbose);
+        {
+            int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
+            bool use_global_y = pose.use_composite_axis;
+            trial_result.computed_torque_after = computePassiveTorque(character, pose.joint_idx, config.verbose, dof_offset, use_global_y);
+        }
 
         // Per-muscle contribution AFTER
         captureMuscleTorqueContributions(character, pose, preOpt.all_muscle_indices,
@@ -1281,6 +1317,10 @@ ContractureOptResult ContractureOptimizer::optimizeWithResults(
     }
 
     result.converged = true;
+
+    // Copy 1D grid search results
+    result.grid_search_1d_results = mGridSearch1DResults;
+
     std::cout << "[ContractureOptimizer] optimizeWithResults complete: "
               << result.muscle_results.size() << " muscles, "
               << result.trial_results.size() << " trials" << std::endl;
@@ -1493,28 +1533,300 @@ void ContractureOptimizer::runGridSearchInitialization(
     const std::vector<PoseData>& pose_data,
     const std::map<int, double>& base_lm_contract,
     const Config& config,
+    const std::vector<GridSearchMapping>& mapping,
     std::vector<double>& x)
 {
-    for (size_t i = 0; i < rom_configs.size() && i < pose_data.size(); ++i) {
-        const auto& rom_config = rom_configs[i];
-        if (rom_config.uniform_search_group.empty()) continue;
+    if (mapping.empty()) {
+        LOG_INFO("[Contracture] No grid search mapping configured, skipping initialization");
+        return;
+    }
 
-        // Find group_id for this uniform_search_group name
-        int target_group_id = findGroupIdByName(rom_config.uniform_search_group);
-        if (target_group_id < 0) {
-            LOG_INFO("[Contracture] Warning: uniform_search_group '"
-                     << rom_config.uniform_search_group << "' not found in muscle groups");
+    // Build a map from trial name to index for quick lookup
+    std::map<std::string, size_t> trial_name_to_index;
+    for (size_t i = 0; i < rom_configs.size(); ++i) {
+        trial_name_to_index[rom_configs[i].name] = i;
+    }
+
+    // Track which groups have been initialized
+    std::set<int> initialized_groups;
+
+    // Process each mapping entry
+    for (const auto& entry : mapping) {
+        if (entry.trials.empty() || entry.groups.empty()) continue;
+
+        // Find trial indices that are present in rom_configs
+        std::vector<size_t> trial_indices;
+        for (const auto& trial_name : entry.trials) {
+            auto it = trial_name_to_index.find(trial_name);
+            if (it != trial_name_to_index.end()) {
+                trial_indices.push_back(it->second);
+            }
+        }
+
+        if (trial_indices.empty()) {
+            // No matching trials in current config, skip this mapping
             continue;
         }
 
-        // Find best initial ratio via grid search
-        double best_ratio = findBestInitialRatio(
-            character, pose_data[i], target_group_id, base_lm_contract, config);
+        // Find group IDs
+        std::vector<int> group_ids;
+        std::vector<std::string> group_names_found;
+        for (const auto& group_name : entry.groups) {
+            int gid = findGroupIdByName(group_name);
+            if (gid >= 0) {
+                // Skip if already initialized
+                if (initialized_groups.count(gid) == 0) {
+                    group_ids.push_back(gid);
+                    group_names_found.push_back(group_name);
+                }
+            } else {
+                LOG_WARN("[Contracture] Grid search mapping: group '" << group_name << "' not found");
+            }
+        }
 
-        x[target_group_id] = best_ratio;
-        LOG_INFO("[Contracture] Grid search for " << rom_config.uniform_search_group
-                 << ": best_ratio=" << best_ratio);
+        if (group_ids.empty()) continue;
+
+        // Log which trials and groups are being searched
+        std::ostringstream trials_str, groups_str;
+        for (size_t i = 0; i < trial_indices.size(); ++i) {
+            if (i > 0) trials_str << ", ";
+            trials_str << rom_configs[trial_indices[i]].name;
+        }
+        for (size_t i = 0; i < group_names_found.size(); ++i) {
+            if (i > 0) groups_str << ", ";
+            groups_str << group_names_found[i];
+        }
+        LOG_INFO("[Contracture] Grid search: trials=[" << trials_str.str()
+                 << "] -> groups=[" << groups_str.str() << "]");
+
+        // Run joint grid search
+        auto best_ratios = runJointGridSearch(
+            character, trial_indices, group_ids, pose_data, base_lm_contract, config);
+
+        // Apply results to x
+        for (const auto& [gid, ratio] : best_ratios) {
+            x[gid] = ratio;
+            initialized_groups.insert(gid);
+        }
     }
+}
+
+std::map<int, double> ContractureOptimizer::runJointGridSearch(
+    Character* character,
+    const std::vector<size_t>& trial_indices,
+    const std::vector<int>& group_ids,
+    const std::vector<PoseData>& pose_data,
+    const std::map<int, double>& base_lm_contract,
+    const Config& config)
+{
+    std::map<int, double> result;
+    if (group_ids.empty() || trial_indices.empty()) {
+        return result;
+    }
+
+    auto& muscles = character->getMuscles();
+    const size_t num_groups = group_ids.size();
+
+    // Store original lm_contract values
+    std::vector<double> original_lm_contract(muscles.size());
+    for (size_t i = 0; i < muscles.size(); ++i) {
+        original_lm_contract[i] = muscles[i]->lm_contract;
+    }
+
+    // Build grid values
+    std::vector<double> grid_values;
+    for (double r = config.gridSearchBegin; r <= config.gridSearchEnd + 1e-6; r += config.gridSearchInterval) {
+        grid_values.push_back(r);
+    }
+    const size_t grid_size = grid_values.size();
+
+    // Initialize best tracking
+    double best_total_error = std::numeric_limits<double>::max();
+    std::vector<double> best_ratios(num_groups, 1.0);
+
+    // N-dimensional grid search (nested loops for up to 3 groups)
+    // For simplicity, support 1, 2, or 3 groups
+    auto evaluateRatios = [&](const std::vector<double>& ratios) -> double {
+        // Apply ratios to all groups
+        for (size_t g = 0; g < num_groups; ++g) {
+            int gid = group_ids[g];
+            auto group_it = mMuscleGroups.find(gid);
+            if (group_it == mMuscleGroups.end()) continue;
+
+            for (int m_idx : group_it->second) {
+                auto it = base_lm_contract.find(m_idx);
+                double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
+                muscles[m_idx]->lm_contract = base * ratios[g];
+                muscles[m_idx]->RefreshMuscleParams();
+            }
+        }
+
+        // Compute total squared error across all trials
+        double total_error = 0.0;
+        for (size_t ti : trial_indices) {
+            if (ti >= pose_data.size()) continue;
+            const auto& pose = pose_data[ti];
+
+            // Set pose and update muscle geometry
+            setPoseAndUpdateGeometry(character, pose.q);
+
+            // Compute passive torque (use specific DOF for symmetry)
+            int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
+            bool use_global_y = pose.use_composite_axis;
+            double computed_torque = computePassiveTorque(character, pose.joint_idx, false, dof_offset, use_global_y);
+
+            double error = computed_torque - pose.tau_obs;
+            total_error += error * error;
+        }
+
+        return total_error;
+    };
+
+    // Grid search based on number of groups
+    if (num_groups == 1) {
+        // Capture 1D grid search results
+        GridSearch1DResult gs_result;
+        auto name_it = mGroupNames.find(group_ids[0]);
+        gs_result.group_name = (name_it != mGroupNames.end()) ? name_it->second : "Group_" + std::to_string(group_ids[0]);
+
+        int best_idx = 0;
+        for (size_t i = 0; i < grid_values.size(); ++i) {
+            double r0 = grid_values[i];
+            std::vector<double> ratios = {r0};
+            double error = evaluateRatios(ratios);
+            gs_result.ratios.push_back(r0);
+            gs_result.errors.push_back(error);
+            if (error < best_total_error) {
+                best_total_error = error;
+                best_ratios = ratios;
+                best_idx = static_cast<int>(i);
+            }
+        }
+        gs_result.best_idx = best_idx;
+        gs_result.best_ratio = best_ratios[0];
+        gs_result.best_error = best_total_error;
+        mGridSearch1DResults.push_back(gs_result);
+
+        // Print 1D error vector if verbose
+        if (config.verbose) {
+            std::ostringstream oss;
+            oss << "[Contracture] Error vector (" << gs_result.group_name << "): ";
+            oss << std::fixed << std::setprecision(1);
+            for (size_t i = 0; i < gs_result.ratios.size(); ++i) {
+                if (i > 0) oss << " ";
+                oss << std::setprecision(2) << gs_result.ratios[i] << "(";
+                if (gs_result.errors[i] > 1000.0) {
+                    oss << ">1000";
+                } else {
+                    oss << std::setprecision(1) << gs_result.errors[i];
+                }
+                oss << ")";
+                if (static_cast<int>(i) == gs_result.best_idx) oss << "*";
+            }
+            LOG_INFO(oss.str());
+        }
+    } else if (num_groups == 2) {
+        // Store error matrix for verbose output
+        std::vector<std::vector<double>> error_matrix(grid_size, std::vector<double>(grid_size));
+        for (size_t i0 = 0; i0 < grid_size; ++i0) {
+            for (size_t i1 = 0; i1 < grid_size; ++i1) {
+                std::vector<double> ratios = {grid_values[i0], grid_values[i1]};
+                double error = evaluateRatios(ratios);
+                error_matrix[i0][i1] = error;
+                if (error < best_total_error) {
+                    best_total_error = error;
+                    best_ratios = ratios;
+                }
+            }
+        }
+        // Print error matrix if verbose
+        if (config.verbose) {
+            auto name0_it = mGroupNames.find(group_ids[0]);
+            auto name1_it = mGroupNames.find(group_ids[1]);
+            std::string gname0 = (name0_it != mGroupNames.end()) ? name0_it->second : "Group_" + std::to_string(group_ids[0]);
+            std::string gname1 = (name1_it != mGroupNames.end()) ? name1_it->second : "Group_" + std::to_string(group_ids[1]);
+
+            // Find best indices
+            size_t best_i0 = 0, best_i1 = 0;
+            for (size_t i0 = 0; i0 < grid_size; ++i0) {
+                for (size_t i1 = 0; i1 < grid_size; ++i1) {
+                    if (std::abs(grid_values[i0] - best_ratios[0]) < 1e-6 &&
+                        std::abs(grid_values[i1] - best_ratios[1]) < 1e-6) {
+                        best_i0 = i0;
+                        best_i1 = i1;
+                    }
+                }
+            }
+
+            std::ostringstream mat;
+            mat << "[Contracture] Error matrix (" << gname0 << " x " << gname1 << "):\n";
+            mat << std::fixed << std::setprecision(2);
+            // Header row (group1 ratios)
+            mat << "         ";
+            for (double r1 : grid_values) {
+                mat << std::setw(8) << r1;
+            }
+            mat << "\n";
+            // Data rows (group0 ratios)
+            for (size_t i0 = 0; i0 < grid_size; ++i0) {
+                mat << std::setw(8) << grid_values[i0] << " ";
+                for (size_t i1 = 0; i1 < grid_size; ++i1) {
+                    double err = error_matrix[i0][i1];
+                    bool is_best = (i0 == best_i0 && i1 == best_i1);
+                    if (err > 1000.0) {
+                        mat << std::setw(7) << ">1000" << (is_best ? "*" : " ");
+                    } else {
+                        mat << std::setw(7) << std::setprecision(2) << err << (is_best ? "*" : " ");
+                    }
+                }
+                mat << "\n";
+            }
+            LOG_INFO(mat.str());
+        }
+    } else if (num_groups >= 3) {
+        // For 3+ groups, limit to first 3 to avoid combinatorial explosion
+        for (double r0 : grid_values) {
+            for (double r1 : grid_values) {
+                for (double r2 : grid_values) {
+                    std::vector<double> ratios = {r0, r1, r2};
+                    // Pad with 1.0 for any additional groups
+                    for (size_t g = 3; g < num_groups; ++g) {
+                        ratios.push_back(1.0);
+                    }
+                    double error = evaluateRatios(ratios);
+                    if (error < best_total_error) {
+                        best_total_error = error;
+                        best_ratios = ratios;
+                    }
+                }
+            }
+        }
+    }
+
+    // Restore original lm_contract values
+    for (size_t i = 0; i < muscles.size(); ++i) {
+        muscles[i]->lm_contract = original_lm_contract[i];
+        muscles[i]->RefreshMuscleParams();
+    }
+
+    // Build result map
+    for (size_t g = 0; g < num_groups; ++g) {
+        result[group_ids[g]] = best_ratios[g];
+    }
+
+    // Log result
+    std::ostringstream oss;
+    oss << "[Contracture] Joint grid search: ";
+    for (size_t g = 0; g < num_groups; ++g) {
+        if (g > 0) oss << ", ";
+        auto name_it = mGroupNames.find(group_ids[g]);
+        std::string gname = (name_it != mGroupNames.end()) ? name_it->second : "Group_" + std::to_string(group_ids[g]);
+        oss << gname << "=" << std::fixed << std::setprecision(2) << best_ratios[g];
+    }
+    oss << " (error=" << std::fixed << std::setprecision(4) << best_total_error << ")";
+    LOG_INFO(oss.str());
+
+    return result;
 }
 
 std::map<int, double> ContractureOptimizer::computeBiarticularAverages(
@@ -1649,14 +1961,31 @@ std::map<int, size_t> ContractureOptimizer::buildGroupToTrialMapping(
 {
     std::map<int, size_t> group_to_trial;
 
-    // First pass: use uniform_search_group if specified
-    for (size_t i = 0; i < rom_configs.size() && i < pose_data.size(); ++i) {
-        const auto& rom_config = rom_configs[i];
-        if (rom_config.uniform_search_group.empty()) continue;
+    // Build trial name to index lookup
+    std::map<std::string, size_t> trial_name_to_index;
+    for (size_t i = 0; i < rom_configs.size(); ++i) {
+        trial_name_to_index[rom_configs[i].name] = i;
+    }
 
-        int target_group_id = findGroupIdByName(rom_config.uniform_search_group);
-        if (target_group_id >= 0) {
-            group_to_trial[target_group_id] = i;
+    // First pass: use centralized grid search mapping
+    for (const auto& entry : mGridSearchMapping) {
+        // Find the first matching trial
+        size_t trial_idx = std::numeric_limits<size_t>::max();
+        for (const auto& trial_name : entry.trials) {
+            auto it = trial_name_to_index.find(trial_name);
+            if (it != trial_name_to_index.end()) {
+                trial_idx = it->second;
+                break;
+            }
+        }
+        if (trial_idx == std::numeric_limits<size_t>::max()) continue;
+
+        // Map all groups in this entry to this trial
+        for (const auto& group_name : entry.groups) {
+            int gid = findGroupIdByName(group_name);
+            if (gid >= 0) {
+                group_to_trial[gid] = trial_idx;
+            }
         }
     }
 
@@ -1738,6 +2067,9 @@ ContractureOptimizer::PreOptimizationData ContractureOptimizer::preOptimization(
 {
     PreOptimizationData preOpt;
 
+    // Clear previous grid search results
+    mGridSearch1DResults.clear();
+
     if (!character || mMuscleGroups.empty()) return preOpt;
 
     const auto& muscles = character->getMuscles();
@@ -1779,7 +2111,11 @@ ContractureOptimizer::PreOptimizationData ContractureOptimizer::preOptimization(
         if (config.verbose) {
             LOG_INFO("[Contracture] Trial '" << rom_config.name << "' BEFORE torque:");
         }
-        trial_result.computed_torque_before = computePassiveTorque(character, pose.joint_idx, config.verbose);
+        {
+            int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
+            bool use_global_y = pose.use_composite_axis;
+            trial_result.computed_torque_before = computePassiveTorque(character, pose.joint_idx, config.verbose, dof_offset, use_global_y);
+        }
 
         // Per-muscle contribution BEFORE
         captureMuscleTorqueContributions(character, pose, preOpt.all_muscle_indices,
@@ -1799,7 +2135,7 @@ ContractureOptimizer::PreOptimizationData ContractureOptimizer::preOptimization(
     // ============================================================
     preOpt.initial_x.resize(num_groups, 1.0);
     runGridSearchInitialization(character, rom_configs, preOpt.pose_data,
-                                preOpt.lm_contract_before, config, preOpt.initial_x);
+                                preOpt.lm_contract_before, config, mGridSearchMapping, preOpt.initial_x);
 
     // ============================================================
     // 6. Log initial parameters
@@ -1815,7 +2151,8 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimizeWithPrecomputed(
     Character* character,
     const std::vector<ROMTrialConfig>& rom_configs,
     const Config& config,
-    const PreOptimizationData& preOpt)
+    const PreOptimizationData& preOpt,
+    int outer_iteration)
 {
     std::vector<MuscleGroupResult> results;
 
@@ -1832,8 +2169,15 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimizeWithPrecomputed(
         base_lm_contract[static_cast<int>(i)] = muscles[i]->lm_contract;
     }
 
-    // Initialize parameters from preOpt (grid search results from first iteration)
-    std::vector<double> x = preOpt.initial_x;
+    // Initialize parameters:
+    // - First iteration (outer_iteration=0): use grid search results
+    // - Subsequent iterations: start at 1.0 (base already has previous results applied)
+    std::vector<double> x;
+    if (outer_iteration == 0) {
+        x = preOpt.initial_x;
+    } else {
+        x.resize(num_groups, 1.0);
+    }
 
     // Build torque matrix BEFORE optimization: torque_matrix_before[group_id][trial_idx]
     std::map<int, std::vector<double>> torque_matrix_before;

@@ -32,5 +32,3 @@ clinical_data:
   field: internal_rotation
   neg: true
   
-# 6. Target muscle group for grid search initialization
-uniform_search_group: "hip_lateral_rotator_r"

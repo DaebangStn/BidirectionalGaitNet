@@ -1,11 +1,8 @@
 # Muscle groups configuration for contracture optimization
 # Generated from data/muscle/base.yaml
 # Groups separated by side (_l, _r)
-# NOTE: Each muscle appears in exactly ONE group (no duplicates)
-# Biarticular muscles have their own separate groups
 
 # ============ HIP FLEXORS ============
-# Primary hip flexors (iliopsoas only - monoarticular)
 hip_flexor_l:
   - L_Psoas_Major
   - L_Psoas_Major1
@@ -13,6 +10,12 @@ hip_flexor_l:
   - L_iliacus
   - L_iliacus1
   - L_iliacus2
+  - L_Rectus_Femoris
+  - L_Rectus_Femoris1
+  - L_Tensor_Fascia_Lata
+  - L_Tensor_Fascia_Lata1
+  - L_Tensor_Fascia_Lata2
+  - L_Sartorius
 
 hip_flexor_r:
   - R_Psoas_Major
@@ -21,15 +24,26 @@ hip_flexor_r:
   - R_iliacus
   - R_iliacus1
   - R_iliacus2
+  - R_Rectus_Femoris
+  - R_Rectus_Femoris1
+  - R_Tensor_Fascia_Lata
+  - R_Tensor_Fascia_Lata1
+  - R_Tensor_Fascia_Lata2
+  - R_Sartorius
 
 # ============ HIP EXTENSORS ============
-# Primary hip extensors (gluteus maximus only - monoarticular)
 hip_extensor_l:
   - L_Gluteus_Maximus
   - L_Gluteus_Maximus1
   - L_Gluteus_Maximus2
   - L_Gluteus_Maximus3
   - L_Gluteus_Maximus4
+  - L_Bicep_Femoris_Longus
+  - L_Bicep_Femoris_Short
+  - L_Bicep_Femoris_Short1
+  - L_Semitendinosus
+  - L_Semimembranosus
+  - L_Semimembranosus1
 
 hip_extensor_r:
   - R_Gluteus_Maximus
@@ -37,9 +51,35 @@ hip_extensor_r:
   - R_Gluteus_Maximus2
   - R_Gluteus_Maximus3
   - R_Gluteus_Maximus4
+  - R_Bicep_Femoris_Longus
+  - R_Bicep_Femoris_Short
+  - R_Bicep_Femoris_Short1
+  - R_Semitendinosus
+  - R_Semimembranosus
+  - R_Semimembranosus1
+
+# ============ HIP MEDIAL ROTATORS ============
+hip_medial_rotator_l:
+  - L_Gluteus_Medius
+  - L_Gluteus_Medius1
+  - L_Gluteus_Medius2
+  - L_Gluteus_Medius3
+  - L_Pectineus
+  - L_Tensor_Fascia_Lata
+  - L_Tensor_Fascia_Lata1
+  - L_Tensor_Fascia_Lata2
+
+hip_medial_rotator_r:
+  - R_Gluteus_Medius
+  - R_Gluteus_Medius1
+  - R_Gluteus_Medius2
+  - R_Gluteus_Medius3
+  - R_Pectineus
+  - R_Tensor_Fascia_Lata
+  - R_Tensor_Fascia_Lata1
+  - R_Tensor_Fascia_Lata2
 
 # ============ HIP LATERAL ROTATORS ============
-# Deep external rotators only (monoarticular)
 hip_lateral_rotator_l:
   - L_Quadratus_Femoris
   - L_Obturator_Externus
@@ -48,6 +88,9 @@ hip_lateral_rotator_l:
   - L_Piriformis1
   - L_Superior_Gemellus
   - L_Inferior_Gemellus
+  - L_Bicep_Femoris_Longus
+  - L_Bicep_Femoris_Short
+  - L_Bicep_Femoris_Short1
 
 hip_lateral_rotator_r:
   - R_Quadratus_Femoris
@@ -57,9 +100,11 @@ hip_lateral_rotator_r:
   - R_Piriformis1
   - R_Superior_Gemellus
   - R_Inferior_Gemellus
+  - R_Bicep_Femoris_Longus
+  - R_Bicep_Femoris_Short
+  - R_Bicep_Femoris_Short1
 
 # ============ HIP ABDUCTORS ============
-# Primary abductors (gluteus medius, minimus, TFL)
 hip_abductor_l:
   - L_Gluteus_Minimus
   - L_Gluteus_Minimus1
@@ -85,7 +130,6 @@ hip_abductor_r:
   - R_Tensor_Fascia_Lata2
 
 # ============ HIP ADDUCTORS ============
-# Primary adductors (monoarticular only)
 hip_adductor_l:
   - L_Adductor_Longus
   - L_Adductor_Longus1
@@ -96,6 +140,7 @@ hip_adductor_l:
   - L_Adductor_Magnus2
   - L_Adductor_Magnus3
   - L_Adductor_Magnus4
+  - L_Gracilis
   - L_Pectineus
 
 hip_adductor_r:
@@ -108,10 +153,10 @@ hip_adductor_r:
   - R_Adductor_Magnus2
   - R_Adductor_Magnus3
   - R_Adductor_Magnus4
+  - R_Gracilis
   - R_Pectineus
 
 # ============ KNEE EXTENSORS ============
-# Quadriceps vasti only (monoarticular)
 knee_extensor_l:
   - L_Vastus_Medialis
   - L_Vastus_Medialis1
@@ -120,6 +165,8 @@ knee_extensor_l:
   - L_Vastus_Intermedius1
   - L_Vastus_Lateralis
   - L_Vastus_Lateralis1
+  - L_Rectus_Femoris
+  - L_Rectus_Femoris1
 
 knee_extensor_r:
   - R_Vastus_Medialis
@@ -129,61 +176,33 @@ knee_extensor_r:
   - R_Vastus_Intermedius1
   - R_Vastus_Lateralis
   - R_Vastus_Lateralis1
-
-# ============ KNEE FLEXORS ============
-# Monoarticular knee flexors only
-knee_flexor_l:
-  - L_Bicep_Femoris_Short
-  - L_Bicep_Femoris_Short1
-  - L_Popliteus
-
-knee_flexor_r:
-  - R_Bicep_Femoris_Short
-  - R_Bicep_Femoris_Short1
-  - R_Popliteus
-
-# ============ HIP-KNEE BIARTICULAR: HAMSTRINGS ============
-# Biarticular: hip extension + knee flexion
-hamstring_biart_l:
-  - L_Bicep_Femoris_Longus
-  - L_Semitendinosus
-  - L_Semimembranosus
-  - L_Semimembranosus1
-
-hamstring_biart_r:
-  - R_Bicep_Femoris_Longus
-  - R_Semitendinosus
-  - R_Semimembranosus
-  - R_Semimembranosus1
-
-# ============ HIP-KNEE BIARTICULAR: RECTUS FEMORIS ============
-# Biarticular: hip flexion + knee extension
-rectus_femoris_biart_l:
-  - L_Rectus_Femoris
-  - L_Rectus_Femoris1
-
-rectus_femoris_biart_r:
   - R_Rectus_Femoris
   - R_Rectus_Femoris1
 
-# ============ HIP-KNEE BIARTICULAR: SARTORIUS ============
-# Biarticular: hip flexion + knee flexion
-sartorius_biart_l:
+# ============ KNEE FLEXORS ============
+knee_flexor_l:
   - L_Sartorius
-
-sartorius_biart_r:
-  - R_Sartorius
-
-# ============ HIP-KNEE BIARTICULAR: GRACILIS ============
-# Biarticular: hip adduction + knee flexion
-gracilis_biart_l:
+  - L_Bicep_Femoris_Longus
+  - L_Bicep_Femoris_Short
+  - L_Bicep_Femoris_Short1
+  - L_Semitendinosus
+  - L_Semimembranosus
+  - L_Semimembranosus1
+  - L_Popliteus
   - L_Gracilis
 
-gracilis_biart_r:
+knee_flexor_r:
+  - R_Sartorius
+  - R_Bicep_Femoris_Longus
+  - R_Bicep_Femoris_Short
+  - R_Bicep_Femoris_Short1
+  - R_Semitendinosus
+  - R_Semimembranosus
+  - R_Semimembranosus1
+  - R_Popliteus
   - R_Gracilis
 
-# ============ KNEE-ANKLE BIARTICULAR ============
-# Gastrocnemius and plantaris (cross both knee and ankle)
+# ============ FOOT PLANTARFLEXORS ============
 knee_ankle_biart_l:
   - L_Gastrocnemius_Lateral_Head
   - L_Gastrocnemius_Medial_Head
@@ -194,8 +213,6 @@ knee_ankle_biart_r:
   - R_Gastrocnemius_Medial_Head
   - R_Plantaris
 
-# ============ PLANTARFLEXORS ============
-# Monoarticular ankle plantarflexors (soleus, tibialis posterior, etc.)
 plantarflexor_l:
   - L_Soleus
   - L_Soleus1
@@ -222,7 +239,7 @@ plantarflexor_r:
   - R_Peroneus_Longus
   - R_Peroneus_Brevis
 
-# ============ DORSIFLEXORS ============
+# ============ FOOT DORSIFLEXORS ============
 dorsiflexor_l:
   - L_Tibialis_Anterior
   - L_Extensor_Hallucis_Longus

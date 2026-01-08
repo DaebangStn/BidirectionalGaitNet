@@ -1,4 +1,4 @@
-name: "Popliteal_L"
+name: "popliteal_L"
 description: "Left knee passive extension ROM with hip flexed 90 degrees"
 
 # 1. Base pose
@@ -31,5 +31,3 @@ clinical_data:
   joint: knee
   field: popliteal_bilateral
 
-# 6. Target muscle group for grid search initialization
-uniform_search_group: "knee_flexor_l"

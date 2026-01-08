@@ -956,6 +956,11 @@ TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
             trial.angle_sweep.alias = exam_node["alias"].as<std::string>();
         }
 
+        // Parse clinical_data.neg flag for ROM display negation
+        if (trial_node["clinical_data"] && trial_node["clinical_data"]["neg"]) {
+            trial.angle_sweep.neg = trial_node["clinical_data"]["neg"].as<bool>(false);
+        }
+
         // Parse torque_cutoff (with backward compat for old "torque" key)
         trial.torque_cutoff = trial_node["torque_cutoff"].as<double>(
             trial_node["torque"].as<double>(15.0));
@@ -1039,6 +1044,7 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             buffer.trial_name = trial.name;
             buffer.trial_description = trial.description;
             buffer.alias = trial.angle_sweep.alias;
+            buffer.neg = trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
             buffer.std_angle_sweep_data = mStdAngleSweepData;
@@ -2176,6 +2182,7 @@ void PhysicalExam::runAllTrials() {
             buffer.trial_name = trial.name;
             buffer.trial_description = trial.description;
             buffer.alias = trial.angle_sweep.alias;
+            buffer.neg = trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
             buffer.std_angle_sweep_data = mStdAngleSweepData;
@@ -2569,9 +2576,7 @@ void PhysicalExam::drawSweepTabContent() {
 
 void PhysicalExam::drawEtcTabContent() {
     // ROM summary table
-    if (ImGui::CollapsingHeader("ROM Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
-        drawROMSummaryTable();
-    }
+    drawROMSummaryTable();
 
     ImGui::Separator();
 
@@ -2622,6 +2627,11 @@ void PhysicalExam::drawROMSummaryTable() {
         // Trial exists: set value or NaN (if no cutoff angle)
         double value = buf.cutoff_angles.empty() ? std::numeric_limits<double>::quiet_NaN() : buf.cutoff_angles[0];
 
+        // Apply negation if neg flag is set (e.g., dorsiflexion stored as negative)
+        if (buf.neg && !std::isnan(value)) {
+            value = -value;
+        }
+
         if (side == "left") {
             grouped[joint][measurement].left = value;
         } else if (side == "right") {
@@ -2658,7 +2668,8 @@ void PhysicalExam::drawROMSummaryTable() {
         }
     };
 
-    // Render table with Normative column
+    // Render table with Normative column (larger font for readability)
+    ImGui::SetWindowFontScale(1.3f);
     if (ImGui::BeginTable("ROMSummary", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Measurement", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Normative", ImGuiTableColumnFlags_WidthFixed, 70.0f);
@@ -2726,6 +2737,7 @@ void PhysicalExam::drawROMSummaryTable() {
         }
         ImGui::EndTable();
     }
+    ImGui::SetWindowFontScale(1.0f);  // Reset font scale
 }
 
 void PhysicalExam::drawContent() {
@@ -5048,6 +5060,7 @@ void PhysicalExam::runSelectedTrials() {
             buffer.trial_name = trial.name;
             buffer.trial_description = trial.description;
             buffer.alias = trial.angle_sweep.alias;
+            buffer.neg = trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
             buffer.std_angle_sweep_data = mStdAngleSweepData;
@@ -5481,8 +5494,9 @@ void PhysicalExam::drawRecordingSection() {
 }
 
 void PhysicalExam::drawRenderOptionsSection() {
-    if (collapsingHeaderWithControls("Render")) {
-        // Character rendering selection
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Render");
+    ImGui::Separator();
+    // Character rendering selection
         if (mStdCharacter) {
             ImGui::Text("Character Display:");
             int render_option = 0;
@@ -5544,9 +5558,10 @@ void PhysicalExam::drawRenderOptionsSection() {
         }
 
         // Muscle Filtering and Selection
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Muscle");
+        ImGui::Separator();
         ImGui::Indent();
-        if (collapsingHeaderWithControls("Muscle##RenderOptions")) {
-            if (!mCharacter) {
+        if (!mCharacter) {
                 ImGui::TextDisabled("Load character first");
             } else {
                 ImGui::SetNextItemWidth(100);
@@ -5612,7 +5627,6 @@ void PhysicalExam::drawRenderOptionsSection() {
                 }
                 ImGui::EndChild();
             }
-        }
         ImGui::Unindent();
 
         ImGui::Checkbox("Posture Control Debug", &mShowPostureDebug);
@@ -5621,7 +5635,6 @@ void PhysicalExam::drawRenderOptionsSection() {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Print posture control debug info to console (positions, errors, forces)");
         }
-    }
 }
 
 void PhysicalExam::drawJointControlSection() {

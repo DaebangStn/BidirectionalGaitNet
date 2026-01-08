@@ -49,8 +49,7 @@ struct ROMTrialConfig {
     bool cd_neg = false;       // negate the angle from clinical data
     double cd_cutoff = -1.0;   // skip if |rom_angle| > cutoff (-1 means no cutoff)
 
-    // Grid search initialization
-    std::string uniform_search_group;  // Target muscle group for grid search (e.g., "plantarflexor_l")
+    // Note: uniform_search_group removed - now using centralized GridSearchMapping
 
     // IK parameters for composite DOF
     double shank_scale = 0.7;  // Scale factor for shank length in abd_knee IK (default 0.7)
@@ -81,6 +80,17 @@ struct AbdKneePoseResult {
     Eigen::Vector3d hip_positions;  // Axis-angle for hip BallJoint
     double knee_angle;              // Radians for knee RevoluteJoint
     bool success;
+};
+
+/**
+ * @brief Grid search mapping entry for joint multi-group optimization
+ *
+ * Maps a list of ROM trials to a list of muscle groups that should be
+ * searched jointly. Enables N-dimensional grid search over multiple groups.
+ */
+struct GridSearchMapping {
+    std::vector<std::string> trials;   // ROM trial names (e.g., ["dorsi_k0_R", "dorsi_k90_R"])
+    std::vector<std::string> groups;   // Muscle group names to search jointly
 };
 
 /**
@@ -124,12 +134,26 @@ struct TrialTorqueResult {
 };
 
 /**
+ * @brief 1D grid search result for a single group
+ */
+struct GridSearch1DResult {
+    std::string group_name;
+    std::vector<std::string> trial_names;  // Trials used for this search
+    std::vector<double> ratios;            // Grid values tested
+    std::vector<double> errors;            // Error at each ratio
+    int best_idx = -1;                     // Index of best ratio
+    double best_ratio = 1.0;
+    double best_error = 0.0;
+};
+
+/**
  * @brief Comprehensive contracture optimization result
  */
 struct ContractureOptResult {
     std::vector<MuscleGroupResult> group_results;
     std::vector<MuscleContractureResult> muscle_results;
     std::vector<TrialTorqueResult> trial_results;
+    std::vector<GridSearch1DResult> grid_search_1d_results;  // 1D grid search results
     int iterations = 0;
     double final_cost = 0.0;
     bool converged = false;
@@ -154,7 +178,7 @@ public:
         double maxRatio;
         bool verbose;
 
-        // Grid search initialization (applied when uniform_search_group is specified)
+        // Grid search initialization parameters
         double gridSearchBegin = 0.7;
         double gridSearchEnd = 1.3;
         double gridSearchInterval = 0.1;
@@ -233,6 +257,24 @@ public:
         const std::string& yaml_path,
         dart::dynamics::SkeletonPtr skeleton = nullptr);
 
+    // ========== Grid Search Mapping ==========
+
+    /**
+     * @brief Set grid search mapping for joint multi-group optimization
+     *
+     * @param mapping Vector of trial-to-groups mappings
+     */
+    void setGridSearchMapping(const std::vector<GridSearchMapping>& mapping) {
+        mGridSearchMapping = mapping;
+    }
+
+    /**
+     * @brief Get current grid search mapping
+     */
+    const std::vector<GridSearchMapping>& getGridSearchMapping() const {
+        return mGridSearchMapping;
+    }
+
     // ========== Optimization ==========
 
     /**
@@ -284,10 +326,14 @@ public:
      *
      * @param character Character with muscles
      * @param joint_idx Joint index
-     * @param dof_offset If >= 0, only compute torque for this DOF offset within joint (e.g., 1 for Y-axis)
+     * @param verbose Print per-muscle contributions
+     * @param dof_offset DOF index within joint (-1 = sum all DOFs, >= 0 = specific DOF)
+     * @param use_global_y If true and dof_offset >= 0, use global Y-axis projection (for abd_knee)
+     *                     If false and dof_offset >= 0, filter to only the specified DOF
      * @return Total passive torque from all muscles
      */
-    static double computePassiveTorque(Character* character, int joint_idx, bool verbose = false, int dof_offset = -1);
+    static double computePassiveTorque(Character* character, int joint_idx, bool verbose = false,
+                                       int dof_offset = -1, bool use_global_y = false);
 
     /**
      * @brief Build pose data from ROM configs for optimization
@@ -388,14 +434,25 @@ private:
         const std::vector<Muscle*>& muscles,
         bool verbose) const;
 
-    // Run grid search initialization for trials with uniform_search_group
+    // Run grid search initialization using centralized mapping
     void runGridSearchInitialization(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
         const std::vector<PoseData>& pose_data,
         const std::map<int, double>& base_lm_contract,
         const Config& config,
+        const std::vector<GridSearchMapping>& mapping,
         std::vector<double>& x);
+
+    // Run joint multi-group grid search for related trials
+    // Returns map of group_id -> best_ratio
+    std::map<int, double> runJointGridSearch(
+        Character* character,
+        const std::vector<size_t>& trial_indices,
+        const std::vector<int>& group_ids,
+        const std::vector<PoseData>& pose_data,
+        const std::map<int, double>& base_lm_contract,
+        const Config& config);
 
     // Capture per-muscle torque and force contributions at a pose
     void captureMuscleTorqueContributions(
@@ -450,15 +507,19 @@ private:
         const Config& config);
 
     // Optimization using pre-computed data (avoids redundant work)
+    // outer_iteration: 0 = use grid search initial_x, >0 = start at 1.0
     std::vector<MuscleGroupResult> optimizeWithPrecomputed(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
         const Config& config,
-        const PreOptimizationData& preOpt);
+        const PreOptimizationData& preOpt,
+        int outer_iteration = 0);
 
     // Member variables
     std::map<int, std::vector<int>> mMuscleGroups;  // group_id -> muscle indices
     std::map<int, std::string> mGroupNames;          // group_id -> group name
+    std::vector<GridSearchMapping> mGridSearchMapping;  // trial-to-groups mapping for grid search
+    std::vector<GridSearch1DResult> mGridSearch1DResults;  // Captured 1D grid search results
 };
 
 } // namespace PMuscle

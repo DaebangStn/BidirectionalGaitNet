@@ -30,7 +30,5 @@ clinical_data:
   side: right
   joint: hip
   field: adduction_r2
-  neg: true
+  neg: false
   
-# 6. Target muscle group for grid search initialization
-uniform_search_group: "hip_adductor_r"
