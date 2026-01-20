@@ -2659,24 +2659,16 @@ void C3DProcessorApp::drawClinicalDataSection()
         ImGui::Separator();
         ImGui::Text("Static Calibration:");
 
-        // Check for calibration availability
+        // Build pattern for calibration path
         const std::string& pid = pidState.pidList[pidState.selectedPID];
         std::string prePost = pidState.preOp ? "pre" : "post";
         std::string pattern = "@pid:" + pid + "/gait/" + prePost;
 
-        bool hasCalibration = false;
-        if (mResourceManager) {
-            try {
-                auto resolved1 = mResourceManager->resolve(pattern + "/static_calibrated_marker.xml");
-                auto resolved2 = mResourceManager->resolve(pattern + "/static_calibrated_body_scale.yaml");
-                hasCalibration = !resolved1.empty() && !resolved2.empty();
-            } catch (...) { hasCalibration = false; }
-        }
-
+        // Use cached calibration availability (updated when PID/prePost changes)
         // Display calibration status with color coding
         if (mPersonalizedCalibrationLoaded) {
             ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded");
-        } else if (hasCalibration) {
+        } else if (mHasPersonalizedCalibration) {
             ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "Available");
         } else {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Not Available");
@@ -2685,7 +2677,7 @@ void C3DProcessorApp::drawClinicalDataSection()
         // Load calibration button
         ImGui::SameLine();
         if (ImGui::Button("Load calibration")) {
-            if (hasCalibration && mResourceManager) {
+            if (mHasPersonalizedCalibration && mResourceManager) {
                 try {
                     // Use resolveDir for directory path (not resolve which is for files)
                     auto resolved = mResourceManager->resolveDir(pattern);
@@ -2823,13 +2815,10 @@ void C3DProcessorApp::checkForPersonalizedCalibration()
     std::string prePost = state.preOp ? "pre" : "post";
     std::string pattern = "@pid:" + pid + "/gait/" + prePost;
 
-    try {
-        auto resolved1 = mResourceManager->resolve(pattern + "/static_calibrated_marker.xml");
-        auto resolved2 = mResourceManager->resolve(pattern + "/static_calibrated_body_scale.yaml");
-        mHasPersonalizedCalibration = !resolved1.empty() && !resolved2.empty();
-    } catch (const rm::RMError&) {
-        mHasPersonalizedCalibration = false;
-    }
+    // Use exists() for quiet check - doesn't log errors for missing files
+    bool exists1 = mResourceManager->exists(pattern + "/static_calibrated_marker.xml");
+    bool exists2 = mResourceManager->exists(pattern + "/static_calibrated_body_scale.yaml");
+    mHasPersonalizedCalibration = exists1 && exists2;
 }
 
 std::string C3DProcessorApp::getCurrentMotionPath() const

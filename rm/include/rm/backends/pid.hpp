@@ -7,10 +7,28 @@
 
 namespace rm {
 
-// Patient data backend with automatic path transformations
-// Handles:
-//   - Gait data: {pid}/gait/{pre|post} -> {pid}/gait/{pre|post}/Generated_C3D_files
-//   - Metadata fields: {pid}/name -> reads "name" from {pid}/metadata.yaml
+// Patient data backend with direct path resolution
+//
+// New structure (visit-based):
+//   {pid}/{visit}/{data_type}/{filename}
+//
+// Where:
+//   - visit: "pre", "op1", "op2"
+//   - data_type: "gait", "motion", "skeleton", "muscle", "ckpt", "dicom"
+//
+// Examples:
+//   "12964246/pre/gait/walk01.c3d"
+//   "12964246/pre/motion/Trimmed_walk02-Dynamic.h5"
+//   "12964246/pre/skeleton/dynamic.yaml"
+//   "12964246/metadata.yaml"      (patient-level metadata)
+//   "12964246/pre/metadata.yaml"  (visit-level metadata)
+//
+// Backward Compatibility:
+//   Old-style paths are automatically transformed to new-style:
+//   - {pid}/gait/{pre|post}/... -> {pid}/{visit}/gait/...
+//   - {pid}/h5/{pre|post}/...   -> {pid}/{visit}/motion/...
+//   - {pid}/skeleton/{pre|post}/... -> {pid}/{visit}/skeleton/...
+//
 class PidBackend : public Backend {
 public:
     explicit PidBackend(std::filesystem::path root);
@@ -26,29 +44,10 @@ public:
     const std::filesystem::path& root() const { return root_; }
 
 private:
-    struct GaitPathComponents {
-        std::string patient_id;
-        std::string timepoint;   // "pre" or "post"
-        std::string filename;    // optional, empty for directory listing
-    };
-
-    struct H5PathComponents {
-        std::string patient_id;
-        std::string timepoint;   // "pre" or "post"
-        std::string filename;    // optional, empty for directory listing
-    };
-
     struct MetadataFieldRequest {
         std::string patient_id;
         std::string field_name;  // e.g., "name", "pid", "gmfcs"
     };
-
-    // Parse gait path pattern: {pid}/gait/{pre|post}[/{filename}]
-    std::optional<GaitPathComponents> parse_gait_path(const std::string& path) const;
-
-    // Parse h5 path pattern: {pid}/h5/{pre|post}[/{filename}]
-    // Maps to: {pid}/gait/{pre|post}/h5/
-    std::optional<H5PathComponents> parse_h5_path(const std::string& path) const;
 
     // Parse metadata field request: {pid}/{field_name} where field_name is a known metadata field
     std::optional<MetadataFieldRequest> parse_metadata_field(const std::string& path) const;
@@ -56,13 +55,10 @@ private:
     // Fetch metadata field value from {pid}/metadata.yaml
     std::string fetch_metadata_field(const MetadataFieldRequest& request) const;
 
-    // Transform gait path to include Generated_C3D_files subdirectory
-    std::filesystem::path transform_gait_path(const GaitPathComponents& components) const;
-
-    // Transform h5 path: {pid}/h5/{pre|post}/{file} -> {pid}/gait/{pre|post}/h5/{file}
-    std::filesystem::path transform_h5_path(const H5PathComponents& components) const;
-
-    // Resolve path to absolute filesystem path (handles both gait and non-gait paths)
+    // Resolve path to absolute filesystem path
+    // Handles:
+    //   1. Direct new-style paths (no transformation)
+    //   2. Legacy old-style paths (auto-transformed via PidPathResolver)
     std::filesystem::path resolve(const std::string& path) const;
 
     // Glob pattern matching

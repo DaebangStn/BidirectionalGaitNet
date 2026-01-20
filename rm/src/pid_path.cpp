@@ -1,7 +1,19 @@
 #include "rm/pid_path.hpp"
 #include <sstream>
+#include <regex>
+#include <unordered_set>
 
 namespace rm {
+
+// Valid visits for the new structure
+static const std::unordered_set<std::string> VALID_VISITS = {
+    "pre", "op1", "op2"
+};
+
+// Valid data types for the new structure
+static const std::unordered_set<std::string> VALID_DATA_TYPES = {
+    "gait", "motion", "skeleton", "muscle", "ckpt", "dicom"
+};
 
 std::vector<std::string> PidPathResolver::split_path(const std::string& path) {
     std::vector<std::string> parts;
@@ -15,23 +27,168 @@ std::vector<std::string> PidPathResolver::split_path(const std::string& path) {
     return parts;
 }
 
+bool PidPathResolver::is_valid_visit(const std::string& v) {
+    return VALID_VISITS.count(v) > 0;
+}
+
+bool PidPathResolver::is_valid_data_type(const std::string& t) {
+    return VALID_DATA_TYPES.count(t) > 0;
+}
+
+std::string PidPathResolver::timepoint_to_visit(const std::string& timepoint) {
+    if (timepoint == "pre") return "pre";
+    if (timepoint == "post") return "op1";
+    return timepoint;  // Return as-is if not recognized
+}
+
+bool PidPathResolver::match_glob(const std::string& filename, const std::string& pattern) {
+    // Convert glob pattern to regex
+    std::string regex_str;
+    regex_str.reserve(pattern.size() * 2);
+
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        char c = pattern[i];
+        switch (c) {
+            case '*':
+                if (i + 1 < pattern.size() && pattern[i + 1] == '*') {
+                    regex_str += ".*";
+                    ++i;
+                } else {
+                    regex_str += "[^/]*";
+                }
+                break;
+            case '?':
+                regex_str += "[^/]";
+                break;
+            case '.':
+            case '+':
+            case '(':
+            case ')':
+            case '[':
+            case ']':
+            case '{':
+            case '}':
+            case '^':
+            case '$':
+            case '|':
+            case '\\':
+                regex_str += '\\';
+                regex_str += c;
+                break;
+            default:
+                regex_str += c;
+                break;
+        }
+    }
+
+    try {
+        std::regex re(regex_str);
+        return std::regex_match(filename, re);
+    } catch (const std::regex_error&) {
+        return false;
+    }
+}
+
+std::optional<PidPathResolver::PathComponents> PidPathResolver::parse(const std::string& path) {
+    auto parts = split_path(path);
+    if (parts.empty()) {
+        return std::nullopt;
+    }
+
+    PathComponents c;
+    c.patient_id = parts[0];
+
+    if (parts.size() == 1) {
+        // Just patient ID: {pid}
+        return c;
+    }
+
+    // Check if second part is a visit
+    if (is_valid_visit(parts[1])) {
+        c.visit = parts[1];
+
+        if (parts.size() == 2) {
+            // {pid}/{visit}
+            return c;
+        }
+
+        // Check for visit-level files (metadata.yaml, rom.yaml)
+        if (parts[2] == "metadata.yaml" || parts[2] == "rom.yaml") {
+            c.data_type = parts[2].substr(0, parts[2].find('.'));  // "metadata" or "rom"
+            c.filename = parts[2];
+            return c;
+        }
+
+        // Check for data type
+        if (is_valid_data_type(parts[2])) {
+            c.data_type = parts[2];
+
+            if (parts.size() == 3) {
+                // {pid}/{visit}/{data_type}
+                return c;
+            }
+
+            // Join remaining parts as filename
+            std::string filename;
+            for (size_t i = 3; i < parts.size(); ++i) {
+                if (!filename.empty()) filename += "/";
+                filename += parts[i];
+            }
+            c.filename = filename;
+            return c;
+        }
+
+        // Unknown data type - treat rest as filename
+        std::string filename;
+        for (size_t i = 2; i < parts.size(); ++i) {
+            if (!filename.empty()) filename += "/";
+            filename += parts[i];
+        }
+        c.filename = filename;
+        return c;
+    }
+
+    // Not a visit - could be root-level file (metadata.yaml)
+    if (parts[1] == "metadata.yaml") {
+        c.data_type = "metadata";
+        c.filename = parts[1];
+        return c;
+    }
+
+    // Not matching new structure - might be legacy path
+    return std::nullopt;
+}
+
+std::string PidPathResolver::build(const PathComponents& c) {
+    std::string result = c.patient_id;
+
+    if (!c.visit.empty()) {
+        result += "/" + c.visit;
+    }
+
+    if (!c.data_type.empty() && c.data_type != "metadata" && c.data_type != "rom") {
+        result += "/" + c.data_type;
+    }
+
+    if (!c.filename.empty()) {
+        result += "/" + c.filename;
+    }
+
+    return result;
+}
+
+// ============================================================
+// Legacy API implementation (kept for backward compatibility)
+// ============================================================
+
 std::optional<PidPathResolver::GaitPathComponents> PidPathResolver::parse_gait_path(const std::string& path) {
     // Pattern: {patient_id}/gait/{pre|post}[/{filename}]
-    // Only matches gait paths for c3d file listing, NOT nested directories
-    // Examples:
-    //   "12964246/gait/pre" -> {patient_id="12964246", timepoint="pre", filename=""}
-    //   "12964246/gait/post/walk01-Dynamic.c3d" -> {patient_id="12964246", timepoint="post", filename="walk01-Dynamic.c3d"}
-    //   "12964246/gait/pre/*.c3d" -> {patient_id="12964246", timepoint="pre", filename="*.c3d"}
-    //   "12964246/gait/pre/h5" -> NOT a gait path (subdirectory), returns nullopt
-
     auto parts = split_path(path);
 
-    // Need at least 3 parts: {pid}/gait/{pre|post}
     if (parts.size() < 3) {
         return std::nullopt;
     }
 
-    // Check for gait path pattern
     if (parts[1] != "gait") {
         return std::nullopt;
     }
@@ -50,16 +207,13 @@ std::optional<PidPathResolver::GaitPathComponents> PidPathResolver::parse_gait_p
         const std::string& filename = parts[3];
         bool is_c3d_pattern = false;
 
-        // Check if it ends with .c3d
         if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".c3d") {
             is_c3d_pattern = true;
         }
-        // Check if it contains wildcards (glob pattern for c3d files)
         else if (filename.find('*') != std::string::npos || filename.find('?') != std::string::npos) {
             is_c3d_pattern = true;
         }
 
-        // If 4th part doesn't look like a c3d file/pattern, treat as directory path
         if (!is_c3d_pattern) {
             return std::nullopt;
         }
@@ -69,7 +223,6 @@ std::optional<PidPathResolver::GaitPathComponents> PidPathResolver::parse_gait_p
     components.patient_id = parts[0];
     components.timepoint = parts[2];
 
-    // If there are 4 parts and we got here, the 4th is a valid c3d filename/pattern
     if (parts.size() == 4) {
         components.filename = parts[3];
     }
@@ -80,19 +233,12 @@ std::optional<PidPathResolver::GaitPathComponents> PidPathResolver::parse_gait_p
 std::optional<PidPathResolver::H5PathComponents> PidPathResolver::parse_h5_path(const std::string& path) {
     // Pattern: {patient_id}/h5/{pre|post}[/{filename}]
     // Maps to: {pid}/gait/{pre|post}/h5/
-    // Examples:
-    //   "12964246/h5/pre" -> list all *.h5, *.hdf files recursively
-    //   "12964246/h5/post/walk01.h5" -> specific file
-    //   "12964246/h5/pre/*.h5" -> glob pattern
-
     auto parts = split_path(path);
 
-    // Need at least 3 parts: {pid}/h5/{pre|post}
     if (parts.size() < 3) {
         return std::nullopt;
     }
 
-    // Check for h5 path pattern
     if (parts[1] != "h5") {
         return std::nullopt;
     }
@@ -105,9 +251,7 @@ std::optional<PidPathResolver::H5PathComponents> PidPathResolver::parse_h5_path(
     components.patient_id = parts[0];
     components.timepoint = parts[2];
 
-    // If there are 4+ parts, the rest is the filename/pattern
     if (parts.size() >= 4) {
-        // Join remaining parts with /
         std::string filename;
         for (size_t i = 3; i < parts.size(); ++i) {
             if (!filename.empty()) filename += "/";
@@ -120,8 +264,10 @@ std::optional<PidPathResolver::H5PathComponents> PidPathResolver::parse_h5_path(
 }
 
 std::string PidPathResolver::transform_h5_path(const H5PathComponents& components) {
-    // Transform: {pid}/h5/{pre|post}/{file} -> {pid}/gait/{pre|post}/h5/{file}
-    std::string result = components.patient_id + "/gait/" + components.timepoint + "/h5";
+    // OLD: {pid}/h5/{pre|post}/{file} -> {pid}/gait/{pre|post}/h5/{file}
+    // NEW: Convert to {pid}/{visit}/motion/{file}
+    std::string visit = timepoint_to_visit(components.timepoint);
+    std::string result = components.patient_id + "/" + visit + "/motion";
     if (!components.filename.empty()) {
         result += "/" + components.filename;
     }
@@ -129,11 +275,12 @@ std::string PidPathResolver::transform_h5_path(const H5PathComponents& component
 }
 
 std::string PidPathResolver::transform_gait_path(const GaitPathComponents& components) {
-    // Transform: {pid}/gait/{pre|post}/{file}.c3d -> {pid}/gait/{pre|post}/Generated_C3D_files/{file}.c3d
-    // Note: For local filesystem, we check if file exists directly first. For FTP, we always use Generated_C3D_files
-    std::string result = components.patient_id + "/gait/" + components.timepoint;
+    // OLD: {pid}/gait/{pre|post}/{file}.c3d -> {pid}/gait/{pre|post}/Generated_C3D_files/{file}.c3d
+    // NEW: Convert to {pid}/{visit}/gait/{file}.c3d
+    std::string visit = timepoint_to_visit(components.timepoint);
+    std::string result = components.patient_id + "/" + visit + "/gait";
     if (!components.filename.empty()) {
-        result += "/Generated_C3D_files/" + components.filename;
+        result += "/" + components.filename;
     }
     return result;
 }
@@ -141,18 +288,12 @@ std::string PidPathResolver::transform_gait_path(const GaitPathComponents& compo
 std::optional<PidPathResolver::SkeletonPathComponents> PidPathResolver::parse_skeleton_path(const std::string& path) {
     // Pattern: {patient_id}/skeleton/{pre|post}[/{filename}]
     // Maps to: {pid}/gait/{pre|post}/skeleton/
-    // Examples:
-    //   "12964246/skeleton/pre" -> list all skeleton files
-    //   "12964246/skeleton/post/base.xml" -> specific file
-
     auto parts = split_path(path);
 
-    // Need at least 3 parts: {pid}/skeleton/{pre|post}
     if (parts.size() < 3) {
         return std::nullopt;
     }
 
-    // Check for skeleton path pattern
     if (parts[1] != "skeleton") {
         return std::nullopt;
     }
@@ -165,7 +306,6 @@ std::optional<PidPathResolver::SkeletonPathComponents> PidPathResolver::parse_sk
     components.patient_id = parts[0];
     components.timepoint = parts[2];
 
-    // If there are 4+ parts, the rest is the filename
     if (parts.size() >= 4) {
         std::string filename;
         for (size_t i = 3; i < parts.size(); ++i) {
@@ -181,18 +321,12 @@ std::optional<PidPathResolver::SkeletonPathComponents> PidPathResolver::parse_sk
 std::optional<PidPathResolver::MusclePathComponents> PidPathResolver::parse_muscle_path(const std::string& path) {
     // Pattern: {patient_id}/muscle/{pre|post}[/{filename}]
     // Maps to: {pid}/gait/{pre|post}/muscle/
-    // Examples:
-    //   "12964246/muscle/pre" -> list all muscle files
-    //   "12964246/muscle/post/lower.xml" -> specific file
-
     auto parts = split_path(path);
 
-    // Need at least 3 parts: {pid}/muscle/{pre|post}
     if (parts.size() < 3) {
         return std::nullopt;
     }
 
-    // Check for muscle path pattern
     if (parts[1] != "muscle") {
         return std::nullopt;
     }
@@ -205,7 +339,6 @@ std::optional<PidPathResolver::MusclePathComponents> PidPathResolver::parse_musc
     components.patient_id = parts[0];
     components.timepoint = parts[2];
 
-    // If there are 4+ parts, the rest is the filename
     if (parts.size() >= 4) {
         std::string filename;
         for (size_t i = 3; i < parts.size(); ++i) {
@@ -219,8 +352,10 @@ std::optional<PidPathResolver::MusclePathComponents> PidPathResolver::parse_musc
 }
 
 std::string PidPathResolver::transform_skeleton_path(const SkeletonPathComponents& components) {
-    // Transform: {pid}/skeleton/{pre|post}/{file} -> {pid}/gait/{pre|post}/skeleton/{file}
-    std::string result = components.patient_id + "/gait/" + components.timepoint + "/skeleton";
+    // OLD: {pid}/skeleton/{pre|post}/{file} -> {pid}/gait/{pre|post}/skeleton/{file}
+    // NEW: Convert to {pid}/{visit}/skeleton/{file}
+    std::string visit = timepoint_to_visit(components.timepoint);
+    std::string result = components.patient_id + "/" + visit + "/skeleton";
     if (!components.filename.empty()) {
         result += "/" + components.filename;
     }
@@ -228,8 +363,10 @@ std::string PidPathResolver::transform_skeleton_path(const SkeletonPathComponent
 }
 
 std::string PidPathResolver::transform_muscle_path(const MusclePathComponents& components) {
-    // Transform: {pid}/muscle/{pre|post}/{file} -> {pid}/gait/{pre|post}/muscle/{file}
-    std::string result = components.patient_id + "/gait/" + components.timepoint + "/muscle";
+    // OLD: {pid}/muscle/{pre|post}/{file} -> {pid}/gait/{pre|post}/muscle/{file}
+    // NEW: Convert to {pid}/{visit}/muscle/{file}
+    std::string visit = timepoint_to_visit(components.timepoint);
+    std::string result = components.patient_id + "/" + visit + "/muscle";
     if (!components.filename.empty()) {
         result += "/" + components.filename;
     }
@@ -237,6 +374,8 @@ std::string PidPathResolver::transform_muscle_path(const MusclePathComponents& c
 }
 
 std::string PidPathResolver::transform_path(const std::string& path) {
+    // Try to detect and transform legacy paths to new structure
+
     // Check if this is a skeleton path that needs transformation
     auto skeleton_components = parse_skeleton_path(path);
     if (skeleton_components) {
@@ -257,9 +396,31 @@ std::string PidPathResolver::transform_path(const std::string& path) {
 
     // Check if this is a gait path with c3d file that needs transformation
     auto gait_components = parse_gait_path(path);
-    if (gait_components && !gait_components->filename.empty()) {
-        // For c3d files, transform to Generated_C3D_files path
+    if (gait_components) {
         return transform_gait_path(*gait_components);
+    }
+
+    // Check for old-style gait/metadata.yaml path pattern
+    // OLD: {pid}/gait/metadata.yaml -> NOT TRANSFORMED (no equivalent)
+    // OLD: {pid}/gait/{pre|post}/... -> Transform to {pid}/{visit}/...
+    auto parts = split_path(path);
+    if (parts.size() >= 3 && parts[1] == "gait") {
+        std::string timepoint = parts[2];
+        if (timepoint == "pre" || timepoint == "post") {
+            std::string visit = timepoint_to_visit(timepoint);
+            std::string result = parts[0] + "/" + visit;
+
+            // Add remaining path parts
+            for (size_t i = 3; i < parts.size(); ++i) {
+                // Map h5 -> motion
+                if (parts[i] == "h5") {
+                    result += "/motion";
+                } else {
+                    result += "/" + parts[i];
+                }
+            }
+            return result;
+        }
     }
 
     // No transformation needed

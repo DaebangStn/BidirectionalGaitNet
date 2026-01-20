@@ -3,7 +3,7 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@pid:20705431/gait/pre/skeleton/dynamic3.yaml"
+    file: "@pid:20705431/pre/skeleton/dynamic3.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp_scale: 0.3
     damping: 0.1
@@ -11,13 +11,13 @@ environment:
     use_critical_damping: true
     scale_tau_on_weight: true
     weight_from: 
-      file: "@pid:20705431/gait/metadata.yaml"
+      file: "@pid:20705431/pre/metadata.yaml"
       prepost: "pre"
     
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    file: "@pid:20705431/gait/pre/h5/Trimmed_walk03-Dynamic_trimmed.h5"
+    file: "@pid:20705431/pre/motion/Trimmed_walk03-Dynamic_trimmed.h5"
     use_mirror: false
     get_stride_from_motion: true
 

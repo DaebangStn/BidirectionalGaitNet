@@ -92,8 +92,9 @@ PYBIND11_MODULE(pyrm, m) {
             return mgr.resolve_backend_names(uri.to_string());
         }, py::arg("uri"), "Get backend names for a URI")
         // __call__: URI-based access with metadata section support
+        // Supports both old-style (pre, post) and new-style (pre, op1, op2) section names
         .def("__call__", [](rm::ResourceManager& mgr, const std::string& uri) -> py::object {
-            static const std::set<std::string> METADATA_SECTIONS = {"pre", "post", "post2"};
+            static const std::set<std::string> METADATA_SECTIONS = {"pre", "post", "post2", "op1", "op2"};
 
             // Find last path component
             std::string clean_uri = uri;

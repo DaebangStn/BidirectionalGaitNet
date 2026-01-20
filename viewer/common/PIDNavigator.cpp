@@ -85,7 +85,11 @@ void PIDNavigator::scanPIDs() {
     try {
         auto entries = pImpl->resourceManager->list("@pid:");
         for (const auto& entry : entries) {
-            pImpl->state.pidList.push_back(entry);
+            // PIDs must be numeric only - skip non-numeric entries like scripts
+            bool isNumeric = !entry.empty() && std::all_of(entry.begin(), entry.end(), ::isdigit);
+            if (isNumeric) {
+                pImpl->state.pidList.push_back(entry);
+            }
         }
         std::sort(pImpl->state.pidList.begin(), pImpl->state.pidList.end());
 

@@ -3,7 +3,7 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@pid:12964246/gait/pre/skeleton/dynamic.yaml"
+    file: "@pid:12964246/pre/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp_scale: 0.3
     damping: 0.1
@@ -11,7 +11,7 @@ environment:
     use_critical_damping: true
     scale_tau_on_weight: true
     weight_from: 
-      file: "@pid:12964246/gait/metadata.yaml"
+      file: "@pid:12964246/pre/metadata.yaml"
       prepost: "pre"
     
   # Motion Reference
