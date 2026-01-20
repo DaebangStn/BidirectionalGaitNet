@@ -3148,27 +3148,29 @@ Eigen::Matrix3d slerpRotation(const Eigen::Matrix3d& R_from,
 
 } // anonymous namespace
 
-void C3D_Reader::refineTalus()
+std::vector<FootLockPhase> C3D_Reader::refineTalus()
 {
+    std::vector<FootLockPhase> emptyPhases;
+
     // 1. Check if enabled
     if (!mFittingConfig.plantarCorrection.enabled) {
         LOG_VERBOSE("[TalusRefine] Plantar correction disabled");
-        return;
+        return emptyPhases;
     }
 
     // 2. Validate prerequisites
     if (!mMotionCharacter || !mFreeCharacter) {
         LOG_WARN("[TalusRefine] No motion or free character");
-        return;
+        return emptyPhases;
     }
     if (!mCurrentC3D || mFreePoses.empty()) {
         LOG_WARN("[TalusRefine] No C3D data or poses");
-        return;
+        return emptyPhases;
     }
 
     const auto& allMarkers = mCurrentC3D->getAllMarkers();
     int numFrames = static_cast<int>(allMarkers.size());
-    if (numFrames < 2) return;
+    if (numFrames < 2) return emptyPhases;
 
     // 3. Resolve marker indices
     int ankleRIdx = mResolver.resolve(MarkerReference::fromNameAndLabel("", "R.Ankle"));
@@ -3181,7 +3183,7 @@ void C3D_Reader::refineTalus()
     if (ankleRIdx < 0 || heelRIdx < 0 || toeRIdx < 0 ||
         ankleLIdx < 0 || heelLIdx < 0 || toeLIdx < 0) {
         LOG_WARN("[TalusRefine] Missing foot markers, skipping");
-        return;
+        return emptyPhases;
     }
 
     // 4. Get parameters from config
@@ -3252,7 +3254,7 @@ void C3D_Reader::refineTalus()
 
     if (allPhases.empty()) {
         LOG_INFO("[TalusRefine] No lock phases detected, skipping correction");
-        return;
+        return emptyPhases;
     }
 
     // 8. Apply position + plantar correction to mFreeCharacter with smooth interpolation
@@ -3311,6 +3313,8 @@ void C3D_Reader::refineTalus()
 
     LOG_INFO("[TalusRefine] Corrected position + plantar for " << allPhases.size()
              << " lock phases (blend=" << blendFrames << " frames)");
+
+    return allPhases;
 }
 
 // ============================================================================
@@ -3798,7 +3802,7 @@ DynamicCalibrationResult C3D_Reader::calibrateDynamic(C3D* c3dData)
         Eigen::VectorXd pose = buildFramePose(i);
         mFreePoses.push_back(pose);
     }
-    refineTalus();
+    result.footLockPhases = refineTalus();
     result.freePoses = mFreePoses;
 
     // ========== Stage C: Motion Conversion ==========

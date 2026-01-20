@@ -277,6 +277,7 @@ struct DynamicCalibrationResult {
     std::vector<Eigen::VectorXd> freePoses;                 // Free skeleton poses (from mFreeCharacter)
     std::vector<Eigen::VectorXd> motionPoses;               // Articulated poses (from mMotionCharacter)
     MotionConversionResult motionResult;                    // Joint offsets etc.
+    std::vector<FootLockPhase> footLockPhases;              // Detected foot lock phases for visualization
     bool success = false;
     std::string errorMessage;
 };
@@ -359,7 +360,7 @@ class C3D_Reader
         // IK postprocessing methods (can be called independently via UI)
         void refineArmIK();      // Step 6: Adjust arm twist + elbow to match wrist markers
         void refineLegIK();      // Step 7: Adjust femur + tibia to match talus position
-        void refineTalus();      // Step 8: Correct talus orientation during foot lock phases
+        std::vector<FootLockPhase> refineTalus();  // Step 8: Correct talus orientation during foot lock phases
         void enforceSymmetry();  // Step 9: Balance R/L bone scales based on threshold
 
         // ====== Static Calibration API ======

@@ -345,6 +345,7 @@ void C3DProcessorApp::drawUI()
 {
     drawLeftPanel();
     drawRightPanel();
+    drawTimelineTrackBar();
 }
 
 void C3DProcessorApp::drawAxis(const Eigen::Isometry3d& transform, float length, const std::string& label)
@@ -665,9 +666,11 @@ bool C3DProcessorApp::collapsingHeaderWithControls(const std::string& title)
 
 void C3DProcessorApp::drawLeftPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
+    const float timelineHeight = 60.0f;
+    float panelHeight = mHeight - timelineHeight;
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, panelHeight), ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::Begin("Control##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Control##1", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
 
     if (ImGui::BeginTabBar("ControlTabs")) {
         if (ImGui::BeginTabItem("Data")) {
@@ -810,6 +813,131 @@ void C3DProcessorApp::drawPlaybackSection()
     }
 }
 
+void C3DProcessorApp::drawTimelineTrackBar()
+{
+    const float timelineHeight = 60.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(0, mHeight - timelineHeight));
+    ImGui::SetNextWindowSize(ImVec2(static_cast<float>(mWidth), timelineHeight));
+    ImGui::Begin("Timeline", nullptr,
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+
+    // Timeline track area
+    float trackHeight = 30.0f;
+    float trackY = canvasPos.y + 5.0f;
+    float trackWidth = canvasSize.x - 20.0f;
+    float trackX = canvasPos.x + 10.0f;
+
+    // Background
+    drawList->AddRectFilled(
+        ImVec2(trackX, trackY),
+        ImVec2(trackX + trackWidth, trackY + trackHeight),
+        IM_COL32(40, 40, 40, 255)
+    );
+
+    // Border
+    drawList->AddRect(
+        ImVec2(trackX, trackY),
+        ImVec2(trackX + trackWidth, trackY + trackHeight),
+        IM_COL32(80, 80, 80, 255)
+    );
+
+    int totalFrames = mMotion ? mMotion->getNumFrames() : 0;
+    int currentFrame = mMotionState.navigationMode == C3D_MANUAL_FRAME
+                       ? mMotionState.manualFrameIndex
+                       : mMotionState.lastFrameIdx;
+
+    if (totalFrames > 0) {
+        // Draw foot lock phases (before progress bar so they're visible underneath)
+        const auto& phases = mDynamicCalibResult.footLockPhases;
+        if (!phases.empty()) {
+            float halfHeight = trackHeight / 2.0f;
+            for (const auto& phase : phases) {
+                float startX = trackX + (static_cast<float>(phase.startFrame) / (totalFrames - 1)) * trackWidth;
+                float endX = trackX + (static_cast<float>(phase.endFrame) / (totalFrames - 1)) * trackWidth;
+
+                // Left foot: top half (blue), Right foot: bottom half (red)
+                float phaseY = phase.isLeft ? trackY : trackY + halfHeight;
+                ImU32 color = phase.isLeft ? IM_COL32(80, 120, 200, 180) : IM_COL32(200, 80, 80, 180);
+
+                drawList->AddRectFilled(
+                    ImVec2(startX, phaseY),
+                    ImVec2(endX, phaseY + halfHeight),
+                    color
+                );
+            }
+
+            // Separator line between left/right tracks
+            drawList->AddLine(
+                ImVec2(trackX, trackY + halfHeight),
+                ImVec2(trackX + trackWidth, trackY + halfHeight),
+                IM_COL32(60, 60, 60, 255),
+                1.0f
+            );
+        }
+
+        // Progress bar fill (semi-transparent overlay)
+        float progress = static_cast<float>(currentFrame) / static_cast<float>(totalFrames - 1);
+        progress = std::clamp(progress, 0.0f, 1.0f);
+
+        drawList->AddRectFilled(
+            ImVec2(trackX, trackY),
+            ImVec2(trackX + progress * trackWidth, trackY + trackHeight),
+            IM_COL32(255, 255, 255, 40)  // Light overlay for played portion
+        );
+
+        // Playhead line
+        float playheadX = trackX + progress * trackWidth;
+        drawList->AddLine(
+            ImVec2(playheadX, trackY - 3),
+            ImVec2(playheadX, trackY + trackHeight + 3),
+            IM_COL32(255, 255, 0, 255),
+            2.0f
+        );
+
+        // Playhead triangle
+        drawList->AddTriangleFilled(
+            ImVec2(playheadX - 5, trackY - 3),
+            ImVec2(playheadX + 5, trackY - 3),
+            ImVec2(playheadX, trackY + 4),
+            IM_COL32(255, 255, 0, 255)
+        );
+    }
+
+    // Handle click and drag to scrub timeline
+    ImGui::SetCursorScreenPos(ImVec2(trackX, trackY));
+    ImGui::InvisibleButton("timeline_track", ImVec2(trackWidth, trackHeight));
+
+    if (ImGui::IsItemActive() && totalFrames > 0) {
+        ImVec2 mousePos = ImGui::GetMousePos();
+        float relativeX = (mousePos.x - trackX) / trackWidth;
+        relativeX = std::clamp(relativeX, 0.0f, 1.0f);
+        int targetFrame = static_cast<int>(relativeX * (totalFrames - 1));
+
+        mMotionState.navigationMode = C3D_MANUAL_FRAME;
+        mMotionState.manualFrameIndex = targetFrame;
+    }
+
+    // Info text below track
+    ImGui::SetCursorScreenPos(ImVec2(canvasPos.x + 10, trackY + trackHeight + 5));
+
+    if (totalFrames > 0) {
+        ImGui::Text("Frame: %d / %d  |  Time: %.2fs  |  %s",
+                    currentFrame, totalFrames - 1,
+                    mViewerTime,
+                    mIsPlaying ? "Playing" : "Paused");
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No motion loaded");
+    }
+
+    ImGui::End();
+}
+
 void C3DProcessorApp::drawMarkerFittingSection()
 {
     if (collapsingHeaderWithControls("Marker Fitting")) {
@@ -853,9 +981,9 @@ void C3DProcessorApp::drawMarkerFittingSection()
                 const auto& pidState = mPIDNavigator->getState();
                 if (pidState.selectedPID >= 0 && pidState.selectedPID < static_cast<int>(pidState.pidList.size())) {
                     std::string pid = pidState.pidList[pidState.selectedPID];
-                    std::string prePost = pidState.preOp ? "pre" : "post";
-                    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
-                    std::string outputDir = mResourceManager->resolveDir(pattern);
+                    std::string visit = pidState.getVisitDir();
+                    std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
+                    std::string outputDir = mResourceManager->resolveDirCreate(pattern);
                     if (!outputDir.empty()) {
                         mC3DReader->exportPersonalizedCalibration(mStaticCalibResult, outputDir);
                         LOG_INFO("[C3DProcessor] Exported personalized calibration for PID " << pid);
@@ -1344,8 +1472,10 @@ void C3DProcessorApp::exportMotionToHDF5()
 
 void C3DProcessorApp::drawRightPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(500, mHeight), ImGuiCond_Once);
-    ImGui::Begin("Visualization", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    const float timelineHeight = 60.0f;
+    float panelHeight = mHeight - timelineHeight;
+    ImGui::SetNextWindowSize(ImVec2(500, panelHeight), ImGuiCond_Always);
+    ImGui::Begin("Visualization", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     // File Paths
@@ -2659,12 +2789,12 @@ void C3DProcessorApp::drawClinicalDataSection()
         ImGui::Separator();
         ImGui::Text("Static Calibration:");
 
-        // Build pattern for calibration path
+        // Build pattern for calibration path using visit-based structure
         const std::string& pid = pidState.pidList[pidState.selectedPID];
-        std::string prePost = pidState.preOp ? "pre" : "post";
-        std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+        std::string visit = pidState.getVisitDir();
+        std::string skeletonPattern = "@pid:" + pid + "/" + visit + "/skeleton";
 
-        // Use cached calibration availability (updated when PID/prePost changes)
+        // Use cached calibration availability (updated when PID/visit changes)
         // Display calibration status with color coding
         if (mPersonalizedCalibrationLoaded) {
             ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded");
@@ -2679,8 +2809,8 @@ void C3DProcessorApp::drawClinicalDataSection()
         if (ImGui::Button("Load calibration")) {
             if (mHasPersonalizedCalibration && mResourceManager) {
                 try {
-                    // Use resolveDir for directory path (not resolve which is for files)
-                    auto resolved = mResourceManager->resolveDir(pattern);
+                    // Calibration files are in skeleton directory
+                    auto resolved = mResourceManager->resolveDir(skeletonPattern);
                     if (loadPersonalizedCalibration(resolved.string())) {
                         mPersonalizedCalibrationLoaded = true;
                     }
@@ -2697,9 +2827,8 @@ void C3DProcessorApp::drawClinicalDataSection()
         ImGui::InputText("##exportCalibName", mExportCalibrationName, sizeof(mExportCalibrationName));
         ImGui::SameLine();
 
-        // Check if export file exists
-        std::string outputDir = mResourceManager->resolveDir(pattern);
-        std::string skelDir = outputDir + "/skeleton";
+        // Check if export file exists - skeleton directory
+        std::string skelDir = mResourceManager->resolveDir(skeletonPattern);
         if (!std::filesystem::exists(skelDir)) {
             std::filesystem::create_directories(skelDir);
         }
@@ -2812,8 +2941,9 @@ void C3DProcessorApp::checkForPersonalizedCalibration()
     if (state.selectedPID < 0) return;
 
     const std::string& pid = state.pidList[state.selectedPID];
-    std::string prePost = state.preOp ? "pre" : "post";
-    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+    std::string visit = state.getVisitDir();
+    // Calibration files are stored in skeleton directory: @pid:{pid}/{visit}/skeleton/
+    std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
 
     // Use exists() for quiet check - doesn't log errors for missing files
     bool exists1 = mResourceManager->exists(pattern + "/static_calibrated_marker.xml");

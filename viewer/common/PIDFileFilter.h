@@ -35,11 +35,12 @@ public:
 
 /**
  * Filter for HDF5 motion files (.h5, .hdf5)
+ * Located in {visit}/motion/ directory
  */
 class HDFFileFilter : public FileFilter {
 public:
     std::string getSubdirectory() const override {
-        return "h5";
+        return "motion";
     }
 
     bool matches(const std::string& filename) const override {
@@ -54,17 +55,12 @@ public:
 /**
  * Filter for C3D motion capture files (.c3d)
  * Default filter for trimmed files.
- *
- * Note: C3D files use a different RM path structure than H5 files.
- * - Listing: @pid:{pid}/gait/{pre|post} (RM returns C3D files from Generated_C3D_files)
- * - Fetching: @pid:{pid}/gait/{pre|post}/{filename}.c3d (RM transforms internally)
+ * Located in {visit}/gait/ directory
  */
 class C3DFileFilter : public FileFilter {
 public:
     std::string getSubdirectory() const override {
-        // Empty subdirectory - C3D files are listed at gait/{pre|post} level
-        // RM internally handles the Generated_C3D_files directory
-        return "";
+        return "gait";
     }
 
     bool matches(const std::string& filename) const override {

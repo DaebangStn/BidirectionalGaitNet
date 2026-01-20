@@ -20,8 +20,12 @@ struct PIDSelectionState {
     std::vector<std::string> pidList;
     std::vector<std::string> pidNames;
     std::vector<std::string> pidGMFCS;
+    std::vector<std::vector<std::string>> pidVisits;  // Available visits per PID
     int selectedPID = -1;
-    bool preOp = true;
+    int selectedVisit = 0;  // Index into pidVisits[selectedPID]
+
+    // Legacy compatibility
+    bool preOp = true;  // Derived from selectedVisit == 0
 
     /**
      * Returns the currently selected PID string, or empty if none selected.
@@ -29,7 +33,13 @@ struct PIDSelectionState {
     std::string getSelectedPID() const;
 
     /**
-     * Returns "pre" or "post" based on current preOp flag.
+     * Returns the selected visit directory name (e.g., "pre", "op1", "op2").
+     */
+    std::string getVisitDir() const;
+
+    /**
+     * Returns "pre" or "post" based on current visit (legacy compatibility).
+     * @deprecated Use getVisitDir() instead.
      */
     std::string getPrePostDir() const;
 };
@@ -95,12 +105,12 @@ public:
     void scanPIDs();
 
     /**
-     * Scans for files of the configured type in the specified PID directory.
+     * Scans for files of the configured type in the specified PID/visit directory.
      *
-     * @param pid The PID to scan (e.g., "001", "002")
-     * @param preOp True for pre-operative data, false for post-operative
+     * @param pid The PID to scan (e.g., "12964246")
+     * @param visit The visit directory (e.g., "pre", "op1", "op2")
      */
-    void scanFiles(const std::string& pid, bool preOp);
+    void scanFiles(const std::string& pid, const std::string& visit);
 
     /**
      * Returns the current PID selection state (read-only).

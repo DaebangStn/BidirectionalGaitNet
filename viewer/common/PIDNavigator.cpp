@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <set>
 #include <imgui.h>
 
 namespace PIDNav {
@@ -18,8 +19,20 @@ std::string PIDSelectionState::getSelectedPID() const {
     return "";
 }
 
+std::string PIDSelectionState::getVisitDir() const {
+    if (selectedPID >= 0 && selectedPID < static_cast<int>(pidVisits.size())) {
+        const auto& visits = pidVisits[selectedPID];
+        if (selectedVisit >= 0 && selectedVisit < static_cast<int>(visits.size())) {
+            return visits[selectedVisit];
+        }
+    }
+    return "pre";  // Default fallback
+}
+
 std::string PIDSelectionState::getPrePostDir() const {
-    return preOp ? "pre" : "post";
+    // Legacy compatibility: map visit to pre/post
+    std::string visit = getVisitDir();
+    return (visit == "pre") ? "pre" : "post";
 }
 
 // ============================================================================
@@ -76,7 +89,9 @@ void PIDNavigator::scanPIDs() {
     pImpl->state.pidList.clear();
     pImpl->state.pidNames.clear();
     pImpl->state.pidGMFCS.clear();
+    pImpl->state.pidVisits.clear();
     pImpl->state.selectedPID = -1;
+    pImpl->state.selectedVisit = 0;
     pImpl->files.clear();
     pImpl->selectedFile = -1;
 
@@ -95,36 +110,45 @@ void PIDNavigator::scanPIDs() {
 
         pImpl->state.pidNames.resize(pImpl->state.pidList.size());
         pImpl->state.pidGMFCS.resize(pImpl->state.pidList.size());
+        pImpl->state.pidVisits.resize(pImpl->state.pidList.size());
+
         for (size_t i = 0; i < pImpl->state.pidList.size(); ++i) {
+            const auto& pid = pImpl->state.pidList[i];
+
+            // Fetch name
             try {
-                auto h = pImpl->resourceManager->fetch("@pid:" + pImpl->state.pidList[i] + "/name");
+                auto h = pImpl->resourceManager->fetch("@pid:" + pid + "/name");
                 pImpl->state.pidNames[i] = h.as_string();
             } catch (...) {
                 pImpl->state.pidNames[i] = "";
             }
+
+            // Fetch GMFCS
             try {
-                auto h = pImpl->resourceManager->fetch("@pid:" + pImpl->state.pidList[i] + "/gmfcs");
+                auto h = pImpl->resourceManager->fetch("@pid:" + pid + "/gmfcs");
                 pImpl->state.pidGMFCS[i] = h.as_string();
             } catch (...) {
                 pImpl->state.pidGMFCS[i] = "";
             }
+
+            // Initialize with empty visits - will be scanned when PID is selected
+            // This avoids scanning all PIDs at startup
         }
     } catch (const rm::RMError&) {
         // Silently handle errors - list will remain empty
     }
 }
 
-void PIDNavigator::scanFiles(const std::string& pid, bool preOp) {
+void PIDNavigator::scanFiles(const std::string& pid, const std::string& visit) {
     pImpl->files.clear();
     pImpl->selectedFile = -1;
 
     if (!pImpl->resourceManager || !pImpl->fileFilter || pid.empty()) return;
 
-    std::string prePost = preOp ? "pre" : "post";
     std::string subdirectory = pImpl->fileFilter->getSubdirectory();
 
-    // Build pattern - handle empty subdirectory (e.g., C3D files)
-    std::string pattern = "@pid:" + pid + "/gait/" + prePost;
+    // Build pattern using visit-based path: @pid:{pid}/{visit}/{subdirectory}
+    std::string pattern = "@pid:" + pid + "/" + visit;
     if (!subdirectory.empty()) {
         pattern += "/" + subdirectory;
     }
@@ -143,6 +167,7 @@ void PIDNavigator::scanFiles(const std::string& pid, bool preOp) {
         // Silently handle errors - list will remain empty
     }
 }
+
 
 const PIDSelectionState& PIDNavigator::getState() const {
     return pImpl->state;
@@ -212,7 +237,35 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
             if (ImGui::Selectable(displayStr.c_str(), i == pImpl->state.selectedPID)) {
                 if (i != pImpl->state.selectedPID) {
                     pImpl->state.selectedPID = i;
-                    scanFiles(pid, pImpl->state.preOp);
+
+                    // Scan available visits for this PID (lazy loading - single list call)
+                    auto& visits = pImpl->state.pidVisits[i];
+                    if (visits.empty()) {
+                        // Order matters: pre first, then op1, op2
+                        static const std::vector<std::string> VISIT_ORDER = {"pre", "op1", "op2"};
+                        static const std::set<std::string> VALID_VISITS = {"pre", "op1", "op2"};
+                        try {
+                            // List PID directory once and filter for valid visits
+                            auto entries = pImpl->resourceManager->list("@pid:" + pid);
+                            std::set<std::string> foundVisits;
+                            for (const auto& entry : entries) {
+                                if (VALID_VISITS.count(entry)) {
+                                    foundVisits.insert(entry);
+                                }
+                            }
+                            // Add in correct order: pre, op1, op2
+                            for (const auto& v : VISIT_ORDER) {
+                                if (foundVisits.count(v)) {
+                                    visits.push_back(v);
+                                }
+                            }
+                        } catch (...) {}
+                        if (visits.empty()) visits.push_back("pre");  // Fallback
+                    }
+
+                    pImpl->state.selectedVisit = 0;  // Reset to first visit
+                    pImpl->state.preOp = (pImpl->state.getVisitDir() == "pre");
+                    scanFiles(pid, pImpl->state.getVisitDir());
 
                     // Invoke PID change callback if set
                     if (pImpl->pidChangeCallback) {
@@ -224,21 +277,17 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
         ImGui::EndListBox();
     }
 
-    // Pre/Post toggle
-    if (ImGui::RadioButton("Pre-op", pImpl->state.preOp)) {
-        if (!pImpl->state.preOp) {
-            pImpl->state.preOp = true;
-            if (pImpl->state.selectedPID >= 0) {
-                scanFiles(pImpl->state.pidList[pImpl->state.selectedPID], true);
-            }
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Post-op", !pImpl->state.preOp)) {
-        if (pImpl->state.preOp) {
-            pImpl->state.preOp = false;
-            if (pImpl->state.selectedPID >= 0) {
-                scanFiles(pImpl->state.pidList[pImpl->state.selectedPID], false);
+    // Visit selection (pre/op1/op2)
+    if (pImpl->state.selectedPID >= 0) {
+        const auto& visits = pImpl->state.pidVisits[pImpl->state.selectedPID];
+        for (int v = 0; v < static_cast<int>(visits.size()); ++v) {
+            if (v > 0) ImGui::SameLine();
+            if (ImGui::RadioButton(visits[v].c_str(), pImpl->state.selectedVisit == v)) {
+                if (pImpl->state.selectedVisit != v) {
+                    pImpl->state.selectedVisit = v;
+                    pImpl->state.preOp = (visits[v] == "pre");  // Legacy compatibility
+                    scanFiles(pImpl->state.pidList[pImpl->state.selectedPID], visits[v]);
+                }
             }
         }
     }
@@ -268,11 +317,11 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
                     // Invoke file selection callback if set
                     if (pImpl->fileSelectionCallback) {
                         const std::string& pid = pImpl->state.pidList[pImpl->state.selectedPID];
-                        std::string prePost = pImpl->state.preOp ? "pre" : "post";
+                        std::string visit = pImpl->state.getVisitDir();
                         std::string subdirectory = pImpl->fileFilter->getSubdirectory();
 
-                        // Build URI - handle empty subdirectory (e.g., C3D files)
-                        std::string uri = "@pid:" + pid + "/gait/" + prePost;
+                        // Build URI using visit-based path: @pid:{pid}/{visit}/{subdirectory}/{file}
+                        std::string uri = "@pid:" + pid + "/" + visit;
                         if (!subdirectory.empty()) {
                             uri += "/" + subdirectory;
                         }

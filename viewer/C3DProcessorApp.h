@@ -229,12 +229,13 @@ private:
 
     // === UI panels ===
     void drawLeftPanel();
+    void drawRightPanel();
+    void drawTimelineTrackBar();
     void drawMotionListSection();
     void drawPlaybackSection();
     void drawMarkerFittingSection();
     void drawSkeletonScaleSection();
     void drawSkeletonExportSection();
-    void drawRightPanel();
     void drawViewTabContent();
     void drawMarkerDiffPlot();
     void drawMarkerCorrespondenceTable();
