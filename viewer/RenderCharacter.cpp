@@ -776,6 +776,19 @@ static std::string formatVectorYAML(const Eigen::Vector3d& v) {
     return oss.str();
 }
 
+// Helper: find MeshShape node in a body node (for mesh transform export)
+static dart::dynamics::ShapeNode* findMeshShapeNode(BodyNode* bn) {
+    dart::dynamics::ShapeNode* meshNode = nullptr;
+    for (size_t i = 0; i < bn->getNumShapeNodes(); i++) {
+        auto sn = bn->getShapeNode(i);
+        if (std::dynamic_pointer_cast<MeshShape>(sn->getShape())) {
+            meshNode = sn;
+            break;
+        }
+    }
+    return meshNode;
+}
+
 // Helper: get shape type and size
 static std::pair<std::string, Eigen::Vector3d> getShapeInfo(dart::dynamics::ShapePtr shape) {
     if (auto box = std::dynamic_pointer_cast<BoxShape>(shape)) {
@@ -941,6 +954,21 @@ void RenderCharacter::exportSkeletonYAML(const std::string& path) const
                     std::string meshFilename = (lastSlash != std::string::npos) ?
                         meshPath.substr(lastSlash + 1) : meshPath;
                     ofs << ", obj: \"" << meshFilename << "\"";
+                }
+            }
+
+            // Export mesh scale and transform if this body has a MeshShape
+            auto* meshShapeNode = findMeshShapeNode(bn);
+            if (meshShapeNode) {
+                auto meshShape = std::dynamic_pointer_cast<MeshShape>(meshShapeNode->getShape());
+                if (meshShape) {
+                    // Export mesh scale
+                    Eigen::Vector3d meshScale = meshShape->getScale();
+                    ofs << "," << std::endl << "       mesh_scale: " << formatVectorYAML(meshScale);
+                    // Export mesh transform
+                    Eigen::Isometry3d meshTransform = meshShapeNode->getRelativeTransform();
+                    ofs << "," << std::endl << "       mesh_R: " << formatMatrixYAML(meshTransform.linear());
+                    ofs << "," << std::endl << "       mesh_t: " << formatVectorYAML(meshTransform.translation());
                 }
             }
 

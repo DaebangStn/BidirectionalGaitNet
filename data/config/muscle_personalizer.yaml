@@ -46,7 +46,7 @@ waypoint_optimization:
 # Contracture estimation defaults
 contracture_estimation:
   max_iterations: 100
-  min_ratio: 0.7
+  min_ratio: 0.5
   max_ratio: 1.2
   solver_verbose: false
   lambda_ratio_reg: 0.0    # Penalize (ratio - 1.0)^2 (0=disabled)
@@ -101,9 +101,11 @@ contracture_estimation:
     # Hip abduction - tests hip adductor tightness
     # k0 = knee extended (stretches gracilis), k90 = knee flexed (isolates monoarticular)
     - trials: [abd_k0_L, abd_k90_L]
-      groups: [hip_adductor_l, gracilis_biart_l]
+      groups: [hip_adductor_l]
+      # groups: [hip_adductor_l, gracilis_biart_l]
     - trials: [abd_k0_R, abd_k90_R]
-      groups: [hip_adductor_r, gracilis_biart_r]
+      groups: [hip_adductor_r]
+      # groups: [hip_adductor_r, gracilis_biart_r]
 
     # ============ KNEE ============
     # Popliteal angle - tests hamstring tightness (with hip flexed 90°)
@@ -128,8 +130,16 @@ contracture_estimation:
     # - "plantar_R"
     # - "popliteal_L"
     # - "popliteal_R"
-    - "add_L"
-    - "add_R"
+    # - "add_L"
+    # - "add_R"
+    # - "abd_k0_L"
+    # - "abd_k0_R"
+    # - "abd_k90_L"
+    # - "abd_k90_R"
+    - "intRot_L"
+    - "intRot_R"
+    # - "extRot_L"
+    # - "extRot_R"
 
 # Muscle visualization
 visualization:

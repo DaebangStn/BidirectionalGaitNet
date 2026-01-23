@@ -494,6 +494,7 @@ void MusclePersonalizerApp::drawLeftPanel()
         if (ImGui::BeginTabItem("Character")) {
             drawClinicalDataSection();
             drawCharacterLoadSection();
+            drawExportSection();
             drawWeightApplicationSection();
             drawSymmetryOperationsSection();
             drawJointAngleSection();
@@ -535,10 +536,6 @@ void MusclePersonalizerApp::drawRightPanel()
         }
         if (ImGui::BeginTabItem("Symmetry")) {
             drawSymmetryTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Exports")) {
-            drawResultsSection();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -1334,7 +1331,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::InputFloat("Min Ratio", &mContractureMinRatio, 0.0f, 0.0f, "%.2f");
         ImGui::SetNextItemWidth(100);
         ImGui::InputFloat("Max Ratio", &mContractureMaxRatio, 0.0f, 0.0f, "%.2f");
-        ImGui::Checkbox("Verbose (Ceres + torque)", &mContractureVerbose);
+        ImGui::Checkbox("Verbose##Contracture", &mContractureVerbose);
 
         ImGui::Text("Grid Search Range:");
         ImGui::SetNextItemWidth(60);
@@ -1578,7 +1575,7 @@ void MusclePersonalizerApp::drawRenderTab()
     mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
 }
 
-void MusclePersonalizerApp::drawResultsSection()
+void MusclePersonalizerApp::drawExportSection()
 {
     if (!mExecutor || !mExecutor->getCharacter()) {
         ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "No character loaded");
@@ -2437,10 +2434,17 @@ void MusclePersonalizerApp::runContractureEstimation()
 
             // Populate rom_angle from clinical data or manual input
             if (trial.cd_value.has_value()) {
-                config.rom_angle = trial.cd_neg ? -trial.cd_value.value() : trial.cd_value.value();
+                // For composite DOF (e.g., abd_knee), angle is always positive
+                // Only negate for simple DOF types
+                if (config.is_composite_dof) {
+                    config.rom_angle = trial.cd_value.value();  // Always positive
+                } else {
+                    config.rom_angle = trial.cd_neg ? -trial.cd_value.value() : trial.cd_value.value();
+                }
                 LOG_INFO("[MusclePersonalizer] Using clinical ROM: " << config.name
                           << " = " << config.rom_angle << "°"
-                          << (trial.cd_neg ? " (negated)" : "") );
+                          << (config.is_composite_dof ? " (composite DOF, no negation)" :
+                              (trial.cd_neg ? " (negated)" : "")) );
             } else if (std::abs(trial.manual_rom) > 0.001f) {
                 config.rom_angle = static_cast<double>(trial.manual_rom);
                 LOG_INFO("[MusclePersonalizer] Using manual ROM: " << config.name
@@ -2568,6 +2572,10 @@ void MusclePersonalizerApp::scanROMConfigs()
                         trial.angle_min = exam["angle_min"].as<float>(-90.0f);
                         trial.angle_max = exam["angle_max"].as<float>(90.0f);
                         trial.num_steps = exam["num_steps"].as<int>(100);
+                        // Normative ROM value (degrees)
+                        if (exam["normative"]) {
+                            trial.normative = exam["normative"].as<float>();
+                        }
                     }
 
                     // Parse clinical_data section
@@ -2615,37 +2623,15 @@ void MusclePersonalizerApp::scanROMConfigs()
 
 void MusclePersonalizerApp::applyDefaultROMValues()
 {
-    // Hardcoded default ROM values for each clinical data field
-    // Format: cd_field -> default angle in degrees
-    // Moon, Seung Jun, et al. "Normative values of physical examinations commonly used for cerebral palsy." Yonsei medical journal 58.6 (2017): 1170-1176.
-    static const std::map<std::string, float> defaultROMValues = {
-        // Ankle (mean of 13–50y normals)
-        {"dorsiflexion_knee0_r2",  11.5f},   // knee extended
-        {"dorsiflexion_knee90_r2", 19.7f},   // knee flexed 90°
-        {"plantarflexion",         47.8f},
-    
-        // Hip
-        {"extension_staheli",      18.6f},   // magnitude of mean (-18.6° extension)
-        {"abduction_ext_r2",       47.7f},
-        {"abduction_flex90_r2",    55.0f},
-        {"adduction_r2",           30.9f},
-        {"external_rotation",      41.5f},
-        {"internal_rotation",      39.6f},
-    
-        // Knee
-        {"popliteal_bilateral",    24.6f},
-    };
-    
-
+    // Apply normative ROM values from config files when no patient data is available
+    // Source: Moon, Seung Jun, et al. "Normative values of physical examinations
+    //         commonly used for cerebral palsy." Yonsei medical journal 58.6 (2017): 1170-1176.
     int applied = 0;
     for (auto& trial : mROMTrials) {
         // Only apply default if no value is already set (don't overwrite patient data)
-        if (!trial.cd_value.has_value()) {
-            auto it = defaultROMValues.find(trial.cd_field);
-            if (it != defaultROMValues.end()) {
-                trial.cd_value = it->second;
-                applied++;
-            }
+        if (!trial.cd_value.has_value() && trial.normative.has_value()) {
+            trial.cd_value = trial.normative.value();
+            applied++;
         }
     }
 
@@ -3014,6 +3000,28 @@ void MusclePersonalizerApp::drawContractureResultsTab()
     ImGui::SameLine();
     ImGui::Checkbox("Group Torque", &mShowGroupTorqueChart);
 
+    // Page navigation (controls all charts) - always visible
+    {
+        int maxPages = 1;
+        if (mContractureSelectedGroupIdx >= 0 &&
+            mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
+            const auto& grp = result.group_results[mContractureSelectedGroupIdx];
+            int total = static_cast<int>(grp.muscle_names.size());
+            maxPages = (total + mPlotBarsPerChart - 1) / mPlotBarsPerChart;
+        }
+        mContractureChartPage = std::max(0, std::min(mContractureChartPage, maxPages - 1));
+
+        ImGui::BeginDisabled(mContractureChartPage == 0);
+        if (ImGui::ArrowButton("##chart_prev", ImGuiDir_Left)) mContractureChartPage--;
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::Text("%d/%d", mContractureChartPage + 1, maxPages);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(mContractureChartPage >= maxPages - 1);
+        if (ImGui::ArrowButton("##chart_next", ImGuiDir_Right)) mContractureChartPage++;
+        ImGui::EndDisabled();
+    }
+
     // ===== Chart 1: lm_contract before/after for selected group =====
     if (mShowLmContractChart && mContractureSelectedGroupIdx >= 0 &&
         mContractureSelectedGroupIdx < static_cast<int>(result.group_results.size())) {
@@ -3063,17 +3071,6 @@ void MusclePersonalizerApp::drawContractureResultsTab()
             double y_margin = (y_max - y_min) * 0.2;  // 20% margin for text labels
             y_min -= y_margin;
             y_max += y_margin;
-
-            // Page navigation (controls both charts)
-            ImGui::BeginDisabled(mContractureChartPage == 0);
-            if (ImGui::ArrowButton("##chart_prev", ImGuiDir_Left)) mContractureChartPage--;
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::Text("%d/%d", mContractureChartPage + 1, maxPages);
-            ImGui::SameLine();
-            ImGui::BeginDisabled(mContractureChartPage >= maxPages - 1);
-            if (ImGui::ArrowButton("##chart_next", ImGuiDir_Right)) mContractureChartPage++;
-            ImGui::EndDisabled();
 
             if (ImPlot::BeginPlot("##lm_contract_chart", ImVec2(-1, 200), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Muscle", "lm_contract (m)");

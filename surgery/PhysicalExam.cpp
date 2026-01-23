@@ -69,6 +69,10 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mShowJointForceLabels(false)     // Labels off by default
     , mTopPassiveForcesCount(3)       // Show top 3 passive forces by default
     , mShowPostureDebug(false)        // Posture control debug off by default
+    , mVerboseTorque(false)           // Verbose torque debug off by default
+    , mVisualizeSweep(false)          // Step-by-step sweep visualization off by default
+    , mSweepNextPressed(false)
+    , mSweepQuitPressed(false)
     , mShowExamTable(false)            // Show examination table by default
     , mShowAnchorPoints(true)         // Anchor point visualization off by default
     , mApplyPostureControl(true)
@@ -146,29 +150,43 @@ void PhysicalExam::loadRenderConfigImpl() {
     // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
     // Uses inherited mControlPanelWidth and mPlotPanelWidth from geometry.control/plot
 
-    // Load normative ROM values from render.yaml
+    // Load normative ROM values from ROM config files
+    // Source: Moon, Seung Jun, et al. "Normative values of physical examinations
+    //         commonly used for cerebral palsy." Yonsei medical journal 58.6 (2017): 1170-1176.
+    namespace fs = std::filesystem;
     try {
-        std::string resolved_path = rm::resolve("render.yaml");
-        YAML::Node config = YAML::LoadFile(resolved_path);
+        std::string rom_dir_uri = "@data/config/rom";
+        std::filesystem::path resolved_path = rm::getManager().resolveDir(rom_dir_uri);
 
-        if (config["normative_rom"]) {
-            auto normative = config["normative_rom"];
-            // Iterate over joints (hip, knee, ankle)
-            for (auto joint_it = normative.begin(); joint_it != normative.end(); ++joint_it) {
-                std::string joint = joint_it->first.as<std::string>();
-                auto measurements = joint_it->second;
-                // Iterate over measurements
-                for (auto meas_it = measurements.begin(); meas_it != measurements.end(); ++meas_it) {
-                    std::string measurement = meas_it->first.as<std::string>();
-                    double value = meas_it->second.as<double>();
-                    std::string key = joint + "/" + measurement;
-                    mNormativeROM[key] = value;
+        if (!resolved_path.empty() && fs::exists(resolved_path) && fs::is_directory(resolved_path)) {
+            for (const auto& entry : fs::directory_iterator(resolved_path)) {
+                if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+                    try {
+                        YAML::Node config = YAML::LoadFile(entry.path().string());
+                        if (config["exam"] && config["exam"]["alias"] && config["exam"]["normative"]) {
+                            std::string alias = config["exam"]["alias"].as<std::string>();
+                            double normative = config["exam"]["normative"].as<double>();
+
+                            // Remove the side suffix ("/left" or "/right") from alias
+                            // e.g., "hip/abduction_knee0/left" -> "hip/abduction_knee0"
+                            size_t lastSlash = alias.rfind('/');
+                            if (lastSlash != std::string::npos) {
+                                std::string key = alias.substr(0, lastSlash);
+                                // Only add if not already present (avoid duplicates from L/R pairs)
+                                if (mNormativeROM.find(key) == mNormativeROM.end()) {
+                                    mNormativeROM[key] = normative;
+                                }
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        LOG_WARN("[PhysicalExam] Error parsing ROM config " << entry.path().string() << ": " << e.what());
+                    }
                 }
             }
-            LOG_INFO("[PhysicalExam] Loaded " << mNormativeROM.size() << " normative ROM values");
+            LOG_INFO("[PhysicalExam] Loaded " << mNormativeROM.size() << " normative ROM values from ROM configs");
         }
     } catch (const std::exception& e) {
-        LOG_WARN("[PhysicalExam] Could not load normative ROM from render.yaml: " << e.what());
+        LOG_WARN("[PhysicalExam] Could not load normative ROM from config files: " << e.what());
     }
 }
 
@@ -444,7 +462,8 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
         std::string resolved_std_skel = rm::resolve(mStdSkeletonPath);
         
         mStdCharacter = new Character(resolved_std_skel, SKEL_COLLIDE_ALL);
-        
+        mStdCharacter->getSkeleton()->setName("Human_std");  // Avoid duplicate name warning
+
         if (!mStdMusclePath.empty()) {
             std::string resolved_std_muscle = rm::resolve(mStdMusclePath);
             mStdCharacter->setMuscles(resolved_std_muscle);
@@ -695,7 +714,17 @@ double PhysicalExam::getPassiveTorqueJointGlobalY(
         total_torque += torque_world.y();
     }
 
-    return total_torque;
+    // Debug output for comparison with JTP Y-axis
+    if (mVerboseTorque) {
+        std::cout << "  [getPassiveTorqueJointGlobalY] joint=" << joint->getName()
+                  << " joint_center=[" << joint_center.transpose() << "]"
+                  << " descendant_bodies=" << descendant_bodies.size()
+                  << " raw_total=" << total_torque
+                  << " negated=" << -total_torque << std::endl;
+    }
+
+    // Negate to match renderer convention (global Y torque sign was reversed)
+    return -total_torque;
 }
 
 double PhysicalExam::getPassiveTorqueJointDof(
@@ -1044,7 +1073,8 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             buffer.trial_name = trial.name;
             buffer.trial_description = trial.description;
             buffer.alias = trial.angle_sweep.alias;
-            buffer.neg = trial.angle_sweep.neg;
+            // abd_knee: don't negate ROM angle for display (neg flag only affects cutoff direction)
+            buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
             buffer.std_angle_sweep_data = mStdAngleSweepData;
@@ -1052,7 +1082,13 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
-            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
+            // Negate cutoff based on neg flag (neg:false → negative torque direction)
+            double effective_cutoff = trial.angle_sweep.neg ? trial.torque_cutoff : -trial.torque_cutoff;
+            // abd_knee has reversed torque direction - flip the cutoff sign
+            if (trial.angle_sweep.dof_type == "abd_knee") {
+                effective_cutoff = -effective_cutoff;
+            }
+            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, effective_cutoff);
             buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
             buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
             buffer.base_pose = mCharacter->getSkeleton()->getPositions();
@@ -1351,6 +1387,13 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
 
     auto skel = mCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_index);
+
+    // Debug: verify joint name
+    if (mVerboseTorque) {
+        std::cout << "  [collectAngleSweepData] joint_index=" << joint_index
+                  << " joint_name=" << (joint ? joint->getName() : "NULL") << std::endl;
+    }
+
     // Use DOF-specific torque for simple sweeps (symmetric), global Y for composite DOFs
     data.passive_torque_total = use_global_y
         ? getPassiveTorqueJointGlobalY(mCharacter, joint)
@@ -1360,7 +1403,27 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
     if (std::isnan(data.passive_torque_total)) {
         LOG_WARN("NaN detected in passive_torque_total at angle=" << angle << " rad, use_global_y=" << use_global_y);
     }
-    
+
+    // Verbose torque debug output
+    if (mVerboseTorque) {
+        int skel_dof = joint->getIndexInSkeleton(mSweepConfig.dof_index);
+        double jtp_sum = 0.0;
+        for (auto& muscle : mCharacter->getMuscles()) {
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            const auto& related_indices = muscle->related_dof_indices;
+            for (size_t i = 0; i < related_indices.size(); ++i) {
+                if (related_indices[i] == skel_dof) {
+                    jtp_sum += jtp[i];
+                    break;
+                }
+            }
+        }
+        std::cout << "[Sweep] angle=" << std::fixed << std::setprecision(1)
+                  << angle * 180.0 / M_PI << "° use_global_y=" << use_global_y
+                  << " passive_torque_total=" << std::setprecision(2) << data.passive_torque_total
+                  << " JTP_sum=" << jtp_sum << std::endl;
+    }
+
     // Compute stiffness (dtau/dtheta) using backward difference
     size_t N = mAngleSweepData.size();
     if (N >= 1) {
@@ -1567,7 +1630,20 @@ std::vector<double> PhysicalExam::computeCutoffAngles(
     double torque_cutoff) const {
 
     std::vector<double> crossings;
-    if (data.size() < 2) return crossings;
+    if (data.size() < 2) {
+        LOG_WARN("[computeCutoffAngles] Data size < 2: " << data.size());
+        return crossings;
+    }
+
+    // Log torque range for debugging
+    double min_tau = std::numeric_limits<double>::max();
+    double max_tau = std::numeric_limits<double>::lowest();
+    for (const auto& pt : data) {
+        min_tau = std::min(min_tau, pt.passive_torque_total);
+        max_tau = std::max(max_tau, pt.passive_torque_total);
+    }
+    LOG_INFO("[computeCutoffAngles] Torque range: [" << min_tau << ", " << max_tau
+             << "] Nm, cutoff: " << torque_cutoff << " Nm, data points: " << data.size());
 
     for (size_t i = 1; i < data.size(); ++i) {
         double tau0 = data[i-1].passive_torque_total;
@@ -1584,9 +1660,18 @@ std::vector<double> PhysicalExam::computeCutoffAngles(
             // Linear interpolation: find t where tau = cutoff
             double t = d0 / (d0 - d1);
             double crossing_angle = ang0 + t * (ang1 - ang0);
-            crossings.push_back(crossing_angle * 180.0 / M_PI);  // degrees
+            double crossing_deg = crossing_angle * 180.0 / M_PI;
+            crossings.push_back(crossing_deg);
+            LOG_INFO("[computeCutoffAngles] Found crossing at " << crossing_deg << "° (torque "
+                     << tau0 << " -> " << tau1 << " Nm)");
         }
     }
+
+    if (crossings.empty()) {
+        LOG_WARN("[computeCutoffAngles] No crossings found - cutoff " << torque_cutoff
+                 << " Nm not crossed by torque range [" << min_tau << ", " << max_tau << "] Nm");
+    }
+
     return crossings;
 }
 
@@ -1634,8 +1719,9 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
         return;
     }
 
-    // 3. Store joint index for passive torque calculation
+    // 3. Store joint index and DOF index for passive torque calculation
     mAngleSweepJointIdx = static_cast<int>(joint->getJointIndexInSkeleton());
+    mSweepConfig.dof_index = trial.angle_sweep.dof_index;
 
     // 4. Identify muscles crossing this joint
     setupTrackedMusclesForAngleSweep(trial.angle_sweep.joint_name);
@@ -1720,7 +1806,62 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
             double angle_rad = angle_deg * M_PI / 180.0;
             collectAngleSweepData(angle_rad, mAngleSweepJointIdx, /*use_global_y=*/true);
 
-            angle_deg += trial.angle_sweep.angle_step;  // Increment by step size
+            // Visualize mode: render 3D only and wait for N key to proceed, Q to exit
+            if (mVisualizeSweep) {
+                bool exitSweep = false;
+                mSweepNextPressed = false;
+                mSweepQuitPressed = false;
+                // Disable ImGui input capture so camera controls work
+                auto& io = ImGui::GetIO();
+                io.WantCaptureMouse = false;
+                io.WantCaptureKeyboard = false;
+                while (true) {
+                    glfwPollEvents();
+                    // Check flags set by keyPress callback
+                    if (glfwWindowShouldClose(mWindow)) { exitSweep = true; break; }
+                    if (mSweepQuitPressed) { exitSweep = true; break; }
+                    if (mSweepNextPressed) { mSweepNextPressed = false; break; }
+
+                    // Render 3D content only (no ImGui to avoid frame conflicts)
+                    GUI::InitGL();
+                    GUI::InitLighting();
+                    updateCamera();
+                    setCamera();
+                    if (mRenderGround) GUI::DrawGroundGrid(mGroundMode);
+                    drawContent();
+
+                    // Draw simple OpenGL text overlay
+                    glMatrixMode(GL_PROJECTION);
+                    glPushMatrix();
+                    glLoadIdentity();
+                    int w, h;
+                    glfwGetFramebufferSize(mWindow, &w, &h);
+                    glOrtho(0, w, h, 0, -1, 1);
+                    glMatrixMode(GL_MODELVIEW);
+                    glPushMatrix();
+                    glLoadIdentity();
+                    glDisable(GL_LIGHTING);
+                    glDisable(GL_DEPTH_TEST);
+                    glColor3f(1.0f, 1.0f, 0.0f);
+                    glRasterPos2i(10, 20);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "Sweep: %.1f deg  [N] Next  [Q] Quit", angle_deg);
+                    for (char* c = buf; *c; ++c) {
+                        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+                    }
+                    glEnable(GL_DEPTH_TEST);
+                    glEnable(GL_LIGHTING);
+                    glPopMatrix();
+                    glMatrixMode(GL_PROJECTION);
+                    glPopMatrix();
+                    glMatrixMode(GL_MODELVIEW);
+
+                    glfwSwapBuffers(mWindow);
+                }
+                if (exitSweep) break;
+            }
+
+            angle_deg += trial.angle_sweep.angle_step;  // IK requires positive angle input
         }
 
         LOG_VERBOSE("Collected " << mAngleSweepData.size() << " abd_knee sweep data points");
@@ -1747,6 +1888,59 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
 
             // Collect data point
             collectAngleSweepData(angle, mAngleSweepJointIdx);
+
+            // Visualize mode: render 3D only and wait for N key to proceed, Q to exit
+            if (mVisualizeSweep) {
+                bool exitSweep = false;
+                double angle_deg_display = angle * 180.0 / M_PI;
+                mSweepNextPressed = false;
+                mSweepQuitPressed = false;
+                auto& io = ImGui::GetIO();
+                io.WantCaptureMouse = false;
+                io.WantCaptureKeyboard = false;
+                while (true) {
+                    glfwPollEvents();
+                    if (glfwWindowShouldClose(mWindow)) { exitSweep = true; break; }
+                    if (mSweepQuitPressed) { exitSweep = true; break; }
+                    if (mSweepNextPressed) { mSweepNextPressed = false; break; }
+
+                    GUI::InitGL();
+                    GUI::InitLighting();
+                    updateCamera();
+                    setCamera();
+                    if (mRenderGround) GUI::DrawGroundGrid(mGroundMode);
+                    drawContent();
+
+                    // Draw simple OpenGL text overlay
+                    glMatrixMode(GL_PROJECTION);
+                    glPushMatrix();
+                    glLoadIdentity();
+                    int w, h;
+                    glfwGetFramebufferSize(mWindow, &w, &h);
+                    glOrtho(0, w, h, 0, -1, 1);
+                    glMatrixMode(GL_MODELVIEW);
+                    glPushMatrix();
+                    glLoadIdentity();
+                    glDisable(GL_LIGHTING);
+                    glDisable(GL_DEPTH_TEST);
+                    glColor3f(1.0f, 1.0f, 0.0f);
+                    glRasterPos2i(10, 20);
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "Sweep: %.1f deg  [N] Next  [Q] Quit", angle_deg_display);
+                    for (char* c = buf; *c; ++c) {
+                        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+                    }
+                    glEnable(GL_DEPTH_TEST);
+                    glEnable(GL_LIGHTING);
+                    glPopMatrix();
+                    glMatrixMode(GL_PROJECTION);
+                    glPopMatrix();
+                    glMatrixMode(GL_MODELVIEW);
+
+                    glfwSwapBuffers(mWindow);
+                }
+                if (exitSweep) break;
+            }
         }
 
         LOG_VERBOSE("Collected " << mAngleSweepData.size() << " angle sweep data points");
@@ -2182,7 +2376,8 @@ void PhysicalExam::runAllTrials() {
             buffer.trial_name = trial.name;
             buffer.trial_description = trial.description;
             buffer.alias = trial.angle_sweep.alias;
-            buffer.neg = trial.angle_sweep.neg;
+            // abd_knee: don't negate ROM angle for display (neg flag only affects cutoff direction)
+            buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
             buffer.std_angle_sweep_data = mStdAngleSweepData;
@@ -2190,7 +2385,13 @@ void PhysicalExam::runAllTrials() {
             buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
-            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
+            // Negate cutoff based on neg flag (neg:false → negative torque direction)
+            double effective_cutoff = trial.angle_sweep.neg ? trial.torque_cutoff : -trial.torque_cutoff;
+            // abd_knee has reversed torque direction - flip the cutoff sign
+            if (trial.angle_sweep.dof_type == "abd_knee") {
+                effective_cutoff = -effective_cutoff;
+            }
+            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, effective_cutoff);
             buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
             if (!mStdAngleSweepData.empty()) {
                 buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
@@ -2259,7 +2460,7 @@ void PhysicalExam::drawLeftPanel() {
 void PhysicalExam::drawRightPanel() {
     // Right panel - matches GLFWApp layout
     ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight), ImGuiCond_Once);
-    ImGui::Begin("Visualization & Data", nullptr,
+    ImGui::Begin("Visualization", nullptr,
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0),
                         ImGuiCond_Always);
@@ -2743,7 +2944,7 @@ void PhysicalExam::drawROMSummaryTable() {
 void PhysicalExam::drawContent() {
     glEnable(GL_LIGHTING);
 
-    drawGround();
+    GUI::DrawGroundGrid(GroundMode::Wireframe, 10, 0.5f);
 
     // Draw examination bed
     if (mShowExamTable && mExamTable) {
@@ -2764,41 +2965,13 @@ void PhysicalExam::drawContent() {
         glPopMatrix();
     }
 
-    // Render main character
+    drawSkeleton();
+    drawMuscles();
+
     if (mCharacter && mRenderMainCharacter) {
-        drawSkeleton(mCharacter->getSkeleton());
-        drawMuscles();
         drawJointPassiveForces();
         drawSelectedAnchors();
         drawReferenceAnchor();
-    }
-    
-    // Render standard character with different visual style
-    if (mStdCharacter && mRenderStdCharacter) {
-        // Save current color and set semi-transparent gray for std character
-        glPushAttrib(GL_CURRENT_BIT | GL_LIGHTING_BIT);
-        glColor4f(0.5f, 0.5f, 0.5f, 0.5f);  // Gray with 50% transparency
-        
-        drawSkeleton(mStdCharacter->getSkeleton());
-        
-        // Draw std character muscles if available
-        if (!mStdCharacter->getMuscles().empty()) {
-            auto muscles = mStdCharacter->getMuscles();
-            glDisable(GL_LIGHTING);
-            glLineWidth(1.5f);
-            for (auto muscle : muscles) {
-                auto& anchors = muscle->GetAnchors();
-                glColor4f(0.6f, 0.4f, 0.4f, 0.4f);  // Semi-transparent reddish for muscles
-                glBegin(GL_LINE_STRIP);
-                for (auto& anchor : anchors) {
-                    Eigen::Vector3d pos = anchor->GetPoint();
-                    glVertex3f(pos[0], pos[1], pos[2]);
-                }
-                glEnd();
-            }
-        }
-        
-        glPopAttrib();
     }
 
     drawForceArrow();
@@ -2812,180 +2985,108 @@ void PhysicalExam::drawContent() {
     }
 }
 
-void PhysicalExam::drawGround() {
-    glDisable(GL_LIGHTING);
-    glColor3f(0.5f, 0.5f, 0.5f);
-
-    // Draw grid at the same height as physics ground (y = -0.05)
-    const float groundY = -0.05f;
-    glBegin(GL_LINES);
-    for (int i = -10; i <= 10; ++i) {
-        glVertex3f(i * 0.5f, groundY, -5.0f);
-        glVertex3f(i * 0.5f, groundY, 5.0f);
-        glVertex3f(-5.0f, groundY, i * 0.5f);
-        glVertex3f(5.0f, groundY, i * 0.5f);
-    }
-    glEnd();
-
-    glEnable(GL_LIGHTING);
-}
-
-void PhysicalExam::drawSkeleton(const dart::dynamics::SkeletonPtr& skel) {
-    if (!skel) return;
-
-    Eigen::Vector4d color(0.5, 0.5, 0.5, 1.0); // Gray color
-    for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
-        auto bn = skel->getBodyNode(i);
-        drawSingleBodyNode(bn, color);
-    }
-}
-
-void PhysicalExam::drawSingleBodyNode(const dart::dynamics::BodyNode* bn, const Eigen::Vector4d& color) {
-    if (!bn) return;
-
-    glPushMatrix();
-    glMultMatrixd(bn->getTransform().data());
-
-    bn->eachShapeNodeWith<dart::dynamics::VisualAspect>([this, &color](const dart::dynamics::ShapeNode* sn) {
-        if (!sn) return true;
-
-        const auto& va = sn->getVisualAspect();
-        if (!va || va->isHidden()) return true;
-
-        glPushMatrix();
-        Eigen::Affine3d tmp = sn->getRelativeTransform();
-        glMultMatrixd(tmp.data());
-
-        drawShape(sn->getShape().get(), color);
-
-        glPopMatrix();
-        return true;
-    });
-
-    glPopMatrix();
-}
-
-void PhysicalExam::drawShape(const dart::dynamics::Shape* shape, const Eigen::Vector4d& color) {
-    if (!shape) return;
-
-    glEnable(GL_DEPTH_TEST);
-
-    // Set wireframe mode once at the start
-    const bool isWireframe = (mRenderMode == RenderMode::Wireframe);
-    if (isWireframe) {
-        glDisable(GL_LIGHTING);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glLineWidth(3.0f);
-        glColor4d(0.0, 0.5, 0.5, 1.0);  // White wireframe
-    } else {
-        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-        glColor4d(color[0], color[1], color[2], color[3]);
+void PhysicalExam::drawSkeleton() {
+    // Render main character (white)
+    if (mCharacter && mRenderMainCharacter) {
+        GUI::DrawSkeleton(mCharacter->getSkeleton(),
+                          Eigen::Vector4d(1.0, 1.0, 1.0, 0.9),
+                          mRenderMode, &mShapeRenderer);
     }
 
-    // Render based on shape type and render mode
-    if (shape->is<dart::dynamics::MeshShape>()) {
-        // Mesh shapes: render only in Mesh mode
-        if (mRenderMode == RenderMode::Mesh) {
-            const auto* mesh = static_cast<const dart::dynamics::MeshShape*>(shape);
-            mShapeRenderer.renderMesh(mesh, false, 0.0, color);
-        }
-    } else if (mRenderMode == RenderMode::Primitive || isWireframe) {
-        // Primitive shapes: render in Primitive or Wireframe mode
-        if (shape->is<dart::dynamics::BoxShape>()) {
-            const auto* box = static_cast<const dart::dynamics::BoxShape*>(shape);
-            GUI::DrawCube(box->getSize());
-        } else if (shape->is<dart::dynamics::CapsuleShape>()) {
-            const auto* capsule = static_cast<const dart::dynamics::CapsuleShape*>(shape);
-            GUI::DrawCapsule(capsule->getRadius(), capsule->getHeight());
-        } else if (shape->is<dart::dynamics::SphereShape>()) {
-            const auto* sphere = static_cast<const dart::dynamics::SphereShape*>(shape);
-            GUI::DrawSphere(sphere->getRadius());
-        } else if (shape->is<dart::dynamics::CylinderShape>()) {
-            const auto* cylinder = static_cast<const dart::dynamics::CylinderShape*>(shape);
-            GUI::DrawCylinder(cylinder->getRadius(), cylinder->getHeight());
-        }
-    }
-
-    // Restore GL state
-    if (isWireframe) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glLineWidth(1.0f);
-        glEnable(GL_LIGHTING);
+    // Render standard character (gray, semi-transparent)
+    if (mStdCharacter && mRenderStdCharacter) {
+        GUI::DrawSkeleton(mStdCharacter->getSkeleton(),
+                          Eigen::Vector4d(0.5, 0.5, 0.5, 0.5),
+                          mRenderMode, &mShapeRenderer);
     }
 }
 
 void PhysicalExam::drawMuscles() {
-    if (!mCharacter) return;
-    if (mCharacter->getMuscles().empty()) return;
-
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_DEPTH_TEST);
     glDisableClientState(GL_COLOR_ARRAY);
 
-    auto& muscles = mCharacter->getMuscles();
+    // Render main character muscles
+    if (mCharacter && mRenderMainCharacter && !mCharacter->getMuscles().empty()) {
+        auto& muscles = mCharacter->getMuscles();
 
-    if (mShowAnchorPoints) {
-        // Anchor points mode: disable lighting once for all muscles
+        if (mShowAnchorPoints) {
+            glDisable(GL_LIGHTING);
+            glLineWidth(1.5f);
+
+            for (size_t i = 0; i < muscles.size(); i++) {
+                if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
+
+                auto& muscle = muscles[i];
+                auto& anchors = muscle->GetAnchors();
+
+                double f_p = muscle->Getf_p();
+                double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
+
+                glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
+                glBegin(GL_LINE_STRIP);
+                for (auto& anchor : anchors) {
+                    Eigen::Vector3d pos = anchor->GetPoint();
+                    glVertex3f(pos[0], pos[1], pos[2]);
+                }
+                glEnd();
+
+                for (auto& anchor : anchors) {
+                    Eigen::Vector3d anchorPos = anchor->GetPoint();
+
+                    if (!anchor->bodynodes.empty()) {
+                        glColor4f(0.0f, 0.8f, 0.0f, 0.6f);
+                        glBegin(GL_LINES);
+                        for (auto& bodynode : anchor->bodynodes) {
+                            Eigen::Vector3d bnPos = bodynode->getWorldTransform().translation();
+                            glVertex3f(anchorPos[0], anchorPos[1], anchorPos[2]);
+                            glVertex3f(bnPos[0], bnPos[1], bnPos[2]);
+                        }
+                        glEnd();
+                    }
+
+                    glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
+                    glPushMatrix();
+                    glTranslatef(anchorPos[0], anchorPos[1], anchorPos[2]);
+                    glutSolidSphere(0.004, 12, 12);
+                    glPopMatrix();
+                }
+            }
+
+            glLineWidth(1.0f);
+            glEnable(GL_LIGHTING);
+        } else {
+            for (size_t i = 0; i < muscles.size(); i++) {
+                if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
+
+                auto& muscle = muscles[i];
+                double f_p = muscle->Getf_p();
+                double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
+                glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
+                mShapeRenderer.renderMuscleLine(muscle, 2.0f);
+            }
+        }
+    }
+
+    // Render standard character muscles (semi-transparent reddish)
+    if (mStdCharacter && mRenderStdCharacter && !mStdCharacter->getMuscles().empty()) {
+        auto& muscles = mStdCharacter->getMuscles();
         glDisable(GL_LIGHTING);
         glLineWidth(1.5f);
 
-        for (size_t i = 0; i < muscles.size(); i++) {
-            if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
-
-            auto& muscle = muscles[i];
+        for (auto muscle : muscles) {
             auto& anchors = muscle->GetAnchors();
-
-            // Passive force color for muscle path
-            double f_p = muscle->Getf_p();
-            double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
-
-            // Draw muscle path with passive force color
-            glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
+            glColor4f(0.6f, 0.4f, 0.4f, 0.4f);
             glBegin(GL_LINE_STRIP);
             for (auto& anchor : anchors) {
                 Eigen::Vector3d pos = anchor->GetPoint();
                 glVertex3f(pos[0], pos[1], pos[2]);
             }
             glEnd();
-
-            // Draw anchor-to-bodynode connections and anchor points
-            for (auto& anchor : anchors) {
-                Eigen::Vector3d anchorPos = anchor->GetPoint();
-
-                // Lines to bodynodes
-                if (!anchor->bodynodes.empty()) {
-                    glColor4f(0.0f, 0.8f, 0.0f, 0.6f);
-                    glBegin(GL_LINES);
-                    for (auto& bodynode : anchor->bodynodes) {
-                        Eigen::Vector3d bnPos = bodynode->getWorldTransform().translation();
-                        glVertex3f(anchorPos[0], anchorPos[1], anchorPos[2]);
-                        glVertex3f(bnPos[0], bnPos[1], bnPos[2]);
-                    }
-                    glEnd();
-                }
-
-                // Anchor point sphere
-                glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
-                glPushMatrix();
-                glTranslatef(anchorPos[0], anchorPos[1], anchorPos[2]);
-                glutSolidSphere(0.004, 12, 12);
-                glPopMatrix();
-            }
         }
 
         glLineWidth(1.0f);
         glEnable(GL_LIGHTING);
-    } else {
-        // Default muscle rendering
-        for (size_t i = 0; i < muscles.size(); i++) {
-            if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
-
-            auto& muscle = muscles[i];
-            double f_p = muscle->Getf_p();
-            double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
-            glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
-            mShapeRenderer.renderMuscleLine(muscle, 2.0f);
-        }
     }
 }
 
@@ -2997,8 +3098,6 @@ void PhysicalExam::drawForceArrow() {
     auto bn = mCharacter->getSkeleton()->getBodyNode(bodyNodes[mSelectedBodyNode]);
     if (!bn) return;
 
-    glDisable(GL_LIGHTING);
-
     // Get force parameters directly from UI
     Eigen::Vector3d offset(mOffsetX, mOffsetY, mOffsetZ);
     Eigen::Vector3d direction(mForceX, mForceY, mForceZ);
@@ -3006,68 +3105,27 @@ void PhysicalExam::drawForceArrow() {
 
     // Calculate force application point in world coordinates
     Eigen::Vector3d world_pos = bn->getWorldTransform() * offset;
-    Eigen::Vector3d force_vec = direction * (mForceMagnitude * 0.001); // Scale for visualization
+    double length = mForceMagnitude * 0.001;  // Scale for visualization
 
-    // Draw arrow
-    glColor3f(0.6f, 0.2f, 0.8f); // purple
-    glLineWidth(6.0f);
-
-    glBegin(GL_LINES);
-    glVertex3f(world_pos[0], world_pos[1], world_pos[2]);
-    glVertex3f(world_pos[0] + force_vec[0],
-               world_pos[1] + force_vec[1],
-               world_pos[2] + force_vec[2]);
-    glEnd();
-
-    // Draw arrowhead
-    Eigen::Vector3d tip = world_pos + force_vec;
-    glPushMatrix();
-    glTranslatef(tip[0], tip[1], tip[2]);
-    glutSolidSphere(0.02, 15, 15);
-    glPopMatrix();
-
-    glLineWidth(1.0f);
-    glEnable(GL_LIGHTING);
+    Eigen::Vector4d purple(0.6, 0.2, 0.8, 1.0);
+    GUI::DrawArrow3D(world_pos, direction, length, 0.01, purple);
 }
 
 void PhysicalExam::drawConfinementForces() {
     if (!mCharacter || !mApplyConfinementForce) return;
 
-    glDisable(GL_LIGHTING);
-    glColor3f(0.6f, 0.2f, 0.8f);  // Purple color
-    glLineWidth(6.0f);
-
     const char* confinementBodies[] = {"Pelvis", "Torso", "ShoulderR", "ShoulderL"};
     Eigen::Vector3d forceDirection(0.0, -1.0, 0.0);  // Downward
-    double forceMagnitude = 500.0;
-    double visualScale = 0.001;  // Scale for visualization
+    double length = 500.0 * 0.001;  // forceMagnitude * visualScale
+    Eigen::Vector4d purple(0.6, 0.2, 0.8, 1.0);
 
     for (const char* bodyName : confinementBodies) {
         auto bn = mCharacter->getSkeleton()->getBodyNode(bodyName);
         if (!bn) continue;
 
-        // Get body node center of mass position in world coordinates
         Eigen::Vector3d world_pos = bn->getWorldTransform().translation();
-        Eigen::Vector3d force_vec = forceDirection * (forceMagnitude * visualScale);
-
-        // Draw arrow line
-        glBegin(GL_LINES);
-        glVertex3f(world_pos[0], world_pos[1], world_pos[2]);
-        glVertex3f(world_pos[0] + force_vec[0],
-                   world_pos[1] + force_vec[1],
-                   world_pos[2] + force_vec[2]);
-        glEnd();
-
-        // Draw arrowhead
-        Eigen::Vector3d tip = world_pos + force_vec;
-        glPushMatrix();
-        glTranslatef(tip[0], tip[1], tip[2]);
-        glutSolidSphere(0.02, 15, 15);
-        glPopMatrix();
+        GUI::DrawArrow3D(world_pos, forceDirection, length, 0.01, purple);
     }
-
-    glLineWidth(1.0f);
-    glEnable(GL_LIGHTING);
 }
 
 void PhysicalExam::drawSelectedAnchors() {
@@ -3383,6 +3441,12 @@ void PhysicalExam::drawJointPassiveForces() {
 
 void PhysicalExam::keyPress(int key, int scancode, int action, int mods) {
     if (action != GLFW_PRESS) return;
+
+    // Handle visualize sweep keys (always process, even when ImGui has focus)
+    if (mVisualizeSweep) {
+        if (key == GLFW_KEY_N) { mSweepNextPressed = true; return; }
+        if (key == GLFW_KEY_Q) { mSweepQuitPressed = true; return; }
+    }
 
     // Ctrl+1/2/3 for camera planes (delegate to base)
     if ((mods & GLFW_MOD_CONTROL) && key >= GLFW_KEY_1 && key <= GLFW_KEY_3) {
@@ -4646,31 +4710,31 @@ void PhysicalExam::renderMusclePlots() {
             }
 
             // Stiffness plot
-            if (!stiffness_data.empty()) {
-                if (ImPlot::BeginPlot(stiffness_plot_title.c_str(), ImVec2(-1, 300), plot_flags)) {
-                    ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
-                    ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
-                    ImPlot::SetupAxis(ImAxis_Y1, "Stiffness (Nm/rad)");
-                    ImPlot::PlotLine("Stiffness", x_data.data(), stiffness_data.data(), stiffness_data.size());
+            // if (!stiffness_data.empty()) {
+            //     if (ImPlot::BeginPlot(stiffness_plot_title.c_str(), ImVec2(-1, 300), plot_flags)) {
+            //         ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
+            //         ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
+            //         ImPlot::SetupAxis(ImAxis_Y1, "Stiffness (Nm/rad)");
+            //         ImPlot::PlotLine("Stiffness", x_data.data(), stiffness_data.data(), stiffness_data.size());
 
-                    // Plot standard character data
-                    if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-                        std::vector<double> std_stiffness_data;
-                        std_stiffness_data.reserve(mStdAngleSweepData.size());
-                        for (const auto& pt : mStdAngleSweepData) {
-                            std_stiffness_data.push_back(pt.passive_torque_stiffness);
-                        }
-                        if (!std_stiffness_data.empty() && std_stiffness_data.size() == std_x_data.size()) {
-                            ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
-                            ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-                            ImPlot::PlotLine("Stiffness (std)", std_x_data.data(),
-                                std_stiffness_data.data(), std_stiffness_data.size());
-                        }
-                    }
+            //         // Plot standard character data
+            //         if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
+            //             std::vector<double> std_stiffness_data;
+            //             std_stiffness_data.reserve(mStdAngleSweepData.size());
+            //             for (const auto& pt : mStdAngleSweepData) {
+            //                 std_stiffness_data.push_back(pt.passive_torque_stiffness);
+            //             }
+            //             if (!std_stiffness_data.empty() && std_stiffness_data.size() == std_x_data.size()) {
+            //                 ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+            //                 ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
+            //                 ImPlot::PlotLine("Stiffness (std)", std_x_data.data(),
+            //                     std_stiffness_data.data(), std_stiffness_data.size());
+            //             }
+            //         }
 
-                    ImPlot::EndPlot();
-                }
-            }
+            //         ImPlot::EndPlot();
+            //     }
+            // }
         }
     }
 
@@ -5060,7 +5124,8 @@ void PhysicalExam::runSelectedTrials() {
             buffer.trial_name = trial.name;
             buffer.trial_description = trial.description;
             buffer.alias = trial.angle_sweep.alias;
-            buffer.neg = trial.angle_sweep.neg;
+            // abd_knee: don't negate ROM angle for display (neg flag only affects cutoff direction)
+            buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
             buffer.std_angle_sweep_data = mStdAngleSweepData;
@@ -5068,7 +5133,13 @@ void PhysicalExam::runSelectedTrials() {
             buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
-            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
+            // Negate cutoff based on neg flag (neg:false → negative torque direction)
+            double effective_cutoff = trial.angle_sweep.neg ? trial.torque_cutoff : -trial.torque_cutoff;
+            // abd_knee has reversed torque direction - flip the cutoff sign
+            if (trial.angle_sweep.dof_type == "abd_knee") {
+                effective_cutoff = -effective_cutoff;
+            }
+            buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, effective_cutoff);
             buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
             if (!mStdAngleSweepData.empty()) {
                 buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
@@ -5690,6 +5761,63 @@ void PhysicalExam::drawJointControlSection() {
 
             ImGui::Separator();
 
+            // abd_knee composite DOF control box
+            if (ImGui::BeginChild("AbdKneeBox", ImVec2(0, 100), true)) {
+                ImGui::Text("Abd Knee IK");
+
+                static float abd_knee_shank_ratio = 0.5f;
+                static float abd_knee_angle = 0.0f;  // degrees
+                static int abd_knee_side = 0;  // 0=Left, 1=Right
+
+                // Row 1: Shank ratio and Knee angle
+                ImGui::SetNextItemWidth(60);
+                ImGui::InputFloat("Shank Ratio", &abd_knee_shank_ratio, 0.0f, 0.0f, "%.2f");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60);
+                ImGui::InputFloat("Angle (deg)", &abd_knee_angle, 0.0f, 0.0f, "%.1f");
+
+                // Row 2: Left/Right radio buttons and Apply
+                ImGui::RadioButton("Left", &abd_knee_side, 0);
+                ImGui::SameLine();
+                ImGui::RadioButton("Right", &abd_knee_side, 1);
+                ImGui::SameLine();
+
+                if (ImGui::Button("Apply")) {
+                    bool is_left = (abd_knee_side == 0);
+                    std::string hip_name = is_left ? "FemurL" : "FemurR";
+                    std::string knee_name = is_left ? "TibiaL" : "TibiaR";
+
+                    auto hip_joint = skel->getJoint(hip_name);
+                    auto knee_joint = skel->getJoint(knee_name);
+
+                    if (hip_joint && knee_joint) {
+                        int hip_idx = static_cast<int>(skel->getIndexOf(hip_joint));
+                        auto ik_result = PMuscle::ContractureOptimizer::computeAbdKneePose(
+                            skel, hip_idx, abd_knee_angle, is_left, abd_knee_shank_ratio);
+
+                        if (ik_result.success) {
+                            Eigen::VectorXd pos = skel->getPositions();
+                            int hip_dof_start = static_cast<int>(hip_joint->getIndexInSkeleton(0));
+                            int knee_dof_idx = static_cast<int>(knee_joint->getIndexInSkeleton(0));
+
+                            pos.segment<3>(hip_dof_start) = ik_result.hip_positions;
+                            pos[knee_dof_idx] = ik_result.knee_angle;
+                            skel->setPositions(pos);
+
+                            // Update muscle geometry
+                            if (!mCharacter->getMuscles().empty()) {
+                                mCharacter->getMuscleTuple();
+                            }
+                        } else {
+                            LOG_WARN("abd_knee IK failed at angle " << abd_knee_angle << "°");
+                        }
+                    }
+                }
+            }
+            ImGui::EndChild();
+
+            ImGui::Separator();
+
             // Show warning if interpolation is on and simulation is running
             if (mEnableInterpolation && !mSimulationPaused) {
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Sliders are read-only during simulation");
@@ -6042,6 +6170,15 @@ void PhysicalExam::drawTrialManagementSection() {
                 LOG_INFO("Trials reset");
             }
 
+            // Verbose torque checkbox
+            ImGui::SameLine();
+            ImGui::Checkbox("Verbose", &mVerboseTorque);
+            ImGui::SameLine();
+            ImGui::Checkbox("Visualize", &mVisualizeSweep);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Press N to advance to next angle during sweep");
+            }
+
             // Show current trial status if running
             if (mTrialRunning && mCurrentTrialIndex >= 0 &&
                 mCurrentTrialIndex < static_cast<int>(mTrials.size())) {
@@ -6125,6 +6262,90 @@ void PhysicalExam::drawCurrentStateSection() {
                     ImGui::Text("    %d. %s: %.2f N", i+1,
                                muscle_forces[i].second.c_str(),
                                muscle_forces[i].first);
+                }
+
+                ImGui::Separator();
+
+                // JTP listbox for debugging - click DOF to print JTP
+                ImGui::Text("JTP Debug (click to print):");
+                {
+                    auto skel = mCharacter->getSkeleton();
+                    ImGui::BeginChild("JTPList", ImVec2(0, 150), true);
+
+                    // Femur Y-axis projection entries (for abd_knee composite DOF)
+                    for (const char* femur_name : {"FemurL", "FemurR"}) {
+                        auto* femur_joint = skel->getJoint(femur_name);
+                        if (femur_joint && femur_joint->getNumDofs() == 3) {
+                            std::string label = std::string(femur_name) + " (Y-axis)";
+                            if (ImGui::Selectable(label.c_str())) {
+                                auto* child_body = femur_joint->getChildBodyNode();
+                                Eigen::Vector3d joint_center = child_body->getTransform().translation();
+
+                                // Build set of descendant bodies
+                                std::set<dart::dynamics::BodyNode*> descendant_bodies;
+                                std::function<void(dart::dynamics::BodyNode*)> collect_descendants;
+                                collect_descendants = [&](dart::dynamics::BodyNode* bn) {
+                                    descendant_bodies.insert(bn);
+                                    for (size_t i = 0; i < bn->getNumChildBodyNodes(); ++i) {
+                                        collect_descendants(bn->getChildBodyNode(i));
+                                    }
+                                };
+                                collect_descendants(child_body);
+
+                                double total_torque = 0.0;
+                                std::cout << "\n[JTP Y-axis] " << femur_name
+                                          << " joint_center=[" << joint_center.transpose() << "]"
+                                          << " descendant_bodies=" << descendant_bodies.size() << std::endl;
+                                for (auto& muscle : mCharacter->getMuscles()) {
+                                    Eigen::Vector3d torque_world = muscle->GetPassiveTorqueAboutPoint(
+                                        joint_center, &descendant_bodies);
+                                    double contribution = torque_world.y();
+                                    if (std::abs(contribution) > 1e-6) {
+                                        std::cout << "    " << muscle->GetName()
+                                                  << " Y-torque=" << std::fixed << std::setprecision(2)
+                                                  << contribution << " Nm" << std::endl;
+                                    }
+                                    total_torque += contribution;
+                                }
+                                std::cout << "  Total Y-axis JTP: " << -total_torque << " Nm" << std::endl;
+                            }
+                        }
+                    }
+                    ImGui::Separator();
+
+                    for (size_t j = 0; j < skel->getNumJoints(); ++j) {
+                        auto joint = skel->getJoint(j);
+                        // Skip pelvis (root joint)
+                        if (joint->getName().find("Pelvis") != std::string::npos ||
+                            joint->getName().find("pelvis") != std::string::npos) {
+                            continue;
+                        }
+                        for (size_t d = 0; d < joint->getNumDofs(); ++d) {
+                            int dof_idx = joint->getIndexInSkeleton(d);
+                            std::string label = joint->getName() + " [" + std::to_string(dof_idx) + "]";
+                            if (ImGui::Selectable(label.c_str())) {
+                                double total_jtp = 0.0;
+                                std::cout << "\n[JTP] " << joint->getName() << " DOF " << dof_idx << ":" << std::endl;
+                                for (auto& muscle : muscles) {
+                                    Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+                                    const auto& related_indices = muscle->related_dof_indices;
+                                    for (size_t i = 0; i < related_indices.size(); ++i) {
+                                        if (related_indices[i] == dof_idx) {
+                                            if (std::abs(jtp[i]) > 1e-6) {
+                                                std::cout << "    " << muscle->GetName()
+                                                          << " jtp=" << std::fixed << std::setprecision(2)
+                                                          << jtp[i] << " Nm" << std::endl;
+                                            }
+                                            total_jtp += jtp[i];
+                                            break;
+                                        }
+                                    }
+                                }
+                                std::cout << "  Total JTP: " << total_jtp << " Nm" << std::endl;
+                            }
+                        }
+                    }
+                    ImGui::EndChild();
                 }
 
                 ImGui::Separator();

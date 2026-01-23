@@ -16,7 +16,7 @@ joint: "TalusL"
 dof_index: 0
 
 # 3. Torque cutoff for ROM limit (Nm)
-torque_cutoff: -5.0
+torque_cutoff: 5.0
 
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:
@@ -24,6 +24,7 @@ exam:
   angle_min: 50
   angle_max: 0
   num_steps: 100
+  normative: 47.8
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
@@ -31,5 +32,6 @@ clinical_data:
   joint: ankle
   field: plantarflexion
   cutoff: 60
+  neg: true
 
   

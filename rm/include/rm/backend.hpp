@@ -21,6 +21,12 @@ public:
     // Returns true for remote backends (FTP), false for local filesystem
     virtual bool cached() const = 0;
 
+    // Whether this backend is currently available/operational
+    // For local backends: returns true if root directory exists
+    // For remote backends: returns true (connectivity checked per-request)
+    // Used to determine if fallback to next backend should occur
+    virtual bool isAvailable() const = 0;
+
     // Check if a resource exists at the given path
     // Path is relative to the backend's root
     virtual bool exists(const std::string& path) = 0;
@@ -41,6 +47,6 @@ public:
     // List resources matching a pattern (glob-style)
     // Returns relative paths within the backend
     virtual std::vector<std::string> list(const std::string& pattern) = 0;
-};
+};;
 
 } // namespace rm

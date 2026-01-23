@@ -16,7 +16,7 @@ joint: "FemurL"
 dof_index: 2
 
 # 3. Torque cutoff for ROM limit (Nm)
-torque_cutoff: -15.0
+torque_cutoff: 15.0
 
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:
@@ -24,10 +24,12 @@ exam:
   angle_max: 60
   num_steps: 100
   alias: "hip/abduction_knee0/left"
+  normative: 47.7
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
   side: left
   joint: hip
   field: abduction_ext_r2
+  neg: false
 

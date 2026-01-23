@@ -286,10 +286,7 @@ public:
     void drawSweepTabContent();
     void drawEtcTabContent();
     void drawROMSummaryTable();
-    void drawGround();
-    void drawSkeleton(const dart::dynamics::SkeletonPtr& skel);
-    void drawSingleBodyNode(const dart::dynamics::BodyNode* bn, const Eigen::Vector4d& color);
-    void drawShape(const dart::dynamics::Shape* shape, const Eigen::Vector4d& color);
+    void drawSkeleton();
     void drawMuscles();
     void drawForceArrow();
     void drawJointPassiveForces();
@@ -467,6 +464,10 @@ private:
     bool mShowJointForceLabels;      // Toggle for joint passive force text labels
     int mTopPassiveForcesCount;      // Number of top passive forces to display in UI
     bool mShowPostureDebug;          // Toggle for posture control debug output
+    bool mVerboseTorque;             // Verbose torque debug output during sweep
+    bool mVisualizeSweep;            // Step-by-step sweep with N key to advance
+    bool mSweepNextPressed;          // Flag for N key during visualize sweep
+    bool mSweepQuitPressed;          // Flag for Q key during visualize sweep
     bool mShowExamTable;             // Toggle for examination table visibility
     bool mShowAnchorPoints;          // Toggle for anchor point visualization
     // mRenderMode inherited from ViewerAppBase

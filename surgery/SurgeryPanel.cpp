@@ -577,7 +577,7 @@ void SurgeryPanel::drawRelaxPassiveForceSection() {
 }
 
 void SurgeryPanel::drawSaveMuscleConfigSection() {
-    ImGui::TextWrapped("Save current muscle configuration to file.");
+    ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.4f, 1.0f), "Save muscle configuration to file.");
     ImGui::Spacing();
 
     if (!mCharacter) {
@@ -1757,7 +1757,7 @@ void SurgeryPanel::drawResetSkeletonSection() {
 }
 
 void SurgeryPanel::drawSaveSkeletonConfigSection() {
-    ImGui::TextWrapped("Save skeleton configuration to file.");
+    ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.4f, 1.0f), "Save skeleton configuration to file.");
     ImGui::Spacing();
 
     if (!mCharacter) {

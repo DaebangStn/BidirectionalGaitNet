@@ -17,7 +17,7 @@ dof: abd_knee
 shank_scale: 0.5  # Scale factor for shank length in IK (for geometry constraint)
 
 # 3. Torque cutoff for ROM limit (Nm)
-torque_cutoff: -15.0
+torque_cutoff: 15.0
 
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:
@@ -25,10 +25,12 @@ exam:
   angle_min: 0
   angle_step: 1.0
   # No angle_max - sweep until IK fails (geometry constraint violated)
+  normative: 55.0
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
   side: right
   joint: hip
   field: abduction_flex90_r2
+  neg: false
 

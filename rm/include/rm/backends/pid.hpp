@@ -35,6 +35,7 @@ public:
 
     std::string name() const override;
     bool cached() const override { return false; }  // Local files don't need caching
+    bool isAvailable() const override { return std::filesystem::exists(root_); }
     bool exists(const std::string& path) override;
     bool existsDir(const std::string& path) override;
     std::filesystem::path resolvePath(const std::string& path) override;
@@ -65,6 +66,6 @@ private:
     bool match_glob(const std::string& text, const std::string& pattern) const;
 
     std::filesystem::path root_;
-};
+};;
 
 } // namespace rm

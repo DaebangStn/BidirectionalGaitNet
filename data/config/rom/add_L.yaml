@@ -24,6 +24,7 @@ exam:
   angle_min: -50
   angle_max: 0
   num_steps: 100
+  normative: 30.9
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
@@ -31,4 +32,3 @@ clinical_data:
   joint: hip
   field: adduction_r2
   neg: true
-  

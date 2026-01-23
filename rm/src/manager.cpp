@@ -249,11 +249,13 @@ bool ResourceManager::exists(const std::string& uri_str) {
         }
     }
 
-    // Check backends
+    // Check backends - stop at first available backend
+    // This prevents fallback to remote backends when local is available but file doesn't exist
     auto backends = resolve_backends(uri);
     for (auto* backend : backends) {
-        if (backend->exists(resolved)) {
-            return true;
+        if (backend->isAvailable()) {
+            // This backend is operational - its answer is authoritative
+            return backend->exists(resolved);
         }
     }
     return false;
@@ -271,11 +273,13 @@ ResourceHandle ResourceManager::fetch(const std::string& uri_str) {
         return ResourceHandle(cached_path, false);  // Don't own cached files
     }
 
-    // Try backends in order
+    // Try backends - stop at first available backend
+    // This prevents fallback to remote backends when local is available
     auto backends = resolve_backends(uri);
     for (auto* backend : backends) {
-        if (backend->exists(resolved)) {
-            try {
+        if (backend->isAvailable()) {
+            // This backend is operational - try to fetch from it
+            if (backend->exists(resolved)) {
                 auto handle = backend->fetch(resolved);
 
                 // Backend doesn't need caching: return directly
@@ -286,37 +290,31 @@ ResourceHandle ResourceManager::fetch(const std::string& uri_str) {
                 // Cached backend: write to cache, return cached path
                 write_cache(uri_str, handle);
                 return ResourceHandle(cached_path, false);  // Don't own cached files
-
-            } catch (const RMError&) {
-                // Try next backend
-                continue;
             }
+            // Backend is available but file doesn't exist - don't try other backends
+            throw RMError(ErrorCode::NotFound, uri_str, "Resource not found");
         }
     }
 
-    throw RMError(ErrorCode::NotFound, uri_str, "Resource not found in any backend");
+    throw RMError(ErrorCode::NotFound, uri_str, "No available backend found");
 }
 
 std::vector<std::string> ResourceManager::list(const std::string& pattern) {
-    std::unordered_set<std::string> seen;
-    std::vector<std::string> results;
-
     // Parse pattern to determine which backends to query
     URI uri = URI::parse(pattern);
 
     auto backends = resolve_backends(uri);
     std::string resolved = uri.resolved_path();
 
+    // Use first available backend only
+    // This prevents fallback to remote backends when local is available
     for (auto* backend : backends) {
-        auto entries = backend->list(resolved);
-        for (auto& entry : entries) {
-            if (seen.insert(entry).second) {
-                results.push_back(std::move(entry));
-            }
+        if (backend->isAvailable()) {
+            return backend->list(resolved);
         }
     }
 
-    return results;
+    return {};
 }
 
 std::filesystem::path ResourceManager::resolve(const std::string& uri_str) {

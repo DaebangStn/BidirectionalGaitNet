@@ -170,6 +170,8 @@ private:
         float cd_cutoff = -1.0f; // skip if |rom_angle| > cutoff (-1 means no cutoff)
         // resolved CD value (angle in degrees)
         std::optional<float> cd_value;
+        // Normative ROM value from config file (degrees)
+        std::optional<float> normative;
         // Manual ROM input (when cd_value unavailable)
         float manual_rom = 0.0f;
         // selection state
@@ -188,7 +190,7 @@ private:
     int mContractureMaxIterations = 100;
     float mContractureMinRatio = 0.7f;
     float mContractureMaxRatio = 1.2f;
-    bool mContractureVerbose = false;
+    bool mContractureVerbose = true;
 
     // Grid search initialization
     float mContractureGridBegin = 0.7f;
@@ -361,7 +363,7 @@ private:
     void drawRenderTab();
 
     void drawRightPanel();
-    void drawResultsSection();
+    void drawExportSection();
     void drawWaypointCurvesTab();
     void drawContractureResultsTab();
     void drawSymmetryTab();           // Right panel: status/analysis display

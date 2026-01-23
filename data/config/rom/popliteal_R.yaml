@@ -24,10 +24,12 @@ exam:
   angle_min: -5
   angle_max: 130
   num_steps: 100
+  normative: 24.6
 
 # 5. Clinical data reference (ROM angle only)
 clinical_data:
   side: right
   joint: knee
   field: popliteal_bilateral
+  neg: false
 

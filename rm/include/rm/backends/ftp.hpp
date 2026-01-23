@@ -24,6 +24,7 @@ public:
 
     std::string name() const override;
     bool cached() const override { return true; }  // Manager should cache FTP results
+    bool isAvailable() const override { return true; }  // Connectivity checked per-request
     bool exists(const std::string& path) override;
     ResourceHandle fetch(const std::string& path) override;  // Returns in-memory data
     std::vector<std::string> list(const std::string& pattern) override;
@@ -37,6 +38,6 @@ private:
     std::vector<std::string> list_directory(const std::string& path);
 
     FTPConfig config_;
-};
+};;
 
 } // namespace rm

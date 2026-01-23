@@ -744,15 +744,28 @@ dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 			std::string obj_path = rm::resolve(obj_uri);
 			const aiScene *scene = MeshShape::loadMesh(std::string(obj_path));
 
-			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(Eigen::Vector3d(0.01, 0.01, 0.01), scene));
+			// Read mesh scale from YAML or use default
+			Eigen::Vector3d meshScale(0.01, 0.01, 0.01);
+			if (body["mesh_scale"]) {
+				meshScale = yaml_to_vector3d(body["mesh_scale"]);
+			}
+
+			MeshShapePtr visual_shape = std::shared_ptr<MeshShape>(new MeshShape(meshScale, scene));
 			visual_shape->setColorMode(MeshShape::ColorMode::SHAPE_COLOR);
 			auto vsn = bn->createShapeNodeWith<VisualAspect>(visual_shape);
 
-			// Visual mesh OBJ files are modeled in zero pose world coordinates
-			// We need to transform from zero pose world to body-local frame
-			// Get body's world transform in zero pose (just computed by DART)
-			Eigen::Isometry3d T_body_world = bn->getWorldTransform();
-			Eigen::Isometry3d T_obj = T_body_world.inverse();
+			// Read mesh transform from YAML or compute default
+			Eigen::Isometry3d T_obj;
+			if (body["mesh_R"] && body["mesh_t"]) {
+				T_obj.linear() = yaml_to_matrix3d(body["mesh_R"]);
+				T_obj.translation() = yaml_to_vector3d(body["mesh_t"]);
+			} else {
+				// Visual mesh OBJ files are modeled in zero pose world coordinates
+				// We need to transform from zero pose world to body-local frame
+				// Get body's world transform in zero pose (just computed by DART)
+				Eigen::Isometry3d T_body_world = bn->getWorldTransform();
+				T_obj = T_body_world.inverse();
+			}
 			vsn->setRelativeTransform(T_obj);
 		}
 

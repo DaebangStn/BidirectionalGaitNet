@@ -2,3 +2,4 @@
 - If you test ray_rollout.py, you must launch tmux window like debugging since rollout takes quite long time.
 - If you should check the ppo output, run "python ppo/learn.py debug" it also takes much time.
 - generate the png with the render command plot/render.sh do not manually run the dot command.
+- you must rebuild the executable after you made the change

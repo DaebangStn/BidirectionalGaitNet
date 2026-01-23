@@ -817,8 +817,7 @@ void GUI::
     glMatrixMode(oldMode);
 }
 
-void GUI::
-    DrawGround(int com_x, int com_z, double ground_height)
+void GUI::DrawGround(int com_x, int com_z, double ground_height)
 {
     static float ground_mat_shininess[] = {128.0};
     static float ground_mat_specular1[] = {0.0, 0.0, 0.0, 0.};

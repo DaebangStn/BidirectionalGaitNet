@@ -885,7 +885,8 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
         point.joint_idx = joint_idx;
         point.joint_dof = config.dof_index;
         point.q = positions;
-        point.tau_obs = config.torque_cutoff;
+        // Negate tau_obs when neg: false (positive angle sweep → negative torque)
+        point.tau_obs = config.cd_neg ? config.torque_cutoff : -config.torque_cutoff;
         point.weight = 1.0;
 
         // Handle composite DOF types
@@ -922,13 +923,14 @@ std::vector<PoseData> ContractureOptimizer::buildPoseData(
                     // Update pose in PoseData
                     point.q = positions;
 
+                    // Set pose and compute composite axis
+                    skeleton->setPositions(positions);
+                    point.composite_axis = computeAbdKneeAxis(skeleton, joint_idx);
                 } else {
-                    LOG_WARN("[Contracture] abd_knee IK failed for trial: " << config.name);
+                    LOG_WARN("[Contracture] abd_knee IK failed for trial: " << config.name
+                             << " - skipping this trial");
+                    continue;  // Skip trial when IK fails
                 }
-
-                // Set pose and compute composite axis
-                skeleton->setPositions(positions);
-                point.composite_axis = computeAbdKneeAxis(skeleton, joint_idx);
             } else {
                 // Set pose first to compute correct joint positions for axis calculation
                 skeleton->setPositions(positions);
@@ -2101,7 +2103,8 @@ ContractureOptimizer::PreOptimizationData ContractureOptimizer::preOptimization(
         trial_result.trial_name = rom_config.name;
         trial_result.joint = rom_config.joint;
         trial_result.dof_index = rom_config.dof_index;
-        trial_result.observed_torque = rom_config.torque_cutoff;
+        // Negate observed_torque when neg: false (positive angle sweep → negative torque)
+        trial_result.observed_torque = rom_config.cd_neg ? rom_config.torque_cutoff : -rom_config.torque_cutoff;
         trial_result.pose = pose.q;
 
         // Set pose and update muscle geometry
