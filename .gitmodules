@@ -10,3 +10,6 @@
 [submodule "libs/ceres-solver"]
 	path = libs/ceres-solver
 	url = https://github.com/ceres-solver/ceres-solver
+[submodule "libs/tinycolormap"]
+	path = libs/tinycolormap
+	url = https://github.com/yuki-koyama/tinycolormap.git

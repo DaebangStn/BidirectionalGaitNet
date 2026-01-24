@@ -66,10 +66,12 @@ void LabeledSeparator(const char* label);
 void ColorLegendItem(const ImVec4& color, const char* text);
 
 // Horizontal color bar legend
+// colormap: "viridis", "plasma", "coolwarm" (default: legacy blue-cyan-green-yellow-red)
 void ColorBarLegend(
     const char* label,
     float minVal, float maxVal,
-    const char* minLabel, const char* maxLabel
+    const char* minLabel, const char* maxLabel,
+    const char* colormap = nullptr
 );
 
 // ============================================================

@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
     bool verbose = false;
     double torque_threshold = 0.01;   // Nm
     double length_threshold = 0.001;  // normalized
+    std::string sort_by = "";         // "torque" or "length"
 
     po::options_description desc("Physical Exam Options");
     desc.add_options()
@@ -29,7 +30,9 @@ int main(int argc, char** argv) {
         ("torque-threshold", po::value<double>(&torque_threshold)->default_value(0.01),
          "Torque change threshold in Nm (default: 0.01)")
         ("length-threshold", po::value<double>(&length_threshold)->default_value(0.001),
-         "Length change threshold (default: 0.001)");
+         "Length change threshold (default: 0.001)")
+        ("sort-by,s", po::value<std::string>(&sort_by)->default_value(""),
+         "Sort output by: 'torque' or 'length' (descending by max diff)");
 
     po::positional_options_description pos;
     pos.add("config", 1);
@@ -60,6 +63,8 @@ int main(int argc, char** argv) {
         std::cout << "  " << argv[0] << " --trial @data/config/rom/intRot_R.yaml @data/config/rom/extRot_R.yaml\n";
         std::cout << "  " << argv[0] << " --trial @data/config/rom/intRot_R.yaml -v  # Verbose\n";
         std::cout << "  " << argv[0] << " --trial @data/config/rom/intRot_R.yaml --torque-threshold 0.05\n";
+        std::cout << "  " << argv[0] << " --trial @data/config/rom/intRot_R.yaml --sort-by torque  # Sort by torque diff\n";
+        std::cout << "  " << argv[0] << " --trial @data/config/rom/intRot_R.yaml -s length  # Sort by length diff\n";
         return 0;
     }
 
@@ -76,7 +81,7 @@ int main(int argc, char** argv) {
         // CLI trial mode - run specific trials and print muscle comparison table
         if (vm.count("trial")) {
             auto trials = vm["trial"].as<std::vector<std::string>>();
-            return exam.runTrialsCLI(trials, verbose, torque_threshold, length_threshold);
+            return exam.runTrialsCLI(trials, verbose, torque_threshold, length_threshold, sort_by);
         }
 
         if (headless_mode) {

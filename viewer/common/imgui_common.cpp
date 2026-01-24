@@ -1,9 +1,11 @@
 #include "imgui_common.h"
 #include "Muscle.h"
 #include "implot.h"
+#include <tinycolormap.hpp>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 
 namespace ImGuiCommon {
 
@@ -269,7 +271,8 @@ void ColorLegendItem(const ImVec4& color, const char* text)
 void ColorBarLegend(
     const char* label,
     float minVal, float maxVal,
-    const char* minLabel, const char* maxLabel)
+    const char* minLabel, const char* maxLabel,
+    const char* colormap)
 {
     ImGui::Text("%s", label);
 
@@ -279,6 +282,17 @@ void ColorBarLegend(
     float width = ImGui::GetContentRegionAvail().x;
     float height = 15.0f;
 
+    // Determine colormap type
+    bool useTinyColormap = (colormap != nullptr);
+    tinycolormap::ColormapType cmapType = tinycolormap::ColormapType::Viridis;
+    if (colormap) {
+        if (std::strcmp(colormap, "plasma") == 0) {
+            cmapType = tinycolormap::ColormapType::Plasma;
+        } else if (std::strcmp(colormap, "coolwarm") == 0) {
+            cmapType = tinycolormap::ColormapType::Heat;  // closest to coolwarm
+        }
+    }
+
     // Draw gradient bar
     int segments = 50;
     float segWidth = width / segments;
@@ -286,19 +300,24 @@ void ColorBarLegend(
         float t = static_cast<float>(i) / (segments - 1);
         ImVec4 color;
 
-        // Blue -> Cyan -> Green -> Yellow -> Red
-        if (t < 0.25f) {
-            float s = t / 0.25f;
-            color = ImVec4(0.0f, s, 1.0f, 1.0f);
-        } else if (t < 0.5f) {
-            float s = (t - 0.25f) / 0.25f;
-            color = ImVec4(0.0f, 1.0f, 1.0f - s, 1.0f);
-        } else if (t < 0.75f) {
-            float s = (t - 0.5f) / 0.25f;
-            color = ImVec4(s, 1.0f, 0.0f, 1.0f);
+        if (useTinyColormap) {
+            auto c = tinycolormap::GetColor(t, cmapType);
+            color = ImVec4(c.r(), c.g(), c.b(), 1.0f);
         } else {
-            float s = (t - 0.75f) / 0.25f;
-            color = ImVec4(1.0f, 1.0f - s, 0.0f, 1.0f);
+            // Legacy: Blue -> Cyan -> Green -> Yellow -> Red
+            if (t < 0.25f) {
+                float s = t / 0.25f;
+                color = ImVec4(0.0f, s, 1.0f, 1.0f);
+            } else if (t < 0.5f) {
+                float s = (t - 0.25f) / 0.25f;
+                color = ImVec4(0.0f, 1.0f, 1.0f - s, 1.0f);
+            } else if (t < 0.75f) {
+                float s = (t - 0.5f) / 0.25f;
+                color = ImVec4(s, 1.0f, 0.0f, 1.0f);
+            } else {
+                float s = (t - 0.75f) / 0.25f;
+                color = ImVec4(1.0f, 1.0f - s, 0.0f, 1.0f);
+            }
         }
 
         drawList->AddRectFilled(

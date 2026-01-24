@@ -38,7 +38,10 @@ target_link_libraries(viewer_common PUBLIC
     GLU
     glut
 )
-target_include_directories(viewer_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(viewer_common PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tinycolormap/include
+)
 
 # Viewer sources
 set(VIEWER_SOURCES
@@ -155,6 +158,10 @@ add_executable(muscle_personalizer
     "MusclePersonalizerApp.cpp"
     "RenderCharacter.h"
     "RenderCharacter.cpp"
+)
+
+target_include_directories(muscle_personalizer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tinycolormap/include
 )
 
 target_link_libraries(muscle_personalizer

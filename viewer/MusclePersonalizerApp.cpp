@@ -6,6 +6,7 @@
 #include <yaml-cpp/yaml.h>
 #include <filesystem>
 #include <implot.h>
+#include <tinycolormap.hpp>
 
 namespace fs = std::filesystem;
 
@@ -226,6 +227,15 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
                 }
                 LOG_INFO("[MusclePersonalizer] Loaded " << mGridSearchMapping.size() << " grid search mappings");
             }
+        }
+
+        // Visualization settings
+        if (config["visualization"]) {
+            auto vis = config["visualization"];
+            mColorByContracture = vis["color_by_contracture"].as<bool>(true);
+            mContractureColormap = vis["contracture_colormap"].as<std::string>("viridis");
+            mContractureMinValue = vis["min_color_value"].as<float>(0.7f);
+            mContractureMaxValue = vis["max_color_value"].as<float>(1.2f);
         }
 
         LOG_INFO("[MusclePersonalizer] App config loaded from " << resolved);
@@ -450,23 +460,20 @@ void MusclePersonalizerApp::drawMuscles()
             } else if (mColorByContracture && muscle->lmt_base > 0) {
                 // Contracture ratio: < 1.0 means shortened, > 1.0 means lengthened
                 double ratio = muscle->lmt_ref / muscle->lmt_base;
-                // Clamp to [0.7, 1.3] range and normalize to [0, 1]
-                double t = std::clamp((ratio - 0.7) / 0.6, 0.0, 1.0);
+                // Normalize to [0, 1] based on config range
+                double range = mContractureMaxValue - mContractureMinValue;
+                double t = std::clamp((ratio - mContractureMinValue) / range, 0.0, 1.0);
 
-                // Colormap: Blue (contracted) -> Cyan -> Green -> Yellow -> Red (lengthened)
-                if (t < 0.25) {
-                    double s = t / 0.25;
-                    color = Eigen::Vector4d(0.0, s, 1.0, 0.85);  // Blue to Cyan
-                } else if (t < 0.5) {
-                    double s = (t - 0.25) / 0.25;
-                    color = Eigen::Vector4d(0.0, 1.0, 1.0 - s, 0.85);  // Cyan to Green
-                } else if (t < 0.75) {
-                    double s = (t - 0.5) / 0.25;
-                    color = Eigen::Vector4d(s, 1.0, 0.0, 0.85);  // Green to Yellow
-                } else {
-                    double s = (t - 0.75) / 0.25;
-                    color = Eigen::Vector4d(1.0, 1.0 - s, 0.0, 0.85);  // Yellow to Red
+                // Get colormap type from config string
+                tinycolormap::ColormapType cmapType = tinycolormap::ColormapType::Viridis;
+                if (mContractureColormap == "plasma") {
+                    cmapType = tinycolormap::ColormapType::Plasma;
+                } else if (mContractureColormap == "coolwarm") {
+                    cmapType = tinycolormap::ColormapType::Heat;  // closest to coolwarm
                 }
+
+                auto c = tinycolormap::GetColor(t, cmapType);
+                color = Eigen::Vector4d(c.r(), c.g(), c.b(), 0.85);
             } else {
                 // Default: Fluorescent magenta/pink for high visibility
                 color = Eigen::Vector4d(1.0, 0.2, 0.6, 0.85);
@@ -1491,7 +1498,8 @@ void MusclePersonalizerApp::drawRenderTab()
 
     if (mColorByContracture) {
         ImGui::Separator();
-        ImGuiCommon::ColorBarLegend("Contracture Ratio", 0.7f, 1.3f, "(contracted)", "(lengthened)");
+        ImGuiCommon::ColorBarLegend("Contracture Ratio", mContractureMinValue, mContractureMaxValue,
+                                    "(contracted)", "(lengthened)", mContractureColormap.c_str());
     }
 
     // Muscle selection

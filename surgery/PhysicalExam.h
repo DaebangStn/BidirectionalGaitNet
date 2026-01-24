@@ -147,6 +147,7 @@ struct TrialDataBuffer {
     ROMMetrics rom_metrics;
     ROMMetrics std_rom_metrics;
     Eigen::VectorXd base_pose;  // Full skeleton pose for character positioning
+    Eigen::VectorXd normative_pose;  // Full skeleton pose at normative angle
 };
 
 class PhysicalExam : public ViewerAppBase, public SurgeryExecutor {
@@ -254,7 +255,8 @@ public:
     int runTrialsCLI(const std::vector<std::string>& trial_paths,
                      bool verbose = false,
                      double torque_threshold = 0.01,
-                     double length_threshold = 0.001);
+                     double length_threshold = 0.001,
+                     const std::string& sort_by = "");
 
     // Rendering
     void reset();  // Reset camera and scene
@@ -463,8 +465,13 @@ private:
     int mControlHz;
 
     // Rendering (mShapeRenderer inherited from ViewerAppBase)
+    // Muscle color mode: 0=Passive Force, 1=Normalized Length
+    int mMuscleColorMode = 1;
     float mPassiveForceNormalizer;  // Normalization factor for passive force visualization
     float mMuscleTransparency;       // Transparency for muscle rendering
+    float mLmNormMin = 0.7f;         // Min lm_norm for viridis color scale
+    float mLmNormMax = 1.3f;         // Max lm_norm for viridis color scale
+    float mMuscleLineWidth = 5.0f;   // Muscle line thickness
     bool mShowJointPassiveForces;   // Toggle for joint passive force arrows
     float mJointForceScale;          // Scale factor for joint force arrow visualization
     bool mShowJointForceLabels;      // Toggle for joint passive force text labels

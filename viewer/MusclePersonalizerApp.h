@@ -316,6 +316,11 @@ private:
     bool mColorByContracture = false;
     bool mShowAnchorPoints = true;  // Show anchor points instead of muscle cylinders
     bool mRenderReferenceCharacter = false;  // Toggle between subject and reference
+
+    // Visualization colormap settings (from config)
+    std::string mContractureColormap = "viridis";  // viridis, plasma, coolwarm
+    float mContractureMinValue = 0.7f;
+    float mContractureMaxValue = 1.2f;
     float mMuscleLabelFontSize = 14.0f;
     float mPlotHeight = 400.0f;  // Height of length curve plots
     int mErrorPlotYLimMode = 0;  // 0: near best, 1: overview, 2: draggable

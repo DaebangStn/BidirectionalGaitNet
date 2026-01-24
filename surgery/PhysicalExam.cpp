@@ -24,6 +24,8 @@
 #include <GLFW/glfw3.h>
 #include <GL/glut.h>
 #include <GL/glu.h>
+#define TINYCOLORMAP_WITH_EIGEN
+#include <tinycolormap.hpp>
 
 using namespace PMuscle;
 
@@ -64,7 +66,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mSelectedTrialFileIndex(-1)
     , mPassiveForceNormalizer(10.0f)  // Default normalization factor
     , mMuscleTransparency(1.0f)        // Default muscle transparency (0.0-1.0)
-    , mShowJointPassiveForces(true)   // Show joint passive forces by default
+    , mShowJointPassiveForces(false)   // Show joint passive forces by default
     , mJointForceScale(0.01f)          // Default scale for force arrows
     , mShowJointForceLabels(false)     // Labels off by default
     , mTopPassiveForcesCount(3)       // Show top 3 passive forces by default
@@ -74,7 +76,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mSweepNextPressed(false)
     , mSweepQuitPressed(false)
     , mShowExamTable(false)            // Show examination table by default
-    , mShowAnchorPoints(true)         // Anchor point visualization off by default
+    , mShowAnchorPoints(false)         // Anchor point visualization off by default
     , mApplyPostureControl(true)
     , mGraphData(nullptr)
     , mEnableInterpolation(false)
@@ -1092,6 +1094,48 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
             buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
             buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+
+            // Capture normative pose: set skeleton to normative angle and capture
+            // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
+            std::string normKey = buffer.alias;
+            size_t lastSlash = normKey.rfind('/');
+            if (lastSlash != std::string::npos) {
+                normKey = normKey.substr(0, lastSlash);
+            }
+            LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+            auto normIt = mNormativeROM.find(normKey);
+            if (normIt != mNormativeROM.end()) {
+                double normative_deg = normIt->second;
+                double normative_rad = normative_deg * M_PI / 180.0;
+                LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+
+                // Apply neg flag: if neg=true, negate the angle for internal representation
+                if (trial.angle_sweep.neg) {
+                    normative_rad = -normative_rad;
+                    LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+                }
+
+                auto skel = mCharacter->getSkeleton();
+                auto joint = skel->getJoint(trial.angle_sweep.joint_name);
+                if (joint) {
+                    int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
+                    Eigen::VectorXd pos = skel->getPositions();
+                    double before_angle = pos[dof_idx];
+                    pos[dof_idx] = normative_rad;
+                    skel->setPositions(pos);
+                    buffer.normative_pose = skel->getPositions();
+                    LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                             << ", dof_idx=" << dof_idx
+                             << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
+                             << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
+
+                    // Restore base pose
+                    skel->setPositions(buffer.base_pose);
+                }
+            } else {
+                LOG_WARN("[NormativePose] Key '" << normKey << "' not found in mNormativeROM");
+            }
+
             addTrialToBuffer(buffer);
             LOG_INFO("Trial '" << trial.name << "' buffered for visualization");
         }
@@ -1146,6 +1190,48 @@ void PhysicalExam::startNextTrial() {
         buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
         buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
         buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+
+        // Capture normative pose: set skeleton to normative angle and capture
+        // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
+        std::string normKey = buffer.alias;
+        size_t lastSlash = normKey.rfind('/');
+        if (lastSlash != std::string::npos) {
+            normKey = normKey.substr(0, lastSlash);
+        }
+        LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+        auto normIt = mNormativeROM.find(normKey);
+        if (normIt != mNormativeROM.end()) {
+            double normative_deg = normIt->second;
+            double normative_rad = normative_deg * M_PI / 180.0;
+            LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+
+            // Apply neg flag: if neg=true, negate the angle for internal representation
+            if (trial.angle_sweep.neg) {
+                normative_rad = -normative_rad;
+                LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+            }
+
+            auto skel = mCharacter->getSkeleton();
+            auto joint = skel->getJoint(trial.angle_sweep.joint_name);
+            if (joint) {
+                int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
+                Eigen::VectorXd pos = skel->getPositions();
+                double before_angle = pos[dof_idx];
+                pos[dof_idx] = normative_rad;
+                skel->setPositions(pos);
+                buffer.normative_pose = skel->getPositions();
+                LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                         << ", dof_idx=" << dof_idx
+                         << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
+                         << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
+
+                // Restore base pose
+                skel->setPositions(buffer.base_pose);
+            }
+        } else {
+            LOG_WARN("[NormativePose] Key '" << normKey << "' not found in mNormativeROM");
+        }
+
         addTrialToBuffer(buffer);
         LOG_INFO("Trial '" << trial.name << "' buffered for visualization");
     }
@@ -2397,6 +2483,48 @@ void PhysicalExam::runAllTrials() {
                 buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
             }
             buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+
+            // Capture normative pose: set skeleton to normative angle and capture
+            // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
+            std::string normKey = buffer.alias;
+            size_t lastSlash = normKey.rfind('/');
+            if (lastSlash != std::string::npos) {
+                normKey = normKey.substr(0, lastSlash);
+            }
+            LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+            auto normIt = mNormativeROM.find(normKey);
+            if (normIt != mNormativeROM.end()) {
+                double normative_deg = normIt->second;
+                double normative_rad = normative_deg * M_PI / 180.0;
+                LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+
+                // Apply neg flag: if neg=true, negate the angle for internal representation
+                if (trial.angle_sweep.neg) {
+                    normative_rad = -normative_rad;
+                    LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+                }
+
+                auto skel = mCharacter->getSkeleton();
+                auto joint = skel->getJoint(trial.angle_sweep.joint_name);
+                if (joint) {
+                    int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
+                    Eigen::VectorXd pos = skel->getPositions();
+                    double before_angle = pos[dof_idx];
+                    pos[dof_idx] = normative_rad;
+                    skel->setPositions(pos);
+                    buffer.normative_pose = skel->getPositions();
+                    LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                             << ", dof_idx=" << dof_idx
+                             << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
+                             << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
+
+                    // Restore base pose
+                    skel->setPositions(buffer.base_pose);
+                }
+            } else {
+                LOG_WARN("[NormativePose] Key '" << normKey << "' not found in mNormativeROM");
+            }
+
             addTrialToBuffer(buffer);
         }
 
@@ -2414,7 +2542,8 @@ void PhysicalExam::runAllTrials() {
 int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
                                 bool verbose,
                                 double torque_threshold,
-                                double length_threshold) {
+                                double length_threshold,
+                                const std::string& sort_by) {
     if (!mCharacter || mCharacter->getMuscles().empty()) {
         LOG_ERROR("No character or muscles loaded");
         return 1;
@@ -2455,6 +2584,12 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
             normative_deg = trial_node["exam"]["normative"].as<double>();
         } else {
             LOG_WARN("No normative angle found in trial config: " << trial.name);
+        }
+
+        // Apply neg flag: if neg=true, the normative angle is in the negative direction
+        // (e.g., extRot has normative=41.5 with neg=true, meaning actual angle is -41.5)
+        if (trial.angle_sweep.neg) {
+            normative_deg = -normative_deg;
         }
         double normative_rad = normative_deg * M_PI / 180.0;
 
@@ -2554,30 +2689,22 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
         all_muscles_set.insert(muscles.begin(), muscles.end());
     }
     std::vector<std::string> all_muscles(all_muscles_set.begin(), all_muscles_set.end());
-    std::sort(all_muscles.begin(), all_muscles.end());
 
-    // Print table header
-    std::cout << "\n";
-    std::cout << std::left << std::setw(28) << "muscle_name";
-    for (const auto& name : trial_names) {
-        // Shorten trial name if too long
-        std::string short_name = name.length() > 15 ? name.substr(0, 12) + "..." : name;
-        std::cout << std::setw(22) << (short_name + " (torque)");
-        std::cout << std::setw(22) << (short_name + " (lm_norm)");
-    }
-    std::cout << "\n";
-
-    // Print separator
-    int total_width = 28 + trial_names.size() * 44;
-    std::cout << std::string(total_width, '-') << "\n";
-
-    // Print each muscle row
-    int printed_count = 0;
-    for (const auto& muscle_name : all_muscles) {
-        // Check if any column has significant change
-        bool has_significant_change = false;
+    // Structure to hold a muscle row for sorting
+    struct MuscleRow {
+        std::string name;
         std::vector<std::string> torque_cols;
         std::vector<std::string> length_cols;
+        double max_torque_diff = 0.0;
+        double max_length_diff = 0.0;
+        bool has_significant_change = false;
+    };
+
+    // Build all muscle rows
+    std::vector<MuscleRow> rows;
+    for (const auto& muscle_name : all_muscles) {
+        MuscleRow row;
+        row.name = muscle_name;
 
         for (size_t t = 0; t < trial_names.size(); ++t) {
             auto& zero_data = zero_data_list[t];
@@ -2596,43 +2723,84 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
                 double delta_jtp = std::abs(jtp_norm - jtp_zero);
                 double delta_lm = std::abs(lm_norm - lm_zero);
 
+                // Track max diffs across trials
+                row.max_torque_diff = std::max(row.max_torque_diff, delta_jtp);
+                row.max_length_diff = std::max(row.max_length_diff, delta_lm);
+
                 // Format torque column
                 std::ostringstream torque_ss;
                 if (delta_jtp > torque_threshold) {
-                    has_significant_change = true;
+                    row.has_significant_change = true;
                     torque_ss << std::fixed << std::setprecision(2)
                               << jtp_zero << " -> " << jtp_norm;
                 } else {
                     torque_ss << "-";
                 }
-                torque_cols.push_back(torque_ss.str());
+                row.torque_cols.push_back(torque_ss.str());
 
                 // Format length column
                 std::ostringstream length_ss;
                 if (delta_lm > length_threshold) {
-                    has_significant_change = true;
+                    row.has_significant_change = true;
                     length_ss << std::fixed << std::setprecision(3)
                               << lm_zero << " -> " << lm_norm;
                 } else {
                     length_ss << "-";
                 }
-                length_cols.push_back(length_ss.str());
+                row.length_cols.push_back(length_ss.str());
             } else {
-                torque_cols.push_back("-");
-                length_cols.push_back("-");
+                row.torque_cols.push_back("-");
+                row.length_cols.push_back("-");
             }
         }
 
+        rows.push_back(row);
+    }
+
+    // Sort rows based on sort_by option
+    if (sort_by == "torque") {
+        std::sort(rows.begin(), rows.end(), [](const MuscleRow& a, const MuscleRow& b) {
+            return a.max_torque_diff > b.max_torque_diff;  // Descending
+        });
+    } else if (sort_by == "length") {
+        std::sort(rows.begin(), rows.end(), [](const MuscleRow& a, const MuscleRow& b) {
+            return a.max_length_diff > b.max_length_diff;  // Descending
+        });
+    } else {
+        // Default: sort alphabetically by name
+        std::sort(rows.begin(), rows.end(), [](const MuscleRow& a, const MuscleRow& b) {
+            return a.name < b.name;
+        });
+    }
+
+    // Print table header
+    std::cout << "\n";
+    std::cout << std::left << std::setw(28) << "muscle_name";
+    for (const auto& name : trial_names) {
+        // Shorten trial name if too long
+        std::string short_name = name.length() > 15 ? name.substr(0, 12) + "..." : name;
+        std::cout << std::setw(22) << (short_name + " (torque)");
+        std::cout << std::setw(22) << (short_name + " (lm_norm)");
+    }
+    std::cout << "\n";
+
+    // Print separator
+    int total_width = 28 + trial_names.size() * 44;
+    std::cout << std::string(total_width, '-') << "\n";
+
+    // Print each muscle row
+    int printed_count = 0;
+    for (const auto& row : rows) {
         // Skip muscle if no significant change (unless verbose)
-        if (!verbose && !has_significant_change) {
+        if (!verbose && !row.has_significant_change) {
             continue;
         }
 
         // Print muscle row
-        std::cout << std::left << std::setw(28) << muscle_name;
+        std::cout << std::left << std::setw(28) << row.name;
         for (size_t t = 0; t < trial_names.size(); ++t) {
-            std::cout << std::setw(22) << torque_cols[t];
-            std::cout << std::setw(22) << length_cols[t];
+            std::cout << std::setw(22) << row.torque_cols[t];
+            std::cout << std::setw(22) << row.length_cols[t];
         }
         std::cout << "\n";
         printed_count++;
@@ -2642,6 +2810,9 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
     std::cout << "Printed " << printed_count << "/" << all_muscles.size() << " muscles";
     if (!verbose) {
         std::cout << " (use -v to show all)";
+    }
+    if (!sort_by.empty()) {
+        std::cout << " (sorted by " << sort_by << " diff, descending)";
     }
     std::cout << "\n";
     std::cout << "Thresholds: torque=" << torque_threshold << " Nm, length=" << length_threshold << "\n";
@@ -3245,24 +3416,39 @@ void PhysicalExam::drawMuscles() {
     glEnable(GL_DEPTH_TEST);
     glDisableClientState(GL_COLOR_ARRAY);
 
+    // Helper to compute muscle color based on current mode
+    auto getMuscleColor = [&](Muscle* muscle) -> Eigen::Vector4f {
+        if (mMuscleColorMode == 0) {
+            // Passive Force mode (blue gradient)
+            double f_p = muscle->Getf_p();
+            double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
+            return Eigen::Vector4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
+        } else {
+            // Normalized Length mode (viridis)
+            double lm_norm = muscle->GetLmNorm();
+            double t = (lm_norm - mLmNormMin) / (mLmNormMax - mLmNormMin);
+            Eigen::Vector3d rgb = tinycolormap::GetColor(t, tinycolormap::ColormapType::Viridis).ConvertToEigen();
+            return Eigen::Vector4f(rgb[0], rgb[1], rgb[2], mMuscleTransparency);
+        }
+    };
+
     // Render main character muscles
     if (mCharacter && mRenderMainCharacter && !mCharacter->getMuscles().empty()) {
         auto& muscles = mCharacter->getMuscles();
 
         if (mShowAnchorPoints) {
             glDisable(GL_LIGHTING);
-            glLineWidth(1.5f);
+            glLineWidth(mMuscleLineWidth);
 
             for (size_t i = 0; i < muscles.size(); i++) {
                 if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
-                auto& muscle = muscles[i];
+                auto muscle = muscles[i];
                 auto& anchors = muscle->GetAnchors();
 
-                double f_p = muscle->Getf_p();
-                double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
+                Eigen::Vector4f color = getMuscleColor(muscle);
+                glColor4f(color[0], color[1], color[2], color[3]);
 
-                glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
                 glBegin(GL_LINE_STRIP);
                 for (auto& anchor : anchors) {
                     Eigen::Vector3d pos = anchor->GetPoint();
@@ -3298,11 +3484,10 @@ void PhysicalExam::drawMuscles() {
             for (size_t i = 0; i < muscles.size(); i++) {
                 if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
-                auto& muscle = muscles[i];
-                double f_p = muscle->Getf_p();
-                double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
-                glColor4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
-                mShapeRenderer.renderMuscleLine(muscle, 2.0f);
+                auto muscle = muscles[i];
+                Eigen::Vector4f color = getMuscleColor(muscle);
+                glColor4f(color[0], color[1], color[2], color[3]);
+                mShapeRenderer.renderMuscleLine(muscle, mMuscleLineWidth);
             }
         }
     }
@@ -5254,19 +5439,21 @@ void PhysicalExam::loadBufferForVisualization(int buffer_index) {
     mStdAngleSweepTrackedMuscles = buffer.std_tracked_muscles;
     mCurrentSweepName = buffer.trial_name;
 
-    // Apply base pose to character and std character (only if DOF count matches)
-    if (buffer.base_pose.size() > 0 && mCharacter) {
+    // Apply normative pose to character and std character (only if DOF count matches)
+    // Falls back to base_pose if normative_pose is not available
+    const Eigen::VectorXd& pose_to_apply = (buffer.normative_pose.size() > 0) ? buffer.normative_pose : buffer.base_pose;
+    if (pose_to_apply.size() > 0 && mCharacter) {
         auto skel = mCharacter->getSkeleton();
-        if (buffer.base_pose.size() == skel->getNumDofs()) {
-            skel->setPositions(buffer.base_pose);
+        if (pose_to_apply.size() == skel->getNumDofs()) {
+            skel->setPositions(pose_to_apply);
             if (mStdCharacter) {
                 auto stdSkel = mStdCharacter->getSkeleton();
-                if (buffer.base_pose.size() == stdSkel->getNumDofs()) {
-                    stdSkel->setPositions(buffer.base_pose);
+                if (pose_to_apply.size() == stdSkel->getNumDofs()) {
+                    stdSkel->setPositions(pose_to_apply);
                 }
             }
         } else {
-            LOG_WARN("Buffer base_pose DOF count (" << buffer.base_pose.size()
+            LOG_WARN("Buffer pose DOF count (" << pose_to_apply.size()
                      << ") doesn't match skeleton (" << skel->getNumDofs() << "), skipping pose restore");
         }
     }
@@ -5384,6 +5571,47 @@ void PhysicalExam::runSelectedTrials() {
                 buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
             }
             buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+
+            // Capture normative pose: set skeleton to normative angle and capture
+            // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
+            std::string normKey = buffer.alias;
+            size_t lastSlash = normKey.rfind('/');
+            if (lastSlash != std::string::npos) {
+                normKey = normKey.substr(0, lastSlash);
+            }
+            LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+            auto normIt = mNormativeROM.find(normKey);
+            if (normIt != mNormativeROM.end()) {
+                double normative_deg = normIt->second;
+                double normative_rad = normative_deg * M_PI / 180.0;
+                LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+
+                // Apply neg flag: if neg=true, negate the angle for internal representation
+                if (trial.angle_sweep.neg) {
+                    normative_rad = -normative_rad;
+                    LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+                }
+
+                auto skel = mCharacter->getSkeleton();
+                auto joint = skel->getJoint(trial.angle_sweep.joint_name);
+                if (joint) {
+                    int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
+                    Eigen::VectorXd pos = skel->getPositions();
+                    double before_angle = pos[dof_idx];
+                    pos[dof_idx] = normative_rad;
+                    skel->setPositions(pos);
+                    buffer.normative_pose = skel->getPositions();
+                    LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                             << ", dof_idx=" << dof_idx
+                             << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
+                             << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
+
+                    // Restore base pose
+                    skel->setPositions(buffer.base_pose);
+                }
+            } else {
+                LOG_WARN("[NormativePose] Key '" << normKey << "' not found in mNormativeROM");
+            }
 
             // Add to buffer with limit enforcement
             addTrialToBuffer(buffer);
@@ -5814,12 +6042,12 @@ void PhysicalExam::drawRenderOptionsSection() {
             else if (mRenderStdCharacter) render_option = 1;
             else render_option = 0;
             
-            if (ImGui::RadioButton("Main Only", &render_option, 0)) {
+            if (ImGui::RadioButton("Main##Render", &render_option, 0)) {
                 mRenderMainCharacter = true;
                 mRenderStdCharacter = false;
             }
             ImGui::SameLine();
-            if (ImGui::RadioButton("Std Only", &render_option, 1)) {
+            if (ImGui::RadioButton("Std##Render", &render_option, 1)) {
                 mRenderMainCharacter = false;
                 mRenderStdCharacter = true;
             }
@@ -5838,13 +6066,82 @@ void PhysicalExam::drawRenderOptionsSection() {
         ImGui::Separator();
         
         // Render Mode section
-        ImGui::Text("Render Mode (O):");
+        ImGui::Text("Skeleton Render Mode (O):");
         int mode = static_cast<int>(mRenderMode);
         if (ImGui::RadioButton("Primitive", &mode, 0)) mRenderMode = RenderMode::Primitive;
         ImGui::SameLine();
         if (ImGui::RadioButton("Mesh", &mode, 1)) mRenderMode = RenderMode::Mesh;
         ImGui::SameLine();
         if (ImGui::RadioButton("Wire", &mode, 2)) mRenderMode = RenderMode::Wireframe;
+        ImGui::Separator();
+
+        // Muscle Render Mode section
+        ImGui::Text("Muscle Color Mode:");
+        ImGui::RadioButton("Passive Force", &mMuscleColorMode, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Norm. Length", &mMuscleColorMode, 1);
+
+        // Mode-specific controls
+        if (mMuscleColorMode == 0) {
+            ImGui::SetNextItemWidth(80);
+            ImGui::InputFloat("##ForceNorm", &mPassiveForceNormalizer, 0, 0, "%.0f");
+            ImGui::SameLine();
+            ImGui::Text("Force Norm");
+        } else {
+            ImGui::SetNextItemWidth(50);
+            ImGui::InputFloat("##LmMin", &mLmNormMin, 0, 0, "%.2f");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(50);
+            ImGui::InputFloat("##LmMax", &mLmNormMax, 0, 0, "%.2f");
+            ImGui::SameLine();
+            ImGui::Text("Lm Range");
+
+            // Viridis colorbar
+            auto viridisColor = [](float t) -> ImU32 {
+                auto c = tinycolormap::GetColor(t, tinycolormap::ColormapType::Viridis);
+                return IM_COL32((int)(c.r()*255), (int)(c.g()*255), (int)(c.b()*255), 255);
+            };
+
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 pos = ImGui::GetCursorScreenPos();
+            float barWidth = 150.0f;
+            float barHeight = 12.0f;
+            int segments = 32;
+
+            for (int i = 0; i < segments; i++) {
+                float t0 = (float)i / segments;
+                float t1 = (float)(i + 1) / segments;
+                float x0 = pos.x + t0 * barWidth;
+                float x1 = pos.x + t1 * barWidth;
+                drawList->AddRectFilledMultiColor(
+                    ImVec2(x0, pos.y), ImVec2(x1, pos.y + barHeight),
+                    viridisColor(t0), viridisColor(t1), viridisColor(t1), viridisColor(t0));
+            }
+            drawList->AddRect(ImVec2(pos.x, pos.y), ImVec2(pos.x + barWidth, pos.y + barHeight), IM_COL32(128, 128, 128, 255));
+
+            // Labels
+            ImGui::Dummy(ImVec2(barWidth, barHeight + 2));
+            ImGui::Text("%.2f", mLmNormMin);
+            ImGui::SameLine(barWidth - 25);
+            ImGui::Text("%.2f", mLmNormMax);
+        }
+        // Common controls on same line
+        ImGui::SetNextItemWidth(40);
+        ImGui::InputFloat("##LineWidth", &mMuscleLineWidth, 0, 0, "%.1f");
+        ImGui::SameLine();
+        ImGui::Text("Width");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        ImGui::SliderFloat("##Alpha", &mMuscleTransparency, 0.1f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::Text("Alpha");
+
+        ImGui::Checkbox("Show Anchor Points", &mShowAnchorPoints);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Display muscle anchor points as dots instead of lines");
+        }
         ImGui::Separator();
 
         ImGui::Checkbox("Show Exam Table", &mShowExamTable);
@@ -5859,26 +6156,15 @@ void PhysicalExam::drawRenderOptionsSection() {
                 ImGui::SetTooltip("Display numeric force values at arrow tips");
             }
         }
-
-        ImGui::Checkbox("Show Anchor Points", &mShowAnchorPoints);
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Display muscle anchor points as dots instead of lines");
-        }
+        ImGui::Separator();
 
         // Muscle Filtering and Selection
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Muscle");
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Muscle Filter");
         ImGui::Separator();
         ImGui::Indent();
         if (!mCharacter) {
                 ImGui::TextDisabled("Load character first");
             } else {
-                ImGui::SetNextItemWidth(100);
-                ImGui::DragFloat("Passive Force Normalizer", &mPassiveForceNormalizer, 1.0f, 5.0f, 100.0f);
-                ImGui::SetNextItemWidth(100);
-                ImGui::SliderFloat("Transparency", &mMuscleTransparency, 0.1f, 1.0f);
-        
                 auto allMuscles = mCharacter->getMuscles();
 
                 // Initialize selection states if needed

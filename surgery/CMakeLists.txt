@@ -76,6 +76,7 @@ target_include_directories(physical_exam PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../viewer
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/../libs/implot
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tinycolormap/include
 )
 
 target_link_libraries(physical_exam
