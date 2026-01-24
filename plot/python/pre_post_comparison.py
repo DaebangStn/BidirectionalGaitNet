@@ -10,6 +10,7 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
+import yaml
 sys.path.insert(0, '/home/geon/BidirectionalGaitNet')
 
 from rm import rm_mgr
@@ -18,7 +19,7 @@ from utils import set_plot, style_axis
 # =============================================================================
 # CONFIGURATION - Edit these to select which metrics to plot
 # =============================================================================
-GMFCS = 3  # Set to 1, 2, or 3 to filter by GMFCS level; None = no filter
+GMFCS = None  # Set to 1, 2, or 3 to filter by GMFCS level; None = no filter
 
 METRICS = [
     ('height', 'Height (cm)', lambda d: d.get('height')),
@@ -46,27 +47,38 @@ def get_metric_value(data, extractor):
 
 
 def main():
-    # 1. List all PIDs
+    # 1. List all PIDs and filter out non-patient entries
     pids = rm_mgr.list("@pid")
+    # Filter: valid PIDs are numeric strings
+    pids = [pid for pid in pids if pid.isdigit()]
     print(f"Found {len(pids)} patients: {pids}")
 
     # 2. Collect pre/post data and metadata for each PID
+    # New structure: {pid}/pre/metadata.yaml, {pid}/op1/metadata.yaml (formerly "post")
     pre_data_all = {}
     post_data_all = {}
     gmfcs_all = {}
     for pid in pids:
+        # Load pre-operative visit metadata
         try:
-            pre_data_all[pid] = rm_mgr(f"@pid:{pid}/gait/pre")
+            handle = rm_mgr.fetch(f"@pid:{pid}/pre/metadata.yaml")
+            pre_data_all[pid] = yaml.safe_load(handle.as_string()) if handle.valid() else {}
         except Exception as e:
             print(f"Warning: Could not load pre data for {pid}: {e}")
             pre_data_all[pid] = {}
+
+        # Load post-operative visit metadata (op1 = first post-op, formerly "post")
         try:
-            post_data_all[pid] = rm_mgr(f"@pid:{pid}/gait/post")
+            handle = rm_mgr.fetch(f"@pid:{pid}/op1/metadata.yaml")
+            post_data_all[pid] = yaml.safe_load(handle.as_string()) if handle.valid() else {}
         except Exception as e:
             print(f"Warning: Could not load post data for {pid}: {e}")
             post_data_all[pid] = {}
+
+        # Load patient-level GMFCS
         try:
-            gmfcs_all[pid] = rm_mgr(f"@pid:{pid}/gmfcs")
+            handle = rm_mgr.fetch(f"@pid:{pid}/gmfcs")
+            gmfcs_all[pid] = int(handle.as_string().strip()) if handle.valid() else None
         except Exception as e:
             print(f"Warning: Could not load gmfcs for {pid}: {e}")
             gmfcs_all[pid] = None
