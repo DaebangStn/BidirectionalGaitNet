@@ -16,7 +16,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@data/muscle/base.yaml"
+    file: "@data/muscle/base_rom_no_ext.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true

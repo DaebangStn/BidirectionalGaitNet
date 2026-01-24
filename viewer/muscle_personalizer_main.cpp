@@ -529,12 +529,16 @@ int main(int argc, char** argv)
         std::cout << "[Contracture CLI] Character loaded: " << character->getMuscles().size() << " muscles" << std::endl;
 
         // Load ROM trial configs
+        // Only override rom_angle if --rom-angle was explicitly specified
+        bool overrideRomAngle = !vm["rom-angle"].defaulted();
         std::vector<PMuscle::ROMTrialConfig> trials;
         for (const auto& romConfigPath : romConfigs) {
             auto trial = PMuscle::ContractureOptimizer::loadROMConfig(romConfigPath, skeleton);
-            // Use rom_angle from YAML (typically set via clinical_data or manual)
-            // For testing, set a fixed ROM angle
-            trial.rom_angle = romAngle;
+            // rom_angle is loaded from exam.normative by default
+            // Override only if user explicitly specified --rom-angle
+            if (overrideRomAngle) {
+                trial.rom_angle = romAngle;
+            }
             trials.push_back(trial);
             std::cout << "[Contracture CLI] Loaded: " << trial.name
                       << " (joint=" << trial.joint << ", dof=" << trial.dof_index
@@ -578,16 +582,43 @@ int main(int argc, char** argv)
         optConfig.verbose = verbose;
         optConfig.outerIterations = 1;
 
-        // Run optimization
-        std::cout << "\n[Contracture CLI] Running optimization..." << std::endl;
-        auto results = optimizer.optimize(character, trials, optConfig);
+        // Run tiered optimization (includes torque summary table output)
+        std::cout << "\n[Contracture CLI] Running tiered optimization..." << std::endl;
+        auto tieredResult = optimizer.optimizeWithTieredResults(character, trials, optConfig);
 
-        // Print results
-        std::cout << "\n========== CONTRACTURE OPTIMIZATION RESULTS ==========" << std::endl;
+        // Print summary
+        std::cout << "\n========== CONTRACTURE OPTIMIZATION SUMMARY ==========" << std::endl;
         std::cout << std::fixed << std::setprecision(4);
-        for (const auto& gr : results) {
+        std::cout << "Converged: " << (tieredResult.converged ? "yes" : "no")
+                  << " | Iterations: " << tieredResult.iterations
+                  << " | Final cost: " << tieredResult.final_cost << std::endl;
+
+        // Print search group results (grid search phase)
+        if (!tieredResult.search_group_results.empty()) {
+            std::cout << "\n--- Search Groups (Grid Search) ---" << std::endl;
+            for (const auto& sg : tieredResult.search_group_results) {
+                std::cout << "  " << std::setw(25) << std::left << sg.search_group_name
+                          << " ratio=" << std::setw(6) << sg.ratio
+                          << " error=" << sg.best_error << std::endl;
+            }
+        }
+
+        // Print optimization group results (Ceres phase)
+        std::cout << "\n--- Optimization Groups (Ceres) ---" << std::endl;
+        for (const auto& gr : tieredResult.opt_group_results) {
             std::cout << "  " << std::setw(25) << std::left << gr.group_name
                       << " ratio=" << gr.ratio << std::endl;
+        }
+
+        // Print trial results
+        std::cout << "\n--- Trial Results ---" << std::endl;
+        for (const auto& tr : tieredResult.trial_results) {
+            double error = tr.computed_torque_after - tr.observed_torque;
+            std::cout << "  " << std::setw(20) << std::left << tr.trial_name
+                      << " target=" << std::setw(8) << tr.observed_torque
+                      << " before=" << std::setw(8) << tr.computed_torque_before
+                      << " after=" << std::setw(8) << tr.computed_torque_after
+                      << " error=" << error << std::endl;
         }
         std::cout << "======================================================" << std::endl;
 

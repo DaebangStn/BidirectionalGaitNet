@@ -88,3 +88,24 @@ target_link_libraries(physical_exam
     Boost::program_options
     viewer_common
 )
+
+# Contracture Optimizer CLI (standalone, no GUI)
+add_executable(contracture_cli
+    "contracture_cli_main.cpp"
+    "SurgeryExecutor.h"
+    "SurgeryExecutor.cpp"
+)
+
+target_include_directories(contracture_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../sim
+    ${CMAKE_CURRENT_SOURCE_DIR}/../viewer
+)
+
+target_link_libraries(contracture_cli
+    sim
+    surgery_optimizer
+    tinyxml2::tinyxml2
+    dart
+    yaml-cpp
+    Boost::program_options
+)

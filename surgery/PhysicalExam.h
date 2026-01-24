@@ -250,6 +250,12 @@ public:
     void writeForceSweepData(H5::Group& group, const TrialConfig& trial);
     void runAllTrials();
 
+    // CLI trial mode - runs trials and prints muscle comparison table
+    int runTrialsCLI(const std::vector<std::string>& trial_paths,
+                     bool verbose = false,
+                     double torque_threshold = 0.01,
+                     double length_threshold = 0.001);
+
     // Rendering
     void reset();  // Reset camera and scene
     void resetSkeleton();  // Reset skeleton by reloading from XML

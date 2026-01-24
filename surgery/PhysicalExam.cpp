@@ -2410,6 +2410,245 @@ void PhysicalExam::runAllTrials() {
 
     LOG_INFO("All trials complete. Results saved to: " << mExamOutputPath);
 }
+
+int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
+                                bool verbose,
+                                double torque_threshold,
+                                double length_threshold) {
+    if (!mCharacter || mCharacter->getMuscles().empty()) {
+        LOG_ERROR("No character or muscles loaded");
+        return 1;
+    }
+
+    // Structure to hold per-muscle data at a pose
+    struct MusclePoseData {
+        double lm_norm;      // Normalized muscle length
+        double jtp_dof;      // Joint torque at target DOF
+    };
+
+    // Store trial names and data
+    std::vector<std::string> trial_names;
+    std::vector<std::map<std::string, MusclePoseData>> zero_data_list;
+    std::vector<std::map<std::string, MusclePoseData>> norm_data_list;
+    std::vector<std::vector<std::string>> trial_muscles;  // Muscles crossing each trial's joint
+
+    // Process each trial
+    for (const auto& trial_path : trial_paths) {
+        std::string resolved_path = rm::resolve(trial_path);
+        LOG_INFO("Processing trial: " << resolved_path);
+
+        YAML::Node trial_node;
+        try {
+            trial_node = YAML::LoadFile(resolved_path);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Failed to load trial config: " << resolved_path << " - " << e.what());
+            continue;
+        }
+
+        // Parse trial config
+        TrialConfig trial = parseTrialConfig(trial_node);
+        trial_names.push_back(trial.name);
+
+        // Get normative angle from exam section
+        double normative_deg = 0.0;
+        if (trial_node["exam"] && trial_node["exam"]["normative"]) {
+            normative_deg = trial_node["exam"]["normative"].as<double>();
+        } else {
+            LOG_WARN("No normative angle found in trial config: " << trial.name);
+        }
+        double normative_rad = normative_deg * M_PI / 180.0;
+
+        // Get joint and DOF info
+        std::string joint_name = trial.angle_sweep.joint_name;
+        int dof_index = trial.angle_sweep.dof_index;
+
+        auto skel = mCharacter->getSkeleton();
+        auto joint = skel->getJoint(joint_name);
+        if (!joint) {
+            LOG_ERROR("Joint not found: " << joint_name);
+            continue;
+        }
+        int skel_dof_idx = joint->getIndexInSkeleton(dof_index);
+
+        // Find muscles crossing this joint
+        std::vector<std::string> tracked_muscles;
+        for (auto* muscle : mCharacter->getMuscles()) {
+            auto related_joints = muscle->GetRelatedJoints();
+            for (auto* rj : related_joints) {
+                if (rj == joint) {
+                    tracked_muscles.push_back(muscle->GetName());
+                    break;
+                }
+            }
+        }
+        trial_muscles.push_back(tracked_muscles);
+
+        // Apply base pose from trial config
+        for (const auto& [jname, angles] : trial.pose) {
+            setCharacterPose(jname, angles);
+        }
+
+        // Lambda to collect muscle data at current pose
+        auto collectMuscleData = [&]() -> std::map<std::string, MusclePoseData> {
+            // Update muscle geometry for current skeleton state
+            // NOTE: Don't call SetMuscle() which recalculates lmt_ref
+            for (auto* m : mCharacter->getMuscles()) {
+                m->UpdateGeometry();
+            }
+
+            std::map<std::string, MusclePoseData> data;
+            for (const auto& muscle_name : tracked_muscles) {
+                Muscle* muscle = mCharacter->getMuscleByName(muscle_name);
+                if (!muscle) continue;
+
+                MusclePoseData md;
+                md.lm_norm = muscle->GetLmNorm();
+
+                // Get jtp at the swept DOF
+                Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+                const auto& related_indices = muscle->related_dof_indices;
+                md.jtp_dof = 0.0;
+                for (size_t j = 0; j < related_indices.size(); ++j) {
+                    if (related_indices[j] == skel_dof_idx) {
+                        md.jtp_dof = jtp[j];
+                        break;
+                    }
+                }
+                data[muscle_name] = md;
+            }
+            return data;
+        };
+
+        // Set joint DOF to 0 (zero angle)
+        Eigen::VectorXd joint_pos = joint->getPositions();
+        Eigen::VectorXd zero_pos = joint_pos;
+        zero_pos[dof_index] = 0.0;
+        joint->setPositions(zero_pos);
+
+        // Collect data at zero angle
+        auto zero_data = collectMuscleData();
+        zero_data_list.push_back(zero_data);
+
+        // Set joint DOF to normative angle
+        Eigen::VectorXd norm_pos = joint_pos;
+        norm_pos[dof_index] = normative_rad;
+        joint->setPositions(norm_pos);
+
+        // Collect data at normative angle
+        auto norm_data = collectMuscleData();
+        norm_data_list.push_back(norm_data);
+
+        LOG_INFO("Trial " << trial.name << ": joint=" << joint_name
+                  << ", dof=" << dof_index << ", normative=" << normative_deg << "°"
+                  << ", muscles=" << tracked_muscles.size());
+    }
+
+    if (trial_names.empty()) {
+        LOG_ERROR("No valid trials processed");
+        return 1;
+    }
+
+    // Collect all muscle names across trials
+    std::set<std::string> all_muscles_set;
+    for (const auto& muscles : trial_muscles) {
+        all_muscles_set.insert(muscles.begin(), muscles.end());
+    }
+    std::vector<std::string> all_muscles(all_muscles_set.begin(), all_muscles_set.end());
+    std::sort(all_muscles.begin(), all_muscles.end());
+
+    // Print table header
+    std::cout << "\n";
+    std::cout << std::left << std::setw(28) << "muscle_name";
+    for (const auto& name : trial_names) {
+        // Shorten trial name if too long
+        std::string short_name = name.length() > 15 ? name.substr(0, 12) + "..." : name;
+        std::cout << std::setw(22) << (short_name + " (torque)");
+        std::cout << std::setw(22) << (short_name + " (lm_norm)");
+    }
+    std::cout << "\n";
+
+    // Print separator
+    int total_width = 28 + trial_names.size() * 44;
+    std::cout << std::string(total_width, '-') << "\n";
+
+    // Print each muscle row
+    int printed_count = 0;
+    for (const auto& muscle_name : all_muscles) {
+        // Check if any column has significant change
+        bool has_significant_change = false;
+        std::vector<std::string> torque_cols;
+        std::vector<std::string> length_cols;
+
+        for (size_t t = 0; t < trial_names.size(); ++t) {
+            auto& zero_data = zero_data_list[t];
+            auto& norm_data = norm_data_list[t];
+            auto& muscles = trial_muscles[t];
+
+            // Check if this muscle is tracked for this trial
+            bool in_trial = std::find(muscles.begin(), muscles.end(), muscle_name) != muscles.end();
+
+            if (in_trial && zero_data.count(muscle_name) && norm_data.count(muscle_name)) {
+                double jtp_zero = zero_data[muscle_name].jtp_dof;
+                double jtp_norm = norm_data[muscle_name].jtp_dof;
+                double lm_zero = zero_data[muscle_name].lm_norm;
+                double lm_norm = norm_data[muscle_name].lm_norm;
+
+                double delta_jtp = std::abs(jtp_norm - jtp_zero);
+                double delta_lm = std::abs(lm_norm - lm_zero);
+
+                // Format torque column
+                std::ostringstream torque_ss;
+                if (delta_jtp > torque_threshold) {
+                    has_significant_change = true;
+                    torque_ss << std::fixed << std::setprecision(2)
+                              << jtp_zero << " -> " << jtp_norm;
+                } else {
+                    torque_ss << "-";
+                }
+                torque_cols.push_back(torque_ss.str());
+
+                // Format length column
+                std::ostringstream length_ss;
+                if (delta_lm > length_threshold) {
+                    has_significant_change = true;
+                    length_ss << std::fixed << std::setprecision(3)
+                              << lm_zero << " -> " << lm_norm;
+                } else {
+                    length_ss << "-";
+                }
+                length_cols.push_back(length_ss.str());
+            } else {
+                torque_cols.push_back("-");
+                length_cols.push_back("-");
+            }
+        }
+
+        // Skip muscle if no significant change (unless verbose)
+        if (!verbose && !has_significant_change) {
+            continue;
+        }
+
+        // Print muscle row
+        std::cout << std::left << std::setw(28) << muscle_name;
+        for (size_t t = 0; t < trial_names.size(); ++t) {
+            std::cout << std::setw(22) << torque_cols[t];
+            std::cout << std::setw(22) << length_cols[t];
+        }
+        std::cout << "\n";
+        printed_count++;
+    }
+
+    std::cout << "\n";
+    std::cout << "Printed " << printed_count << "/" << all_muscles.size() << " muscles";
+    if (!verbose) {
+        std::cout << " (use -v to show all)";
+    }
+    std::cout << "\n";
+    std::cout << "Thresholds: torque=" << torque_threshold << " Nm, length=" << length_threshold << "\n";
+
+    return 0;
+}
+
 // setCamera(), render(), mainLoop() removed - handled by ViewerAppBase::startLoop()
 
 void PhysicalExam::drawLeftPanel() {

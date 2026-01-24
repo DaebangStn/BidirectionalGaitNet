@@ -1251,14 +1251,30 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::SameLine();
         if (ImGui::Button("Default")) applyDefaultROMValues();
 
-        ImGui::Text("ROM Trials: %zu found", mROMTrials.size());
+        // Count selected and filtered trials
+        size_t selectedCount = 0;
+        size_t filteredCount = 0;
+        for (const auto& trial : mROMTrials) {
+            bool visible = (strlen(mROMFilter) == 0 || trial.name.find(mROMFilter) != std::string::npos);
+            if (visible) {
+                filteredCount++;
+                if (trial.selected) selectedCount++;
+            }
+        }
+        ImGui::Text("ROM Trials: %zu / %zu selected", selectedCount, filteredCount);
         ImGui::SameLine();
         if (ImGui::SmallButton("All")) {
-            for (auto& trial : mROMTrials) trial.selected = true;
+            for (auto& trial : mROMTrials) {
+                bool visible = (strlen(mROMFilter) == 0 || trial.name.find(mROMFilter) != std::string::npos);
+                if (visible) trial.selected = true;
+            }
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("None")) {
-            for (auto& trial : mROMTrials) trial.selected = false;
+            for (auto& trial : mROMTrials) {
+                bool visible = (strlen(mROMFilter) == 0 || trial.name.find(mROMFilter) != std::string::npos);
+                if (visible) trial.selected = false;
+            }
         }
         ImGui::InputText("Filter##ROM", mROMFilter, sizeof(mROMFilter));
 
@@ -2503,34 +2519,77 @@ void MusclePersonalizerApp::runContractureEstimation()
 
     LOG_INFO("[MusclePersonalizer] Running optimization with results capture..." );
 
-    // Run optimization with comprehensive results capture
-    mContractureOptResult = optimizer.optimizeWithResults(mExecutor->getCharacter(), configs, optConfig);
+    // Use tiered optimization if available (dual-tier: search groups + optimization groups)
+    if (optimizer.hasTieredGroups()) {
+        LOG_INFO("[MusclePersonalizer] Using tiered optimization (search + optimization groups)" );
+        mTieredContractureResult = optimizer.optimizeWithTieredResults(mExecutor->getCharacter(), configs, optConfig);
 
-    if (!mContractureOptResult.has_value() || mContractureOptResult->group_results.empty()) {
-        LOG_WARN("[MusclePersonalizer] Optimization returned no results" );
-        mContractureOptResult = std::nullopt;
-        return;
+        if (!mTieredContractureResult.has_value() || mTieredContractureResult->opt_group_results.empty()) {
+            LOG_WARN("[MusclePersonalizer] Tiered optimization returned no results" );
+            mTieredContractureResult = std::nullopt;
+            return;
+        }
+
+        // Convert to local result type for backwards compatibility
+        mGroupResults.clear();
+        for (const auto& optResult : mTieredContractureResult->opt_group_results) {
+            MuscleGroupResult result;
+            result.group_name = optResult.group_name;
+            result.muscle_names = optResult.muscle_names;
+            result.ratio = optResult.ratio;
+            result.lm_contract_values = optResult.lm_contract_values;
+            mGroupResults.push_back(result);
+        }
+
+        // Reset selection indices for visualization tab
+        mContractureSelectedGroupIdx = mTieredContractureResult->opt_group_results.empty() ? -1 : 0;
+        mContractureSelectedTrialIdx = mTieredContractureResult->trial_results.empty() ? -1 : 0;
+        mGridSearchSelectedGroup = mTieredContractureResult->search_group_results.empty() ? -1 : 0;
+        mContractureSubTab = 0;  // Start with Grid Search tab
+
+        // Also set mContractureOptResult for legacy code compatibility
+        mContractureOptResult = PMuscle::ContractureOptResult();
+        mContractureOptResult->group_results = mTieredContractureResult->opt_group_results;
+        mContractureOptResult->muscle_results = mTieredContractureResult->muscle_results;
+        mContractureOptResult->trial_results = mTieredContractureResult->trial_results;
+
+        LOG_INFO("[MusclePersonalizer] Tiered optimization complete: "
+                  << mTieredContractureResult->search_group_results.size() << " search groups, "
+                  << mTieredContractureResult->opt_group_results.size() << " opt groups, "
+                  << mTieredContractureResult->muscle_results.size() << " muscles" );
+    } else {
+        // Fall back to standard optimization
+        LOG_INFO("[MusclePersonalizer] Using standard optimization (no tiered groups)" );
+        mTieredContractureResult = std::nullopt;
+
+        mContractureOptResult = optimizer.optimizeWithResults(mExecutor->getCharacter(), configs, optConfig);
+
+        if (!mContractureOptResult.has_value() || mContractureOptResult->group_results.empty()) {
+            LOG_WARN("[MusclePersonalizer] Optimization returned no results" );
+            mContractureOptResult = std::nullopt;
+            return;
+        }
+
+        // Convert to local result type for backwards compatibility
+        mGroupResults.clear();
+        for (const auto& optResult : mContractureOptResult->group_results) {
+            MuscleGroupResult result;
+            result.group_name = optResult.group_name;
+            result.muscle_names = optResult.muscle_names;
+            result.ratio = optResult.ratio;
+            result.lm_contract_values = optResult.lm_contract_values;
+            mGroupResults.push_back(result);
+        }
+
+        // Reset selection indices for visualization tab
+        mContractureSelectedGroupIdx = mContractureOptResult->group_results.empty() ? -1 : 0;
+        mContractureSelectedTrialIdx = mContractureOptResult->trial_results.empty() ? -1 : 0;
+
+        LOG_INFO("[MusclePersonalizer] Standard optimization complete: "
+                  << mGroupResults.size() << " groups, "
+                  << mContractureOptResult->muscle_results.size() << " muscles, "
+                  << mContractureOptResult->trial_results.size() << " trials" );
     }
-
-    // Convert to local result type for backwards compatibility
-    mGroupResults.clear();
-    for (const auto& optResult : mContractureOptResult->group_results) {
-        MuscleGroupResult result;
-        result.group_name = optResult.group_name;
-        result.muscle_names = optResult.muscle_names;
-        result.ratio = optResult.ratio;
-        result.lm_contract_values = optResult.lm_contract_values;
-        mGroupResults.push_back(result);
-    }
-
-    // Reset selection indices for visualization tab
-    mContractureSelectedGroupIdx = mContractureOptResult->group_results.empty() ? -1 : 0;
-    mContractureSelectedTrialIdx = mContractureOptResult->trial_results.empty() ? -1 : 0;
-
-    LOG_INFO("[MusclePersonalizer] Contracture estimation complete: "
-              << mGroupResults.size() << " groups, "
-              << mContractureOptResult->muscle_results.size() << " muscles, "
-              << mContractureOptResult->trial_results.size() << " trials" );
 }
 
 // ============================================================
@@ -2928,6 +2987,203 @@ void MusclePersonalizerApp::drawContractureResultsTab()
         return;
     }
 
+    // Check if we have tiered results (dual-tier: search groups + optimization groups)
+    bool hasTiered = mTieredContractureResult.has_value() && mTieredContractureResult->used_tiered;
+
+    if (hasTiered) {
+        // Show sub-tabs for tiered results
+        if (ImGui::BeginTabBar("ContractureSubTabs")) {
+            if (ImGui::BeginTabItem("Grid Search")) {
+                mContractureSubTab = 0;
+                drawGridSearchSubTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Optimization")) {
+                mContractureSubTab = 1;
+                drawOptimizationSubTab();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    } else {
+        // Legacy view (non-tiered)
+        drawLegacyContractureView();
+    }
+}
+
+
+void MusclePersonalizerApp::drawGridSearchSubTab()
+{
+    if (!mTieredContractureResult.has_value()) return;
+
+    const auto& result = mTieredContractureResult.value();
+
+    // ===== Search Group Selector =====
+    ImGui::Text("Search Groups (%zu)", result.search_group_results.size());
+
+    if (ImGui::BeginListBox("##SearchGroupList", ImVec2(-FLT_MIN, 120))) {
+        for (size_t i = 0; i < result.search_group_results.size(); ++i) {
+            const auto& sr = result.search_group_results[i];
+            bool selected = (mGridSearchSelectedGroup == static_cast<int>(i));
+            char label[128];
+            snprintf(label, sizeof(label), "%s (ratio=%.3f, err=%.1f)",
+                     sr.search_group_name.c_str(), sr.ratio, sr.best_error);
+            if (ImGui::Selectable(label, selected)) {
+                mGridSearchSelectedGroup = static_cast<int>(i);
+            }
+        }
+        ImGui::EndListBox();
+    }
+
+    ImGui::Separator();
+
+    // ===== Error Curve Plot for Selected Search Group =====
+    if (mGridSearchSelectedGroup >= 0 &&
+        mGridSearchSelectedGroup < static_cast<int>(result.search_group_results.size())) {
+
+        const auto& sr = result.search_group_results[mGridSearchSelectedGroup];
+
+        ImGui::Text("Error Curve: %s", sr.search_group_name.c_str());
+        ImGui::Text("Best: ratio=%.3f, error=%.2f", sr.ratio, sr.best_error);
+
+        // Show child optimization groups
+        if (!sr.opt_group_names.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Child opt groups:");
+            for (const auto& name : sr.opt_group_names) {
+                ImGui::BulletText("%s", name.c_str());
+            }
+        }
+
+        ImGui::Spacing();
+
+        // Plot error vs ratio
+        if (!sr.ratios.empty() && sr.ratios.size() == sr.errors.size()) {
+            // Find min/max for scaling
+            double minErr = *std::min_element(sr.errors.begin(), sr.errors.end());
+            double maxErr = *std::max_element(sr.errors.begin(), sr.errors.end());
+            double minRatio = sr.ratios.front();
+            double maxRatio = sr.ratios.back();
+            double bestErr = (sr.best_idx >= 0 && sr.best_idx < static_cast<int>(sr.errors.size()))
+                             ? sr.errors[sr.best_idx] : minErr;
+
+            // Y-limit mode radio buttons
+            ImGui::RadioButton("Near Best", &mErrorPlotYLimMode, 0); ImGui::SameLine();
+            ImGui::RadioButton("Overview", &mErrorPlotYLimMode, 1); ImGui::SameLine();
+            ImGui::RadioButton("Draggable", &mErrorPlotYLimMode, 2);
+
+            if (ImPlot::BeginPlot("##ErrorCurve", ImVec2(-1, mPlotHeight))) {
+                ImPlot::SetupAxes("Ratio", "Squared Error");
+
+                // Set y-limits based on mode
+                if (mErrorPlotYLimMode == 0) {
+                    // Near best: 0.9*best ~ 3*best
+                    ImPlot::SetupAxesLimits(minRatio - 0.05, maxRatio + 0.05,
+                                            bestErr * 0.9, bestErr * 3.0, ImPlotCond_Always);
+                } else if (mErrorPlotYLimMode == 1) {
+                    // Overview: full range capped at 1e4
+                    ImPlot::SetupAxesLimits(minRatio - 0.05, maxRatio + 0.05,
+                                            minErr * 0.9, std::min(maxErr * 1.1, 1e4), ImPlotCond_Always);
+                } else {
+                    // Draggable: x fixed, y draggable
+                    ImPlot::SetupAxisLimits(ImAxis_X1, minRatio - 0.05, maxRatio + 0.05, ImPlotCond_Always);
+                    ImPlot::SetupAxisLimits(ImAxis_Y1, minErr * 0.9, std::min(maxErr * 1.1, 1e4), ImPlotCond_Once);
+                }
+
+                // Plot error curve
+                ImPlot::PlotLine("Error", sr.ratios.data(), sr.errors.data(),
+                                static_cast<int>(sr.ratios.size()));
+
+                // Mark best point
+                if (sr.best_idx >= 0 && sr.best_idx < static_cast<int>(sr.ratios.size())) {
+                    double bx = sr.ratios[sr.best_idx];
+                    double by = sr.errors[sr.best_idx];
+                    ImPlot::SetNextMarkerStyle(ImPlotMarker_Diamond, 8, ImVec4(1, 0.3f, 0.3f, 1), 2);
+                    ImPlot::PlotScatter("Best", &bx, &by, 1);
+                }
+
+                ImPlot::EndPlot();
+            }
+        }
+    }
+}
+
+
+void MusclePersonalizerApp::drawOptimizationSubTab()
+{
+    if (!mTieredContractureResult.has_value()) return;
+
+    const auto& result = mTieredContractureResult.value();
+
+    // This is similar to the legacy view but shows opt_group_results
+    // ===== Selectors Section =====
+    if (ImGui::TreeNodeEx("Optimization Groups", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Count entries outside grid search boundary
+        int outsideBoundaryCount = 0;
+        for (const auto& grp : result.opt_group_results) {
+            if (grp.ratio < mContractureGridBegin || grp.ratio > mContractureGridEnd) {
+                outsideBoundaryCount++;
+            }
+        }
+
+        ImGui::Text("Opt Groups (%zu)", result.opt_group_results.size());
+        if (outsideBoundaryCount > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[%d outside grid %.2f~%.2f]",
+                outsideBoundaryCount, mContractureGridBegin, mContractureGridEnd);
+        }
+        ImGui::InputTextWithHint("##optGrpFilter", "Filter...",
+            mContractureGroupFilter, sizeof(mContractureGroupFilter));
+
+        // Create sorted indices by |ratio - 1| descending
+        std::vector<size_t> sortedIndices(result.opt_group_results.size());
+        std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+        std::sort(sortedIndices.begin(), sortedIndices.end(),
+            [&result](size_t a, size_t b) {
+                double devA = std::abs(result.opt_group_results[a].ratio - 1.0);
+                double devB = std::abs(result.opt_group_results[b].ratio - 1.0);
+                return devA > devB;
+            });
+
+        if (ImGui::BeginListBox("##OptGroupList", ImVec2(-FLT_MIN, 100))) {
+            for (size_t idx : sortedIndices) {
+                const auto& grp = result.opt_group_results[idx];
+                if (strlen(mContractureGroupFilter) > 0 &&
+                    grp.group_name.find(mContractureGroupFilter) == std::string::npos)
+                    continue;
+
+                bool selected = (mContractureSelectedGroupIdx == static_cast<int>(idx));
+                bool outsideBoundary = (grp.ratio < mContractureGridBegin || grp.ratio > mContractureGridEnd);
+                char label[128];
+                if (outsideBoundary) {
+                    snprintf(label, sizeof(label), "[!] %s (%.3f)", grp.group_name.c_str(), grp.ratio);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+                } else {
+                    snprintf(label, sizeof(label), "%s (%.3f)", grp.group_name.c_str(), grp.ratio);
+                }
+                if (ImGui::Selectable(label, selected)) {
+                    mContractureSelectedGroupIdx = static_cast<int>(idx);
+                }
+                if (outsideBoundary) {
+                    ImGui::PopStyleColor();
+                }
+            }
+            ImGui::EndListBox();
+        }
+        ImGui::TreePop();
+    }
+
+    ImGui::Separator();
+
+    // Use the legacy view for the rest (charts, etc.) - it uses mContractureOptResult
+    // which was populated to match opt_group_results
+    drawLegacyContractureView();
+}
+
+
+void MusclePersonalizerApp::drawLegacyContractureView()
+{
+    if (!mContractureOptResult.has_value()) return;
+
     const auto& result = mContractureOptResult.value();
 
     // ===== Selectors Section (collapsible) =====
@@ -2971,17 +3227,37 @@ void MusclePersonalizerApp::drawContractureResultsTab()
         ImGui::InputTextWithHint("##trialFilter", "Filter...",
             mContractureTrialFilter, sizeof(mContractureTrialFilter));
 
-        if (ImGui::BeginListBox("##TrialList", ImVec2(-FLT_MIN, 100))) {
+        if (ImGui::BeginListBox("##TrialList", ImVec2(-FLT_MIN, 150))) {
             for (size_t i = 0; i < result.trial_results.size(); ++i) {
                 const auto& trial = result.trial_results[i];
                 if (strlen(mContractureTrialFilter) > 0 &&
                     trial.trial_name.find(mContractureTrialFilter) == std::string::npos)
                     continue;
 
+                // Calculate error reduction rate
+                double err_before = std::abs(trial.computed_torque_before - trial.observed_torque);
+                double err_after = std::abs(trial.computed_torque_after - trial.observed_torque);
+                double reduction_rate = (err_before > 1e-9) ? (1.0 - err_after / err_before) * 100.0 : 0.0;
+
+                // Color based on reduction rate: green (>50%), yellow (0-50%), red (<0%)
+                ImVec4 color;
+                if (reduction_rate > 50.0) {
+                    color = ImVec4(0.2f, 0.9f, 0.2f, 1.0f);  // Green
+                } else if (reduction_rate > 0.0) {
+                    color = ImVec4(0.9f, 0.9f, 0.2f, 1.0f);  // Yellow
+                } else {
+                    color = ImVec4(0.9f, 0.2f, 0.2f, 1.0f);  // Red
+                }
+
                 bool selected = (mContractureSelectedTrialIdx == static_cast<int>(i));
-                if (ImGui::Selectable(trial.trial_name.c_str(), selected)) {
+                char label[256];
+                snprintf(label, sizeof(label), "%s (%.1f%%)", trial.trial_name.c_str(), reduction_rate);
+
+                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                if (ImGui::Selectable(label, selected)) {
                     mContractureSelectedTrialIdx = static_cast<int>(i);
                 }
+                ImGui::PopStyleColor();
             }
             ImGui::EndListBox();
         }

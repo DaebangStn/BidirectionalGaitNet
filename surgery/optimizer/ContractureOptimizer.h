@@ -146,6 +146,38 @@ struct GridSearch1DResult {
     double best_error = 0.0;
 };
 
+
+/**
+ * @brief Simple grid search result for a single muscle group
+ *
+ * Used by simpleGridSearch() for standalone CLI-based optimization.
+ */
+struct SimpleSearchResult {
+    std::string group_name;
+    double best_ratio = 1.0;
+    double best_error = 0.0;
+    // Per-trial torque contributions (for display)
+    std::vector<std::string> trial_names;      // Trial names (for column headers)
+    std::vector<double> torques_before;        // One per trial
+    std::vector<double> torques_after;         // One per trial
+};
+
+/**
+ * @brief Result for a search group (coarse, grid search level)
+ *
+ * Represents the grid search result for a coarse search group that may
+ * contain multiple finer optimization groups.
+ */
+struct SearchGroupResult {
+    std::string search_group_name;               // e.g., "hip_abductor_l"
+    std::vector<std::string> opt_group_names;    // Child groups, e.g., ["gluteus_medius_l", ...]
+    double ratio;                                // Best grid search ratio
+    double best_error;                           // Squared error at best ratio
+    std::vector<double> ratios;                  // All tested ratios
+    std::vector<double> errors;                  // Error at each ratio
+    int best_idx = -1;                           // Index of best ratio
+};
+
 /**
  * @brief Comprehensive contracture optimization result
  */
@@ -157,6 +189,24 @@ struct ContractureOptResult {
     int iterations = 0;
     double final_cost = 0.0;
     bool converged = false;
+};
+
+/**
+ * @brief Extended result with dual-tier grouping information
+ *
+ * Contains both search group (coarse) and optimization group (fine) results.
+ * Search groups are used for grid search initialization; optimization groups
+ * are used for Ceres optimization with finer control.
+ */
+struct TieredContractureOptResult {
+    std::vector<SearchGroupResult> search_group_results;   // Grid search (coarse)
+    std::vector<MuscleGroupResult> opt_group_results;      // Ceres optimization (fine)
+    std::vector<MuscleContractureResult> muscle_results;
+    std::vector<TrialTorqueResult> trial_results;
+    int iterations = 0;
+    double final_cost = 0.0;
+    bool converged = false;
+    bool used_tiered = false;  // True if tiered grouping was actually used
 };
 
 /**
@@ -240,6 +290,33 @@ public:
      */
     bool hasGroups() const { return !mMuscleGroups.empty(); }
 
+    /**
+     * @brief Check if tiered grouping (search + optimization) is configured
+     *
+     * @return true if search_groups and optimization_groups were loaded
+     */
+    bool hasTieredGroups() const { return !mSearchToOptGroups.empty(); }
+
+    /**
+     * @brief Get optimization group names
+     */
+    const std::map<int, std::string>& getOptGroupNames() const { return mOptGroupNames; }
+
+    /**
+     * @brief Get search group names
+     */
+    const std::map<int, std::string>& getSearchGroupNames() const { return mSearchGroupNames; }
+
+    /**
+     * @brief Get search to optimization group mapping
+     */
+    const std::map<int, std::vector<int>>& getSearchToOptGroups() const { return mSearchToOptGroups; }
+
+    /**
+     * @brief Get captured search group results (from last optimization)
+     */
+    const std::vector<SearchGroupResult>& getSearchGroupResults() const { return mSearchGroupResults; }
+
     // ========== ROM Configuration ==========
 
     /**
@@ -307,6 +384,46 @@ public:
     ContractureOptResult optimizeWithResults(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
+        const Config& config = Config()
+    );
+
+    /**
+     * @brief Run contracture optimization with dual-tier grouping
+     *
+     * Uses search groups for grid search initialization, then optimization groups
+     * for Ceres fine-tuning. Each optimization group inherits its parent search
+     * group's best ratio as initial value.
+     *
+     * Falls back to single-tier optimization if tiered grouping is not configured.
+     *
+     * @param character Character with muscles to optimize
+     * @param rom_configs ROM trial configurations
+     * @param config Optimization configuration
+     * @return Extended result with search and optimization group information
+     */
+    TieredContractureOptResult optimizeWithTieredResults(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const Config& config = Config()
+    );
+
+    /**
+     * @brief Simple joint grid search across specified groups and all trials
+     *
+     * Performs N-dimensional grid search over all specified groups jointly,
+     * minimizing total squared error across all trials. This is a standalone
+     * method for CLI usage without the full optimization pipeline.
+     *
+     * @param character Character with muscles
+     * @param rom_configs All ROM trials to evaluate
+     * @param group_names List of muscle group names to search (from optimization_groups)
+     * @param config Search configuration (gridSearchBegin/End/Interval)
+     * @return Vector of SimpleSearchResult (one per group)
+     */
+    std::vector<SimpleSearchResult> simpleGridSearch(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const std::vector<std::string>& group_names,
         const Config& config = Config()
     );
 
@@ -468,6 +585,35 @@ private:
         const std::map<int, double>& lm_contract_before,
         std::vector<MuscleGroupResult>& group_results) const;
 
+    // ========== Tiered Optimization Helpers ==========
+
+    // Run grid search on search groups (coarse level)
+    // Returns vector of SearchGroupResult with error curves per search group
+    std::vector<SearchGroupResult> runSearchGroupGridSearch(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const std::vector<PoseData>& pose_data,
+        const std::map<int, double>& base_lm_contract,
+        const Config& config);
+
+    // Initialize optimization group ratios from search group results
+    // Each opt group inherits its parent search group's best ratio
+    std::vector<double> initOptGroupRatiosFromSearch(
+        const std::vector<SearchGroupResult>& search_results);
+
+    // Run Ceres optimization on optimization groups (fine level)
+    // Returns vector of MuscleGroupResult per opt group
+    std::vector<MuscleGroupResult> runOptGroupCeresOptimization(
+        Character* character,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const std::vector<PoseData>& pose_data,
+        const std::map<int, double>& base_lm_contract,
+        const std::vector<double>& initial_x,
+        const Config& config);
+
+    // Find search group ID by name
+    int findSearchGroupIdByName(const std::string& name) const;
+
     // ========== Pre-Optimization Helpers ==========
 
     /**
@@ -520,6 +666,23 @@ private:
     std::map<int, std::string> mGroupNames;          // group_id -> group name
     std::vector<GridSearchMapping> mGridSearchMapping;  // trial-to-groups mapping for grid search
     std::vector<GridSearch1DResult> mGridSearch1DResults;  // Captured 1D grid search results
+
+    // ========== Tiered Grouping (dual-tier: search + optimization) ==========
+    // Populated if search_groups and optimization_groups sections exist in YAML
+
+    // Search groups (coarse, for grid search)
+    std::map<int, std::vector<int>> mSearchGroups;      // search_id -> muscle indices (all muscles in search group)
+    std::map<int, std::string> mSearchGroupNames;       // search_id -> search group name
+    std::map<int, std::vector<int>> mSearchToOptGroups; // search_id -> [opt_ids] (children)
+
+    // Optimization groups (fine, for Ceres)
+    std::map<int, std::vector<int>> mOptGroups;         // opt_id -> muscle indices
+    std::map<int, std::string> mOptGroupNames;          // opt_id -> opt group name
+    std::map<int, int> mOptToSearchGroup;               // opt_id -> search_id (parent)
+    std::map<std::string, int> mOptNameToId;            // opt_name -> opt_id (lookup helper)
+
+    // Captured search group results (for UI visualization)
+    std::vector<SearchGroupResult> mSearchGroupResults;
 };
 
 } // namespace PMuscle

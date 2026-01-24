@@ -32,6 +32,4 @@ clinical_data:
   joint: ankle
   field: plantarflexion
   cutoff: 60
-  neg: true
-
-  
+  neg: false

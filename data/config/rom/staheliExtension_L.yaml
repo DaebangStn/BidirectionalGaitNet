@@ -21,8 +21,8 @@ torque_cutoff: 15.0
 # 4. Exam sweep parameters (for PhysicalExam)
 exam:
   alias: "hip/staheli_extension/left"
-  angle_min: -40
-  angle_max: 10
+  angle_min: -30
+  angle_max: 30
   num_steps: 100
   normative: 18.6
 
@@ -31,6 +31,4 @@ clinical_data:
   side: left
   joint: hip
   field: extension_staheli
-  neg: true
-
-  
+  neg: false

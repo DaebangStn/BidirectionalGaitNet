@@ -1,28 +1,44 @@
-# Dual-tier muscle groups configuration for contracture optimization
+# Detailed muscle groups configuration for contracture optimization
+# Hip muscles separated into individual groups; non-hip groups unchanged
 # ============ SEARCH GROUPS (coarse, for grid search) ============
-# Maps search group name → list of optimization group names
-# By default all 1:1 mappings. Add subdivisions manually as needed.
-# Example subdivision:
-#   hip_abductor_l: [gluteus_medius_l, gluteus_minimus_l, tfl_l]
 search_groups:
-  hip_flexor_l: [iliopsoas_l, rectus_femoris_biart_l, sartorius_biart_l]
-  hip_flexor_r: [iliopsoas_r, rectus_femoris_biart_r, sartorius_biart_r]
-  hip_extensor_l: [hip_extensor_l]
-  hip_extensor_r: [hip_extensor_r]
-  hip_lateral_rotator_l: [hip_lateral_rotator_l]
-  hip_lateral_rotator_r: [hip_lateral_rotator_r]
+  # Hip Flexors - separated by muscle
+  iliopsoas_l: [psoas_major_l, iliacus_l]
+  iliopsoas_r: [psoas_major_r, iliacus_r]
+  rectus_femoris_biart_l: [rectus_femoris_biart_l]
+  rectus_femoris_biart_r: [rectus_femoris_biart_r]
+  sartorius_biart_l: [sartorius_biart_l]
+  sartorius_biart_r: [sartorius_biart_r]
+
+  # Hip Extensors - separated
+  hip_extensor_l: [gluteus_maximus_l]
+  hip_extensor_r: [gluteus_maximus_r]
+
+  # Hip Lateral Rotators - separated by muscle
+  hip_lateral_rotator_l: [quadratus_femoris_l, obturator_externus_l, obturator_internus_l, piriformis_l, gemellus_l]
+  hip_lateral_rotator_r: [quadratus_femoris_r, obturator_externus_r, obturator_internus_r, piriformis_r, gemellus_r]
+
+  # Hip Abductors - already detailed in original
   hip_abductor_l: [glt_minimus_l, gluteus_medius0_l, gluteus_medius1_l, gluteus_medius2_l, gluteus_medius3_l, tfl_l]
   hip_abductor_r: [glt_minimus_r, gluteus_medius0_r, gluteus_medius1_r, gluteus_medius2_r, gluteus_medius3_r, tfl_r]
-  hip_adductor_l: [hip_adductor_l]
-  hip_adductor_r: [hip_adductor_r]
+
+  # Hip Adductors - separated by muscle
+  hip_adductor_l: [adductor_longus_l, adductor_brevis_l, adductor_magnus_l, pectineus_l]
+  hip_adductor_r: [adductor_longus_r, adductor_brevis_r, adductor_magnus_r, pectineus_r]
+
+  # Hamstrings (Hip-Knee Biarticular) - separated by muscle
+  hamstring_biart_l: [bicep_femoris_longus_l, semitendinosus_l, semimembranosus_l]
+  hamstring_biart_r: [bicep_femoris_longus_r, semitendinosus_r, semimembranosus_r]
+
+  # Gracilis (Hip-Knee Biarticular)
+  gracilis_biart_l: [gracilis_biart_l]
+  gracilis_biart_r: [gracilis_biart_r]
+
+  # ============ NON-HIP GROUPS (unchanged from original) ============
   knee_extensor_l: [knee_extensor_l]
   knee_extensor_r: [knee_extensor_r]
   knee_flexor_l: [knee_flexor_l]
   knee_flexor_r: [knee_flexor_r]
-  hamstring_biart_l: [hamstring_biart_l]
-  hamstring_biart_r: [hamstring_biart_r]
-  gracilis_biart_l: [gracilis_biart_l]
-  gracilis_biart_r: [gracilis_biart_r]
   knee_ankle_biart_l: [knee_ankle_biart_l]
   knee_ankle_biart_r: [knee_ankle_biart_r]
   plantarflexor_l: [plantarflexor_l]
@@ -31,60 +47,79 @@ search_groups:
   dorsiflexor_r: [dorsiflexor_r]
 
 # ============ OPTIMIZATION GROUPS (fine, for Ceres) ============
-# Original grouping - same as before
 optimization_groups:
-  # ============ HIP FLEXORS ============
-  iliopsoas_l:
+  # ============ HIP FLEXORS - SEPARATED ============
+  psoas_major_l:
     - L_Psoas_Major
     - L_Psoas_Major1
     - L_Psoas_Major2
+
+  psoas_major_r:
+    - R_Psoas_Major
+    - R_Psoas_Major1
+    - R_Psoas_Major2
+
+  iliacus_l:
     - L_iliacus
     - L_iliacus1
     - L_iliacus2
 
-  iliopsoas_r:
-    - R_Psoas_Major
-    - R_Psoas_Major1
-    - R_Psoas_Major2
+  iliacus_r:
     - R_iliacus
     - R_iliacus1
     - R_iliacus2
 
   # ============ HIP EXTENSORS ============
-  hip_extensor_l:
+  gluteus_maximus_l:
     - L_Gluteus_Maximus
     - L_Gluteus_Maximus1
     - L_Gluteus_Maximus2
     - L_Gluteus_Maximus3
     - L_Gluteus_Maximus4
 
-  hip_extensor_r:
+  gluteus_maximus_r:
     - R_Gluteus_Maximus
     - R_Gluteus_Maximus1
     - R_Gluteus_Maximus2
     - R_Gluteus_Maximus3
     - R_Gluteus_Maximus4
 
-  # ============ HIP LATERAL ROTATORS ============
-  hip_lateral_rotator_l:
+  # ============ HIP LATERAL ROTATORS - SEPARATED ============
+  quadratus_femoris_l:
     - L_Quadratus_Femoris
+
+  quadratus_femoris_r:
+    - R_Quadratus_Femoris
+
+  obturator_externus_l:
     - L_Obturator_Externus
+
+  obturator_externus_r:
+    - R_Obturator_Externus
+
+  obturator_internus_l:
     - L_Obturator_Internus
+
+  obturator_internus_r:
+    - R_Obturator_Internus
+
+  piriformis_l:
     - L_Piriformis
     - L_Piriformis1
+
+  piriformis_r:
+    - R_Piriformis
+    - R_Piriformis1
+
+  gemellus_l:
     - L_Superior_Gemellus
     - L_Inferior_Gemellus
 
-  hip_lateral_rotator_r:
-    - R_Quadratus_Femoris
-    - R_Obturator_Externus
-    - R_Obturator_Internus
-    - R_Piriformis
-    - R_Piriformis1
+  gemellus_r:
     - R_Superior_Gemellus
     - R_Inferior_Gemellus
 
-  # ============ HIP ABDUCTORS ============
+  # ============ HIP ABDUCTORS (already detailed) ============
   glt_minimus_l:
     - L_Gluteus_Minimus
     - L_Gluteus_Minimus1
@@ -129,71 +164,61 @@ optimization_groups:
     - R_Tensor_Fascia_Lata1
     - R_Tensor_Fascia_Lata2
 
-  # ============ HIP ADDUCTORS ============
-  hip_adductor_l:
+  # ============ HIP ADDUCTORS - SEPARATED ============
+  adductor_longus_l:
     - L_Adductor_Longus
     - L_Adductor_Longus1
+
+  adductor_longus_r:
+    - R_Adductor_Longus
+    - R_Adductor_Longus1
+
+  adductor_brevis_l:
     - L_Adductor_Brevis
     - L_Adductor_Brevis1
+
+  adductor_brevis_r:
+    - R_Adductor_Brevis
+    - R_Adductor_Brevis1
+
+  adductor_magnus_l:
     - L_Adductor_Magnus
     - L_Adductor_Magnus1
     - L_Adductor_Magnus2
     - L_Adductor_Magnus3
     - L_Adductor_Magnus4
-    - L_Pectineus
 
-  hip_adductor_r:
-    - R_Adductor_Longus
-    - R_Adductor_Longus1
-    - R_Adductor_Brevis
-    - R_Adductor_Brevis1
+  adductor_magnus_r:
     - R_Adductor_Magnus
     - R_Adductor_Magnus1
     - R_Adductor_Magnus2
     - R_Adductor_Magnus3
     - R_Adductor_Magnus4
+
+  pectineus_l:
+    - L_Pectineus
+
+  pectineus_r:
     - R_Pectineus
 
-  # ============ KNEE EXTENSORS ============
-  knee_extensor_l:
-    - L_Vastus_Medialis
-    - L_Vastus_Medialis1
-    - L_Vastus_Medialis2
-    - L_Vastus_Intermedius
-    - L_Vastus_Intermedius1
-    - L_Vastus_Lateralis
-    - L_Vastus_Lateralis1
-
-  knee_extensor_r:
-    - R_Vastus_Medialis
-    - R_Vastus_Medialis1
-    - R_Vastus_Medialis2
-    - R_Vastus_Intermedius
-    - R_Vastus_Intermedius1
-    - R_Vastus_Lateralis
-    - R_Vastus_Lateralis1
-
-  # ============ KNEE FLEXORS ============
-  knee_flexor_l:
-    - L_Bicep_Femoris_Short
-    - L_Bicep_Femoris_Short1
-    - L_Popliteus
-
-  knee_flexor_r:
-    - R_Bicep_Femoris_Short
-    - R_Bicep_Femoris_Short1
-    - R_Popliteus
-
-  # ============ HIP-KNEE BIARTICULAR: HAMSTRINGS ============
-  hamstring_biart_l:
+  # ============ HAMSTRINGS (HIP-KNEE BIARTICULAR) - SEPARATED ============
+  bicep_femoris_longus_l:
     - L_Bicep_Femoris_Longus
+
+  bicep_femoris_longus_r:
+    - R_Bicep_Femoris_Longus
+
+  semitendinosus_l:
     - L_Semitendinosus
+
+  semitendinosus_r:
+    - R_Semitendinosus
+
+  semimembranosus_l:
     - L_Semimembranosus
     - L_Semimembranosus1
 
-  hamstring_biart_r:
-    - R_Bicep_Femoris_Longus
-    - R_Semitendinosus
+  semimembranosus_r:
     - R_Semimembranosus
     - R_Semimembranosus1
 
@@ -220,7 +245,35 @@ optimization_groups:
   gracilis_biart_r:
     - R_Gracilis
 
-  # ============ KNEE-ANKLE BIARTICULAR ============
+  # ============ NON-HIP GROUPS (unchanged from original) ============
+  knee_extensor_l:
+    - L_Vastus_Medialis
+    - L_Vastus_Medialis1
+    - L_Vastus_Medialis2
+    - L_Vastus_Intermedius
+    - L_Vastus_Intermedius1
+    - L_Vastus_Lateralis
+    - L_Vastus_Lateralis1
+
+  knee_extensor_r:
+    - R_Vastus_Medialis
+    - R_Vastus_Medialis1
+    - R_Vastus_Medialis2
+    - R_Vastus_Intermedius
+    - R_Vastus_Intermedius1
+    - R_Vastus_Lateralis
+    - R_Vastus_Lateralis1
+
+  knee_flexor_l:
+    - L_Bicep_Femoris_Short
+    - L_Bicep_Femoris_Short1
+    - L_Popliteus
+
+  knee_flexor_r:
+    - R_Bicep_Femoris_Short
+    - R_Bicep_Femoris_Short1
+    - R_Popliteus
+
   knee_ankle_biart_l:
     - L_Gastrocnemius_Lateral_Head
     - L_Gastrocnemius_Medial_Head
@@ -231,7 +284,6 @@ optimization_groups:
     - R_Gastrocnemius_Medial_Head
     - R_Plantaris
 
-  # ============ PLANTARFLEXORS ============
   plantarflexor_l:
     - L_Soleus
     - L_Soleus1
@@ -258,7 +310,6 @@ optimization_groups:
     - R_Peroneus_Longus
     - R_Peroneus_Brevis
 
-  # ============ DORSIFLEXORS ============
   dorsiflexor_l:
     - L_Tibialis_Anterior
     - L_Extensor_Hallucis_Longus

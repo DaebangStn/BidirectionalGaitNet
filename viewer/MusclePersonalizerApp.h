@@ -219,6 +219,9 @@ private:
     // Comprehensive optimization results (for visualization tab)
     std::optional<PMuscle::ContractureOptResult> mContractureOptResult;
 
+    // Tiered optimization results (dual-tier: search groups + optimization groups)
+    std::optional<PMuscle::TieredContractureOptResult> mTieredContractureResult;
+
     // UI state for contracture results tab
     int mContractureSelectedGroupIdx = -1;
     int mContractureSelectedTrialIdx = -1;
@@ -229,6 +232,10 @@ private:
     bool mShowTorqueChart = false;
     bool mShowForceChart = false;
     bool mShowGroupTorqueChart = false;
+
+    // Tiered UI state (for sub-tabs)
+    int mContractureSubTab = 0;        // 0=Grid Search, 1=Optimization
+    int mGridSearchSelectedGroup = -1;  // Selected search group in grid search sub-tab
 
     // ============================================================
     // Tool 4: Symmetry Analysis (UI state)
@@ -311,6 +318,7 @@ private:
     bool mRenderReferenceCharacter = false;  // Toggle between subject and reference
     float mMuscleLabelFontSize = 14.0f;
     float mPlotHeight = 400.0f;  // Height of length curve plots
+    int mErrorPlotYLimMode = 0;  // 0: near best, 1: overview, 2: draggable
 
     // Muscle selection
     std::vector<bool> mMuscleSelectionStates;
@@ -366,6 +374,9 @@ private:
     void drawExportSection();
     void drawWaypointCurvesTab();
     void drawContractureResultsTab();
+    void drawGridSearchSubTab();      // Grid search results sub-tab (tiered)
+    void drawOptimizationSubTab();    // Optimization results sub-tab (tiered)
+    void drawLegacyContractureView(); // Legacy (non-tiered) contracture view
     void drawSymmetryTab();           // Right panel: status/analysis display
     void drawSkeletonSymmetrySubTab();  // Skeleton symmetry sub-tab
     void drawMuscleSymmetrySubTab();    // Muscle symmetry sub-tab

@@ -53,9 +53,9 @@ contracture_estimation:
   lambda_torque_reg: 0.0  # Penalize passive torque magnitude (0=disabled)
   outer_iterations: 1      # Outer iterations for biarticular convergence (1=single pass)
   grid_search:
-    begin: 0.7
+    begin: 0.5
     end: 1.3
-    interval: 0.1
+    interval: 0.025
 
   # Grid search mapping: maps ROM trials (list) to muscle groups (list)
   # For joint multi-group optimization, multiple trials search multiple groups simultaneously
@@ -79,16 +79,16 @@ contracture_estimation:
     # Staheli extension test (Thomas test) - tests hip flexor tightness
     # Includes iliopsoas (monoarticular) and rectus femoris, sartorius (biarticular)
     - trials: [staheliExtension_L]
-      groups: [hip_flexor_l, rectus_femoris_biart_l, sartorius_biart_l]
+      groups: [hip_flexor_l]
     - trials: [staheliExtension_R]
-      groups: [hip_flexor_r, rectus_femoris_biart_r, sartorius_biart_r]
+      groups: [hip_flexor_r]
 
     # ============ HIP ROTATION ============
-    # Internal rotation tests lateral rotator tightness
+    # Internal rotation tests lateral rotator tightness + medial rotators (abductors)
     - trials: [intRot_L]
-      groups: [hip_lateral_rotator_l]
+      groups: [hip_lateral_rotator_l, hip_abductor_l]
     - trials: [intRot_R]
-      groups: [hip_lateral_rotator_r]
+      groups: [hip_lateral_rotator_r, hip_abductor_r]
 
     # ============ HIP ABDUCTION/ADDUCTION/EXTERNAL ROTATION ============
     # Hip abductors (Gluteus Medius, Minimus, TFL) also provide medial rotation
@@ -122,18 +122,20 @@ contracture_estimation:
 
   # Default ROM trials to select (empty = none selected)
   default_rom_trials:
-    # - "dorsi_k0_L"
-    # - "dorsi_k0_R"
-    # - "dorsi_k90_L"
-    # - "dorsi_k90_R"
-    # - "plantar_L"
-    # - "plantar_R"
-    # - "popliteal_L"
-    # - "popliteal_R"
-    # - "add_L"
-    # - "add_R"
-    # - "abd_k0_L"
-    # - "abd_k0_R"
+    - "dorsi_k0_L"
+    - "dorsi_k0_R"
+    - "dorsi_k90_L"
+    - "dorsi_k90_R"
+    - "plantar_L"
+    - "plantar_R"
+    - "popliteal_L"
+    - "popliteal_R"
+    - "staheliExtension_L"
+    - "staheliExtension_R"
+    - "add_L"
+    - "add_R"
+    - "abd_k0_L"
+    - "abd_k0_R"
     # - "abd_k90_L"
     # - "abd_k90_R"
     - "intRot_L"
