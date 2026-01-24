@@ -45,7 +45,7 @@ target_include_directories(viewer_common PUBLIC
 
 # Viewer sources
 set(VIEWER_SOURCES
-    "main.cpp"
+    "glfw_app_main.cpp"
     "GLFWApp.h"
     "GLFWApp.cpp"
     "RenderEnvironment.h"

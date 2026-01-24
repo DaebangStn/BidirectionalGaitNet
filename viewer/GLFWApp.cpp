@@ -77,9 +77,10 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mResizePlotPane = true;
     mSetResizablePlotPane = false;
     mPlotTitleResizablePlotPane = true;
-    mMuscleTransparency = 0.1;
+    mMuscleTransparency = 1.0;
     mMuscleResolution = 1.0;
-    
+    mGroundMode = GroundMode::Solid;
+
     // Initialize single motion architecture
     mMotion = nullptr;
     mMotionProcessor = std::make_unique<MotionProcessor>();
@@ -3587,9 +3588,8 @@ void GLFWApp::drawRenderingContent()
 
     ImGui::RadioButton("PassiveForce", &mMuscleRenderTypeInt, 0);
     ImGui::RadioButton("ContractileForce", &mMuscleRenderTypeInt, 1);
-    ImGui::RadioButton("ActivatonLevel", &mMuscleRenderTypeInt, 2);
+    ImGui::RadioButton("Activation", &mMuscleRenderTypeInt, 2);
     ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
-    ImGui::RadioButton("Weakness", &mMuscleRenderTypeInt, 4);
     mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
 
     drawCameraStatusSection();
@@ -3834,7 +3834,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
     glLoadIdentity();
 
     glLineWidth(1.0);
-    glColor3f(0.0f, 0.0f, 0.0f);
+    glColor3f(1.0f, 1.0f, 1.0f);
     glTranslatef(mWidth * 0.5, mHeight * 0.95, 0.0f);  // Move to top (95% of height from bottom)
     glBegin(GL_LINE_LOOP);
     for (int i = 0; i < 360; i++)
@@ -3852,7 +3852,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
     glVertex2d(mHeight * 0.04 * sin(normalized_phase * 2 * M_PI), mHeight * 0.04 * cos(normalized_phase * 2 * M_PI));
     glEnd();
 
-    glColor3f(0, 0, 0);
+    glColor3f(1.0f, 1.0f, 1.0f);
     glLineWidth(2.0);
 
     glBegin(GL_LINES);
@@ -3906,14 +3906,9 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
 void GLFWApp::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
-    if (mMotion == nullptr ||
-        mMotionState.currentPose.size() == 0 ||
-        mMotionState.render == false) return;
-
+    if (mMotion == nullptr || mMotionState.currentPose.size() == 0 || mMotionState.render == false) return;
     // Draw skeleton
     drawSkeleton(mMotionState.currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
-
-    // C3D marker rendering moved to c3d_processor executable
 }
 
 bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std::string& sourceFile)
@@ -3939,7 +3934,7 @@ void GLFWApp::drawContent()
         drawPhase(mViewerPhase, mViewerPhase);
         if (mDrawFlags.character)
         {
-            drawSkeleton(mRenderEnv->getCharacter()->getSkeleton()->getPositions(), Eigen::Vector4d(0.65, 0.65, 0.65, 0.5));
+            drawSkeleton(mRenderEnv->getCharacter()->getSkeleton()->getPositions(), Eigen::Vector4d(1.0, 1.0, 1.0, 0.7));
             if (!mRenderConditions) drawShadow();
             if (mMuscleSelectionStates.size() > 0) drawMuscles(mMuscleRenderType);
         }
@@ -4033,48 +4028,9 @@ void GLFWApp::drawContent()
         // Then: drawSkeleton with converted position
     }
 
-    // BVH motions now drawn via drawPlayableMotion() (integrated into mMotions)
 
     if (mMouseDown) drawAxis();
 
-}
-
-void GLFWApp::drawGround()
-{
-    // Get ground dimensions from the world
-    // Ground is typically the last skeleton added to the world
-    Eigen::Vector3d size(100.0, 1.0, 250.0); // Default size
-    const double mWidth = size[0];
-    const double mHeight = size[1];
-    const double depth = size[2];
-
-    glDisable(GL_LIGHTING);
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-    // Draw checkerboard pattern
-    glBegin(GL_QUADS);
-
-    Eigen::Vector3d color1,color2;
-    color1 << 216.0/255.0, 211.0/255.0, 204.0/255.0;
-    color2 << 216.0/255.0-0.1, 211.0/255.0-0.1, 204.0/255.0-0.1;
-    const double grid_size = 1.0;
-
-    for(double x=-mWidth/2.0; x<mWidth/2.0 + 0.01; x+=grid_size)
-    {
-        for(double z=-5.0; z<depth + 0.01 - 5.0; z+=grid_size)
-        {
-            bool isEven = (int(x/grid_size) + int(z/grid_size)) % 2 == 0;
-            if(isEven) glColor4f(color1[0], color1[1], color1[2] ,1.0);
-            else glColor4f(color2[0], color2[1], color2[2] ,1.0);
-            glVertex3f(x,           0.0, z);
-            glVertex3f(x+grid_size, 0.0, z);
-            glVertex3f(x+grid_size, 0.0, z+grid_size);
-            glVertex3f(x,           0.0, z+grid_size);
-        }
-    }
-    glEnd();
-
-    glEnable(GL_LIGHTING);
 }
 
 void GLFWApp::reset()
@@ -4699,10 +4655,9 @@ void GLFWApp::drawCollision()
 void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
 {
     int count = 0;
-    glEnable(GL_LIGHTING);
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glEnable(GL_COLOR_MATERIAL);
-    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_COLOR_MATERIAL);
+    glDisable(GL_DEPTH_TEST);
 
     // Check if activation noise is active
     bool activationNoiseActive = false;
@@ -4729,28 +4684,23 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
         switch (renderingType)
         {
         case activationLevel:
-            color = Eigen::Vector4d(0.2 + 1.6 * a, 0.2, 0.2, mMuscleTransparency + 0.9 * a);
+            color = Eigen::Vector4d(0.2 + 1.6 * a, 0.2, 0.2, mMuscleTransparency * (1.2 * a));
             break;
         case passiveForce:
         {
             double f_p = muscle->Getf_p() / mMuscleResolution;
-            color = Eigen::Vector4d(0.1, 0.1, 0.1 + 0.9 * f_p, mMuscleTransparency + f_p);
+            color = Eigen::Vector4d(0.1, 0.1, 0.1 + 0.9 * f_p, mMuscleTransparency * (0.9 * f_p));
             break;
         }
         case contractileForce:
         {
             double f_c = muscle->GetActiveForce() / mMuscleResolution;
-            color = Eigen::Vector4d(0.1, 0.1 + 0.9 * f_c, 0.1, mMuscleTransparency + f_c);
-            break;
-        }
-        case weakness:
-        {
-            color = Eigen::Vector4d(0.1, 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), 0.1 + 2.0 * (1.0 - muscle->f0 / muscle->f0_base), mMuscleTransparency + 2.0 * (1.0 - muscle->f0 / muscle->f0_base));
+            color = Eigen::Vector4d(0.1, 0.1 + 0.9 * f_c, 0.1, mMuscleTransparency * (0.9 * f_c));
             break;
         }
         case contracture:
         {
-            color = Eigen::Vector4d(0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), 0.05, 0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), mMuscleTransparency + 5.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base));
+            color = Eigen::Vector4d(0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), 0.05, 0.05 + 10.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base), mMuscleTransparency * (0.05 + 5.0 * (1.0 - muscle->lmt_ref / muscle->lmt_base)));
             break;
         }
         default:

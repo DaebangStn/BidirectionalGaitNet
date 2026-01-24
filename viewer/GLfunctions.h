@@ -61,7 +61,7 @@ namespace GUI
 	void Draw2DCircle(const Eigen::Vector3d &origin, const Eigen::Vector3d &normal, const Eigen::Vector3d &up, double R, int segment = 30);
 
 	void DrawOriginAxisGizmo(const Eigen::Vector3d& center, float length = 0.05f, float colorTint = 0.0f);
-	void DrawGroundGrid(GroundMode mode = GroundMode::Wireframe, int gridSize = 10, float cellSize = 0.5f);
+	void DrawGroundGrid(GroundMode mode = GroundMode::Wireframe, int gridSize = 100, float cellSize = 2.0f);
 
 	// Skeleton rendering (centralized)
 	void DrawSkeleton(std::shared_ptr<dart::dynamics::Skeleton> skel,

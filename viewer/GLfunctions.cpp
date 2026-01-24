@@ -1285,6 +1285,10 @@ void GUI::DrawSkeleton(std::shared_ptr<Skeleton> skel,
 {
     if (!skel) return;
 
+    // Disable back-face culling and enable two-sided lighting
+    glDisable(GL_CULL_FACE);
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE);
+
     // Setup GL state
     // For wireframe mode, disable lighting to show pure colors
     if (mode == RenderMode::Wireframe) {
