@@ -92,15 +92,11 @@ public:
     static std::optional<SkeletonPathComponents> parse_skeleton_path(const std::string& path);
     static std::optional<MusclePathComponents> parse_muscle_path(const std::string& path);
 
-    // Legacy transformers (convert old paths to new paths)
+    // Legacy transformers (kept for reference but transformation is disabled)
     static std::string transform_h5_path(const H5PathComponents& components);
     static std::string transform_gait_path(const GaitPathComponents& components);
     static std::string transform_skeleton_path(const SkeletonPathComponents& components);
     static std::string transform_muscle_path(const MusclePathComponents& components);
-
-    // Transform old-style path to new-style path
-    // Returns original path if no transformation needed
-    static std::string transform_path(const std::string& path);
 
     // Convert legacy "pre"/"post" to new visit names
     static std::string timepoint_to_visit(const std::string& timepoint);

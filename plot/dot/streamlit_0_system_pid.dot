@@ -54,7 +54,7 @@ digraph StreamlitPID {
     list_pids [label="list_pids()"];
     list_hdf [label="list_hdf_files()"];
     load_hdf5 [label="load_hdf5_data()", fillcolor="#C8E6C9"];
-    rm_uri [label="@pid:{pid}/gait/\n{pre_post}/h5/{file}", shape=note, fillcolor="#FFF9C4"];
+    rm_uri [label="@pid:{pid}/{visit}/\nmotion/{file}", shape=note, fillcolor="#FFF9C4"];
   }
 
   // ─────────────────────────────────────────────────────────────

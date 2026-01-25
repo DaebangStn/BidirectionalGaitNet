@@ -1215,8 +1215,8 @@ void MotionEditorApp::scanSkeletonDirectory()
     }
 
     const std::string& pid = state.pidList[state.selectedPID];
-    std::string prePost = state.preOp ? "pre" : "post";
-    std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/skeleton";
+    std::string visit = state.preOp ? "pre" : "op1";
+    std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
     mSkeletonDirectory = pattern;
 
     try {
@@ -1320,8 +1320,8 @@ void MotionEditorApp::autoDetectSkeleton()
     }
 
     const std::string& pid = state.pidList[state.selectedPID];
-    std::string prePost = state.preOp ? "pre" : "post";
-    std::string uri = "@pid:" + pid + "/gait/" + prePost + "/skeleton/dynamic.yaml";
+    std::string visit = state.preOp ? "pre" : "op1";
+    std::string uri = "@pid:" + pid + "/" + visit + "/skeleton/dynamic.yaml";
 
     try {
         auto resolved = mResourceManager->resolve(uri);
@@ -1474,8 +1474,8 @@ void MotionEditorApp::exportMotion()
             const auto& state = mPIDNavigator->getState();
             if (state.selectedPID >= 0 && state.selectedPID < static_cast<int>(state.pidList.size())) {
                 std::string pid = state.pidList[state.selectedPID];
-                std::string prePost = state.preOp ? "pre" : "post";
-                mLastExportURI = "@pid:" + pid + "/gait/" + prePost + "/h5/" + outputPath.filename().string();
+                std::string visit = state.preOp ? "pre" : "op1";
+                mLastExportURI = "@pid:" + pid + "/" + visit + "/motion/" + outputPath.filename().string();
             } else {
                 mLastExportURI = outputPath.string();
             }

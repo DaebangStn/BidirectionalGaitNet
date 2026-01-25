@@ -30,7 +30,7 @@ int main(int argc, char** argv)
             std::cout << "\nUsage examples:\n"
                       << "  c3d_processor                                    # Uses default config\n"
                       << "  c3d_processor @data/config/c3d_processor.yaml    # Positional argument\n"
-                      << "  c3d_processor @pid:12345/gait/pre/c3d_config.yaml\n"
+                      << "  c3d_processor @pid:12345/pre/gait/c3d_config.yaml\n"
                       << "\nControls:\n"
                       << "  Space         Play/Pause\n"
                       << "  R             Reset to frame 0\n"

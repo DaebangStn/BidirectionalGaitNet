@@ -23,11 +23,11 @@ namespace rm {
 //   "12964246/metadata.yaml"      (patient-level metadata)
 //   "12964246/pre/metadata.yaml"  (visit-level metadata)
 //
-// Backward Compatibility:
-//   Old-style paths are automatically transformed to new-style:
-//   - {pid}/gait/{pre|post}/... -> {pid}/{visit}/gait/...
-//   - {pid}/h5/{pre|post}/...   -> {pid}/{visit}/motion/...
-//   - {pid}/skeleton/{pre|post}/... -> {pid}/{visit}/skeleton/...
+// Note: Legacy path transformation has been removed. Use canonical paths only:
+//   {pid}/{visit}/gait/...      for C3D files
+//   {pid}/{visit}/motion/...    for H5 motion files
+//   {pid}/{visit}/skeleton/...  for skeleton files
+//   {pid}/{visit}/muscle/...    for muscle files
 //
 class PidBackend : public Backend {
 public:

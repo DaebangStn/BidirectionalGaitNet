@@ -9,8 +9,8 @@
 
 namespace fs = std::filesystem;
 
-void processDirectory(rm::ResourceManager& mgr, const std::string& pid, const std::string& prePost) {
-    std::string uri = "@pid:" + pid + "/gait/" + prePost;
+void processDirectory(rm::ResourceManager& mgr, const std::string& pid, const std::string& visit) {
+    std::string uri = "@pid:" + pid + "/" + visit + "/gait";
 
     // List files and filter for Trimmed_*.c3d
     std::vector<std::string> trimmedFiles;
@@ -27,12 +27,12 @@ void processDirectory(rm::ResourceManager& mgr, const std::string& pid, const st
     }
 
     if (trimmedFiles.empty()) {
-        std::cout << "[" << pid << "/" << prePost << "] No Trimmed_*.c3d files found\n";
+        std::cout << "[" << pid << "/" << visit << "] No Trimmed_*.c3d files found\n";
         return;
     }
 
     std::sort(trimmedFiles.begin(), trimmedFiles.end());
-    std::cout << "[" << pid << "/" << prePost << "] Merging " << trimmedFiles.size() << " files\n";
+    std::cout << "[" << pid << "/" << visit << "] Merging " << trimmedFiles.size() << " files\n";
 
     // Load first file to get labels and frame rate
     auto firstHandle = mgr.fetch(uri + "/" + trimmedFiles[0]);
@@ -83,7 +83,7 @@ void processDirectory(rm::ResourceManager& mgr, const std::string& pid, const st
         std::cout << "  - " << filename << " (" << numFrames << " frames)\n";
     }
 
-    // Write to gait/pre or gait/post directory directly
+    // Write to {visit}/gait directory directly
     fs::path outputPath;
 
     // Try to fetch existing Trimmed_unified.c3d to get its location
@@ -93,7 +93,7 @@ void processDirectory(rm::ResourceManager& mgr, const std::string& pid, const st
     } else {
         // File doesn't exist yet - determine output path from first source file
         fs::path c3dDir = firstHandle.local_path().parent_path();
-        // If source is in Generated_C3D_files, write to parent (gait/pre/)
+        // If source is in Generated_C3D_files, write to parent ({visit}/gait/)
         if (c3dDir.filename() == "Generated_C3D_files") {
             outputPath = c3dDir.parent_path() / "Trimmed_unified.c3d";
         } else {
@@ -102,7 +102,7 @@ void processDirectory(rm::ResourceManager& mgr, const std::string& pid, const st
     }
 
     output.write(outputPath.string());
-    std::cout << "[" << pid << "/" << prePost << "] Written: " << outputPath
+    std::cout << "[" << pid << "/" << visit << "] Written: " << outputPath
               << " (" << totalFrames << " total frames)\n";
 }
 
@@ -115,12 +115,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Processing " << pids.size() << " PIDs...\n";
         for (const auto& pid : pids) {
             processDirectory(mgr, pid, "pre");
-            processDirectory(mgr, pid, "post");
+            processDirectory(mgr, pid, "op1");
         }
     } else if (argc > 1) {
         std::string pid = argv[1];
         processDirectory(mgr, pid, "pre");
-        processDirectory(mgr, pid, "post");
+        processDirectory(mgr, pid, "op1");
     } else {
         std::cerr << "Usage: c3d_merge <pid> | --all\n";
         return 1;

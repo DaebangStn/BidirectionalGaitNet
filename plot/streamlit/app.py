@@ -185,7 +185,8 @@ def main():
         # Load data for all panels based on source type
         for item in panel_items:
             if source_type == "Patient (PID)":
-                uri = f"@pid:{selected_pid}/gait/{pre_post}/h5/{item}"
+                visit = "op1" if pre_post == "post" else pre_post
+                uri = f"@pid:{selected_pid}/{visit}/motion/{item}"
                 pdata = load_hdf5_data(uri)
                 if pdata is not None:
                     pdata['panel_title'] = item  # Use h5 filename as title
@@ -209,7 +210,8 @@ def main():
         # Single mode - load selected item
         if selected_item is not None:
             if source_type == "Patient (PID)":
-                uri = f"@pid:{selected_pid}/gait/{pre_post}/h5/{selected_item}"
+                visit = "op1" if pre_post == "post" else pre_post
+                uri = f"@pid:{selected_pid}/{visit}/motion/{selected_item}"
                 data = load_hdf5_data(uri)
                 if data is None:
                     st.error(f"Failed to load: {uri}")

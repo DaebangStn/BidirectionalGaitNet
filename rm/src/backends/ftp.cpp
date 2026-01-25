@@ -1,5 +1,4 @@
 #include "rm/backends/ftp.hpp"
-#include "rm/pid_path.hpp"
 #include "rm/error.hpp"
 #include "Log.h"
 #include <curl/curl.h>
@@ -70,21 +69,12 @@ std::string FTPBackend::build_url(const std::string& path) const {
         url += config_.root;
     }
 
-    // Transform path if pid_style is enabled
-    std::string transformed_path = path;
-    if (config_.pid_style && !path.empty()) {
-        transformed_path = PidPathResolver::transform_path(path);
-        if (transformed_path != path) {
-            LOG_VERBOSE("[ftp] pid_style transform: " << path << " -> " << transformed_path);
-        }
-    }
-
-    // Add requested path
-    if (!transformed_path.empty()) {
-        if (transformed_path[0] != '/' && (url.empty() || url.back() != '/')) {
+    // Add requested path (legacy transformation removed - use canonical paths)
+    if (!path.empty()) {
+        if (path[0] != '/' && (url.empty() || url.back() != '/')) {
             url += "/";
         }
-        url += transformed_path;
+        url += path;
     }
 
     return url;

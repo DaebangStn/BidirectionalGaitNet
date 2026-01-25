@@ -159,8 +159,8 @@ void C3DInspectorUI::loadFiles() {
     mFiles.clear();
     if (mPIDs.empty()) return;
 
-    std::string prePost = (mSelectedPrePost == 0) ? "pre" : "post";
-    std::string uri = "@pid:" + mPIDs[mSelectedPID] + "/gait/" + prePost;
+    std::string visit = (mSelectedPrePost == 0) ? "pre" : "op1";
+    std::string uri = "@pid:" + mPIDs[mSelectedPID] + "/" + visit + "/gait";
 
     try {
         auto files = mMgr.list(uri);
@@ -186,8 +186,8 @@ void C3DInspectorUI::loadC3DInfo() {
 
     if (mFiles.empty()) return;
 
-    std::string prePost = (mSelectedPrePost == 0) ? "pre" : "post";
-    mC3DInfo.uri = "@pid:" + mPIDs[mSelectedPID] + "/gait/" + prePost + "/" + mFiles[mSelectedFile];
+    std::string visit = (mSelectedPrePost == 0) ? "pre" : "op1";
+    mC3DInfo.uri = "@pid:" + mPIDs[mSelectedPID] + "/" + visit + "/gait/" + mFiles[mSelectedFile];
     mC3DInfo.filename = mFiles[mSelectedFile];
 
     try {
@@ -1017,7 +1017,7 @@ void printUsage(const char* progName) {
     std::cerr << "Interactive mode (ncurses):\n";
     std::cerr << "  " << progName << "                      # interactive PID/file selection\n\n";
     std::cerr << "Direct inspection:\n";
-    std::cerr << "  " << progName << " @pid:CP001/gait/pre/file.c3d\n";
+    std::cerr << "  " << progName << " @pid:CP001/pre/gait/file.c3d\n";
     std::cerr << "  " << progName << " /path/to/file.c3d\n";
 }
 

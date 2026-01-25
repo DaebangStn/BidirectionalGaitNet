@@ -1061,8 +1061,8 @@ void C3DProcessorApp::drawMarkerFittingSection()
         if (canExportHDF) {
             const auto& pidState = mPIDNavigator->getState();
             std::string pid = pidState.pidList[pidState.selectedPID];
-            std::string prePost = pidState.preOp ? "pre" : "post";
-            std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
+            std::string visit = pidState.preOp ? "pre" : "op1";
+            std::string pattern = "@pid:" + pid + "/" + visit + "/motion";
             std::string outputDir = mResourceManager->resolveDir(pattern);
             if (!outputDir.empty()) {
                 std::string filename = (std::strlen(mExportHDFName) > 0)
@@ -1273,9 +1273,9 @@ void C3DProcessorApp::drawSkeletonExportSection()
         // Export path display
         const auto& pidState = mPIDNavigator->getState();
         std::string pid = pidState.pidList[pidState.selectedPID];
-        std::string prePost = pidState.preOp ? "pre" : "post";
+        std::string visit = pidState.preOp ? "pre" : "op1";
 
-        ImGui::Text("Export to: @pid:%s/skeleton/", pid.c_str());
+        ImGui::Text("Export to: @pid:%s/%s/skeleton/", pid.c_str(), visit.c_str());
         ImGui::SameLine();
         ImGui::SetNextItemWidth(150);
         ImGui::InputText("##exportname", mExportSkeletonName, sizeof(mExportSkeletonName));
@@ -1285,7 +1285,7 @@ void C3DProcessorApp::drawSkeletonExportSection()
         // Export button
         if (ImGui::Button("Export Calibrated Skeleton")) {
             if (mMotionCharacter) {
-                std::string pattern = "@pid:" + pid + "/skeleton";
+                std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
                 std::string outputDir = mResourceManager->resolveDirCreate(pattern);
 
                 if (outputDir.empty()) {
@@ -1300,7 +1300,7 @@ void C3DProcessorApp::drawSkeletonExportSection()
 
                 mMotionCharacter->exportSkeletonYAML(outputPath);
                 LOG_INFO("[C3DProcessor] Exported calibrated skeleton to: " << outputPath);
-                std::string skelURI = "@pid:" + pid + "/skeleton/" + filename + ".yaml";
+                std::string skelURI = "@pid:" + pid + "/" + visit + "/skeleton/" + filename + ".yaml";
                 LOG_INFO("[C3DProcessor] URI: " << skelURI);
             }
         }
@@ -1312,8 +1312,8 @@ void C3DProcessorApp::exportMotionToHDF5()
     // 1. Resolve output path via PID URI
     const auto& pidState = mPIDNavigator->getState();
     std::string pid = pidState.pidList[pidState.selectedPID];
-    std::string prePost = pidState.preOp ? "pre" : "post";
-    std::string pattern = "@pid:" + pid + "/gait/" + prePost + "/h5";
+    std::string visit = pidState.preOp ? "pre" : "op1";
+    std::string pattern = "@pid:" + pid + "/" + visit + "/motion";
     std::string outputDir = mResourceManager->resolveDirCreate(pattern);
 
     if (outputDir.empty()) {
@@ -1394,7 +1394,7 @@ void C3DProcessorApp::exportMotionToHDF5()
         writeIntAttr("num_frames", numFrames);
         writeIntAttr("dof_per_frame", dofPerFrame);
         writeStrAttr("pid", pid);
-        writeStrAttr("pre_post", prePost);
+        writeStrAttr("visit", visit);
 
         // 7. Compute and write marker tracking errors for both characters
         C3D* c3dMotion = static_cast<C3D*>(mMotion);
@@ -1484,7 +1484,7 @@ void C3DProcessorApp::exportMotionToHDF5()
 
         file.close();
         LOG_INFO("[C3DProcessor] Exported HDF5 motion to: " << outputPath);
-        std::string hdfURI = "@pid:" + pid + "/gait/" + prePost + "/h5/" + filename + ".h5";
+        std::string hdfURI = "@pid:" + pid + "/" + visit + "/motion/" + filename + ".h5";
         LOG_INFO("[C3DProcessor] URI: " << hdfURI);
 
     } catch (const H5::Exception& e) {

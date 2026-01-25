@@ -3,7 +3,7 @@
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@pid:29792292/gait/pre/skeleton/dynamic.yaml"
+    file: "@pid:29792292/pre/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
     kp: 200
     kv: 40
@@ -13,7 +13,7 @@ environment:
   motion:
     type: "h5"  # h5, bvh, npz
     get_stride_from_motion: true
-    file: "@pid:29792292/gait/pre/h5/walk01_single.h5"
+    file: "@pid:29792292/pre/motion/walk01_single.h5"
 
   # Muscle System
   muscle:

@@ -85,16 +85,13 @@ std::string PidBackend::fetch_metadata_field(const MetadataFieldRequest& request
 }
 
 std::filesystem::path PidBackend::resolve(const std::string& path) const {
-    // Transform path if it's an old-style path
-    std::string transformed_path = PidPathResolver::transform_path(path);
-
-    // Build absolute path
-    if (transformed_path.empty()) {
+    // Build absolute path (legacy transformation removed - use canonical paths)
+    if (path.empty()) {
         return root_;
-    } else if (transformed_path[0] == '/') {
-        return root_ / transformed_path.substr(1);
+    } else if (path[0] == '/') {
+        return root_ / path.substr(1);
     } else {
-        return root_ / transformed_path;
+        return root_ / path;
     }
 }
 
@@ -160,27 +157,25 @@ std::vector<std::string> PidBackend::list(const std::string& pattern) {
     std::vector<std::string> results;
     std::error_code ec;
 
-    // Transform the pattern if it's an old-style path
-    std::string transformed_pattern = PidPathResolver::transform_path(pattern);
-
     // Find the base directory (up to first wildcard)
-    std::string glob_pattern = transformed_pattern;
-    size_t wildcard_pos = transformed_pattern.find_first_of("*?");
+    // Legacy transformation removed - use canonical paths
+    std::string glob_pattern = pattern;
+    size_t wildcard_pos = pattern.find_first_of("*?");
 
     std::filesystem::path base_path;
     std::string base_dir;
 
     if (wildcard_pos != std::string::npos) {
         // Has wildcard - extract base directory
-        size_t last_sep = transformed_pattern.rfind('/', wildcard_pos);
+        size_t last_sep = pattern.rfind('/', wildcard_pos);
         if (last_sep != std::string::npos) {
-            base_dir = transformed_pattern.substr(0, last_sep);
+            base_dir = pattern.substr(0, last_sep);
         }
         base_path = resolve(base_dir);
     } else {
         // No wildcard - resolve full path
-        base_path = resolve(transformed_pattern);
-        base_dir = transformed_pattern;
+        base_path = resolve(pattern);
+        base_dir = pattern;
     }
 
     if (!std::filesystem::exists(base_path)) {
@@ -198,7 +193,7 @@ std::vector<std::string> PidBackend::list(const std::string& pattern) {
 
     // If no wildcard and path is a file, return just that file
     if (wildcard_pos == std::string::npos && std::filesystem::is_regular_file(base_path)) {
-        results.push_back(std::filesystem::path(transformed_pattern).filename().string());
+        results.push_back(std::filesystem::path(pattern).filename().string());
         return results;
     }
 

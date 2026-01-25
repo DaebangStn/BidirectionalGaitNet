@@ -65,7 +65,8 @@ def list_hdf_files(pid: str, pre_post: str) -> list[str]:
     Returns list of HDF5 filenames (without path).
     """
     try:
-        uri = f"@pid:{pid}/gait/{pre_post}/h5"
+        visit = "op1" if pre_post == "post" else pre_post
+        uri = f"@pid:{pid}/{visit}/motion"
         files = rm_mgr.list(uri)
         # Filter for .h5 files only
         h5_files = [f for f in files if f.lower().endswith('.h5')]
