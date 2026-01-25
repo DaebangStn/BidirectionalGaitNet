@@ -8,7 +8,7 @@
 #include "HDF.h"
 #include "rm/rm.hpp"
 #include "motion/PlaybackController.h"
-#include "common/PIDNavigator.h"
+#include "common/PIDImGui.h"
 #include <memory>
 #include <string>
 #include <vector>

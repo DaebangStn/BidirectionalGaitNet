@@ -983,9 +983,13 @@ void C3DProcessorApp::drawMarkerFittingSection()
                     std::string pid = pidState.pidList[pidState.selectedPID];
                     std::string visit = pidState.getVisitDir();
                     std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
-                    std::string outputDir = mResourceManager->resolveDirCreate(pattern);
-                    if (!outputDir.empty()) {
-                        mC3DReader->exportPersonalizedCalibration(mStaticCalibResult, outputDir);
+                    std::string skelDir = mResourceManager->resolveDirCreate(pattern);
+                    if (!skelDir.empty()) {
+                        std::string calibDir = skelDir + "/calibration";
+                        if (!std::filesystem::exists(calibDir)) {
+                            std::filesystem::create_directories(calibDir);
+                        }
+                        mC3DReader->exportPersonalizedCalibration(mStaticCalibResult, calibDir);
                         LOG_INFO("[C3DProcessor] Exported personalized calibration for PID " << pid);
                         mHasPersonalizedCalibration = true;
                     }
@@ -1267,7 +1271,11 @@ void C3DProcessorApp::drawSkeletonExportSection()
 {
     if (collapsingHeaderWithControls("Skeleton Export")) {
         // Export path display
-        ImGui::Text("Export to: data/skeleton/");
+        const auto& pidState = mPIDNavigator->getState();
+        std::string pid = pidState.pidList[pidState.selectedPID];
+        std::string prePost = pidState.preOp ? "pre" : "post";
+
+        ImGui::Text("Export to: @pid:%s/skeleton/", pid.c_str());
         ImGui::SameLine();
         ImGui::SetNextItemWidth(150);
         ImGui::InputText("##exportname", mExportSkeletonName, sizeof(mExportSkeletonName));
@@ -1277,9 +1285,23 @@ void C3DProcessorApp::drawSkeletonExportSection()
         // Export button
         if (ImGui::Button("Export Calibrated Skeleton")) {
             if (mMotionCharacter) {
-                std::string outputPath = std::string("data/skeleton/") + mExportSkeletonName + ".yaml";
+                std::string pattern = "@pid:" + pid + "/skeleton";
+                std::string outputDir = mResourceManager->resolveDirCreate(pattern);
+
+                if (outputDir.empty()) {
+                    LOG_ERROR("[C3DProcessor] Failed to resolve PID directory: " << pattern);
+                    return;
+                }
+
+                std::string filename = std::strlen(mExportSkeletonName) > 0
+                    ? mExportSkeletonName
+                    : "skeleton";
+                std::string outputPath = outputDir + "/" + filename + ".yaml";
+
                 mMotionCharacter->exportSkeletonYAML(outputPath);
-                LOG_INFO("[C3DProcessor] Exported calibrated skeleton to: " + outputPath);
+                LOG_INFO("[C3DProcessor] Exported calibrated skeleton to: " << outputPath);
+                std::string skelURI = "@pid:" + pid + "/skeleton/" + filename + ".yaml";
+                LOG_INFO("[C3DProcessor] URI: " << skelURI);
             }
         }
     }
@@ -2809,9 +2831,13 @@ void C3DProcessorApp::drawClinicalDataSection()
         if (ImGui::Button("Load calibration")) {
             if (mHasPersonalizedCalibration && mResourceManager) {
                 try {
-                    // Calibration files are in skeleton directory
+                    // Calibration files are in skeleton/calibration directory
                     auto resolved = mResourceManager->resolveDir(skeletonPattern);
-                    if (loadPersonalizedCalibration(resolved.string())) {
+                    std::string calibDir = resolved.string() + "/calibration";
+                    if (!std::filesystem::exists(calibDir)) {
+                        std::filesystem::create_directories(calibDir);
+                    }
+                    if (loadPersonalizedCalibration(calibDir)) {
                         mPersonalizedCalibrationLoaded = true;
                     }
                 } catch (const rm::RMError& e) {
@@ -2942,8 +2968,8 @@ void C3DProcessorApp::checkForPersonalizedCalibration()
 
     const std::string& pid = state.pidList[state.selectedPID];
     std::string visit = state.getVisitDir();
-    // Calibration files are stored in skeleton directory: @pid:{pid}/{visit}/skeleton/
-    std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
+    // Calibration files are stored in skeleton/calibration directory: @pid:{pid}/{visit}/skeleton/calibration/
+    std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton/calibration";
 
     // Use exists() for quiet check - doesn't log errors for missing files
     bool exists1 = mResourceManager->exists(pattern + "/static_calibrated_marker.xml");

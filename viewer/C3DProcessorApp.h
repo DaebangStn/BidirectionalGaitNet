@@ -9,7 +9,7 @@
 #include "Motion.h"
 #include "CBufferData.h"
 #include "rm/rm.hpp"
-#include "common/PIDNavigator.h"
+#include "common/PIDImGui.h"
 #include <implot.h>
 #include <memory>
 #include <string>

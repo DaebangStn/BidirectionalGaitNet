@@ -14,8 +14,8 @@ find_package(Boost REQUIRED COMPONENTS program_options)
 
 # Common viewer library for shared components
 add_library(viewer_common STATIC
-    common/PIDNavigator.h
-    common/PIDNavigator.cpp
+    common/PIDImGui.h
+    common/PIDImGui.cpp
     common/PIDFileFilter.h
     common/imgui_common.h
     common/imgui_common.cpp

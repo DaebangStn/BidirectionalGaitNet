@@ -16,7 +16,7 @@
 #include "SurgeryOperation.h"
 #include "SurgeryExecutor.h"
 #include "SurgeryPanel.h"
-#include "common/PIDNavigator.h"
+#include "common/PIDImGui.h"
 #include "common/ViewerAppBase.h"
 
 namespace PMuscle {
@@ -48,6 +48,12 @@ struct AngleSweepTrialConfig {
     // Hierarchical alias for ROM summary (e.g., "hip/abduction_knee0/left")
     std::string alias;
     bool neg = false;  // Negate ROM value for display (e.g., dorsiflexion stored as negative)
+
+    // Clinical data reference (from ROM config clinical_data section)
+    std::string cd_side;    // "left" or "right"
+    std::string cd_joint;   // "hip", "knee", "ankle"
+    std::string cd_field;   // field name in rom.yaml (e.g., "abduction_ext_r2")
+    bool cd_neg = false;    // Negate clinical value for comparison
 };
 
 // Angle sweep data point (per-step recording)
@@ -148,6 +154,12 @@ struct TrialDataBuffer {
     ROMMetrics std_rom_metrics;
     Eigen::VectorXd base_pose;  // Full skeleton pose for character positioning
     Eigen::VectorXd normative_pose;  // Full skeleton pose at normative angle
+
+    // Clinical data reference (copied from AngleSweepTrialConfig for table rendering)
+    std::string cd_side;    // "left" or "right"
+    std::string cd_joint;   // "hip", "knee", "ankle"
+    std::string cd_field;   // field name in rom.yaml
+    bool cd_neg = false;    // Negate clinical value for comparison
 };
 
 class PhysicalExam : public ViewerAppBase, public SurgeryExecutor {
@@ -525,6 +537,15 @@ private:
     // Clinical weight data
     float mClinicalWeight = 0.0f;       // kg (from clinical data)
     bool mClinicalWeightAvailable = false;
+
+    // Clinical ROM data (loaded from @pid:{pid}/{visit}/rom.yaml)
+    // Key format: "side.joint.field" (e.g., "left.hip.abduction_ext_r2")
+    std::map<std::string, std::optional<float>> mClinicalROM;
+    std::string mClinicalROMPID;    // Track loaded PID for cache invalidation
+    std::string mClinicalROMVisit;  // Track loaded visit for cache invalidation
+
+    // Helper function to load clinical ROM data
+    void loadClinicalROM(const std::string& pid, const std::string& visit);
 };
 
 } // namespace PMuscle

@@ -1477,72 +1477,6 @@ void GLFWApp::drawKinematicsControlPanelContent()
     // Clinical Data Section (PID-based HDF access)
     drawClinicalDataSection();
 
-    // Bone Scale Control - uses RenderCharacter's cached scale info
-    if (mMotionCharacter && ImGui::CollapsingHeader("Bone Scale"))
-    {
-        auto skel = mMotionCharacter->getSkeleton();
-        auto& skelInfos = mMotionCharacter->getSkelInfos();
-
-        if (skel && !skelInfos.empty())
-        {
-            bool anyChanged = false;
-            for (size_t i = 0; i < skelInfos.size(); ++i)
-            {
-                auto& [boneName, modInfo] = skelInfos[i];
-
-                auto* bn = skel->getBodyNode(boneName);
-                if (!bn) continue;
-
-                // Get current shape size for display
-                Eigen::Vector3d currentSize = Eigen::Vector3d::Zero();
-                auto* shapeNode = bn->getShapeNodeWith<dart::dynamics::VisualAspect>(0);
-                if (shapeNode) {
-                    const auto* boxShape = dynamic_cast<const dart::dynamics::BoxShape*>(shapeNode->getShape().get());
-                    if (boxShape) {
-                        currentSize = boxShape->getSize();
-                    }
-                }
-
-                // Create sliders for scale ratios (lx, ly, lz)
-                ImGui::PushID(static_cast<int>(i));
-                if (ImGui::TreeNode(boneName.c_str()))
-                {
-                    // Display current size
-                    ImGui::Text("Size: [%.3f, %.3f, %.3f]", currentSize[0], currentSize[1], currentSize[2]);
-
-                    float scaleX = static_cast<float>(modInfo.value[0]);
-                    float scaleY = static_cast<float>(modInfo.value[1]);
-                    float scaleZ = static_cast<float>(modInfo.value[2]);
-                    float scale = static_cast<float>(modInfo.value[3]);
-
-                    bool changed = false;
-                    changed |= ImGui::SliderFloat("Scale X", &scaleX, 0.5f, 2.0f);
-                    changed |= ImGui::SliderFloat("Scale Y", &scaleY, 0.5f, 2.0f);
-                    changed |= ImGui::SliderFloat("Scale Z", &scaleZ, 0.5f, 2.0f);
-                    changed |= ImGui::SliderFloat("Uniform", &scale, 0.5f, 2.0f);
-
-                    if (changed)
-                    {
-                        modInfo.value[0] = scaleX;
-                        modInfo.value[1] = scaleY;
-                        modInfo.value[2] = scaleZ;
-                        modInfo.value[3] = scale;
-                        anyChanged = true;
-                    }
-
-                    ImGui::TreePop();
-                }
-                ImGui::PopID();
-            }
-
-            // Apply all bone scales when any changed
-            if (anyChanged)
-            {
-                mMotionCharacter->applySkeletonBodyNode(skelInfos, skel);
-            }
-        }
-    }
-
     // TODO: Update for Motion* interface
     // if (mGVAELoaded)
     // {
@@ -3204,28 +3138,6 @@ void GLFWApp::drawSimControlPanelContent()
 
     // Noise Injection Control Panel
     drawNoiseControlPanel();
-
-    // Network
-    if (ImGui::CollapsingHeader("Network"))
-    {
-        if (mRenderEnv->getWeights().size() > 0)
-        {
-            for (int i = 0; i < mUseWeights.size(); i++)
-            {
-                bool uw = mUseWeights[i];
-
-                if (mRenderEnv->getUseMuscle())
-                    ImGui::Checkbox((std::to_string(i / 2) + "_th network" + (i % 2 == 0 ? "_joint" : "_muscle")).c_str(), &uw);
-                else
-                    ImGui::Checkbox((std::to_string(i) + "_th network").c_str(), &uw);
-
-                mUseWeights[i] = uw;
-                ImGui::SameLine();
-            }
-            mRenderEnv->setUseWeights(mUseWeights);
-            ImGui::NewLine();
-        }
-    }
 }
 
 void GLFWApp::updateUnifiedKeys()
@@ -3593,6 +3505,116 @@ void GLFWApp::drawRenderingContent()
     mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
 
     drawCameraStatusSection();
+
+    // === TIMING SECTION ===
+    ImGui::Separator();
+
+    ImVec4 labelColor(0.7f, 0.7f, 0.7f, 1.0f);
+    ImVec4 valueColor(0.95f, 0.95f, 0.95f, 1.0f);
+    ImVec4 accentColor(0.3f, 0.9f, 0.5f, 1.0f);
+
+    // Viewer Timing
+    if (ImGui::BeginTable("ViewerTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Time");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%.3f s", mViewerTime);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Phase");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(accentColor, "%.3f", mViewerPhase);
+
+        ImGui::EndTable();
+    }
+
+    // Simulation Timing
+    ImGui::Spacing();
+    if (ImGui::BeginTable("SimTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Sim Time");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%.3f s", mRenderEnv->getWorld()->getTime());
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Cycle Count");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%d", mRenderEnv->getGaitPhase()->getAdaptiveCycleCount());
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Step Count");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%d", mRenderEnv->GetEnvironment()->getSimulationStep());
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Adaptive Phase");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(accentColor, "%.3f", mRenderEnv->getGaitPhase()->getAdaptivePhase());
+
+        ImGui::EndTable();
+    }
+
+    // Playback Controls
+    ImGui::Spacing();
+    ImGui::TextColored(labelColor, "Cycle Duration");
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputDouble("##CycleDuration", &mViewerCycleDuration, 0.1, 0.5, "%.3f s");
+    if (mViewerCycleDuration < 0.1) mViewerCycleDuration = 0.1;
+
+    ImGui::Spacing();
+    if(ImGui::SmallButton("0.5x")) mViewerPlaybackSpeed = 0.5;
+    ImGui::SameLine();
+    if(ImGui::SmallButton("1.0x")) mViewerPlaybackSpeed = 1.0;
+    ImGui::SameLine();
+    if(ImGui::SmallButton("2.0x")) mViewerPlaybackSpeed = 2.0;
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::SliderFloat("##PlaybackSpeed", &mViewerPlaybackSpeed, 0.1f, 2.5f, "%.2fx");
+
+    // Performance Metrics
+    ImGui::Spacing();
+    if (ImGui::BeginTable("PerfTable", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Frame Delta");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%.1f ms", mRealDeltaTimeAvg * 1000.0);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Sim Step");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%.1f ms", mSimulationStepDuration * 1000.0);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextColored(labelColor, "Sim Avg");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextColored(valueColor, "%.1f ms", mSimStepDurationAvg * 1000.0);
+
+        ImGui::EndTable();
+    }
+
+    // Warning
+    if (mIsPlaybackTooFast)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Warning: Playback too fast!");
+    }
 }
 
 void GLFWApp::drawLeftPanel()
@@ -3604,14 +3626,77 @@ void GLFWApp::drawLeftPanel()
     if (ImGui::BeginTabBar("LeftPanelTabs")) {
         if (ImGui::BeginTabItem("Sim")) {
             drawSimControlPanelContent();
+
+            // Bone Scale Control - uses RenderCharacter's cached scale info
+            if (mMotionCharacter && ImGui::CollapsingHeader("Bone Scale"))
+            {
+                auto skel = mMotionCharacter->getSkeleton();
+                auto& skelInfos = mMotionCharacter->getSkelInfos();
+
+                if (skel && !skelInfos.empty())
+                {
+                    bool anyChanged = false;
+                    for (size_t i = 0; i < skelInfos.size(); ++i)
+                    {
+                        auto& [boneName, modInfo] = skelInfos[i];
+
+                        auto* bn = skel->getBodyNode(boneName);
+                        if (!bn) continue;
+
+                        // Get current shape size for display
+                        Eigen::Vector3d currentSize = Eigen::Vector3d::Zero();
+                        auto* shapeNode = bn->getShapeNodeWith<dart::dynamics::VisualAspect>(0);
+                        if (shapeNode) {
+                            const auto* boxShape = dynamic_cast<const dart::dynamics::BoxShape*>(shapeNode->getShape().get());
+                            if (boxShape) {
+                                currentSize = boxShape->getSize();
+                            }
+                        }
+
+                        // Create sliders for scale ratios (lx, ly, lz)
+                        ImGui::PushID(static_cast<int>(i));
+                        if (ImGui::TreeNode(boneName.c_str()))
+                        {
+                            // Display current size
+                            ImGui::Text("Size: [%.3f, %.3f, %.3f]", currentSize[0], currentSize[1], currentSize[2]);
+
+                            float scaleX = static_cast<float>(modInfo.value[0]);
+                            float scaleY = static_cast<float>(modInfo.value[1]);
+                            float scaleZ = static_cast<float>(modInfo.value[2]);
+                            float scale = static_cast<float>(modInfo.value[3]);
+
+                            bool changed = false;
+                            changed |= ImGui::SliderFloat("Scale X", &scaleX, 0.5f, 2.0f);
+                            changed |= ImGui::SliderFloat("Scale Y", &scaleY, 0.5f, 2.0f);
+                            changed |= ImGui::SliderFloat("Scale Z", &scaleZ, 0.5f, 2.0f);
+                            changed |= ImGui::SliderFloat("Uniform", &scale, 0.5f, 2.0f);
+
+                            if (changed)
+                            {
+                                modInfo.value[0] = scaleX;
+                                modInfo.value[1] = scaleY;
+                                modInfo.value[2] = scaleZ;
+                                modInfo.value[3] = scale;
+                                anyChanged = true;
+                            }
+
+                            ImGui::TreePop();
+                        }
+                        ImGui::PopID();
+                    }
+
+                    // Apply all bone scales when any changed
+                    if (anyChanged)
+                    {
+                        mMotionCharacter->applySkeletonBodyNode(skelInfos, skel);
+                    }
+                }
+            }
+
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Kinematics")) {
             drawKinematicsControlPanelContent();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Timing")) {
-            drawTimingPaneContent();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Rendering")) {
@@ -3928,6 +4013,16 @@ bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std
 
 void GLFWApp::drawContent()
 {
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_NORMALIZE);
+    glEnable(GL_MULTISAMPLE);
+    glEnable(GL_LIGHTING);
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+    glEnable(GL_COLOR_MATERIAL);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
     // Simulated Character
     if (mRenderEnv){
         // Draw phase using viewer time
@@ -4723,6 +4818,7 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
         mShapeRenderer.renderMuscle(muscle, -1.0);
     }
     glEnable(GL_LIGHTING);
+    glEnable(GL_DEPTH_TEST);
 }
 
 void GLFWApp::drawFootStep()

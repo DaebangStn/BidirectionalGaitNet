@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <implot.h>
 #include <tinycolormap.hpp>
+#include <ctime>
 
 namespace fs = std::filesystem;
 
@@ -21,6 +22,13 @@ MusclePersonalizerApp::MusclePersonalizerApp(const std::string& configPath)
     // Adjust camera for muscle personalizer (slightly different defaults)
     mCamera.eye = Eigen::Vector3d(0.0, 0.0, 3.0);
     mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
+
+    // Initialize export name with timestamp (mmdd_hhmm)
+    std::time_t now = std::time(nullptr);
+    std::tm* t = std::localtime(&now);
+    char timestamp[16];
+    std::strftime(timestamp, sizeof(timestamp), "%m%d_%H%M", t);
+    std::snprintf(mExportMuscleName, sizeof(mExportMuscleName), "base_rom_%s", timestamp);
 }
 
 
@@ -143,6 +151,8 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
             // Reference character paths for waypoint optimization (standard/ideal muscle behavior)
             mReferenceSkeletonPath = paths["reference_skeleton"].as<std::string>("@data/skeleton/base.yaml");
             mReferenceMusclePath = paths["reference_muscle"].as<std::string>("@data/muscle/base.yaml");
+            // Muscle groups config for contracture estimation
+            mMuscleGroupsPath = paths["muscle_groups"].as<std::string>("@data/config/muscle_groups.yaml");
         }
 
         // Weight scaling defaults
@@ -232,8 +242,6 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
         // Visualization settings
         if (config["visualization"]) {
             auto vis = config["visualization"];
-            mColorByContracture = vis["color_by_contracture"].as<bool>(true);
-            mContractureColormap = vis["contracture_colormap"].as<std::string>("viridis");
             mContractureMinValue = vis["min_color_value"].as<float>(0.7f);
             mContractureMaxValue = vis["max_color_value"].as<float>(1.2f);
         }
@@ -343,11 +351,6 @@ void MusclePersonalizerApp::drawMuscles()
     }
     if (!character) return;
 
-    glEnable(GL_LIGHTING);
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-    glEnable(GL_COLOR_MATERIAL);
-    glEnable(GL_DEPTH_TEST);
-
     auto muscles = character->getMuscles();
 
     // Initialize selection states if needed
@@ -369,40 +372,84 @@ void MusclePersonalizerApp::drawMuscles()
     std::string symHighlightL = mSymmetryHighlightLeft;
     std::string symHighlightR = mSymmetryHighlightRight;
 
-    if (mShowAnchorPoints) {
-        // Anchor points mode: disable lighting for line/point rendering
-        glDisable(GL_LIGHTING);
+    glDisable(GL_LIGHTING);
 
+    // Render muscles as lines
+    for (size_t i = 0; i < muscles.size(); i++) {
+        if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
+
+        auto muscle = muscles[i];
+        muscle->UpdateGeometry();
+
+        // Check if this muscle is highlighted by symmetry tab
+        bool isSymmetryHighlighted = (!symHighlightL.empty() &&
+            (muscle->name == symHighlightL || muscle->name == symHighlightR));
+
+        Eigen::Vector4d color;
+        float lineWidth = mMuscleLineWidth;
+
+        // Waypoint highlight (green) always takes priority
+        if (!highlightedMuscle.empty() && muscle->name == highlightedMuscle) {
+            color = Eigen::Vector4d(0.2, 1.0, 0.2, 1.0);  // Bright green
+            lineWidth = mMuscleLineWidth + 2.0f;
+        } else if (mMuscleColorMode == MuscleColorMode::Symmetry) {
+            // Symmetry mode: highlight L/R pairs in blue, others in default
+            if (isSymmetryHighlighted) {
+                color = Eigen::Vector4d(0.2, 0.4, 1.0, 1.0);  // Blue
+                lineWidth = mMuscleLineWidth + 2.0f;
+            } else {
+                color = Eigen::Vector4d(0.6, 0.6, 0.6, 0.5);  // Gray for non-highlighted
+            }
+        } else if (mMuscleColorMode == MuscleColorMode::ContractureExt) {
+            // ContractureExt mode: only show extremes
+            if (muscle->lmt_base > 0) {
+                double ratio = muscle->lm_contract;
+                if (ratio > mContractureMaxValue) {
+                    color = Eigen::Vector4d(1.0, 0.3, 0.3, 1.0);  // Red: lengthened
+                    lineWidth = mMuscleLineWidth + 2.0f;
+                } else if (ratio < mContractureMinValue) {
+                    color = Eigen::Vector4d(1.0, 0.6, 0.8, 1.0);  // Pink: contracted
+                    lineWidth = mMuscleLineWidth + 2.0f;
+                } else {
+                    continue;  // Skip muscles in normal range
+                }
+            } else {
+                continue;  // Skip muscles without base length
+            }
+        } else if (mMuscleColorMode == MuscleColorMode::MuscleLength) {
+            // Muscle Length mode: viridis colormap based on lm_norm
+            double lm_norm = muscle->GetLmNorm();
+            double range = mMuscleLengthMaxValue - mMuscleLengthMinValue;
+            double t = std::clamp((lm_norm - mMuscleLengthMinValue) / range, 0.0, 1.0);
+            auto c = tinycolormap::GetColor(t, tinycolormap::ColormapType::Viridis);
+            color = Eigen::Vector4d(c.r(), c.g(), c.b(), 0.85);
+        } else {
+            // Contracture mode (default): viridis colormap
+            if (muscle->lmt_base > 0) {
+                double ratio = muscle->lm_contract;
+                double range = mContractureMaxValue - mContractureMinValue;
+                double t = std::clamp((ratio - mContractureMinValue) / range, 0.0, 1.0);
+                auto c = tinycolormap::GetColor(t, tinycolormap::ColormapType::Viridis);
+                color = Eigen::Vector4d(c.r(), c.g(), c.b(), 0.85);
+            } else {
+                color = Eigen::Vector4d(1.0, 0.2, 0.6, 0.85);  // Default magenta
+            }
+        }
+
+        glColor4dv(color.data());
+        mShapeRenderer.renderMuscleLine(muscle, lineWidth);
+    }
+
+    // Draw anchor points if enabled (separate from muscle line rendering)
+    if (mShowAnchorPoints) {
         for (size_t i = 0; i < muscles.size(); i++) {
             if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
             auto muscle = muscles[i];
-            muscle->UpdateGeometry();
             auto& anchors = muscle->GetAnchors();
 
-            // Check if this muscle is highlighted by symmetry tab
             bool isSymmetryHighlighted = (!symHighlightL.empty() &&
                 (muscle->name == symHighlightL || muscle->name == symHighlightR));
-
-            // Set line width (thicker for symmetry highlight)
-            if (isSymmetryHighlighted) {
-                glLineWidth(3.0f);
-            } else {
-                glLineWidth(1.5f);
-            }
-
-            // Draw muscle path as line strip
-            if (isSymmetryHighlighted) {
-                glColor4f(0.2f, 0.4f, 1.0f, 1.0f);  // Blue for symmetry highlight
-            } else {
-                glColor4f(0.8f, 0.2f, 0.6f, 0.85f);  // Magenta color for path
-            }
-            glBegin(GL_LINE_STRIP);
-            for (auto& anchor : anchors) {
-                Eigen::Vector3d pos = anchor->GetPoint();
-                glVertex3f(pos[0], pos[1], pos[2]);
-            }
-            glEnd();
 
             // Draw anchor points and connections to bodynodes
             for (auto& anchor : anchors) {
@@ -411,7 +458,7 @@ void MusclePersonalizerApp::drawMuscles()
                 // Lines to bodynodes
                 if (!anchor->bodynodes.empty()) {
                     if (isSymmetryHighlighted) {
-                        glColor4f(0.3f, 0.5f, 1.0f, 0.8f);  // Light blue for connections
+                        glColor4f(0.3f, 0.5f, 1.0f, 0.8f);
                     } else {
                         glColor4f(0.0f, 0.8f, 0.0f, 0.6f);
                     }
@@ -426,61 +473,13 @@ void MusclePersonalizerApp::drawMuscles()
 
                 // Anchor point sphere
                 if (isSymmetryHighlighted) {
-                    glColor4f(0.2f, 0.4f, 1.0f, 1.0f);  // Blue for symmetry highlight
-                    GUI::DrawSphere(anchorPos, 0.006);  // Slightly larger
+                    glColor4f(0.2f, 0.4f, 1.0f, 1.0f);
+                    GUI::DrawSphere(anchorPos, 0.006);
                 } else {
-                    glColor4f(0.0f, 1.0f, 0.0f, 1.0f);  // Green
+                    glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
                     GUI::DrawSphere(anchorPos, 0.004);
                 }
             }
-        }
-
-        glLineWidth(1.0f);
-        glEnable(GL_LIGHTING);
-    } else {
-        // Default muscle rendering
-        for (size_t i = 0; i < muscles.size(); i++) {
-            // Skip if muscle is not selected
-            if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
-
-            auto muscle = muscles[i];
-            muscle->UpdateGeometry();
-
-            Eigen::Vector4d color;
-
-            // Check if this muscle is highlighted by symmetry tab
-            bool isSymmetryHighlighted = (!symHighlightL.empty() &&
-                (muscle->name == symHighlightL || muscle->name == symHighlightR));
-
-            // Priority: Symmetry highlight (blue) > Waypoint highlight (green) > Contracture > Default
-            if (isSymmetryHighlighted) {
-                color = Eigen::Vector4d(0.2, 0.4, 1.0, 1.0);  // Blue for symmetry
-            } else if (!highlightedMuscle.empty() && muscle->name == highlightedMuscle) {
-                color = Eigen::Vector4d(0.2, 1.0, 0.2, 1.0);  // Bright green
-            } else if (mColorByContracture && muscle->lmt_base > 0) {
-                // Contracture ratio: < 1.0 means shortened, > 1.0 means lengthened
-                double ratio = muscle->lmt_ref / muscle->lmt_base;
-                // Normalize to [0, 1] based on config range
-                double range = mContractureMaxValue - mContractureMinValue;
-                double t = std::clamp((ratio - mContractureMinValue) / range, 0.0, 1.0);
-
-                // Get colormap type from config string
-                tinycolormap::ColormapType cmapType = tinycolormap::ColormapType::Viridis;
-                if (mContractureColormap == "plasma") {
-                    cmapType = tinycolormap::ColormapType::Plasma;
-                } else if (mContractureColormap == "coolwarm") {
-                    cmapType = tinycolormap::ColormapType::Heat;  // closest to coolwarm
-                }
-
-                auto c = tinycolormap::GetColor(t, cmapType);
-                color = Eigen::Vector4d(c.r(), c.g(), c.b(), 0.85);
-            } else {
-                // Default: Fluorescent magenta/pink for high visibility
-                color = Eigen::Vector4d(1.0, 0.2, 0.6, 0.85);
-            }
-
-            glColor4dv(color.data());
-            mShapeRenderer.renderMuscle(muscle, -1.0);
         }
     }
 
@@ -565,12 +564,18 @@ void MusclePersonalizerApp::drawClinicalDataSection()
         // Show selected PID info
         const auto& pidState = mPIDNavigator->getState();
 
-        // Check if PID or pre/post changed - reload patient ROM and weight
+        // Check if PID changed - reset ROM source to Normative and load character files
         if (pidState.selectedPID >= 0) {
             const std::string& pid = pidState.pidList[pidState.selectedPID];
-            if (pid != mCurrentROMPID || pidState.preOp != mCurrentROMPreOp) {
-                loadPatientROM(pid, pidState.preOp);
-                loadClinicalWeight(pid, pidState.preOp);
+            if (pid != mCurrentROMPID) {
+                // Reset ROM source to Normative when PID changes
+                mROMSource = ROMSource::Normative;
+                mPatientROMValues.clear();
+                mCurrentROMPID = pid;
+                // Note: getEffectiveROMValue() will use trial.normative when mROMSource is Normative
+
+                // Load clinical weight using visit directory
+                loadClinicalWeight(pid, pidState.getVisitDir());
 
                 // Auto-select patient skeleton (first available file)
                 mCharacterPID = pid;
@@ -582,12 +587,12 @@ void MusclePersonalizerApp::drawClinicalDataSection()
                 scanMuscleFiles();
 
                 // Select first skeleton/muscle files if available and auto-rebuild
-                std::string prePost = pidState.preOp ? "pre" : "post";
+                std::string visit = pidState.getVisitDir();
                 if (!mSkeletonCandidates.empty()) {
-                    mSkeletonPath = "@pid:" + pid + "/gait/" + prePost + "/skeleton/" + mSkeletonCandidates[0];
+                    mSkeletonPath = "@pid:" + pid + "/" + visit + "/skeleton/" + mSkeletonCandidates[0];
                 }
                 if (!mMuscleCandidates.empty()) {
-                    mMusclePath = "@pid:" + pid + "/gait/" + prePost + "/muscle/" + mMuscleCandidates[0];
+                    mMusclePath = "@pid:" + pid + "/" + visit + "/muscle/" + mMuscleCandidates[0];
                 }
 
                 if (!mSkeletonCandidates.empty() || !mMuscleCandidates.empty()) {
@@ -595,11 +600,12 @@ void MusclePersonalizerApp::drawClinicalDataSection()
                 }
             }
         } else if (!mCurrentROMPID.empty()) {
-            // PID was deselected
+            // PID was deselected - reset to Normative
+            mROMSource = ROMSource::Normative;
             mPatientROMValues.clear();
             mCurrentROMPID.clear();
             mClinicalWeightAvailable = false;
-            updateROMTrialCDValues();
+            // Note: getEffectiveROMValue() will use trial.normative when mROMSource is Normative
         }
     }
 }
@@ -642,12 +648,12 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             }
         }
 
-        // Patient skeleton controls - uses preOp from PID navigator
+        // Patient skeleton controls - uses visit from PID navigator
         if (mSkeletonDataSource == CharacterDataSource::PatientData) {
             if (!mCharacterPID.empty()) {
                 ImGui::SameLine();
                 const auto& pidState = mPIDNavigator->getState();
-                ImGui::Text("(%s/%s)", mCharacterPID.c_str(), pidState.preOp ? "pre" : "post");
+                ImGui::Text("(%s/%s)", mCharacterPID.c_str(), pidState.getVisitDir().c_str());
             } else {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
@@ -662,8 +668,8 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
         // Skeleton file list
         std::string skelPrefix = "@data/skeleton/";
         if (mSkeletonDataSource == CharacterDataSource::PatientData && !mCharacterPID.empty() && mPIDNavigator) {
-            std::string prePost = mPIDNavigator->getState().preOp ? "pre" : "post";
-            skelPrefix = "@pid:" + mCharacterPID + "/gait/" + prePost + "/skeleton/";
+            std::string visit = mPIDNavigator->getState().getVisitDir();
+            skelPrefix = "@pid:" + mCharacterPID + "/" + visit + "/skeleton/";
         }
 
         if (ImGui::BeginListBox("##SkeletonList", ImVec2(-1, 60))) {
@@ -697,12 +703,12 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             }
         }
 
-        // Patient muscle controls - uses preOp from PID navigator
+        // Patient muscle controls - uses visit from PID navigator
         if (mMuscleDataSource == CharacterDataSource::PatientData) {
             if (!mCharacterPID.empty()) {
                 ImGui::SameLine();
                 const auto& pidState = mPIDNavigator->getState();
-                ImGui::Text("(%s/%s)", mCharacterPID.c_str(), pidState.preOp ? "pre" : "post");
+                ImGui::Text("(%s/%s)", mCharacterPID.c_str(), pidState.getVisitDir().c_str());
             } else {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
@@ -717,8 +723,8 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
         // Muscle file list
         std::string musclePrefix = "@data/muscle/";
         if (mMuscleDataSource == CharacterDataSource::PatientData && !mCharacterPID.empty() && mPIDNavigator) {
-            std::string prePost = mPIDNavigator->getState().preOp ? "pre" : "post";
-            musclePrefix = "@pid:" + mCharacterPID + "/gait/" + prePost + "/muscle/";
+            std::string visit = mPIDNavigator->getState().getVisitDir();
+            musclePrefix = "@pid:" + mCharacterPID + "/" + visit + "/muscle/";
         }
 
         if (ImGui::BeginListBox("##MuscleList", ImVec2(-1, 60))) {
@@ -1285,6 +1291,38 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         }
         ImGui::InputText("Filter##ROM", mROMFilter, sizeof(mROMFilter));
 
+        // ROM source selector
+        ImGui::Text("ROM Source:");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Normative##rom", mROMSource == ROMSource::Normative)) {
+            if (mROMSource != ROMSource::Normative) {
+                mROMSource = ROMSource::Normative;
+                // No need to modify cd_value - getEffectiveROMValue() will use trial.normative
+            }
+        }
+        if (mPIDNavigator) {
+            const auto& pidState = mPIDNavigator->getState();
+            if (pidState.selectedPID >= 0) {
+                const std::string& pid = pidState.pidList[pidState.selectedPID];
+                ImGui::SameLine();
+                std::string preLabel = "Pre (" + pid + ")##rom";
+                if (ImGui::RadioButton(preLabel.c_str(), mROMSource == ROMSource::Pre)) {
+                    if (mROMSource != ROMSource::Pre) {
+                        mROMSource = ROMSource::Pre;
+                        loadPatientROM(pid, "pre");
+                    }
+                }
+                ImGui::SameLine();
+                std::string op1Label = "Op1 (" + pid + ")##rom";
+                if (ImGui::RadioButton(op1Label.c_str(), mROMSource == ROMSource::Op1)) {
+                    if (mROMSource != ROMSource::Op1) {
+                        mROMSource = ROMSource::Op1;
+                        loadPatientROM(pid, "op1");
+                    }
+                }
+            }
+        }
+
         // ROM selection list - display "TC name - CD value"
         ImGui::BeginChild("ROMList", ImVec2(0, 250), true);
         for (size_t i = 0; i < mROMTrials.size(); ++i) {
@@ -1297,11 +1335,12 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 }
             }
 
-            // Format label: "TC name - CD value" or "TC name - N/A"
+            // Format label: "TC name - value" or "TC name - N/A"
+            auto effectiveValue = getEffectiveROMValue(trial);
             std::string label;
-            if (trial.cd_value.has_value()) {
+            if (effectiveValue.has_value()) {
                 char buf[128];
-                snprintf(buf, sizeof(buf), "%s - %.1f°", trial.name.c_str(), trial.cd_value.value());
+                snprintf(buf, sizeof(buf), "%s - %.1f°", trial.name.c_str(), effectiveValue.value());
                 label = buf;
             } else {
                 label = trial.name + " - N/A";
@@ -1311,8 +1350,8 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 // Selection changed
             }
 
-            // If no clinical data available, show manual ROM input
-            if (!trial.cd_value.has_value()) {
+            // If no effective ROM value available, show manual ROM input
+            if (!effectiveValue.has_value()) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(60);
                 char input_id[64];
@@ -1331,14 +1370,17 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 ImGui::Text("Description: %s", trial.description.c_str());
                 ImGui::Text("Joint: %s (DOF %d)", trial.joint.c_str(), trial.dof_index);
                 ImGui::Text("Torque Cutoff: %.1f Nm", trial.torque_cutoff);
+                if (trial.normative.has_value()) {
+                    ImGui::Text("Normative: %.1f°", trial.normative.value());
+                }
                 if (!trial.cd_side.empty()) {
                     ImGui::Separator();
                     ImGui::Text("Clinical Data: %s.%s.%s",
                         trial.cd_side.c_str(), trial.cd_joint.c_str(), trial.cd_field.c_str());
                     if (trial.cd_value.has_value()) {
-                        ImGui::Text("Value: %.1f°", trial.cd_value.value());
+                        ImGui::Text("Patient Value: %.1f°", trial.cd_value.value());
                     } else {
-                        ImGui::TextColored(ImVec4(1, 0.5, 0, 1), "Value: Not available");
+                        ImGui::TextColored(ImVec4(1, 0.5, 0, 1), "Patient Value: Not available");
                     }
                 }
                 ImGui::EndTooltip();
@@ -1350,10 +1392,13 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::Text("Optimization Parameters:");
         ImGui::SetNextItemWidth(100);
         ImGui::InputInt("Max Iterations##Contract", &mContractureMaxIterations);
-        ImGui::SetNextItemWidth(100);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
         ImGui::InputFloat("Min Ratio", &mContractureMinRatio, 0.0f, 0.0f, "%.2f");
-        ImGui::SetNextItemWidth(100);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
         ImGui::InputFloat("Max Ratio", &mContractureMaxRatio, 0.0f, 0.0f, "%.2f");
+        ImGui::SameLine();
         ImGui::Checkbox("Verbose##Contracture", &mContractureVerbose);
 
         ImGui::Text("Grid Search Range:");
@@ -1493,13 +1538,59 @@ void MusclePersonalizerApp::drawRenderTab()
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Muscles");
     ImGui::Separator();
     ImGui::Checkbox("Show Muscles", &mRenderMuscles);
-    ImGui::Checkbox("Color by Contracture", &mColorByContracture);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(60);
+    ImGui::InputFloat("##LineWidth", &mMuscleLineWidth, 0.0f, 0.0f, "%.1f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("Width");
     ImGui::Checkbox("Show Anchor Points", &mShowAnchorPoints);
 
-    if (mColorByContracture) {
+    // Muscle color mode
+    ImGui::Text("Color Mode:");
+    ImGui::Indent();
+    if (ImGui::RadioButton("Contracture", mMuscleColorMode == MuscleColorMode::Contracture)) {
+        mMuscleColorMode = MuscleColorMode::Contracture;
+    }
+    if (ImGui::RadioButton("Contracture (ext)", mMuscleColorMode == MuscleColorMode::ContractureExt)) {
+        mMuscleColorMode = MuscleColorMode::ContractureExt;
+    }
+    if (ImGui::RadioButton("Symmetry", mMuscleColorMode == MuscleColorMode::Symmetry)) {
+        mMuscleColorMode = MuscleColorMode::Symmetry;
+    }
+    if (ImGui::RadioButton("Muscle Length", mMuscleColorMode == MuscleColorMode::MuscleLength)) {
+        mMuscleColorMode = MuscleColorMode::MuscleLength;
+    }
+    ImGui::Unindent();
+
+    if (mMuscleColorMode == MuscleColorMode::Contracture ||
+        mMuscleColorMode == MuscleColorMode::ContractureExt) {
         ImGui::Separator();
-        ImGuiCommon::ColorBarLegend("Contracture Ratio", mContractureMinValue, mContractureMaxValue,
-                                    "(contracted)", "(lengthened)", mContractureColormap.c_str());
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("##MinVal", &mContractureMinValue, 0.0f, 0.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("##MaxVal", &mContractureMaxValue, 0.0f, 0.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::TextDisabled("Min/Max");
+        if (mMuscleColorMode == MuscleColorMode::Contracture) {
+            ImGuiCommon::ColorBarLegend("Contracture Ratio", mContractureMinValue, mContractureMaxValue,
+                                        "(contracted)", "(lengthened)", "viridis");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Red: > %.2f", mContractureMaxValue);
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.8f, 1.0f), "Pink: < %.2f", mContractureMinValue);
+            ImGui::TextDisabled("In range: not drawn");
+        }
+    } else if (mMuscleColorMode == MuscleColorMode::MuscleLength) {
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("##LmMinVal", &mMuscleLengthMinValue, 0.0f, 0.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("##LmMaxVal", &mMuscleLengthMaxValue, 0.0f, 0.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::TextDisabled("Min/Max");
+        ImGuiCommon::ColorBarLegend("Normalized Length (lm_norm)", mMuscleLengthMinValue, mMuscleLengthMaxValue,
+                                    "(shortened)", "(lengthened)", "viridis");
     }
 
     // Muscle selection
@@ -1607,7 +1698,6 @@ void MusclePersonalizerApp::drawExportSection()
     }
 
     // Determine export directory based on PID selection
-    std::string skelPrefix = "@data/skeleton/";
     std::string musclePrefix = "@data/muscle/";
     std::string pathDisplay = "@data/";
 
@@ -1615,44 +1705,15 @@ void MusclePersonalizerApp::drawExportSection()
         const auto& pidState = mPIDNavigator->getState();
         if (pidState.selectedPID >= 0) {
             const std::string& pid = pidState.pidList[pidState.selectedPID];
-            std::string prePost = pidState.preOp ? "pre" : "post";
-            skelPrefix = "@pid:" + pid + "/gait/" + prePost + "/skeleton/";
-            musclePrefix = "@pid:" + pid + "/gait/" + prePost + "/muscle/";
-            pathDisplay = "@pid:" + pid + "/gait/" + prePost + "/";
+            std::string visit = pidState.getVisitDir();
+            musclePrefix = "@pid:" + pid + "/" + visit + "/muscle/";
+            pathDisplay = "@pid:" + pid + "/" + visit + "/";
         }
     }
 
     // Show current export path
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Export to: %s", pathDisplay.c_str());
     ImGui::Spacing();
-
-    // Skeleton export
-    ImGui::Text("Skeleton:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(-80);
-    ImGui::InputText("##export_skeleton_name", mExportSkeletonName, sizeof(mExportSkeletonName));
-    ImGui::SameLine();
-
-    std::string skelFilename = std::string(mExportSkeletonName) + ".yaml";
-    fs::path skelDir = rm::getManager().resolveDir(skelPrefix);
-    fs::path skelPath = skelDir / skelFilename;
-    bool skelExists = fs::exists(skelPath);
-
-    if (ImGui::Button("Export##skel", ImVec2(-1, 0))) {
-        try {
-            if (skelPrefix.find("@pid:") != std::string::npos) {
-                skelDir = rm::getManager().resolveDirCreate(skelPrefix);
-                skelPath = skelDir / skelFilename;
-            }
-            mExecutor->exportSkeleton(skelPath.string());
-            LOG_INFO("[MusclePersonalizer] Skeleton exported to: " << skelPrefix << skelFilename );
-        } catch (const std::exception& e) {
-            LOG_ERROR("[MusclePersonalizer] Error exporting skeleton: " << e.what() );
-        }
-    }
-    if (skelExists) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "  %s exists - will overwrite", skelFilename.c_str());
-    }
 
     // Muscle export
     ImGui::Text("Muscle:  ");
@@ -2435,9 +2496,6 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
 
 void MusclePersonalizerApp::runContractureEstimation()
 {
-    // Hardcoded muscle groups config path
-    static const std::string MUSCLE_GROUPS_CONFIG = "@data/config/muscle_groups.yaml";
-
     if (!mExecutor || !mExecutor->getCharacter()) {
         LOG_WARN("[MusclePersonalizer] No character loaded" );
         return;
@@ -2456,16 +2514,18 @@ void MusclePersonalizerApp::runContractureEstimation()
             PMuscle::ROMTrialConfig config = PMuscle::ContractureOptimizer::loadROMConfig(
                 trial.filePath, skeleton);
 
-            // Populate rom_angle from clinical data or manual input
-            if (trial.cd_value.has_value()) {
+            // Populate rom_angle from effective value (normative or patient) or manual input
+            auto effectiveValue = getEffectiveROMValue(trial);
+            if (effectiveValue.has_value()) {
                 // For composite DOF (e.g., abd_knee), angle is always positive
                 // Only negate for simple DOF types
                 if (config.is_composite_dof) {
-                    config.rom_angle = trial.cd_value.value();  // Always positive
+                    config.rom_angle = effectiveValue.value();  // Always positive
                 } else {
-                    config.rom_angle = trial.cd_neg ? -trial.cd_value.value() : trial.cd_value.value();
+                    config.rom_angle = trial.cd_neg ? -effectiveValue.value() : effectiveValue.value();
                 }
-                LOG_INFO("[MusclePersonalizer] Using clinical ROM: " << config.name
+                std::string sourceType = (mROMSource == ROMSource::Normative) ? "normative" : "patient";
+                LOG_INFO("[MusclePersonalizer] Using " << sourceType << " ROM: " << config.name
                           << " = " << config.rom_angle << "°"
                           << (config.is_composite_dof ? " (composite DOF, no negation)" :
                               (trial.cd_neg ? " (negated)" : "")) );
@@ -2503,9 +2563,9 @@ void MusclePersonalizerApp::runContractureEstimation()
     PMuscle::ContractureOptimizer optimizer;
 
     // Load muscle groups from config (required)
-    if (optimizer.loadMuscleGroups(MUSCLE_GROUPS_CONFIG, mExecutor->getCharacter()) == 0) {
+    if (optimizer.loadMuscleGroups(mMuscleGroupsPath, mExecutor->getCharacter()) == 0) {
         LOG_ERROR("[MusclePersonalizer] Failed to load muscle groups from "
-                  << MUSCLE_GROUPS_CONFIG );
+                  << mMuscleGroupsPath );
         return;
     }
 
@@ -2707,36 +2767,31 @@ void MusclePersonalizerApp::applyDefaultROMValues()
     }
 }
 
-void MusclePersonalizerApp::loadPatientROM(const std::string& pid, bool preOp)
+void MusclePersonalizerApp::loadPatientROM(const std::string& pid, const std::string& visit)
 {
     mPatientROMValues.clear();
     mCurrentROMPID = pid;
-    mCurrentROMPreOp = preOp;
 
-    if (pid.empty()) return;
+    if (pid.empty() || visit.empty()) return;
 
     try {
-        // Try to resolve @pid:{pid}/rom.yaml
-        std::string romPath = "@pid:" + pid + "/rom.yaml";
+        // New path: @pid:{pid}/{visit}/rom.yaml (flat structure)
+        std::string romPath = "@pid:" + pid + "/" + visit + "/rom.yaml";
         std::string resolvedPath = rm::getManager().resolve(romPath);
 
         if (resolvedPath.empty() || !fs::exists(resolvedPath)) {
-            LOG_INFO("[MusclePersonalizer] No ROM data found for PID: " << pid );
+            LOG_INFO("[MusclePersonalizer] No ROM data found: " << romPath);
             return;
         }
 
         YAML::Node romData = YAML::LoadFile(resolvedPath);
 
-        // Select phase based on preOp flag
-        std::string phaseName = preOp ? "pre_op" : "post_op";
-        if (!romData[phaseName]) {
-            LOG_INFO("[MusclePersonalizer] No " << phaseName << " data in ROM file" );
+        // Flat structure: rom.left.hip.field, rom.right.knee.field, etc.
+        if (!romData["rom"]) {
+            LOG_INFO("[MusclePersonalizer] No 'rom' section in ROM file: " << romPath);
             return;
         }
-
-        auto phaseData = romData[phaseName];
-        if (!phaseData["rom"]) return;
-        auto romSection = phaseData["rom"];
+        auto romSection = romData["rom"];
 
         // Parse left and right sides
         for (const std::string& side : {"left", "right"}) {
@@ -2767,13 +2822,13 @@ void MusclePersonalizerApp::loadPatientROM(const std::string& pid, bool preOp)
         }
 
         LOG_INFO("[MusclePersonalizer] Loaded " << mPatientROMValues.size()
-                  << " ROM values for PID " << pid << " (" << phaseName << ")" );
+                  << " ROM values for PID " << pid << " (" << visit << ")");
 
         // Update trial CD values
         updateROMTrialCDValues();
     }
     catch (const std::exception& e) {
-        LOG_ERROR("[MusclePersonalizer] Error loading patient ROM: " << e.what() );
+        LOG_ERROR("[MusclePersonalizer] Error loading patient ROM: " << e.what());
     }
 }
 
@@ -2795,7 +2850,17 @@ void MusclePersonalizerApp::updateROMTrialCDValues()
     }
 }
 
-void MusclePersonalizerApp::loadClinicalWeight(const std::string& pid, bool preOp)
+std::optional<float> MusclePersonalizerApp::getEffectiveROMValue(const ROMTrialInfo& trial) const
+{
+    // Return appropriate ROM value based on current source selection
+    if (mROMSource == ROMSource::Normative) {
+        return trial.normative;  // Use normative from config
+    } else {
+        return trial.cd_value;   // Use patient data (Pre/Op1)
+    }
+}
+
+void MusclePersonalizerApp::loadClinicalWeight(const std::string& pid, const std::string& visit)
 {
     mClinicalWeightAvailable = false;
     mClinicalWeight = 0.0f;
@@ -2803,19 +2868,19 @@ void MusclePersonalizerApp::loadClinicalWeight(const std::string& pid, bool preO
     if (pid.empty()) return;
 
     try {
-        // Load from @pid:{pid}/gait/metadata.yaml
-        std::string metaPath = "@pid:" + pid + "/gait/metadata.yaml";
+        // Load from @pid:{pid}/metadata.yaml
+        std::string metaPath = "@pid:" + pid + "/metadata.yaml";
         std::string resolvedPath = rm::getManager().resolve(metaPath);
 
         if (resolvedPath.empty() || !fs::exists(resolvedPath)) {
-            LOG_INFO("[MusclePersonalizer] No gait metadata found for PID: " << pid );
+            LOG_INFO("[MusclePersonalizer] No metadata found for PID: " << pid);
             return;
         }
 
         YAML::Node meta = YAML::LoadFile(resolvedPath);
 
-        // Access pre or post based on preOp flag
-        std::string phaseName = preOp ? "pre" : "post";
+        // Access visit (pre, op1, op2, etc.)
+        std::string phaseName = visit;
         if (meta[phaseName] && meta[phaseName]["weight"]) {
             mClinicalWeight = meta[phaseName]["weight"].as<float>();
             mClinicalWeightAvailable = true;
@@ -2840,19 +2905,14 @@ void MusclePersonalizerApp::scanSkeletonFiles()
     try {
         fs::path skelDir;
         if (mSkeletonDataSource == CharacterDataSource::PatientData && !mCharacterPID.empty() && mPIDNavigator) {
-            // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/skeleton/
+            // Use patient data directory: {pid_root}/{pid}/{visit}/skeleton/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string prePost = mPIDNavigator->getState().preOp ? "pre" : "post";
-                skelDir = pidRoot / mCharacterPID / "gait" / prePost / "skeleton";
-
-                // Create directory if it doesn't exist
-                if (!fs::exists(skelDir)) {
-                    LOG_INFO("[MusclePersonalizer] Creating skeleton directory: " << skelDir );
-                    fs::create_directories(skelDir);
-                }
+                std::string visit = mPIDNavigator->getState().getVisitDir();
+                skelDir = pidRoot / mCharacterPID / visit / "skeleton";
+                if (!fs::exists(skelDir)) return;
             } else {
-                LOG_WARN("[MusclePersonalizer] PID root not available" );
+                LOG_WARN("[MusclePersonalizer] PID root not available");
                 return;
             }
         } else {
@@ -2881,19 +2941,14 @@ void MusclePersonalizerApp::scanMuscleFiles()
     try {
         fs::path muscleDir;
         if (mMuscleDataSource == CharacterDataSource::PatientData && !mCharacterPID.empty() && mPIDNavigator) {
-            // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/muscle/
+            // Use patient data directory: {pid_root}/{pid}/{visit}/muscle/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string prePost = mPIDNavigator->getState().preOp ? "pre" : "post";
-                muscleDir = pidRoot / mCharacterPID / "gait" / prePost / "muscle";
-
-                // Create directory if it doesn't exist
-                if (!fs::exists(muscleDir)) {
-                    LOG_INFO("[MusclePersonalizer] Creating muscle directory: " << muscleDir );
-                    fs::create_directories(muscleDir);
-                }
+                std::string visit = mPIDNavigator->getState().getVisitDir();
+                muscleDir = pidRoot / mCharacterPID / visit / "muscle";
+                if (!fs::exists(muscleDir)) return;
             } else {
-                LOG_WARN("[MusclePersonalizer] PID root not available" );
+                LOG_WARN("[MusclePersonalizer] PID root not available");
                 return;
             }
         } else {
@@ -2968,12 +3023,6 @@ void MusclePersonalizerApp::refreshMuscleList()
     }
 
     LOG_INFO("[MusclePersonalizer] Found " << mAvailableMuscles.size() << " muscles" );
-}
-
-void MusclePersonalizerApp::exportMuscleConfig()
-{
-    // TODO: Implement muscle config export
-    LOG_INFO("[MusclePersonalizer] Muscle config export not yet implemented" );
 }
 
 bool MusclePersonalizerApp::collapsingHeaderWithControls(const std::string& title)

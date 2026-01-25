@@ -657,13 +657,13 @@ void MotionEditorApp::drawExportSection()
         ImGui::InputText("##ExportFilename", mExportFilename, sizeof(mExportFilename));
 
         // Auto suffix checkbox
-        ImGui::Checkbox("Auto-suffix \"_trimmed\"", &mAutoSuffix);
+        ImGui::Checkbox("Auto-suffix \"_edited\"", &mAutoSuffix);
 
         // Preview output filename
         std::string filename = strlen(mExportFilename) > 0
             ? mExportFilename
             : fs::path(mMotionSourcePath).stem().string();
-        if (mAutoSuffix) filename += "_trimmed";
+        if (mAutoSuffix) filename += "_edited";
         filename += ".h5";
 
         fs::path outputPath = fs::path(mMotionSourcePath).parent_path() / filename;
@@ -1284,8 +1284,10 @@ void MotionEditorApp::loadH5Motion(const std::string& path)
         mViewerTime = 0.0;
         mViewerPhase = 0.0;
 
-        // Clear export filename
-        mExportFilename[0] = '\0';
+        // Prefill export filename with source file stem
+        std::string stem = fs::path(path).stem().string();
+        strncpy(mExportFilename, stem.c_str(), sizeof(mExportFilename) - 1);
+        mExportFilename[sizeof(mExportFilename) - 1] = '\0';
 
         // Reset ROM violations
         mROMViolations.clear();

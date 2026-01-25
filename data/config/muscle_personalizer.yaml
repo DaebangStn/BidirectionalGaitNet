@@ -15,6 +15,8 @@ paths:
   # Reference character for waypoint optimization (standard/ideal muscle behavior)
   reference_skeleton: "@data/skeleton/base.yaml"
   reference_muscle: "@data/muscle/base.yaml"
+  muscle_groups: "@data/config/muscle_groups.yaml"
+  # muscle_groups: "@data/config/muscle_groups_detailed3.yaml"
 
 # Weight scaling defaults
 weight_scaling:
@@ -126,10 +128,10 @@ contracture_estimation:
     - "dorsi_k0_R"
     - "dorsi_k90_L"
     - "dorsi_k90_R"
-    - "plantar_L"
-    - "plantar_R"
-    - "popliteal_L"
-    - "popliteal_R"
+    # - "plantar_L"
+    # - "plantar_R"
+    # - "popliteal_L"
+    # - "popliteal_R"
     - "staheliExtension_L"
     - "staheliExtension_R"
     - "add_L"
@@ -138,14 +140,12 @@ contracture_estimation:
     - "abd_k0_R"
     # - "abd_k90_L"
     # - "abd_k90_R"
-    - "intRot_L"
-    - "intRot_R"
+    # - "intRot_L"
+    # - "intRot_R"
     # - "extRot_L"
     # - "extRot_R"
 
 # Muscle visualization
 visualization:
-  color_by_contracture: true
-  contracture_colormap: "viridis"  # viridis, plasma, coolwarm
-  min_color_value: 0.7
-  max_color_value: 1.2
+  min_color_value: 0.6
+  max_color_value: 1.3

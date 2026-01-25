@@ -22,8 +22,8 @@ torque_cutoff: 5.0
 exam:
   alias: "ankle/dorsiflexion_knee0/right"
   angle_min: -50
-  angle_max: 0
-  num_steps: 100
+  angle_max: 50
+  num_steps: 200
   normative: 11.5
 
 # 5. Clinical data reference (ROM angle only)

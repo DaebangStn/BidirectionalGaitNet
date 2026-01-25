@@ -148,6 +148,75 @@ PhysicalExam::~PhysicalExam() {
     // GLFW/ImGui cleanup handled by ViewerAppBase destructor
 }
 
+void PhysicalExam::loadClinicalROM(const std::string& pid, const std::string& visit) {
+    mClinicalROM.clear();
+    mClinicalROMPID = pid;
+    mClinicalROMVisit = visit;
+
+    if (pid.empty() || visit.empty()) {
+        LOG_INFO("[ClinicalROM] No PID or visit specified, clearing clinical ROM data");
+        return;
+    }
+
+    // Get PID root directory from resource manager
+    namespace fs = std::filesystem;
+    fs::path pidRoot = rm::getManager().getPidRoot();
+    if (pidRoot.empty()) {
+        LOG_WARN("[ClinicalROM] PID root not configured");
+        return;
+    }
+
+    // Construct path to rom.yaml: {pid_root}/{pid}/{visit}/rom.yaml
+    fs::path romPath = pidRoot / pid / visit / "rom.yaml";
+    if (!fs::exists(romPath)) {
+        LOG_INFO("[ClinicalROM] No rom.yaml found at: " << romPath.string());
+        return;
+    }
+
+    try {
+        YAML::Node romConfig = YAML::LoadFile(romPath.string());
+
+        // Parse ROM data structure: rom.{side}.{joint}.{field} = value
+        // Expected format:
+        // rom:
+        //   left:
+        //     hip:
+        //       abduction_ext_r2: 35.0
+        //   right:
+        //     hip:
+        //       abduction_ext_r2: 38.0
+        if (romConfig["rom"]) {
+            YAML::Node romData = romConfig["rom"];
+            for (auto sideIt = romData.begin(); sideIt != romData.end(); ++sideIt) {
+                std::string side = sideIt->first.as<std::string>();
+                YAML::Node sideData = sideIt->second;
+
+                for (auto jointIt = sideData.begin(); jointIt != sideData.end(); ++jointIt) {
+                    std::string joint = jointIt->first.as<std::string>();
+                    YAML::Node jointData = jointIt->second;
+
+                    for (auto fieldIt = jointData.begin(); fieldIt != jointData.end(); ++fieldIt) {
+                        std::string field = fieldIt->first.as<std::string>();
+                        if (fieldIt->second.IsScalar()) {
+                            try {
+                                float value = fieldIt->second.as<float>();
+                                std::string key = side + "." + joint + "." + field;
+                                mClinicalROM[key] = value;
+                            } catch (const YAML::BadConversion&) {
+                                // Skip non-numeric values
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        LOG_INFO("[ClinicalROM] Loaded " << mClinicalROM.size() << " ROM values from: " << romPath.string());
+    } catch (const std::exception& e) {
+        LOG_ERROR("[ClinicalROM] Failed to parse rom.yaml: " << e.what());
+    }
+}
+
 void PhysicalExam::loadRenderConfigImpl() {
     // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
     // Uses inherited mControlPanelWidth and mPlotPanelWidth from geometry.control/plot
@@ -987,9 +1056,23 @@ TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
             trial.angle_sweep.alias = exam_node["alias"].as<std::string>();
         }
 
-        // Parse clinical_data.neg flag for ROM display negation
-        if (trial_node["clinical_data"] && trial_node["clinical_data"]["neg"]) {
-            trial.angle_sweep.neg = trial_node["clinical_data"]["neg"].as<bool>(false);
+        // Parse clinical_data section for ROM display and clinical value lookup
+        if (trial_node["clinical_data"]) {
+            auto cd = trial_node["clinical_data"];
+            if (cd["neg"]) {
+                trial.angle_sweep.neg = cd["neg"].as<bool>(false);
+            }
+            if (cd["side"]) {
+                trial.angle_sweep.cd_side = cd["side"].as<std::string>();
+            }
+            if (cd["joint"]) {
+                trial.angle_sweep.cd_joint = cd["joint"].as<std::string>();
+            }
+            if (cd["field"]) {
+                trial.angle_sweep.cd_field = cd["field"].as<std::string>();
+            }
+            // cd_neg: whether to negate the clinical value when comparing
+            trial.angle_sweep.cd_neg = cd["neg"].as<bool>(false);
         }
 
         // Parse torque_cutoff (with backward compat for old "torque" key)
@@ -1084,6 +1167,11 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
+            // Copy clinical data reference for ROM table rendering
+            buffer.cd_side = trial.angle_sweep.cd_side;
+            buffer.cd_joint = trial.angle_sweep.cd_joint;
+            buffer.cd_field = trial.angle_sweep.cd_field;
+            buffer.cd_neg = trial.angle_sweep.cd_neg;
             // Negate cutoff based on neg flag (neg:false → negative torque direction)
             double effective_cutoff = trial.angle_sweep.neg ? trial.torque_cutoff : -trial.torque_cutoff;
             // abd_knee has reversed torque direction - flip the cutoff sign
@@ -1187,6 +1275,11 @@ void PhysicalExam::startNextTrial() {
         buffer.tracked_muscles = mAngleSweepTrackedMuscles;
         buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
         buffer.config = trial.angle_sweep;
+        // Copy clinical data reference for ROM table rendering
+        buffer.cd_side = trial.angle_sweep.cd_side;
+        buffer.cd_joint = trial.angle_sweep.cd_joint;
+        buffer.cd_field = trial.angle_sweep.cd_field;
+        buffer.cd_neg = trial.angle_sweep.cd_neg;
         buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
         buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
         buffer.base_pose = mCharacter->getSkeleton()->getPositions();
@@ -2471,6 +2564,11 @@ void PhysicalExam::runAllTrials() {
             buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
+            // Copy clinical data reference for ROM table rendering
+            buffer.cd_side = trial.angle_sweep.cd_side;
+            buffer.cd_joint = trial.angle_sweep.cd_joint;
+            buffer.cd_field = trial.angle_sweep.cd_field;
+            buffer.cd_neg = trial.angle_sweep.cd_neg;
             // Negate cutoff based on neg flag (neg:false → negative torque direction)
             double effective_cutoff = trial.angle_sweep.neg ? trial.torque_cutoff : -trial.torque_cutoff;
             // abd_knee has reversed torque direction - flip the cutoff sign
@@ -3208,6 +3306,13 @@ void PhysicalExam::drawROMSummaryTable() {
     struct ROMEntry {
         std::optional<double> left;   // nullopt = no trial ("-"), NaN = no ROM ("N/A")
         std::optional<double> right;
+        // Clinical data reference for lookup
+        std::string cd_joint_left;
+        std::string cd_field_left;
+        bool cd_neg_left = false;
+        std::string cd_joint_right;
+        std::string cd_field_right;
+        bool cd_neg_right = false;
     };
 
     // Initialize with all expected measurements (nullopt = no trial)
@@ -3245,47 +3350,89 @@ void PhysicalExam::drawROMSummaryTable() {
 
         if (side == "left") {
             grouped[joint][measurement].left = value;
+            grouped[joint][measurement].cd_joint_left = buf.cd_joint;
+            grouped[joint][measurement].cd_field_left = buf.cd_field;
+            grouped[joint][measurement].cd_neg_left = buf.cd_neg;
         } else if (side == "right") {
             grouped[joint][measurement].right = value;
+            grouped[joint][measurement].cd_joint_right = buf.cd_joint;
+            grouped[joint][measurement].cd_field_right = buf.cd_field;
+            grouped[joint][measurement].cd_neg_right = buf.cd_neg;
         }
     }
 
-    // Helper lambda to render cell with normative comparison
-    // Returns color based on deviation from normative value
-    auto renderCellWithComparison = [](const std::optional<double>& val, double normative) {
-        if (!val.has_value()) {
-            // No trial exists
+    // Helper lambda to render measured value with clinical comparison
+    // Color based on deviation from clinical value (degrees)
+    auto renderMeasuredWithClinicalComparison = [](const std::optional<double>& measured,
+                                                    const std::optional<float>& clinical) {
+        if (!measured.has_value()) {
             ImGui::TextDisabled("-");
-        } else if (std::isnan(*val)) {
-            // Trial exists but no ROM data
-            ImGui::TextDisabled("N/A");
-        } else {
-            // Has ROM value - color based on deviation from normative
-            double diff = *val - normative;
-            double diff_pct = std::abs(diff) / normative * 100.0;
-
-            ImVec4 color;
-            if (diff_pct <= 10.0) {
-                // Within 10%: green (normal)
-                color = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
-            } else if (diff_pct <= 25.0) {
-                // 10-25%: yellow (mild deviation)
-                color = ImVec4(0.9f, 0.9f, 0.3f, 1.0f);
-            } else {
-                // >25%: red (significant deviation)
-                color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
-            }
-            ImGui::TextColored(color, "%.1f", *val);
+            return;
         }
+        if (std::isnan(*measured)) {
+            ImGui::TextDisabled("N/A");
+            return;
+        }
+
+        // If no clinical data, show measured value in white
+        if (!clinical.has_value()) {
+            ImGui::Text("%.1f", *measured);
+            return;
+        }
+
+        // Color based on deviation from clinical value (direct comparison)
+        double diff = std::abs(*measured - *clinical);
+        ImVec4 color;
+        if (diff <= 5.0) {
+            // Within 5°: green (matching)
+            color = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
+        } else if (diff <= 15.0) {
+            // 5-15°: yellow (mild deviation)
+            color = ImVec4(0.9f, 0.9f, 0.3f, 1.0f);
+        } else {
+            // >15°: red (significant deviation)
+            color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+        }
+        ImGui::TextColored(color, "%.1f", *measured);
     };
 
-    // Render table with Normative column (larger font for readability)
+    // Helper lambda to get clinical value from mClinicalROM
+    // Clinical values are displayed exactly as stored in rom.yaml (no transformation).
+    // The neg flag is only for measured ROM display, not clinical values.
+    auto getClinicalValue = [this](const std::string& side, const std::string& cd_joint,
+                                    const std::string& cd_field, bool /*cd_neg*/) -> std::optional<float> {
+        if (cd_joint.empty() || cd_field.empty()) {
+            return std::nullopt;
+        }
+        std::string key = side + "." + cd_joint + "." + cd_field;
+        auto it = mClinicalROM.find(key);
+        if (it != mClinicalROM.end() && it->second.has_value()) {
+            return *it->second;  // Return raw value as-is from rom.yaml
+        }
+        return std::nullopt;
+    };
+
+    // Check if we have any clinical data loaded
+    bool hasClinicalData = !mClinicalROM.empty();
+
+    // Render table (larger font for readability)
     ImGui::SetWindowFontScale(1.3f);
-    if (ImGui::BeginTable("ROMSummary", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+
+    // 6 columns when clinical data available, 4 columns otherwise
+    int numColumns = hasClinicalData ? 6 : 4;
+    if (ImGui::BeginTable("ROMSummary", numColumns, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Measurement", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Normative", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        if (hasClinicalData) {
+            ImGui::TableSetupColumn("CD L", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn("Meas L", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("CD R", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn("Meas R", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("Norm", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+        } else {
+            ImGui::TableSetupColumn("Norm", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        }
         ImGui::TableHeadersRow();
 
         // Iterate in defined order
@@ -3294,9 +3441,9 @@ void PhysicalExam::drawROMSummaryTable() {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", joint.c_str());
-            ImGui::TableNextColumn();
-            ImGui::TableNextColumn();
-            ImGui::TableNextColumn();
+            for (int i = 1; i < numColumns; i++) {
+                ImGui::TableNextColumn();
+            }
 
             for (const auto& meas : measurements) {
                 const auto& entry = grouped[joint][meas];
@@ -3306,40 +3453,82 @@ void PhysicalExam::drawROMSummaryTable() {
                 ImGui::TableNextColumn();
                 ImGui::Text("  %s", meas.c_str());
 
-                // Normative value column
-                ImGui::TableNextColumn();
+                // Look up normative value
                 auto normIt = mNormativeROM.find(normKey);
-                double normative = 0.0;
-                if (normIt != mNormativeROM.end()) {
-                    normative = normIt->second;
-                    ImGui::TextDisabled("%.1f", normative);
-                } else {
-                    ImGui::TextDisabled("-");
-                }
+                double normative = normIt != mNormativeROM.end() ? normIt->second : 0.0;
 
-                // Left value with color comparison
-                ImGui::TableNextColumn();
-                if (normIt != mNormativeROM.end()) {
-                    renderCellWithComparison(entry.left, normative);
+                if (hasClinicalData) {
+                    // Clinical Data Left column
+                    ImGui::TableNextColumn();
+                    auto clinicalLeft = getClinicalValue("left", entry.cd_joint_left, entry.cd_field_left, entry.cd_neg_left);
+                    if (clinicalLeft.has_value()) {
+                        ImGui::TextDisabled("%.1f", *clinicalLeft);
+                    } else {
+                        ImGui::TextDisabled("-");
+                    }
+
+                    // Measured Left column (color-coded vs clinical)
+                    ImGui::TableNextColumn();
+                    renderMeasuredWithClinicalComparison(entry.left, clinicalLeft);
+
+                    // Clinical Data Right column
+                    ImGui::TableNextColumn();
+                    auto clinicalRight = getClinicalValue("right", entry.cd_joint_right, entry.cd_field_right, entry.cd_neg_right);
+                    if (clinicalRight.has_value()) {
+                        ImGui::TextDisabled("%.1f", *clinicalRight);
+                    } else {
+                        ImGui::TextDisabled("-");
+                    }
+
+                    // Measured Right column (color-coded vs clinical)
+                    ImGui::TableNextColumn();
+                    renderMeasuredWithClinicalComparison(entry.right, clinicalRight);
+
+                    // Normative column
+                    ImGui::TableNextColumn();
+                    if (normIt != mNormativeROM.end()) {
+                        ImGui::TextDisabled("%.1f", normative);
+                    } else {
+                        ImGui::TextDisabled("-");
+                    }
                 } else {
+                    // Original 4-column layout when no clinical data
+                    // Normative value column
+                    ImGui::TableNextColumn();
+                    if (normIt != mNormativeROM.end()) {
+                        ImGui::TextDisabled("%.1f", normative);
+                    } else {
+                        ImGui::TextDisabled("-");
+                    }
+
+                    // Left value (color based on normative comparison)
+                    ImGui::TableNextColumn();
                     if (!entry.left.has_value()) {
                         ImGui::TextDisabled("-");
                     } else if (std::isnan(*entry.left)) {
                         ImGui::TextDisabled("N/A");
+                    } else if (normIt != mNormativeROM.end()) {
+                        double diff_pct = std::abs(*entry.left - normative) / normative * 100.0;
+                        ImVec4 color = diff_pct <= 10.0 ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f) :
+                                       diff_pct <= 25.0 ? ImVec4(0.9f, 0.9f, 0.3f, 1.0f) :
+                                                          ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+                        ImGui::TextColored(color, "%.1f", *entry.left);
                     } else {
                         ImGui::Text("%.1f", *entry.left);
                     }
-                }
 
-                // Right value with color comparison
-                ImGui::TableNextColumn();
-                if (normIt != mNormativeROM.end()) {
-                    renderCellWithComparison(entry.right, normative);
-                } else {
+                    // Right value (color based on normative comparison)
+                    ImGui::TableNextColumn();
                     if (!entry.right.has_value()) {
                         ImGui::TextDisabled("-");
                     } else if (std::isnan(*entry.right)) {
                         ImGui::TextDisabled("N/A");
+                    } else if (normIt != mNormativeROM.end()) {
+                        double diff_pct = std::abs(*entry.right - normative) / normative * 100.0;
+                        ImVec4 color = diff_pct <= 10.0 ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f) :
+                                       diff_pct <= 25.0 ? ImVec4(0.9f, 0.9f, 0.3f, 1.0f) :
+                                                          ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+                        ImGui::TextColored(color, "%.1f", *entry.right);
                     } else {
                         ImGui::Text("%.1f", *entry.right);
                     }
@@ -5559,6 +5748,11 @@ void PhysicalExam::runSelectedTrials() {
             buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
+            // Copy clinical data reference for ROM table rendering
+            buffer.cd_side = trial.angle_sweep.cd_side;
+            buffer.cd_joint = trial.angle_sweep.cd_joint;
+            buffer.cd_field = trial.angle_sweep.cd_field;
+            buffer.cd_neg = trial.angle_sweep.cd_neg;
             // Negate cutoff based on neg flag (neg:false → negative torque direction)
             double effective_cutoff = trial.angle_sweep.neg ? trial.torque_cutoff : -trial.torque_cutoff;
             // abd_knee has reversed torque direction - flip the cutoff sign
@@ -5661,11 +5855,17 @@ void PhysicalExam::drawClinicalDataSection() {
                 if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
                     scanMuscleFilesForBrowse();
                 }
+                // Load clinical ROM data for the new PID
+                loadClinicalROM(pid, pidState.getVisitDir());
             }
         } else if (!mBrowseCharacterPID.empty()) {
             // PID was deselected
             mBrowseCharacterPID.clear();
             mClinicalWeightAvailable = false;
+            // Clear clinical ROM data
+            mClinicalROM.clear();
+            mClinicalROMPID.clear();
+            mClinicalROMVisit.clear();
         }
     }
 }
@@ -5698,8 +5898,8 @@ void PhysicalExam::drawCharacterLoadSection() {
         // Skeleton file list
         std::string skelPrefix = "@data/skeleton/";
         if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
-            skelPrefix = "@pid:" + mBrowseCharacterPID + "/gait/" + prePost + "/skeleton/";
+            std::string visit = mPIDNavigator->getState().getVisitDir();
+            skelPrefix = "@pid:" + mBrowseCharacterPID + "/" + visit + "/skeleton/";
         }
 
         if (ImGui::BeginListBox("##SkeletonList", ImVec2(-1, 60))) {
@@ -5741,8 +5941,8 @@ void PhysicalExam::drawCharacterLoadSection() {
         // Muscle file list
         std::string musclePrefix = "@data/muscle/";
         if (mBrowseMuscleDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
-            musclePrefix = "@pid:" + mBrowseCharacterPID + "/gait/" + prePost + "/muscle/";
+            std::string visit = mPIDNavigator->getState().getVisitDir();
+            musclePrefix = "@pid:" + mBrowseCharacterPID + "/" + visit + "/muscle/";
         }
 
         if (ImGui::BeginListBox("##MuscleList", ImVec2(-1, 60))) {
@@ -5775,11 +5975,11 @@ void PhysicalExam::scanSkeletonFilesForBrowse() {
     try {
         fs::path skelDir;
         if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/skeleton/
+            // Use patient data directory: {pid_root}/{pid}/{visit}/skeleton/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
-                skelDir = pidRoot / mBrowseCharacterPID / "gait" / prePost / "skeleton";
+                std::string visit = mPIDNavigator->getState().getVisitDir();
+                skelDir = pidRoot / mBrowseCharacterPID / visit / "skeleton";
 
                 // Create directory if it doesn't exist
                 if (!fs::exists(skelDir)) {
@@ -5816,11 +6016,11 @@ void PhysicalExam::scanMuscleFilesForBrowse() {
     try {
         fs::path muscleDir;
         if (mBrowseMuscleDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            // Use patient data directory: {pid_root}/{pid}/gait/{pre|post}/muscle/
+            // Use patient data directory: {pid_root}/{pid}/{visit}/muscle/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string prePost = mPIDNavigator->getState().preOp ? "post" : "pre";
-                muscleDir = pidRoot / mBrowseCharacterPID / "gait" / prePost / "muscle";
+                std::string visit = mPIDNavigator->getState().getVisitDir();
+                muscleDir = pidRoot / mBrowseCharacterPID / visit / "muscle";
 
                 // Create directory if it doesn't exist
                 if (!fs::exists(muscleDir)) {

@@ -2,7 +2,7 @@
 #define MUSCLE_PERSONALIZER_APP_H
 
 #include "common/ViewerAppBase.h"
-#include "common/PIDNavigator.h"
+#include "common/PIDImGui.h"
 #include "RenderCharacter.h"
 #include "ShapeRenderer.h"
 #include "rm/rm.hpp"
@@ -67,6 +67,7 @@ private:
     // Configuration
     // ============================================================
     std::string mConfigPath;
+    std::string mMuscleGroupsPath;  // Path to muscle groups config (from config file)
     // mDefaultOpenPanels, mControlPanelWidth, mPlotPanelWidth inherited from ViewerAppBase
 
     // ============================================================
@@ -181,10 +182,13 @@ private:
     char mROMFilter[64] = "";
     std::vector<std::string> mDefaultSelectedROMTrials;  // Default trials to pre-select
 
-    // Patient ROM data (from @pid:{pid}/rom.yaml)
+    // Patient ROM data (from @pid:{pid}/{visit}/rom.yaml)
     std::map<std::string, std::optional<float>> mPatientROMValues;  // "side.joint.field" -> value
     std::string mCurrentROMPID;  // PID for which ROM is loaded
-    bool mCurrentROMPreOp = true;
+
+    // ROM source selection
+    enum class ROMSource { Normative, Pre, Op1 };
+    ROMSource mROMSource = ROMSource::Normative;
 
     // Optimization parameters
     int mContractureMaxIterations = 100;
@@ -313,14 +317,19 @@ private:
     // Rendering Flags
     // ============================================================
     bool mRenderMuscles = true;
-    bool mColorByContracture = false;
-    bool mShowAnchorPoints = true;  // Show anchor points instead of muscle cylinders
+    bool mShowAnchorPoints = false;  // Show anchor points instead of muscle cylinders
     bool mRenderReferenceCharacter = false;  // Toggle between subject and reference
 
+    // Muscle color mode
+    enum class MuscleColorMode { Contracture, ContractureExt, Symmetry, MuscleLength };
+    MuscleColorMode mMuscleColorMode = MuscleColorMode::Contracture;
+    float mMuscleLengthMinValue = 0.5f;
+    float mMuscleLengthMaxValue = 1.5f;
+
     // Visualization colormap settings (from config)
-    std::string mContractureColormap = "viridis";  // viridis, plasma, coolwarm
     float mContractureMinValue = 0.7f;
     float mContractureMaxValue = 1.2f;
+    float mMuscleLineWidth = 5.0f;
     float mMuscleLabelFontSize = 14.0f;
     float mPlotHeight = 400.0f;  // Height of length curve plots
     int mErrorPlotYLimMode = 0;  // 0: near best, 1: overview, 2: draggable
@@ -347,7 +356,6 @@ private:
     // ============================================================
     // Export Config
     // ============================================================
-    char mExportSkeletonName[64] = "base_rom";
     char mExportMuscleName[64] = "base_rom";
 
     // ============================================================
@@ -405,11 +413,11 @@ private:
     // Helper methods
     void scanROMConfigs();
     void applyDefaultROMValues();
-    void loadPatientROM(const std::string& pid, bool preOp);
-    void loadClinicalWeight(const std::string& pid, bool preOp);
+    void loadPatientROM(const std::string& pid, const std::string& visit);
+    void loadClinicalWeight(const std::string& pid, const std::string& visit);
     void updateROMTrialCDValues();
+    std::optional<float> getEffectiveROMValue(const ROMTrialInfo& trial) const;  // Returns normative or cd_value based on mROMSource
     void refreshMuscleList();
-    void exportMuscleConfig();
     void scanSkeletonFiles();  // Scans based on mCharacterDataSource
     void scanMuscleFiles();    // Scans based on mCharacterDataSource
     void scanMotionFiles();

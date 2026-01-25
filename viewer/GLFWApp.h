@@ -19,7 +19,7 @@
 // C3D_Reader moved to c3d_processor
 #include "motion/MotionProcessor.h"
 #include "rm/rm.hpp"
-#include "common/PIDNavigator.h"
+#include "common/PIDImGui.h"
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
 #include "ImGuiFileDialog.h"
