@@ -5,4 +5,4 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 # Call the motion_editor binary directly using current shell environment
-exec build/release/viewer/motion_editor "$@" &
+exec build/release/viewer/motion_editor "$@"

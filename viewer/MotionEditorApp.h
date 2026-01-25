@@ -232,6 +232,8 @@ private:
     // === App-specific helpers ===
     void alignCameraToPlaneQuat(int plane);  // Quaternion-based camera alignment
     void resetPlayback();                     // Reset playback state
+    void refreshMotion();                     // Refresh motion state after load/trim
+    void drawTimelineTrackBar();              // Draw timeline trackbar at bottom
 };
 
 #endif // MOTION_EDITOR_APP_H

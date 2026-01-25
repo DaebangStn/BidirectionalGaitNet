@@ -25,21 +25,8 @@ target_include_directories(hdf_dof_remapper PRIVATE
     ${HDF5_INCLUDE_DIRS}
 )
 
-# C3D Merge Tool - Merge Trimmed_*.c3d files into unified C3D
+# C3D Inspect Tool - Inspect C3D file metadata (frames, labels) with concatenation support
 find_package(ezc3d CONFIG REQUIRED)
-
-add_executable(c3d_merge c3d_merge.cpp)
-
-target_link_libraries(c3d_merge
-    rm
-    ezc3d
-)
-
-target_include_directories(c3d_merge PRIVATE
-    ${CMAKE_SOURCE_DIR}/rm/include
-)
-
-# C3D Inspect Tool - Inspect C3D file metadata (frames, labels)
 add_executable(c3d_inspect c3d_inspect.cpp)
 
 target_link_libraries(c3d_inspect

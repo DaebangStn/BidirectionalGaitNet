@@ -12,8 +12,7 @@ environment:
   # Motion Reference
   motion:
     type: "h5"  # h5, bvh, npz
-    get_stride_from_motion: true
-    file: "@pid:29792292/pre/motion/walk01_single.h5"
+    file: "@pid:29792292/pre/motion/Trimmed_walk01-Dynamic_trimmed.h5"
 
   # Muscle System
   muscle:

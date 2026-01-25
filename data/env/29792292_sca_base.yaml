@@ -16,7 +16,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@pid:29792292/pre/muscle/base_rom_0125_1102.yaml"
+    file: "@data/muscle/base.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true

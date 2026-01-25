@@ -145,6 +145,7 @@ void MotionEditorApp::drawUI()
 {
     drawLeftPanel();
     drawRightPanel();
+    drawTimelineTrackBar();
 }
 
 void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
@@ -371,8 +372,9 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
 
 void MotionEditorApp::drawLeftPanel()
 {
+    const float timelineHeight = 80.0f;
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight - timelineHeight), ImGuiCond_Once);
     ImGui::Begin("Data Loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
     // Tab bar for PID Browser / Direct Path
@@ -398,7 +400,8 @@ void MotionEditorApp::drawLeftPanel()
 
 void MotionEditorApp::drawRightPanel()
 {
-    ImGui::SetNextWindowSize(ImVec2(mRightPanelWidth, mHeight), ImGuiCond_Once);
+    const float timelineHeight = 80.0f;
+    ImGui::SetNextWindowSize(ImVec2(mRightPanelWidth, mHeight - timelineHeight), ImGuiCond_Once);
     ImGui::Begin("Data loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
@@ -1271,27 +1274,10 @@ void MotionEditorApp::loadH5Motion(const std::string& path)
         mMotion = new HDF(path);
         mMotionSourcePath = path;
 
-        // Initialize trim range
-        mTrimStart = 0;
-        mTrimEnd = mMotion->getNumFrames() - 1;
-
-        // Initialize playback state
-        mMotionState = MotionEditorViewerState();
-        mMotionState.maxFrameIndex = mMotion->getNumFrames() - 1;
-        mCycleDuration = mMotion->getMaxTime();
-
-        // Reset viewer time
-        mViewerTime = 0.0;
-        mViewerPhase = 0.0;
-
         // Prefill export filename with source file stem
         std::string stem = fs::path(path).stem().string();
         strncpy(mExportFilename, stem.c_str(), sizeof(mExportFilename) - 1);
         mExportFilename[sizeof(mExportFilename) - 1] = '\0';
-
-        // Reset ROM violations
-        mROMViolations.clear();
-        mSelectedViolation = -1;
 
         // Load skeleton if we have one auto-detected or manually set
         std::string skelPath = mUseAutoSkeleton ? mAutoDetectedSkeletonPath : std::string(mManualSkeletonPath);
@@ -1299,10 +1285,45 @@ void MotionEditorApp::loadH5Motion(const std::string& path)
             loadSkeleton(skelPath);
         }
 
+        // Refresh motion state (trim, playback, foot contacts, ROM)
+        refreshMotion();
+
         LOG_INFO("[MotionEditor] Loaded motion: " << path << " (" << mMotion->getNumFrames() << " frames)");
     } catch (const std::exception& e) {
         LOG_ERROR("[MotionEditor] Failed to load motion: " << e.what());
         mMotion = nullptr;
+    }
+}
+
+void MotionEditorApp::refreshMotion()
+{
+    if (!mMotion) return;
+
+    // Reset trim bounds to current motion range
+    mTrimStart = 0;
+    mTrimEnd = mMotion->getNumFrames() - 1;
+
+    // Reset playback state
+    mMotionState = MotionEditorViewerState();
+    mMotionState.maxFrameIndex = mMotion->getNumFrames() - 1;
+    mCycleDuration = mMotion->getMaxTime();
+
+    // Reset viewer time
+    mViewerTime = 0.0;
+    mViewerPhase = 0.0;
+
+    // Reset foot contact phases
+    mDetectedPhases.clear();
+    mSelectedPhase = -1;
+
+    // Reset ROM violations
+    mROMViolations.clear();
+    mSelectedViolation = -1;
+
+    // Auto-detect foot contacts if skeleton loaded
+    if (mCharacter) {
+        detectFootContacts();
+        detectROMViolations();
     }
 }
 
@@ -1509,17 +1530,8 @@ void MotionEditorApp::applyTrim()
 
     hdf->trim(mTrimStart, mTrimEnd);
 
-    // Reset trim bounds to new range
-    mTrimStart = 0;
-    mTrimEnd = hdf->getNumFrames() - 1;
-
-    // Reset playback state
-    mMotionState.manualFrameIndex = 0;
-    mMotionState.maxFrameIndex = mTrimEnd;
-
-    // Clear detected foot contacts (no longer valid)
-    mDetectedPhases.clear();
-    mSelectedPhase = -1;
+    // Refresh all motion state after trim
+    refreshMotion();
 }
 
 // =============================================================================
@@ -1708,4 +1720,106 @@ void MotionEditorApp::resetPlayback()
     mMotionState.cycleAccumulation.setZero();
     mMotionState.manualFrameIndex = 0;
     mIsPlaying = false;
+}
+
+void MotionEditorApp::drawTimelineTrackBar()
+{
+    const float timelineHeight = 80.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(0, mHeight - timelineHeight));
+    ImGui::SetNextWindowSize(ImVec2(static_cast<float>(mWidth), timelineHeight));
+    ImGui::Begin("Timeline", nullptr,
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                 ImGuiWindowFlags_NoScrollbar);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+
+    float trackHeight = 30.0f;
+    float trackY = canvasPos.y + 5.0f;
+    float trackWidth = canvasSize.x - 20.0f;
+    float trackX = canvasPos.x + 10.0f;
+
+    // Background
+    drawList->AddRectFilled(
+        ImVec2(trackX, trackY),
+        ImVec2(trackX + trackWidth, trackY + trackHeight),
+        IM_COL32(40, 40, 40, 255)
+    );
+    drawList->AddRect(
+        ImVec2(trackX, trackY),
+        ImVec2(trackX + trackWidth, trackY + trackHeight),
+        IM_COL32(80, 80, 80, 255)
+    );
+
+    int totalFrames = mMotion ? mMotion->getNumFrames() : 0;
+    int currentFrame = mMotionState.manualFrameIndex;
+
+    if (totalFrames > 0) {
+        // Draw foot contact phases
+        if (!mDetectedPhases.empty()) {
+            float halfHeight = trackHeight / 2.0f;
+            for (const auto& phase : mDetectedPhases) {
+                float startX = trackX + (static_cast<float>(phase.startFrame) / (totalFrames - 1)) * trackWidth;
+                float endX = trackX + (static_cast<float>(phase.endFrame) / (totalFrames - 1)) * trackWidth;
+                float phaseY = phase.isLeft ? trackY : trackY + halfHeight;
+                ImU32 color = phase.isLeft ? IM_COL32(80, 120, 200, 180) : IM_COL32(200, 80, 80, 180);
+                drawList->AddRectFilled(ImVec2(startX, phaseY), ImVec2(endX, phaseY + halfHeight), color);
+            }
+            drawList->AddLine(
+                ImVec2(trackX, trackY + halfHeight),
+                ImVec2(trackX + trackWidth, trackY + halfHeight),
+                IM_COL32(60, 60, 60, 255), 1.0f
+            );
+        }
+
+        // Draw trim range markers (green)
+        if (mTrimStart > 0 || mTrimEnd < totalFrames - 1) {
+            float trimStartX = trackX + (static_cast<float>(mTrimStart) / (totalFrames - 1)) * trackWidth;
+            float trimEndX = trackX + (static_cast<float>(mTrimEnd) / (totalFrames - 1)) * trackWidth;
+            drawList->AddLine(ImVec2(trimStartX, trackY), ImVec2(trimStartX, trackY + trackHeight), IM_COL32(50, 200, 50, 255), 2.0f);
+            drawList->AddLine(ImVec2(trimEndX, trackY), ImVec2(trimEndX, trackY + trackHeight), IM_COL32(50, 200, 50, 255), 2.0f);
+        }
+
+        // Progress bar
+        float progress = std::clamp(static_cast<float>(currentFrame) / (totalFrames - 1), 0.0f, 1.0f);
+        drawList->AddRectFilled(
+            ImVec2(trackX, trackY),
+            ImVec2(trackX + progress * trackWidth, trackY + trackHeight),
+            IM_COL32(255, 255, 255, 40)
+        );
+
+        // Playhead
+        float playheadX = trackX + progress * trackWidth;
+        drawList->AddLine(ImVec2(playheadX, trackY - 3), ImVec2(playheadX, trackY + trackHeight + 3), IM_COL32(255, 255, 0, 255), 2.0f);
+        drawList->AddTriangleFilled(
+            ImVec2(playheadX - 5, trackY - 3),
+            ImVec2(playheadX + 5, trackY - 3),
+            ImVec2(playheadX, trackY + 4),
+            IM_COL32(255, 255, 0, 255)
+        );
+    }
+
+    // Click/drag to scrub
+    ImGui::SetCursorScreenPos(ImVec2(trackX, trackY));
+    ImGui::InvisibleButton("timeline_track", ImVec2(trackWidth, trackHeight));
+    if (ImGui::IsItemActive() && totalFrames > 0) {
+        float relativeX = std::clamp((ImGui::GetMousePos().x - trackX) / trackWidth, 0.0f, 1.0f);
+        mMotionState.navigationMode = ME_MANUAL_FRAME;
+        mMotionState.manualFrameIndex = static_cast<int>(relativeX * (totalFrames - 1));
+        mIsPlaying = false;
+    }
+
+    // Info text
+    ImGui::SetCursorScreenPos(ImVec2(canvasPos.x + 10, trackY + trackHeight + 5));
+    if (totalFrames > 0) {
+        ImGui::Text("Frame: %d / %d  |  Time: %.2fs  |  %s",
+                    currentFrame, totalFrames - 1, mViewerTime, mIsPlaying ? "Playing" : "Paused");
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No motion loaded");
+    }
+
+    ImGui::End();
 }

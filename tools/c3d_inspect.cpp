@@ -36,7 +36,9 @@ public:
         mSelectedPID(0), mSelectedPrePost(0), mSelectedFile(0), mScrollOffset(0),
         mEditMode(false), mCursorPos(0), mFirstMarker(-1), mSecondMarker(-1),
         mShowSaveDialog(false), mShowExitConfirm(false), mModified(false),
-        mSelectedDirEntry(0), mDirScrollOffset(0) {}
+        mSelectedDirEntry(0), mDirScrollOffset(0),
+        mConcatMode(false), mConcatFilter("trimmed_"), mShowConcatDialog(false),
+        mBatchProcessing(false) {}
 
     void run();
 
@@ -76,6 +78,14 @@ private:
     int mSelectedDirEntry;
     int mDirScrollOffset;
 
+    // Concatenation state
+    bool mConcatMode;
+    std::string mConcatFilter;        // Filter pattern (default: "trimmed_")
+    std::vector<int> mFilteredIndices; // Indices of files matching filter
+    bool mShowConcatDialog;
+    bool mBatchProcessing;            // For batch mode progress
+    std::string mBatchStatus;         // Status message during batch
+
     void loadPIDs();
     void loadPIDMetadata();
     void loadFiles();
@@ -99,6 +109,14 @@ private:
     void swapMarkerData(int idx1, int idx2);
     void saveC3D();
     std::string getDefaultSaveFilename();
+
+    // Concatenation methods
+    void applyFileFilter();
+    void drawConcatDialog();
+    void handleConcatDialogInput(int ch);
+    void concatenateFiles(const std::string& uri, const std::vector<std::string>& files, const std::string& outputName);
+    void runBatchMerge();
+    void drawBatchProgress(int current, int total, const std::string& currentPid, const std::string& visit);
 };
 
 void C3DInspectorUI::loadPIDs() {
@@ -255,7 +273,7 @@ void C3DInspectorUI::drawPIDSelect() {
     }
 
     mvhline(maxY - 2, 0, '-', maxX);
-    mvprintw(maxY - 1, 0, "[UP/DOWN] Navigate  [ENTER] Select  [d] Browse data/motion  [q] Quit  (%d/%d)",
+    mvprintw(maxY - 1, 0, "[UP/DOWN] Navigate  [ENTER] Select  [d] Browse  [m] Merge all  [q] Quit  (%d/%d)",
              mSelectedPID + 1, (int)mPIDs.size());
 }
 
@@ -316,7 +334,7 @@ void C3DInspectorUI::drawFileSelect() {
     }
 
     mvhline(maxY - 2, 0, '-', maxX);
-    mvprintw(maxY - 1, 0, "[UP/DOWN] Navigate  [ENTER] Select  [BACKSPACE] Back  [q] Quit  (%d/%d)",
+    mvprintw(maxY - 1, 0, "[UP/DOWN] Navigate  [ENTER] Select  [c] Concatenate  [BACKSPACE] Back  [q] Quit  (%d/%d)",
              mFiles.empty() ? 0 : mSelectedFile + 1, (int)mFiles.size());
 }
 
@@ -489,6 +507,275 @@ void C3DInspectorUI::saveC3D() {
 
     std::string savePath = dir + mSaveFilename;
     mC3D->write(savePath);
+}
+
+void C3DInspectorUI::applyFileFilter() {
+    mFilteredIndices.clear();
+
+    // Case-insensitive filter matching
+    std::string filterLower = mConcatFilter;
+    std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+
+    for (size_t i = 0; i < mFiles.size(); ++i) {
+        std::string fileLower = mFiles[i];
+        std::transform(fileLower.begin(), fileLower.end(), fileLower.begin(), ::tolower);
+
+        // Match files starting with filter and exclude *_unified.c3d
+        if (fileLower.find(filterLower) == 0 &&
+            fileLower.find("_unified.c3d") == std::string::npos) {
+            mFilteredIndices.push_back(i);
+        }
+    }
+}
+
+void C3DInspectorUI::drawConcatDialog() {
+    int maxY, maxX;
+    getmaxyx(stdscr, maxY, maxX);
+
+    int dialogWidth = 60;
+    int dialogHeight = 9;
+    int startX = (maxX - dialogWidth) / 2;
+    int startY = (maxY - dialogHeight) / 2;
+
+    // Clear dialog area
+    for (int y = startY; y < startY + dialogHeight; ++y) {
+        mvhline(y, startX, ' ', dialogWidth);
+    }
+
+    // Border
+    mvhline(startY, startX, '-', dialogWidth);
+    mvhline(startY + dialogHeight - 1, startX, '-', dialogWidth);
+    for (int y = startY; y < startY + dialogHeight; ++y) {
+        mvaddch(y, startX, '|');
+        mvaddch(y, startX + dialogWidth - 1, '|');
+    }
+
+    // Content
+    attron(A_BOLD);
+    mvprintw(startY + 1, startX + 2, "Concatenate C3D Files");
+    attroff(A_BOLD);
+
+    mvprintw(startY + 3, startX + 2, "Filter pattern:");
+    attron(A_REVERSE);
+    mvprintw(startY + 3, startX + 18, "%-38s", mConcatFilter.c_str());
+    attroff(A_REVERSE);
+
+    mvprintw(startY + 5, startX + 2, "Matching files: %zu", mFilteredIndices.size());
+
+    // Output filename
+    std::string outputName = mConcatFilter + "_unified.c3d";
+    mvprintw(startY + 6, startX + 2, "Output: %s", outputName.c_str());
+
+    mvprintw(startY + 7, startX + 2, "[ENTER] Merge  [ESC] Cancel");
+}
+
+void C3DInspectorUI::handleConcatDialogInput(int ch) {
+    if (ch == 27) {  // ESC
+        mShowConcatDialog = false;
+    } else if (ch == '\n' || ch == KEY_ENTER) {
+        if (!mFilteredIndices.empty()) {
+            // Build file list and concatenate
+            std::string visit = (mSelectedPrePost == 0) ? "pre" : "op1";
+            std::string uri = "@pid:" + mPIDs[mSelectedPID] + "/" + visit + "/gait";
+
+            std::vector<std::string> filesToMerge;
+            for (int idx : mFilteredIndices) {
+                filesToMerge.push_back(mFiles[idx]);
+            }
+            std::sort(filesToMerge.begin(), filesToMerge.end());
+
+            std::string outputName = mConcatFilter + "_unified.c3d";
+            concatenateFiles(uri, filesToMerge, outputName);
+
+            // Reload file list to show new file
+            loadFiles();
+        }
+        mShowConcatDialog = false;
+    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+        if (!mConcatFilter.empty()) {
+            mConcatFilter.pop_back();
+            applyFileFilter();
+        }
+    } else if (ch >= 32 && ch < 127) {  // Printable ASCII
+        if (mConcatFilter.length() < 30) {
+            mConcatFilter += static_cast<char>(ch);
+            applyFileFilter();
+        }
+    }
+}
+
+void C3DInspectorUI::concatenateFiles(const std::string& uri,
+                                       const std::vector<std::string>& files,
+                                       const std::string& outputName) {
+    if (files.empty()) return;
+
+    // Load first file to get labels and frame rate
+    auto firstHandle = mMgr.fetch(uri + "/" + files[0]);
+    ezc3d::c3d firstC3d(firstHandle.local_path().string());
+
+    double frameRate = firstC3d.header().frameRate();
+    std::vector<std::string> labels;
+    try {
+        labels = firstC3d.parameters().group("POINT").parameter("LABELS").valuesAsString();
+    } catch (...) {}
+
+    // Create output c3d with point labels and frame rate
+    ezc3d::c3d output;
+
+    // Set frame rate parameter before adding points
+    ezc3d::ParametersNS::GroupNS::Parameter rateParam("RATE");
+    rateParam.set(frameRate);
+    output.parameter("POINT", rateParam);
+
+    if (!labels.empty()) {
+        output.point(labels);
+    }
+
+    // Merge all frames from all files
+    for (const auto& filename : files) {
+        auto handle = mMgr.fetch(uri + "/" + filename);
+        ezc3d::c3d inputC3d(handle.local_path().string());
+
+        size_t numFrames = inputC3d.data().nbFrames();
+        for (size_t frameIdx = 0; frameIdx < numFrames; ++frameIdx) {
+            const auto& srcFrame = inputC3d.data().frame(frameIdx);
+            const auto& srcPoints = srcFrame.points();
+
+            ezc3d::DataNS::Frame outFrame;
+            ezc3d::DataNS::Points3dNS::Points outPts(srcPoints.nbPoints());
+
+            for (size_t i = 0; i < srcPoints.nbPoints(); ++i) {
+                const auto& srcPt = srcPoints.point(i);
+                ezc3d::DataNS::Points3dNS::Point pt;
+                pt.set(srcPt.x(), srcPt.y(), srcPt.z());
+                outPts.point(pt, i);
+            }
+            outFrame.add(outPts);
+            output.frame(outFrame);
+        }
+    }
+
+    // Write to gait directory
+    fs::path outputPath;
+
+    // Check if output file already exists
+    if (mMgr.exists(uri + "/" + outputName)) {
+        auto outputHandle = mMgr.fetch(uri + "/" + outputName);
+        outputPath = outputHandle.local_path();
+    } else {
+        // Determine output path from first source file
+        fs::path c3dDir = firstHandle.local_path().parent_path();
+        // If source is in Generated_C3D_files, write to parent ({visit}/gait/)
+        if (c3dDir.filename() == "Generated_C3D_files") {
+            outputPath = c3dDir.parent_path() / outputName;
+        } else {
+            outputPath = c3dDir / outputName;
+        }
+    }
+
+    output.write(outputPath.string());
+}
+
+void C3DInspectorUI::drawBatchProgress(int current, int total, const std::string& currentPid, const std::string& visit) {
+    int maxY, maxX;
+    getmaxyx(stdscr, maxY, maxX);
+
+    int dialogWidth = 60;
+    int dialogHeight = 9;
+    int startX = (maxX - dialogWidth) / 2;
+    int startY = (maxY - dialogHeight) / 2;
+
+    // Clear dialog area
+    for (int y = startY; y < startY + dialogHeight; ++y) {
+        mvhline(y, startX, ' ', dialogWidth);
+    }
+
+    // Border
+    mvhline(startY, startX, '-', dialogWidth);
+    mvhline(startY + dialogHeight - 1, startX, '-', dialogWidth);
+    for (int y = startY; y < startY + dialogHeight; ++y) {
+        mvaddch(y, startX, '|');
+        mvaddch(y, startX + dialogWidth - 1, '|');
+    }
+
+    // Title
+    attron(A_BOLD);
+    mvprintw(startY + 1, startX + 2, "Batch Merge Progress");
+    attroff(A_BOLD);
+
+    // Current item
+    mvprintw(startY + 3, startX + 2, "Processing: %s / %s", currentPid.c_str(), visit.c_str());
+
+    // Progress bar
+    int barWidth = dialogWidth - 8;
+    float progress = (total > 0) ? (float)current / total : 0.0f;
+    int filledWidth = (int)(progress * barWidth);
+
+    mvprintw(startY + 5, startX + 2, "[");
+    attron(A_REVERSE);
+    for (int i = 0; i < filledWidth; ++i) {
+        mvaddch(startY + 5, startX + 3 + i, ' ');
+    }
+    attroff(A_REVERSE);
+    for (int i = filledWidth; i < barWidth; ++i) {
+        mvaddch(startY + 5, startX + 3 + i, '-');
+    }
+    mvprintw(startY + 5, startX + 3 + barWidth, "]");
+
+    // Percentage and count
+    mvprintw(startY + 7, startX + 2, "%d / %d  (%.0f%%)", current, total, progress * 100);
+
+    refresh();
+}
+
+void C3DInspectorUI::runBatchMerge() {
+    mBatchProcessing = true;
+
+    std::string filterLower = "trimmed_";
+
+    // Calculate total operations (each PID has 2 visits)
+    int total = mPIDs.size() * 2;
+    int current = 0;
+
+    for (const auto& pid : mPIDs) {
+        for (const auto& visit : {"pre", "op1"}) {
+            // Update progress display
+            drawBatchProgress(current, total, pid, visit);
+
+            std::string uri = "@pid:" + pid + "/" + visit + "/gait";
+
+            // List and filter files
+            std::vector<std::string> trimmedFiles;
+            try {
+                auto files = mMgr.list(uri);
+                for (const auto& f : files) {
+                    std::string fLower = f;
+                    std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
+
+                    if (fLower.find(filterLower) == 0 &&
+                        fLower.find("_unified.c3d") == std::string::npos) {
+                        trimmedFiles.push_back(f);
+                    }
+                }
+            } catch (const rm::RMError&) {
+                current++;
+                continue;  // Directory doesn't exist
+            }
+
+            if (!trimmedFiles.empty()) {
+                std::sort(trimmedFiles.begin(), trimmedFiles.end());
+                concatenateFiles(uri, trimmedFiles, "trimmed_unified.c3d");
+            }
+
+            current++;
+        }
+    }
+
+    // Show completion
+    drawBatchProgress(total, total, "Complete", "");
+
+    mBatchProcessing = false;
+    mBatchStatus = "Batch merge complete";
 }
 
 void C3DInspectorUI::drawSaveDialog() {
@@ -746,6 +1033,9 @@ void C3DInspectorUI::handleInput(int ch) {
             mSelectedDirEntry = 0;
             mDirScrollOffset = 0;
             mStage = DIR_BROWSE;
+        } else if (ch == 'm' || ch == 'M') {
+            // Batch merge all PIDs
+            runBatchMerge();
         }
         break;
 
@@ -775,6 +1065,11 @@ void C3DInspectorUI::handleInput(int ch) {
             loadC3DInfo();
             mScrollOffset = 0;
             mStage = INSPECT_VIEW;
+        } else if (ch == 'c' || ch == 'C') {
+            // Enter concatenation mode
+            mConcatFilter = "trimmed_";  // Default filter
+            applyFileFilter();           // Populate mFilteredIndices
+            mShowConcatDialog = true;
         } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
             mStage = PREPOST_SELECT;
         }
@@ -951,19 +1246,23 @@ void C3DInspectorUI::run() {
             drawExitConfirm();
         } else if (mShowSaveDialog) {
             drawSaveDialog();
+        } else if (mShowConcatDialog) {
+            drawConcatDialog();
         }
 
         refresh();
 
         int ch = getch();
         if (ch == 'q' || ch == 'Q') {
-            if (!mShowSaveDialog && !mShowExitConfirm && !mEditMode) {
+            if (!mShowSaveDialog && !mShowExitConfirm && !mShowConcatDialog && !mEditMode) {
                 running = false;
             }
         } else if (mShowExitConfirm) {
             handleExitConfirmInput(ch);
         } else if (mShowSaveDialog) {
             handleSaveDialogInput(ch);
+        } else if (mShowConcatDialog) {
+            handleConcatDialogInput(ch);
         } else {
             handleInput(ch);
         }
