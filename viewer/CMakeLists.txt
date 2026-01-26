@@ -21,6 +21,8 @@ add_library(viewer_common STATIC
     common/imgui_common.cpp
     common/ViewerAppBase.h
     common/ViewerAppBase.cpp
+    common/timeline.h
+    common/timeline.cpp
     # Shared rendering components
     ShapeRenderer.h
     ShapeRenderer.cpp

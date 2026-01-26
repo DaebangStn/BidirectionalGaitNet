@@ -192,6 +192,10 @@ private:
     float mViewerPlaybackSpeed;
     double mViewerCycleDuration;
     double mLastRealTime;
+
+    // Timeline zoom state
+    float mTimelineZoom = 1.0f;
+    float mTimelineScrollOffset = 0.0f;
     bool mIsPlaying;
     bool mProgressForward = false;  // Whether character progresses forward with cycle distance
 

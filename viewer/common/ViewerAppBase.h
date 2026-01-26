@@ -91,6 +91,44 @@ protected:
     int mControlPanelWidth = 450;
     int mPlotPanelWidth = 350;
 
+    // ============================================================
+    // Capture & Video Recording
+    // ============================================================
+
+    // Capture region presets loaded from YAML
+    struct CapturePreset {
+        std::string name;
+        int x0, y0, x1, y1;
+    };
+    std::vector<CapturePreset> mCapturePresets;
+
+    // Screenshot capture
+    int mCaptureX0 = -400;
+    int mCaptureY0 = 100;
+    int mCaptureX1 = 400;
+    int mCaptureY1 = 900;
+    char mCaptureFilename[256] = "capture.png";
+    bool mCaptureShowRect = false;
+
+    // Video recording (30fps fixed)
+    bool mVideoRecording = false;
+    int mVideoFPS = 30;  // Fixed at 30fps
+    double mVideoMaxTime = 30.0;
+    char mVideoFilename[256] = "video.mp4";
+    int mVideoFrameCounter = 0;
+    double mVideoElapsedTime = 0.0;
+    int mVideoFrameSkip = 1;
+    FILE* mFFmpegPipe = nullptr;
+
+    // Capture/video methods
+    bool captureRegionPNG(const char* filename, int x0, int y0, int x1, int y1);
+    bool startVideoRecording(const std::string& filename, int fps = 30);
+    void stopVideoRecording();
+    void recordVideoFrame();
+
+    // Called when max recording time is reached (override to stop simulation)
+    virtual void onMaxRecordingTimeReached() {}
+
     // Check if a panel should be open by default
     bool isPanelDefaultOpen(const std::string& panelName) const {
         return mDefaultOpenPanels.find(panelName) != mDefaultOpenPanels.end();
@@ -117,6 +155,9 @@ protected:
 
     // Called each frame before rendering
     virtual void onFrameStart() {}
+
+    // Called each frame after ImGui is rendered to framebuffer (for video capture)
+    virtual void onPostRender() {}
 
     // Template Method hook: override to parse app-specific render.yaml sections
     // Called automatically after common config is loaded (geometry, default_open_panels)

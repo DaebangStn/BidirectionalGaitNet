@@ -3149,9 +3149,9 @@ Eigen::Matrix3d slerpRotation(const Eigen::Matrix3d& R_from,
 
 } // anonymous namespace
 
-std::vector<FootLockPhase> C3D_Reader::refineTalus()
+std::vector<Timeline::FootContactPhase> C3D_Reader::refineTalus()
 {
-    std::vector<FootLockPhase> emptyPhases;
+    std::vector<Timeline::FootContactPhase> emptyPhases;
 
     // 1. Check if enabled
     if (!mFittingConfig.plantarCorrection.enabled) {
@@ -3197,7 +3197,7 @@ std::vector<FootLockPhase> C3D_Reader::refineTalus()
              << ", blendFrames=" << blendFrames << ")...");
 
     // 5. Detect lock phases for each foot independently
-    std::vector<FootLockPhase> allPhases;
+    std::vector<Timeline::FootContactPhase> allPhases;
 
     auto detectPhasesForFoot = [&](int ankleIdx, int heelIdx, int toeIdx, bool isLeft) {
         int lockStart = -1;
@@ -3241,9 +3241,38 @@ std::vector<FootLockPhase> C3D_Reader::refineTalus()
 
     // 6. Sort by startFrame
     std::sort(allPhases.begin(), allPhases.end(),
-        [](const FootLockPhase& a, const FootLockPhase& b) {
+        [](const Timeline::FootContactPhase& a, const Timeline::FootContactPhase& b) {
             return a.startFrame < b.startFrame;
         });
+
+    // 6.5. Detect gait direction for each phase
+    if (allPhases.size() >= 2 && !mFreePoses.empty()) {
+        allPhases[0].direction = Timeline::GaitDirection::Unknown;
+
+        for (size_t i = 1; i < allPhases.size(); ++i) {
+            int prevFrame = allPhases[i - 1].startFrame;
+            int currFrame = allPhases[i].startFrame;
+
+            if (prevFrame < static_cast<int>(mFreePoses.size()) &&
+                currFrame < static_cast<int>(mFreePoses.size())) {
+                const auto& prevPose = mFreePoses[prevFrame];
+                const auto& currPose = mFreePoses[currFrame];
+
+                if (prevPose.size() >= 6 && currPose.size() >= 6) {
+                    double deltaZ = currPose[5] - prevPose[5];
+                    const double threshold = 0.01;
+
+                    if (deltaZ > threshold) {
+                        allPhases[i].direction = Timeline::GaitDirection::Forward;
+                    } else if (deltaZ < -threshold) {
+                        allPhases[i].direction = Timeline::GaitDirection::Backward;
+                    } else {
+                        allPhases[i].direction = Timeline::GaitDirection::Unknown;
+                    }
+                }
+            }
+        }
+    }
 
     // 7. Log detected phases
     LOG_INFO("[TalusRefine] Detected " << allPhases.size() << " foot lock phases:");

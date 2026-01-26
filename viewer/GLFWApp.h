@@ -164,6 +164,7 @@ public:
 protected:
     // ViewerAppBase overrides
     void onFrameStart() override;
+    void onPostRender() override;  // For video capture and region overlay
     void drawContent() override;
     void drawUI() override;
     void updateCamera() override;
@@ -212,6 +213,7 @@ private:
     void drawMuscleTabContent();
     void drawTitlePanel();
     void drawResizablePlotPane();
+    void drawCaptureSection();
     void drawCameraStatusSection();
     void drawPlayableMotion();
 

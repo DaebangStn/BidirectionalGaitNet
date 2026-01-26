@@ -2,9 +2,15 @@
 #include <rm/global.hpp>
 #include <yaml-cpp/yaml.h>
 #include <iostream>
+#include <iomanip>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
+#include <algorithm>
 #include <implot.h>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 // ============================================================
 // Constructor / Destructor
@@ -154,6 +160,35 @@ void ViewerAppBase::loadRenderConfig()
             }
         }
 
+        // Parse capture presets
+        if (config["capture"]) {
+            YAML::Node capture = config["capture"];
+            for (auto it = capture.begin(); it != capture.end(); ++it) {
+                CapturePreset p;
+                p.name = it->first.as<std::string>();
+                YAML::Node vals = it->second;
+                p.x0 = vals["x0"].as<int>();
+                p.y0 = vals["y0"].as<int>();
+                p.x1 = vals["x1"].as<int>();
+                p.y1 = vals["y1"].as<int>();
+                mCapturePresets.push_back(p);
+            }
+            // Apply first preset as default
+            if (!mCapturePresets.empty()) {
+                mCaptureX0 = mCapturePresets[0].x0;
+                mCaptureY0 = mCapturePresets[0].y0;
+                mCaptureX1 = mCapturePresets[0].x1;
+                mCaptureY1 = mCapturePresets[0].y1;
+            }
+        }
+
+        // Parse video settings
+        if (config["video"]) {
+            auto video = config["video"];
+            if (video["fps"]) mVideoFPS = video["fps"].as<int>();
+            if (video["maxtime"]) mVideoMaxTime = video["maxtime"].as<double>();
+        }
+
         std::cout << "[ViewerAppBase] Loaded render.yaml: " << mWidth << "x" << mHeight
                   << " at (" << mWindowXPos << "," << mWindowYPos << ")" << std::endl;
     } catch (const std::exception& e) {
@@ -204,6 +239,9 @@ void ViewerAppBase::startLoop()
         // Finalize ImGui
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        // Post-render hook (for video capture)
+        onPostRender();
 
         glfwSwapBuffers(mWindow);
     }
@@ -418,4 +456,192 @@ void ViewerAppBase::keyCallback(GLFWwindow* window, int key, int scancode, int a
 
     auto* app = static_cast<ViewerAppBase*>(glfwGetWindowUserPointer(window));
     if (app) app->keyPress(key, scancode, action, mods);
+}
+
+// ============================================================
+// Capture & Video Recording
+// ============================================================
+
+bool ViewerAppBase::captureRegionPNG(const char* filename, int x0, int y0, int x1, int y1)
+{
+    int width = x1 - x0;
+    int height = y1 - y0;
+
+    if (width <= 0 || height <= 0) {
+        std::cerr << "[Capture] Invalid region: " << width << "x" << height << std::endl;
+        return false;
+    }
+
+    // Convert to OpenGL lower-left origin
+    int gl_x = x0;
+    int gl_y = mHeight - y1;
+    gl_y = std::max(0, gl_y);
+
+    // Capture framebuffer
+    std::vector<unsigned char> pixels(width * height * 3);
+    glFinish();
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(gl_x, gl_y, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+
+    // Flip vertically (OpenGL is bottom-up, PNG is top-down)
+    std::vector<unsigned char> flipped(width * height * 3);
+    int stride = width * 3;
+    for (int y = 0; y < height; ++y) {
+        const unsigned char* src = pixels.data() + (height - 1 - y) * stride;
+        unsigned char* dst = flipped.data() + y * stride;
+        std::memcpy(dst, src, stride);
+    }
+
+    // Create capture directory if it doesn't exist
+    std::filesystem::create_directories("capture");
+
+    // Build full path
+    std::string full_path = "capture/" + std::string(filename);
+
+    // Write PNG
+    int result = stbi_write_png(full_path.c_str(), width, height, 3, flipped.data(), stride);
+    return result != 0;
+}
+
+bool ViewerAppBase::startVideoRecording(const std::string& filename, int fps)
+{
+    if (mFFmpegPipe) {
+        stopVideoRecording();
+    }
+
+    // Create capture directory if it doesn't exist
+    std::filesystem::create_directories("capture");
+
+    // Calculate capture region dimensions
+    int x0 = (int)(mWidth * 0.5) + mCaptureX0;
+    int y0 = mCaptureY0;
+    int x1 = (int)(mWidth * 0.5) + mCaptureX1;
+    int y1 = mCaptureY1;
+
+    // Clamp to window bounds
+    x0 = std::clamp(x0, 0, mWidth);
+    y0 = std::clamp(y0, 0, mHeight);
+    x1 = std::clamp(x1, 0, mWidth);
+    y1 = std::clamp(y1, 0, mHeight);
+
+    int width = std::max(0, x1 - x0);
+    int height = std::max(0, y1 - y0);
+
+    // Ensure even dimensions for x264
+    width = (width / 2) * 2;
+    height = (height / 2) * 2;
+
+    if (width <= 0 || height <= 0) {
+        std::cerr << "[Video] Invalid capture region: " << width << "x" << height << std::endl;
+        return false;
+    }
+
+    // Build ffmpeg command
+    std::string full_path = "capture/" + filename;
+    std::string cmd = "ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt rgb24";
+    cmd += " -s " + std::to_string(width) + "x" + std::to_string(height);
+    cmd += " -r " + std::to_string(fps);
+    cmd += " -i - -c:v libx264 -pix_fmt yuv420p";
+    cmd += " -crf 23 -preset medium";
+    cmd += " -movflags +faststart";
+    cmd += " \"" + full_path + "\" 2>/dev/null";
+
+    mFFmpegPipe = popen(cmd.c_str(), "w");
+    if (!mFFmpegPipe) {
+        std::cerr << "[Video] Failed to open ffmpeg pipe for: " << full_path << std::endl;
+        return false;
+    }
+
+    // Initialize recording state
+    mVideoRecording = true;
+    mVideoElapsedTime = 0.0;
+    mVideoFrameCounter = 0;
+    mVideoFrameSkip = 1;
+
+    std::cout << "[Video] Started recording: " << full_path
+              << " (fps=" << fps << ", region=" << width << "x" << height << ")" << std::endl;
+    return true;
+}
+
+void ViewerAppBase::stopVideoRecording()
+{
+    if (mFFmpegPipe) {
+        pclose(mFFmpegPipe);
+        mFFmpegPipe = nullptr;
+        mVideoRecording = false;
+
+        std::cout << "[Video] Recording stopped. Duration: "
+                  << std::fixed << std::setprecision(1) << mVideoElapsedTime
+                  << "s, Frames: " << mVideoFrameCounter << std::endl;
+    }
+}
+
+void ViewerAppBase::recordVideoFrame()
+{
+    if (!mVideoRecording || !mFFmpegPipe) return;
+
+    // Check maximum recording time
+    if (mVideoMaxTime > 0 && mVideoElapsedTime >= mVideoMaxTime) {
+        std::cout << "[Video] Maximum recording time reached ("
+                  << mVideoMaxTime << "s). Stopping recording." << std::endl;
+        onMaxRecordingTimeReached();
+        stopVideoRecording();
+        return;
+    }
+
+    // Calculate capture region
+    int x0 = (int)(mWidth * 0.5) + mCaptureX0;
+    int y0 = mCaptureY0;
+    int x1 = (int)(mWidth * 0.5) + mCaptureX1;
+    int y1 = mCaptureY1;
+
+    // Clamp to window bounds
+    x0 = std::clamp(x0, 0, mWidth);
+    y0 = std::clamp(y0, 0, mHeight);
+    x1 = std::clamp(x1, 0, mWidth);
+    y1 = std::clamp(y1, 0, mHeight);
+
+    int width = std::max(0, x1 - x0);
+    int height = std::max(0, y1 - y0);
+
+    // Ensure even dimensions
+    width = (width / 2) * 2;
+    height = (height / 2) * 2;
+
+    if (width <= 0 || height <= 0) return;
+
+    // Convert to OpenGL lower-left origin
+    int gl_x = x0;
+    int gl_y = mHeight - (y0 + height);
+    gl_y = std::max(0, gl_y);
+
+    // Capture region framebuffer as RGB24
+    std::vector<unsigned char> pixels(width * height * 3);
+    std::vector<unsigned char> flipped(width * height * 3);
+
+    glFinish();
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(gl_x, gl_y, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+
+    // Flip vertically (OpenGL is bottom-up, video is top-down)
+    int stride = width * 3;
+    for (int y = 0; y < height; ++y) {
+        const unsigned char* src = pixels.data() + (height - 1 - y) * stride;
+        unsigned char* dst = flipped.data() + y * stride;
+        std::memcpy(dst, src, stride);
+    }
+
+    // Write frame to ffmpeg pipe
+    size_t written = fwrite(flipped.data(), 1, flipped.size(), mFFmpegPipe);
+    if (written != flipped.size()) {
+        std::cerr << "[Video] Failed to write frame to ffmpeg pipe" << std::endl;
+        stopVideoRecording();
+        return;
+    }
+    fflush(mFFmpegPipe);
+
+    mVideoFrameCounter++;
+
+    // Update elapsed time (assume ~60fps rendering)
+    mVideoElapsedTime += 1.0 / 60.0;
 }

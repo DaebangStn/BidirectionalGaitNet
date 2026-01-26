@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <chrono>
+#include <ctime>
 #include "DARTHelper.h"
 #include <tinyxml2.h>
 #include <sstream>
@@ -2406,6 +2408,154 @@ void GLFWApp::drawMuscleTabContent()
     }
 }
 
+void GLFWApp::drawCaptureSection() {
+    if (ImGui::CollapsingHeader("Capture & Recording")) {
+        // Capture Region Section
+        ImGui::Text("Capture Region");
+        ImGui::SameLine();
+        ImGui::Checkbox("Show##capture", &mCaptureShowRect);
+        ImGui::SameLine();
+        int regionWidth = mCaptureX1 - mCaptureX0;
+        int regionHeight = mCaptureY1 - mCaptureY0;
+        ImGui::Text("Size: %d x %d", regionWidth, regionHeight);
+
+        // Preset combo (if presets exist)
+        if (!mCapturePresets.empty()) {
+            static int selectedPreset = 0;
+            if (ImGui::BeginCombo("Preset##capture", mCapturePresets[selectedPreset].name.c_str())) {
+                for (int i = 0; i < (int)mCapturePresets.size(); i++) {
+                    if (ImGui::Selectable(mCapturePresets[i].name.c_str(), selectedPreset == i)) {
+                        selectedPreset = i;
+                        mCaptureX0 = mCapturePresets[i].x0;
+                        mCaptureY0 = mCapturePresets[i].y0;
+                        mCaptureX1 = mCapturePresets[i].x1;
+                        mCaptureY1 = mCapturePresets[i].y1;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+
+        // Manual region input
+        const int step = 5;
+        ImGui::PushItemWidth(80);
+        ImGui::InputInt("x0##capture", &mCaptureX0, step);
+        ImGui::SameLine();
+        ImGui::InputInt("y0##capture", &mCaptureY0, step);
+        ImGui::InputInt("x1##capture", &mCaptureX1, step);
+        ImGui::SameLine();
+        ImGui::InputInt("y1##capture", &mCaptureY1, step);
+        ImGui::PopItemWidth();
+
+        ImGui::Separator();
+
+        // Screenshot button with timestamped filename
+        if (ImGui::Button("Capture PNG")) {
+            // Generate timestamped filename
+            auto now = std::chrono::system_clock::now();
+            auto time_t = std::chrono::system_clock::to_time_t(now);
+            std::tm tm = *std::localtime(&time_t);
+            char timestamp[64];
+            std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &tm);
+            std::string filename = std::string("capture_") + timestamp + ".png";
+
+            // Convert relative coords to absolute (center-based)
+            int x0 = (int)(mWidth * 0.5) + mCaptureX0;
+            int y0 = mCaptureY0;
+            int x1 = (int)(mWidth * 0.5) + mCaptureX1;
+            int y1 = mCaptureY1;
+
+            // Clamp to window bounds
+            x0 = std::max(0, std::min(x0, mWidth));
+            y0 = std::max(0, std::min(y0, mHeight));
+            x1 = std::max(0, std::min(x1, mWidth));
+            y1 = std::max(0, std::min(y1, mHeight));
+
+            if (captureRegionPNG(filename.c_str(), x0, y0, x1, y1)) {
+                std::cout << "[Capture] Saved: capture/" << filename << std::endl;
+            }
+        }
+
+        ImGui::Separator();
+
+        // Video Recording Section
+        ImGui::Text("Video Recording (30fps)");
+        if (mVideoRecording) {
+            if (ImGui::Button("Stop Recording")) {
+                stopVideoRecording();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "REC");
+            ImGui::SameLine();
+            ImGui::Text("%.1fs  Frames: %d", mVideoElapsedTime, mVideoFrameCounter);
+        } else {
+            if (ImGui::Button("Start Recording")) {
+                // Generate timestamped filename
+                auto now = std::chrono::system_clock::now();
+                auto time_t = std::chrono::system_clock::to_time_t(now);
+                std::tm tm = *std::localtime(&time_t);
+                char timestamp[64];
+                std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &tm);
+                std::string filename = std::string("video_") + timestamp + ".mp4";
+                startVideoRecording(filename, 30);
+            }
+            ImGui::SameLine();
+            ImGui::PushItemWidth(60);
+            ImGui::InputDouble("Max(s)##video", &mVideoMaxTime, 0, 0, "%.0f");
+            ImGui::PopItemWidth();
+        }
+    }
+}
+
+void GLFWApp::onPostRender() {
+    // Record video frame if recording is active
+    if (mVideoRecording) {
+        recordVideoFrame();
+    }
+
+    // Draw capture region rectangle overlay if enabled
+    if (mCaptureShowRect) {
+        // Convert relative coords to absolute (center-based)
+        int x0 = (int)(mWidth * 0.5) + mCaptureX0;
+        int y0 = mCaptureY0;
+        int x1 = (int)(mWidth * 0.5) + mCaptureX1;
+        int y1 = mCaptureY1;
+
+        // Clamp to window bounds
+        x0 = std::max(0, std::min(x0, mWidth));
+        y0 = std::max(0, std::min(y0, mHeight));
+        x1 = std::max(0, std::min(x1, mWidth));
+        y1 = std::max(0, std::min(y1, mHeight));
+
+        // Draw rectangle using OpenGL
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glOrtho(0, mWidth, mHeight, 0, -1, 1);  // Top-left origin
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+
+        glDisable(GL_LIGHTING);
+        glDisable(GL_DEPTH_TEST);
+        glLineWidth(2.0f);
+        glColor4f(1.0f, 0.3f, 0.3f, 1.0f);  // Red color
+        glBegin(GL_LINE_LOOP);
+        glVertex2i(x0, y0);
+        glVertex2i(x1, y0);
+        glVertex2i(x1, y1);
+        glVertex2i(x0, y1);
+        glEnd();
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_LIGHTING);
+
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glPopMatrix();
+    }
+}
+
 void GLFWApp::drawCameraStatusSection() {
     if (ImGui::CollapsingHeader("Camera Status")) {
         // Current preset description
@@ -3504,6 +3654,7 @@ void GLFWApp::drawRenderingContent()
     ImGui::RadioButton("Contracture", &mMuscleRenderTypeInt, 3);
     mMuscleRenderType = MuscleRenderingType(mMuscleRenderTypeInt);
 
+    drawCaptureSection();
     drawCameraStatusSection();
 
     // === TIMING SECTION ===

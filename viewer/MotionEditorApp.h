@@ -2,6 +2,7 @@
 #define MOTION_EDITOR_APP_H
 
 #include "common/ViewerAppBase.h"
+#include "common/timeline.h"
 #include "RenderCharacter.h"
 #include "ShapeRenderer.h"
 #include "Motion.h"
@@ -42,25 +43,6 @@ struct MotionEditorViewerState
     bool render = true;
     MotionEditorNavigationMode navigationMode = ME_SYNC;
     int manualFrameIndex = 0;
-};
-
-/**
- * @brief Gait direction between consecutive contact phases
- */
-enum class GaitDirection {
-    Unknown,   // First contact or insufficient displacement
-    Forward,   // Movement in +Z direction
-    Backward   // Movement in -Z direction
-};
-
-/**
- * @brief Foot contact phase data
- */
-struct FootContactPhase {
-    int startFrame;
-    int endFrame;
-    bool isLeft;
-    GaitDirection direction = GaitDirection::Unknown;
 };
 
 /**
@@ -167,10 +149,14 @@ private:
     bool mHeightOffsetComputed = false;     // whether calculation done
 
     // === Foot Contact Detection ===
-    std::vector<FootContactPhase> mDetectedPhases;
+    std::vector<Timeline::FootContactPhase> mDetectedPhases;
     int mSelectedPhase = -1;
     float mContactVelocityThreshold = 0.01f;  // m/frame
     int mContactMinLockFrames = 5;
+
+    // === Timeline Zoom State ===
+    float mTimelineZoom = 1.0f;         // Zoom level (1.0 = no zoom)
+    float mTimelineScrollOffset = 0.0f; // Scroll offset when zoomed
 
     // === Stride Estimation ===
     int mStrideBodyNodeIdx = 0;          // 0=TalusR, 1=TalusL, 2=Pelvis

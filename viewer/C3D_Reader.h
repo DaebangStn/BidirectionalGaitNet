@@ -6,6 +6,7 @@
 #include "GLfunctions.h"
 #include "RenderCharacter.h"
 #include "C3D.h"
+#include "common/timeline.h"
 #include <ezc3d/ezc3d_all.h>
 #include <yaml-cpp/yaml.h>
 #include <map>
@@ -253,12 +254,6 @@ struct MotionConversionResult {
     bool valid = false;
 };
 
-// Foot lock phase for plantar correction (stance phase detection)
-struct FootLockPhase {
-    int startFrame;
-    int endFrame;
-    bool isLeft;  // true = left foot, false = right foot
-};
 
 // Result of static calibration (mFreeCharacter only, single frame)
 // Outputs: bone scales + personalized marker offsets
@@ -277,7 +272,7 @@ struct DynamicCalibrationResult {
     std::vector<Eigen::VectorXd> freePoses;                 // Free skeleton poses (from mFreeCharacter)
     std::vector<Eigen::VectorXd> motionPoses;               // Articulated poses (from mMotionCharacter)
     MotionConversionResult motionResult;                    // Joint offsets etc.
-    std::vector<FootLockPhase> footLockPhases;              // Detected foot lock phases for visualization
+    std::vector<Timeline::FootContactPhase> footLockPhases;  // Detected foot lock phases for visualization
     bool success = false;
     std::string errorMessage;
 };
@@ -360,7 +355,7 @@ class C3D_Reader
         // IK postprocessing methods (can be called independently via UI)
         void refineArmIK();      // Step 6: Adjust arm twist + elbow to match wrist markers
         void refineLegIK();      // Step 7: Adjust femur + tibia to match talus position
-        std::vector<FootLockPhase> refineTalus();  // Step 8: Correct talus orientation during foot lock phases
+        std::vector<Timeline::FootContactPhase> refineTalus();  // Step 8: Correct talus orientation during foot lock phases
         void enforceSymmetry();  // Step 9: Balance R/L bone scales based on threshold
 
         // ====== Static Calibration API ======
