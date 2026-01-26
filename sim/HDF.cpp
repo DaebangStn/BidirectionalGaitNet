@@ -388,6 +388,44 @@ void HDF::applyYRotation(double angleDegrees)
     LOG_INFO("[HDF] Applied Y rotation of " << angleDegrees << " degrees to " << mNumFrames << " frames");
 }
 
+void HDF::applyYRotationToRange(int startFrame, int endFrame, double angleDegrees)
+{
+    using namespace dart::dynamics;
+
+    if (std::abs(angleDegrees) < 0.001) {
+        return;  // No significant rotation
+    }
+
+    // Clamp frame range to valid bounds
+    startFrame = std::max(0, std::min(startFrame, mNumFrames - 1));
+    endFrame = std::max(startFrame, std::min(endFrame, mNumFrames - 1));
+
+    // Create Y-axis rotation transform
+    double angleRad = angleDegrees * M_PI / 180.0;
+    Eigen::Isometry3d yRotation = Eigen::Isometry3d::Identity();
+    yRotation.rotate(Eigen::AngleAxisd(angleRad, Eigen::Vector3d::UnitY()));
+
+    // Apply rotation to specified frame range
+    for (int frame = startFrame; frame <= endFrame; ++frame) {
+        Eigen::VectorXd pose = mMotionData.row(frame).transpose();
+
+        // Convert root pose to transform (first 6 DOF)
+        Eigen::Isometry3d rootTransform = FreeJoint::convertToTransform(pose.head<6>());
+
+        // Apply world rotation: new_transform = yRotation * rootTransform
+        Eigen::Isometry3d newTransform = yRotation * rootTransform;
+
+        // Convert back to pose vector
+        pose.head<6>() = FreeJoint::convertToPositions(newTransform);
+
+        // Store back
+        mMotionData.row(frame) = pose.transpose();
+    }
+
+    LOG_INFO("[HDF] Applied Y rotation of " << angleDegrees << " degrees to frames "
+             << startFrame << "-" << endFrame);
+}
+
 void HDF::applyHeightOffset(double offset)
 {
     if (std::abs(offset) < 0.0001) {
@@ -400,6 +438,25 @@ void HDF::applyHeightOffset(double offset)
     }
 
     LOG_INFO("[HDF] Applied height offset of " << offset << " to " << mNumFrames << " frames");
+}
+
+void HDF::applyHeightOffsetToRange(int startFrame, int endFrame, double offset)
+{
+    if (std::abs(offset) < 0.0001) {
+        return;  // No significant offset
+    }
+
+    // Clamp frame range to valid bounds
+    startFrame = std::max(0, std::min(startFrame, mNumFrames - 1));
+    endFrame = std::max(startFrame, std::min(endFrame, mNumFrames - 1));
+
+    // Apply height offset to Y translation (index 4) for specified range
+    for (int frame = startFrame; frame <= endFrame; ++frame) {
+        mMotionData(frame, 4) += offset;
+    }
+
+    LOG_INFO("[HDF] Applied height offset of " << offset << " to frames "
+             << startFrame << "-" << endFrame);
 }
 
 void HDF::trim(int startFrame, int endFrame)
@@ -447,6 +504,211 @@ void HDF::trim(int startFrame, int endFrame)
 
     LOG_INFO("[HDF] Trimmed to frames " << startFrame << "-" << endFrame
              << " (" << mNumFrames << " frames)");
+}
+
+void HDF::keepFrameRanges(const std::vector<std::pair<int, int>>& ranges)
+{
+    if (ranges.empty()) return;
+
+    // Calculate total frames
+    int totalFrames = 0;
+    for (const auto& range : ranges) {
+        int start = std::max(0, range.first);
+        int end = std::min(mNumFrames - 1, range.second);
+        if (end >= start) {
+            totalFrames += (end - start + 1);
+        }
+    }
+    if (totalFrames == 0) return;
+
+    // Build new motion data by concatenating ranges with continuous root position
+    Eigen::MatrixXd newMotionData(totalFrames, mDofPerFrame);
+    int destRow = 0;
+
+    // Track cumulative offset for continuous motion (X=index3, Z=index5)
+    double cumulativeOffsetX = 0.0;
+    double cumulativeOffsetZ = 0.0;
+    bool isFirstRange = true;
+    double prevEndX = 0.0;
+    double prevEndZ = 0.0;
+
+    for (const auto& range : ranges) {
+        int start = std::max(0, range.first);
+        int end = std::min(mNumFrames - 1, range.second);
+        int count = end - start + 1;
+        if (count <= 0) continue;
+
+        // Get first frame root position of this range (before any offset)
+        double rangeStartX = mMotionData(start, 3);
+        double rangeStartZ = mMotionData(start, 5);
+
+        // For non-first ranges, compute offset to make motion continuous
+        if (!isFirstRange) {
+            // Offset = where previous ended - where this one starts
+            cumulativeOffsetX = prevEndX - rangeStartX;
+            cumulativeOffsetZ = prevEndZ - rangeStartZ;
+        }
+
+        // Copy range data with offset applied
+        for (int i = 0; i < count; ++i) {
+            newMotionData.row(destRow + i) = mMotionData.row(start + i);
+            // Apply cumulative offset to root X and Z
+            newMotionData(destRow + i, 3) += cumulativeOffsetX;
+            newMotionData(destRow + i, 5) += cumulativeOffsetZ;
+        }
+
+        // Track where this range ends (with offset applied)
+        prevEndX = newMotionData(destRow + count - 1, 3);
+        prevEndZ = newMotionData(destRow + count - 1, 5);
+
+        destRow += count;
+        isFirstRange = false;
+    }
+    mMotionData = newMotionData;
+
+    // Rebuild phase data (0-1 range)
+    Eigen::VectorXd newPhaseData(totalFrames);
+    for (int i = 0; i < totalFrames; ++i) {
+        newPhaseData[i] = static_cast<double>(i) / std::max(1, totalFrames - 1);
+    }
+    mPhaseData = newPhaseData;
+
+    // Rebuild time data
+    Eigen::VectorXd newTimeData(totalFrames);
+    for (int i = 0; i < totalFrames; ++i) {
+        newTimeData[i] = i * mFrameTime;
+    }
+    mTimeData = newTimeData;
+
+    mNumFrames = totalFrames;
+
+    // Recompute cycle distance
+    if (mNumFrames > 1) {
+        Eigen::VectorXd firstFrame = mMotionData.row(0);
+        Eigen::VectorXd lastFrame = mMotionData.row(mNumFrames - 1);
+        double correction = static_cast<double>(mNumFrames) / (mNumFrames - 1);
+        mCycleDistance[0] = (lastFrame[3] - firstFrame[3]) * correction;
+        mCycleDistance[1] = 0.0;
+        mCycleDistance[2] = (lastFrame[5] - firstFrame[5]) * correction;
+    }
+
+    LOG_INFO("[HDF] Kept " << ranges.size() << " ranges, total " << mNumFrames << " frames (continuous root)");
+}
+
+void HDF::keepFrameRangesWithInterpolation(
+    const std::vector<std::pair<int, int>>& ranges,
+    int interpFrames,
+    HDF::InterpolateFn interpolateFunc)
+{
+    if (ranges.empty()) return;
+    if (interpFrames <= 0 || !interpolateFunc) {
+        // Fall back to non-interpolated version
+        keepFrameRanges(ranges);
+        return;
+    }
+
+    // Calculate total frames including interpolation
+    int totalFrames = 0;
+    for (size_t i = 0; i < ranges.size(); ++i) {
+        int start = std::max(0, ranges[i].first);
+        int end = std::min(mNumFrames - 1, ranges[i].second);
+        if (end >= start) {
+            totalFrames += (end - start + 1);
+        }
+        // Add interpolation frames between ranges (not after last)
+        if (i < ranges.size() - 1) {
+            totalFrames += interpFrames;
+        }
+    }
+    if (totalFrames == 0) return;
+
+    // Build new motion data
+    Eigen::MatrixXd newMotionData(totalFrames, mDofPerFrame);
+    int destRow = 0;
+
+    double cumulativeOffsetX = 0.0;
+    double cumulativeOffsetZ = 0.0;
+    bool isFirstRange = true;
+    double prevEndX = 0.0;
+    double prevEndZ = 0.0;
+    Eigen::VectorXd prevEndPose;
+
+    for (size_t rangeIdx = 0; rangeIdx < ranges.size(); ++rangeIdx) {
+        int start = std::max(0, ranges[rangeIdx].first);
+        int end = std::min(mNumFrames - 1, ranges[rangeIdx].second);
+        int count = end - start + 1;
+        if (count <= 0) continue;
+
+        double rangeStartX = mMotionData(start, 3);
+        double rangeStartZ = mMotionData(start, 5);
+
+        // For non-first ranges, insert interpolation frames
+        if (!isFirstRange && interpFrames > 0) {
+            // Compute offset to make motion continuous
+            cumulativeOffsetX = prevEndX - rangeStartX;
+            cumulativeOffsetZ = prevEndZ - rangeStartZ;
+
+            // Get first pose of this range (with offset applied)
+            Eigen::VectorXd rangeStartPose = mMotionData.row(start).transpose();
+            rangeStartPose[3] += cumulativeOffsetX;
+            rangeStartPose[5] += cumulativeOffsetZ;
+
+            // Generate interpolation frames
+            for (int i = 0; i < interpFrames; ++i) {
+                double t = static_cast<double>(i + 1) / (interpFrames + 1);
+                Eigen::VectorXd interpPose = interpolateFunc(prevEndPose, rangeStartPose, t);
+                newMotionData.row(destRow++) = interpPose.transpose();
+            }
+        } else if (!isFirstRange) {
+            cumulativeOffsetX = prevEndX - rangeStartX;
+            cumulativeOffsetZ = prevEndZ - rangeStartZ;
+        }
+
+        // Copy range data with offset applied
+        for (int i = 0; i < count; ++i) {
+            newMotionData.row(destRow + i) = mMotionData.row(start + i);
+            newMotionData(destRow + i, 3) += cumulativeOffsetX;
+            newMotionData(destRow + i, 5) += cumulativeOffsetZ;
+        }
+
+        // Track where this range ends
+        prevEndX = newMotionData(destRow + count - 1, 3);
+        prevEndZ = newMotionData(destRow + count - 1, 5);
+        prevEndPose = newMotionData.row(destRow + count - 1).transpose();
+
+        destRow += count;
+        isFirstRange = false;
+    }
+
+    mMotionData = newMotionData;
+    mNumFrames = totalFrames;
+
+    // Rebuild phase data
+    Eigen::VectorXd newPhaseData(totalFrames);
+    for (int i = 0; i < totalFrames; ++i) {
+        newPhaseData[i] = static_cast<double>(i) / std::max(1, totalFrames - 1);
+    }
+    mPhaseData = newPhaseData;
+
+    // Rebuild time data
+    Eigen::VectorXd newTimeData(totalFrames);
+    for (int i = 0; i < totalFrames; ++i) {
+        newTimeData[i] = i * mFrameTime;
+    }
+    mTimeData = newTimeData;
+
+    // Recompute cycle distance
+    if (mNumFrames > 1) {
+        Eigen::VectorXd firstFrame = mMotionData.row(0);
+        Eigen::VectorXd lastFrame = mMotionData.row(mNumFrames - 1);
+        double correction = static_cast<double>(mNumFrames) / (mNumFrames - 1);
+        mCycleDistance[0] = (lastFrame[3] - firstFrame[3]) * correction;
+        mCycleDistance[1] = 0.0;
+        mCycleDistance[2] = (lastFrame[5] - firstFrame[5]) * correction;
+    }
+
+    LOG_INFO("[HDF] Kept " << ranges.size() << " ranges with " << interpFrames
+             << " interpolation frames each, total " << mNumFrames << " frames");
 }
 
 void HDF::exportToFile(

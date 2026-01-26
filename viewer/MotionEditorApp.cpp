@@ -7,6 +7,7 @@
 #include <numeric>
 #include <fstream>
 #include <filesystem>
+#include <iostream>
 #include <yaml-cpp/yaml.h>
 
 using namespace dart::dynamics;
@@ -157,24 +158,24 @@ void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
             case GLFW_KEY_SPACE:
                 mIsPlaying = !mIsPlaying;
                 return;
-            case GLFW_KEY_S:
-                // Step frame(s) forward: Ctrl+S = 5 frames, S = 1 frame
+            case GLFW_KEY_LEFT:
+                // Step frame(s) backward: Ctrl = 5 frames, normal = 1 frame
+                if (mMotion) {
+                    mIsPlaying = false;
+                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
+                    mMotionState.manualFrameIndex = std::max(
+                        mMotionState.manualFrameIndex - step, 0);
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                }
+                return;
+            case GLFW_KEY_RIGHT:
+                // Step frame(s) forward: Ctrl = 5 frames, normal = 1 frame
                 if (mMotion) {
                     mIsPlaying = false;
                     int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
                     mMotionState.manualFrameIndex = std::min(
                         mMotionState.manualFrameIndex + step,
                         mMotion->getNumFrames() - 1);
-                    mMotionState.navigationMode = ME_MANUAL_FRAME;
-                }
-                return;
-            case GLFW_KEY_A:
-                // Step frame(s) backward: Ctrl+A = 5 frames, A = 1 frame
-                if (mMotion) {
-                    mIsPlaying = false;
-                    int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
-                    mMotionState.manualFrameIndex = std::max(
-                        mMotionState.manualFrameIndex - step, 0);
                     mMotionState.navigationMode = ME_MANUAL_FRAME;
                 }
                 return;
@@ -389,7 +390,7 @@ void MotionEditorApp::drawLeftPanel()
     ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight - timelineHeight), ImGuiCond_Once);
     ImGui::Begin("Data Loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
-    // Tab bar for PID Browser / Direct Path
+    // Tab bar for PID Browser / Direct Path / Root Info
     if (ImGui::BeginTabBar("DataLoaderTabs")) {
         if (ImGui::BeginTabItem("PID Browser")) {
             drawPIDBrowserTab();
@@ -397,6 +398,25 @@ void MotionEditorApp::drawLeftPanel()
         }
         if (ImGui::BeginTabItem("Direct Path")) {
             drawDirectPathTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Root Info")) {
+            if (mMotion && mMotionState.currentPose.size() >= 6) {
+                // Root position from current pose (indices 3,4,5 = X,Y,Z translation)
+                ImGui::Text("Frame: %d", mMotionState.manualFrameIndex);
+                ImGui::Separator();
+                ImGui::Text("Root Position:");
+                ImGui::Text("  X: %.4f", mMotionState.currentPose[3]);
+                ImGui::Text("  Y: %.4f", mMotionState.currentPose[4]);
+                ImGui::Text("  Z: %.4f", mMotionState.currentPose[5]);
+                ImGui::Separator();
+                ImGui::Text("Root Rotation:");
+                ImGui::Text("  R0: %.4f", mMotionState.currentPose[0]);
+                ImGui::Text("  R1: %.4f", mMotionState.currentPose[1]);
+                ImGui::Text("  R2: %.4f", mMotionState.currentPose[2]);
+            } else {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+            }
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -414,7 +434,7 @@ void MotionEditorApp::drawRightPanel()
 {
     const float timelineHeight = 80.0f;
     ImGui::SetNextWindowSize(ImVec2(mRightPanelWidth, mHeight - timelineHeight), ImGuiCond_Once);
-    ImGui::Begin("Data loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Edit Operations", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
     drawMotionInfoSection();
@@ -428,6 +448,8 @@ void MotionEditorApp::drawRightPanel()
     drawFootContactSection();
     ImGui::Separator();
     drawTrimSection();
+    ImGui::Separator();
+    drawDirectionCleanupSection();
     ImGui::Separator();
     drawStrideEstimationSection();
     ImGui::Separator();
@@ -688,56 +710,161 @@ void MotionEditorApp::drawTrimSection()
     }
 }
 
+void MotionEditorApp::drawDirectionCleanupSection()
+{
+    if (!collapsingHeaderWithControls("Direction Cleanup")) return;
+
+    if (!mMotion || !mCharacter || mDirectionIntervals.empty()) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No direction intervals detected");
+        return;
+    }
+
+    int forwardCount = 0, backwardCount = 0;
+    for (const auto& interval : mDirectionIntervals) {
+        if (interval.direction == Timeline::GaitDirection::Forward) forwardCount++;
+        else if (interval.direction == Timeline::GaitDirection::Backward) backwardCount++;
+    }
+
+    // Print button
+    if (ImGui::Button("Print Intervals")) {
+        std::cout << "\n=== Direction Intervals ===" << std::endl;
+        std::cout << "Forward (" << forwardCount << "):" << std::endl;
+        for (const auto& interval : mDirectionIntervals) {
+            if (interval.direction == Timeline::GaitDirection::Forward) {
+                std::cout << "  " << interval.startFrame << "-" << interval.endFrame
+                          << " (" << (interval.endFrame - interval.startFrame + 1) << " frames)" << std::endl;
+            }
+        }
+        std::cout << "Backward (" << backwardCount << "):" << std::endl;
+        for (const auto& interval : mDirectionIntervals) {
+            if (interval.direction == Timeline::GaitDirection::Backward) {
+                std::cout << "  " << interval.startFrame << "-" << interval.endFrame
+                          << " (" << (interval.endFrame - interval.startFrame + 1) << " frames)" << std::endl;
+            }
+        }
+        std::cout << "==========================\n" << std::endl;
+    }
+
+    // Two columns: Forward | Backward (same pattern as Foot Contact table)
+    if (ImGui::BeginTable("##DirectionTable", 2, ImGuiTableFlags_None)) {
+        ImGui::TableSetupColumn("Forward", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Backward", ImGuiTableColumnFlags_WidthStretch);
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Forward (%d)", forwardCount);
+        ImGui::TableNextColumn();
+        ImGui::Text("Backward (%d)", backwardCount);
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        if (ImGui::BeginListBox("##ForwardIntervals", ImVec2(-1, 100))) {
+            for (int i = 0; i < static_cast<int>(mDirectionIntervals.size()); ++i) {
+                const auto& interval = mDirectionIntervals[i];
+                if (interval.direction != Timeline::GaitDirection::Forward) continue;
+
+                char label[64];
+                snprintf(label, sizeof(label), "%d-%d (%d)##F%d",
+                         interval.startFrame, interval.endFrame,
+                         interval.endFrame - interval.startFrame + 1, i);
+
+                if (ImGui::Selectable(label, i == mSelectedDirectionInterval)) {
+                    mSelectedDirectionInterval = i;
+                    mMotionState.manualFrameIndex = interval.startFrame;
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                    mIsPlaying = false;
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        ImGui::TableNextColumn();
+        if (ImGui::BeginListBox("##BackwardIntervals", ImVec2(-1, 100))) {
+            for (int i = 0; i < static_cast<int>(mDirectionIntervals.size()); ++i) {
+                const auto& interval = mDirectionIntervals[i];
+                if (interval.direction != Timeline::GaitDirection::Backward) continue;
+
+                char label[64];
+                snprintf(label, sizeof(label), "%d-%d (%d)##B%d",
+                         interval.startFrame, interval.endFrame,
+                         interval.endFrame - interval.startFrame + 1, i);
+
+                if (ImGui::Selectable(label, i == mSelectedDirectionInterval)) {
+                    mSelectedDirectionInterval = i;
+                    mMotionState.manualFrameIndex = interval.startFrame;
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                    mIsPlaying = false;
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        ImGui::EndTable();
+    }
+
+    if (backwardCount > 0) {
+        ImGui::Text("Interpolation Frames:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputInt("##InterpFrames", &mInterpolationFrames);
+        mInterpolationFrames = std::max(0, mInterpolationFrames);  // Clamp to >= 0
+
+        if (ImGui::Button("Straighten All Backward", ImVec2(-1, 0))) {
+            straightenBackwardIntervals();
+        }
+    }
+}
+
 void MotionEditorApp::drawExportSection()
 {
-    if (collapsingHeaderWithControls("Export")) {
-        if (!mMotion) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
-            return;
-        }
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Export");
+    ImGui::Separator();
 
-        // Filename input
-        ImGui::Text("Filename:");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##ExportFilename", mExportFilename, sizeof(mExportFilename));
+    if (!mMotion) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+        return;
+    }
 
-        // Auto suffix checkbox
-        ImGui::Checkbox("Auto-suffix \"_edited\"", &mAutoSuffix);
+    // Filename input
+    ImGui::Text("Filename:");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##ExportFilename", mExportFilename, sizeof(mExportFilename));
 
-        // Preview output filename
-        std::string filename = strlen(mExportFilename) > 0
-            ? mExportFilename
-            : fs::path(mMotionSourcePath).stem().string();
-        if (mAutoSuffix) filename += "_edited";
-        filename += ".h5";
+    // Auto suffix checkbox
+    ImGui::Checkbox("Auto-suffix \"_edited\"", &mAutoSuffix);
 
-        fs::path outputPath = fs::path(mMotionSourcePath).parent_path() / filename;
-        bool fileExists = fs::exists(outputPath);
+    // Preview output filename
+    std::string filename = strlen(mExportFilename) > 0
+        ? mExportFilename
+        : fs::path(mMotionSourcePath).stem().string();
+    if (mAutoSuffix) filename += "_edited";
+    filename += ".h5";
 
-        ImGui::TextWrapped("Output: %s", filename.c_str());
+    fs::path outputPath = fs::path(mMotionSourcePath).parent_path() / filename;
+    bool fileExists = fs::exists(outputPath);
 
-        // Warn if file already exists
-        if (fileExists) {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Warning: File already exists!");
-        }
+    ImGui::TextWrapped("Output: %s", filename.c_str());
 
-        // Export button
-        if (ImGui::Button("Export Edited Motion", ImVec2(-1, 30))) {
-            exportMotion();
-        }
+    // Warn if file already exists
+    if (fileExists) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Warning: File already exists!");
+    }
 
-        // Export status message
-        if (!mLastExportMessage.empty()) {
-            double elapsed = glfwGetTime() - mLastExportMessageTime;
-            if (elapsed < 10.0) {
-                bool success = mLastExportMessage.find("Success") != std::string::npos;
-                ImVec4 color = success ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f) : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-                ImGui::TextColored(color, "%s", mLastExportMessage.c_str());
+    // Export button
+    if (ImGui::Button("Export Edited Motion", ImVec2(-1, 30))) {
+        exportMotion();
+    }
 
-                // Show URI for successful exports
-                if (success && !mLastExportURI.empty()) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "URI: %s", mLastExportURI.c_str());
-                }
+    // Export status message
+    if (!mLastExportMessage.empty()) {
+        double elapsed = glfwGetTime() - mLastExportMessageTime;
+        if (elapsed < 10.0) {
+            bool success = mLastExportMessage.find("Success") != std::string::npos;
+            ImVec4 color = success ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f) : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+            ImGui::TextColored(color, "%s", mLastExportMessage.c_str());
+
+            // Show URI for successful exports
+            if (success && !mLastExportURI.empty()) {
+                ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "URI: %s", mLastExportURI.c_str());
             }
         }
     }
@@ -760,6 +887,31 @@ void MotionEditorApp::drawRotationSection()
             return;
         }
 
+        int totalFrames = mMotion->getNumFrames();
+
+        // Frame Range Selection
+        ImGui::Text("Frame Range:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##RotStart", &mRotationStartFrame, 0, totalFrames - 1, "Start: %d");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("##RotEnd", &mRotationEndFrame, 0, totalFrames - 1, "End: %d");
+        if (mRotationStartFrame > mRotationEndFrame) mRotationStartFrame = mRotationEndFrame;
+
+        if (ImGui::Button("Set Start to Current##Rot")) {
+            mRotationStartFrame = mMotionState.manualFrameIndex;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Set End to Current##Rot")) {
+            mRotationEndFrame = mMotionState.manualFrameIndex;
+        }
+        if (ImGui::Button("Reset Range##Rot")) {
+            mRotationStartFrame = 0;
+            mRotationEndFrame = totalFrames - 1;
+        }
+        ImGui::Separator();
+
+        // Angle controls
+        ImGui::Text("Rotation Angle:");
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##AngleSlider", &mPendingRotationAngle, -180.0f, 180.0f, "%.1f");
 
@@ -781,8 +933,19 @@ void MotionEditorApp::drawRotationSection()
         ImGui::SetNextItemWidth(-1);
         ImGui::InputFloat("##AngleInput", &mPendingRotationAngle, 0.0f, 0.0f, "%.1f");
 
-        if (ImGui::Button("Apply Rotation", ImVec2(-1, 0))) {
-            applyRotation();
+        // Apply button with range info
+        char applyLabel[64];
+        snprintf(applyLabel, sizeof(applyLabel), "Apply to frames %d-%d",
+                 mRotationStartFrame, mRotationEndFrame);
+        if (ImGui::Button(applyLabel, ImVec2(-1, 0))) {
+            HDF* hdf = dynamic_cast<HDF*>(mMotion);
+            if (hdf) {
+                hdf->applyYRotationToRange(mRotationStartFrame, mRotationEndFrame, mPendingRotationAngle);
+                mPendingRotationAngle = 0.0f;
+                // Re-detect after rotation
+                detectFootContacts();
+                detectDirectionIntervals();
+            }
         }
 
         // Info text
@@ -794,148 +957,159 @@ void MotionEditorApp::drawRotationSection()
 
 void MotionEditorApp::drawHeightSection()
 {
-    if (collapsingHeaderWithControls("Height Adjustment")) {
-        if (!mMotion) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
-            return;
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Height Adjustment");
+    ImGui::Separator();
+
+    if (!mMotion) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+        return;
+    }
+    if (!mCharacter) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Load a skeleton to calculate");
+        return;
+    }
+
+    // Check if direction intervals exist
+    if (mDirectionIntervals.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Run Direction detection first");
+        return;
+    }
+
+    // Calculate button - computes per-interval offsets
+    if (ImGui::Button("Calculate Per-Interval", ImVec2(-1, 0))) {
+        mIntervalHeightOffsets.clear();
+        for (const auto& interval : mDirectionIntervals) {
+            double offset = computeGroundLevelForRange(interval.startFrame, interval.endFrame);
+            mIntervalHeightOffsets.push_back(offset);
+        }
+        mHeightOffsetComputed = !mIntervalHeightOffsets.empty();
+    }
+
+    // Show per-interval offsets
+    if (mHeightOffsetComputed && mIntervalHeightOffsets.size() == mDirectionIntervals.size()) {
+        ImGui::Text("Per-interval offsets:");
+        for (size_t i = 0; i < mDirectionIntervals.size(); ++i) {
+            const auto& interval = mDirectionIntervals[i];
+            const char* dirStr = (interval.direction == Timeline::GaitDirection::Forward) ? "Fwd" : "Bwd";
+            ImGui::Text("  %s %d-%d: %.4f m", dirStr,
+                        interval.startFrame, interval.endFrame,
+                        mIntervalHeightOffsets[i]);
         }
 
-        if (!mCharacter) {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Load a skeleton to calculate");
-        }
-
-        // Display computed offset
-        if (mHeightOffsetComputed) {
-            ImGui::Text("Computed offset: %.4f m", mComputedHeightOffset);
-            ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1.0f), "Preview shown (orange)");
-        } else {
-            ImGui::Text("Offset: not calculated");
-        }
-
-        // Calculate button
-        if (ImGui::Button("Calculate Ground Level", ImVec2(-1, 0))) {
-            if (mCharacter) {
-                computeGroundLevel();
+        // Apply button
+        if (ImGui::Button("Apply All Offsets", ImVec2(-1, 0))) {
+            HDF* hdf = dynamic_cast<HDF*>(mMotion);
+            if (hdf) {
+                for (size_t i = 0; i < mDirectionIntervals.size(); ++i) {
+                    const auto& interval = mDirectionIntervals[i];
+                    hdf->applyHeightOffsetToRange(
+                        interval.startFrame, interval.endFrame,
+                        mIntervalHeightOffsets[i]);
+                }
+                mIntervalHeightOffsets.clear();
+                mHeightOffsetComputed = false;
             }
-        }
-
-        // Apply button (only enabled if computed)
-        bool applyDisabled = !mHeightOffsetComputed;
-        if (applyDisabled) {
-            ImGui::BeginDisabled();
-        }
-        if (ImGui::Button("Apply Height Adjustment", ImVec2(-1, 0))) {
-            applyHeightOffset();
-        }
-        if (applyDisabled) {
-            ImGui::EndDisabled();
         }
 
         // Reset button
-        if (mHeightOffsetComputed) {
-            if (ImGui::Button("Reset##Height")) {
-                mComputedHeightOffset = 0.0;
-                mHeightOffsetComputed = false;
-            }
+        if (ImGui::Button("Reset##Height")) {
+            mIntervalHeightOffsets.clear();
+            mHeightOffsetComputed = false;
         }
     }
 }
 
 void MotionEditorApp::drawFootContactSection()
 {
-    if (collapsingHeaderWithControls("Foot Contact")) {
-        if (!mMotion) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
-            return;
-        }
-        if (!mCharacter) {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Load a skeleton to detect");
-            return;
-        }
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Foot Contact");
+    ImGui::Separator();
 
-        // Run button
-        if (ImGui::Button("Run Detector", ImVec2(-1, 0))) {
-            detectFootContacts();
-        }
+    if (!mMotion) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+        return;
+    }
+    if (!mCharacter) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Load a skeleton to detect");
+        return;
+    }
 
-        // Parameters (hidden by default with TreeNodeEx)
-        if (ImGui::TreeNodeEx("Parameters", 0)) {
-            ImGui::Text("Velocity Threshold (m)");
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputFloat("##VelThreshold", &mContactVelocityThreshold, 0.001f, 0.01f, "%.3f");
-            ImGui::Text("Min Lock Frames");
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputInt("##MinLockFrames", &mContactMinLockFrames);
-            ImGui::TreePop();
-        }
+    // Parameters (hidden by default with TreeNodeEx)
+    if (ImGui::TreeNodeEx("Parameters", 0)) {
+        ImGui::Text("Velocity Threshold (m)");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputFloat("##VelThreshold", &mContactVelocityThreshold, 0.001f, 0.01f, "%.3f");
+        ImGui::Text("Min Lock Frames");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputInt("##MinLockFrames", &mContactMinLockFrames);
+        ImGui::TreePop();
+    }
 
-        // Results - count left and right separately
-        int leftCount = 0, rightCount = 0;
-        for (const auto& phase : mDetectedPhases) {
-            if (phase.isLeft) leftCount++;
-            else rightCount++;
-        }
+    // Results - count left and right separately
+    int leftCount = 0, rightCount = 0;
+    for (const auto& phase : mDetectedPhases) {
+        if (phase.isLeft) leftCount++;
+        else rightCount++;
+    }
 
-        // Two columns using table: Left | Right
-        if (ImGui::BeginTable("##FootContactTable", 2, ImGuiTableFlags_None)) {
-            ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthStretch);
+    // Two columns using table: Left | Right
+    if (ImGui::BeginTable("##FootContactTable", 2, ImGuiTableFlags_None)) {
+        ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthStretch);
 
-            // Header row
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::Text("Left (%d)", leftCount);
-            ImGui::TableNextColumn();
-            ImGui::Text("Right (%d)", rightCount);
+        // Header row
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("Left (%d)", leftCount);
+        ImGui::TableNextColumn();
+        ImGui::Text("Right (%d)", rightCount);
 
-            // Listbox row
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            if (ImGui::BeginListBox("##LeftContact", ImVec2(-1, 100))) {
-                for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
-                    const auto& phase = mDetectedPhases[i];
-                    if (!phase.isLeft) continue;
+        // Listbox row
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        if (ImGui::BeginListBox("##LeftContact", ImVec2(-1, 100))) {
+            for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
+                const auto& phase = mDetectedPhases[i];
+                if (!phase.isLeft) continue;
 
-                    char label[64];
-                    snprintf(label, sizeof(label), "%d-%d (%d)##L%d",
-                             phase.startFrame, phase.endFrame,
-                             phase.endFrame - phase.startFrame + 1, i);
+                char label[64];
+                snprintf(label, sizeof(label), "%d-%d (%d)##L%d",
+                         phase.startFrame, phase.endFrame,
+                         phase.endFrame - phase.startFrame + 1, i);
 
-                    bool isSelected = (i == mSelectedPhase);
-                    if (ImGui::Selectable(label, isSelected)) {
-                        mSelectedPhase = i;
-                        mMotionState.manualFrameIndex = phase.startFrame;
-                        mMotionState.navigationMode = ME_MANUAL_FRAME;
-                        mIsPlaying = false;
-                    }
+                bool isSelected = (i == mSelectedPhase);
+                if (ImGui::Selectable(label, isSelected)) {
+                    mSelectedPhase = i;
+                    mMotionState.manualFrameIndex = phase.startFrame;
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                    mIsPlaying = false;
                 }
-                ImGui::EndListBox();
             }
-
-            ImGui::TableNextColumn();
-            if (ImGui::BeginListBox("##RightContact", ImVec2(-1, 100))) {
-                for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
-                    const auto& phase = mDetectedPhases[i];
-                    if (phase.isLeft) continue;
-
-                    char label[64];
-                    snprintf(label, sizeof(label), "%d-%d (%d)##R%d",
-                             phase.startFrame, phase.endFrame,
-                             phase.endFrame - phase.startFrame + 1, i);
-
-                    bool isSelected = (i == mSelectedPhase);
-                    if (ImGui::Selectable(label, isSelected)) {
-                        mSelectedPhase = i;
-                        mMotionState.manualFrameIndex = phase.startFrame;
-                        mMotionState.navigationMode = ME_MANUAL_FRAME;
-                        mIsPlaying = false;
-                    }
-                }
-                ImGui::EndListBox();
-            }
-
-            ImGui::EndTable();
+            ImGui::EndListBox();
         }
+
+        ImGui::TableNextColumn();
+        if (ImGui::BeginListBox("##RightContact", ImVec2(-1, 100))) {
+            for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
+                const auto& phase = mDetectedPhases[i];
+                if (phase.isLeft) continue;
+
+                char label[64];
+                snprintf(label, sizeof(label), "%d-%d (%d)##R%d",
+                         phase.startFrame, phase.endFrame,
+                         phase.endFrame - phase.startFrame + 1, i);
+
+                bool isSelected = (i == mSelectedPhase);
+                if (ImGui::Selectable(label, isSelected)) {
+                    mSelectedPhase = i;
+                    mMotionState.manualFrameIndex = phase.startFrame;
+                    mMotionState.navigationMode = ME_MANUAL_FRAME;
+                    mIsPlaying = false;
+                }
+            }
+            ImGui::EndListBox();
+        }
+
+        ImGui::EndTable();
     }
 }
 
@@ -1089,6 +1263,125 @@ void MotionEditorApp::detectFootContacts()
         divider = rightContactCount;
     }
     setStrideDivider(divider);
+}
+
+void MotionEditorApp::detectDirectionIntervals()
+{
+    mDirectionIntervals.clear();
+    mSelectedDirectionInterval = -1;
+
+    if (!mMotion || !mCharacter) return;
+
+    auto skel = mCharacter->getSkeleton();
+    auto pelvis = skel->getBodyNode("Pelvis");
+    if (!pelvis) return;
+
+    int numFrames = mMotion->getNumFrames();
+    if (numFrames == 0) return;
+
+    // Save current skeleton state
+    Eigen::VectorXd savedPositions = skel->getPositions();
+
+    // Detect direction for each frame based on pelvis forward (local +Z) axis
+    Timeline::GaitDirection currentDir = Timeline::GaitDirection::Unknown;
+    int intervalStart = 0;
+
+    for (int f = 0; f < numFrames; ++f) {
+        Eigen::VectorXd pose = mMotion->getPose(f);
+        if (pose.size() != skel->getNumDofs()) continue;
+
+        skel->setPositions(pose);
+
+        // Get pelvis forward direction (local +Z axis in world coordinates)
+        Eigen::Vector3d forward = pelvis->getTransform().linear() * Eigen::Vector3d(0, 0, 1);
+
+        // Determine direction based on world Z component
+        Timeline::GaitDirection frameDir;
+        if (forward.z() > 0.1) {
+            frameDir = Timeline::GaitDirection::Forward;
+        } else if (forward.z() < -0.1) {
+            frameDir = Timeline::GaitDirection::Backward;
+        } else {
+            frameDir = Timeline::GaitDirection::Unknown;  // Sideways
+        }
+
+        // First frame or direction changed
+        if (f == 0) {
+            currentDir = frameDir;
+            intervalStart = 0;
+        } else if (frameDir != currentDir) {
+            // Save previous interval if it was a known direction
+            if (currentDir != Timeline::GaitDirection::Unknown) {
+                mDirectionIntervals.push_back({intervalStart, f - 1, currentDir});
+            }
+            currentDir = frameDir;
+            intervalStart = f;
+        }
+    }
+
+    // Save final interval
+    if (currentDir != Timeline::GaitDirection::Unknown && intervalStart < numFrames) {
+        mDirectionIntervals.push_back({intervalStart, numFrames - 1, currentDir});
+    }
+
+    // Restore skeleton state
+    skel->setPositions(savedPositions);
+}
+
+void MotionEditorApp::straightenBackwardIntervals()
+{
+    HDF* hdf = dynamic_cast<HDF*>(mMotion);
+    if (!hdf) return;
+
+    // Step 1: Rotate backward intervals 180°
+    for (const auto& interval : mDirectionIntervals) {
+        if (interval.direction == Timeline::GaitDirection::Backward) {
+            hdf->applyYRotationToRange(interval.startFrame, interval.endFrame, 180.0);
+        }
+    }
+
+    // Step 2: Compute trimmed ranges for each interval using right heel strikes
+    std::vector<std::pair<int, int>> trimmedRanges;
+
+    for (const auto& interval : mDirectionIntervals) {
+        // Find right heel strikes within this interval
+        int firstRightStart = INT_MAX;
+        int lastRightStart = -1;
+
+        for (const auto& phase : mDetectedPhases) {
+            if (!phase.isLeft) {  // Right foot contact
+                if (phase.startFrame >= interval.startFrame &&
+                    phase.startFrame <= interval.endFrame) {
+                    if (phase.startFrame < firstRightStart) {
+                        firstRightStart = phase.startFrame;
+                    }
+                    if (phase.startFrame > lastRightStart) {
+                        lastRightStart = phase.startFrame;
+                    }
+                }
+            }
+        }
+
+        // Trim from first right strike to frame before last right strike
+        int trimEnd = lastRightStart - 1;
+        if (firstRightStart != INT_MAX && trimEnd > firstRightStart) {
+            trimmedRanges.push_back({firstRightStart, trimEnd});
+        }
+    }
+
+    // Step 3: Apply multi-range trim with interpolation if we have valid ranges
+    if (!trimmedRanges.empty()) {
+        // Create interpolation callback using RenderCharacter's interpolatePose
+        auto interpolateFunc = [this](const Eigen::VectorXd& pose1,
+                                       const Eigen::VectorXd& pose2,
+                                       double t) -> Eigen::VectorXd {
+            return mCharacter->interpolatePose(pose1, pose2, t, false);
+        };
+        hdf->keepFrameRangesWithInterpolation(trimmedRanges, mInterpolationFrames, interpolateFunc);
+    }
+
+    // Step 4: Refresh state (re-detects foot contacts and direction intervals)
+    refreshMotion();
 }
 
 void MotionEditorApp::setStrideDivider(int divider)
@@ -1257,16 +1550,12 @@ void MotionEditorApp::detectROMViolations()
 
 void MotionEditorApp::drawROMViolationSection()
 {
-    if (!collapsingHeaderWithControls("ROM Violations")) return;
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "ROM Violations");
+    ImGui::Separator();
 
     if (!mMotion || !mCharacter) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Load motion and skeleton first");
         return;
-    }
-
-    // Detect button
-    if (ImGui::Button("Detect Violations", ImVec2(-1, 0))) {
-        detectROMViolations();
     }
 
     // Preview checkbox
@@ -1281,8 +1570,10 @@ void MotionEditorApp::drawROMViolationSection()
         return;
     }
 
-    // Violation listbox
-    if (ImGui::BeginListBox("##ROMViolations", ImVec2(-1, 150))) {
+    // Violation listbox - height based on item count (min 50, max 200)
+    float itemHeight = ImGui::GetTextLineHeightWithSpacing();
+    float listHeight = std::clamp(static_cast<float>(mROMViolations.size()) * itemHeight + 8.0f, 50.0f, 200.0f);
+    if (ImGui::BeginListBox("##ROMViolations", ImVec2(-1, listHeight))) {
         for (int i = 0; i < static_cast<int>(mROMViolations.size()); ++i) {
             const auto& v = mROMViolations[i];
 
@@ -1433,9 +1724,18 @@ void MotionEditorApp::refreshMotion()
     mROMViolations.clear();
     mSelectedViolation = -1;
 
+    // Reset direction intervals
+    mDirectionIntervals.clear();
+    mSelectedDirectionInterval = -1;
+
+    // Reset rotation frame range to full motion
+    mRotationStartFrame = 0;
+    mRotationEndFrame = mMotion->getNumFrames() - 1;
+
     // Auto-detect foot contacts if skeleton loaded
     if (mCharacter) {
         detectFootContacts();
+        detectDirectionIntervals();
         detectROMViolations();
     }
 }
@@ -1763,6 +2063,56 @@ void MotionEditorApp::computeGroundLevel()
 
     LOG_INFO("[MotionEditor] Computed ground level: " << meanGroundLevel
              << ", offset: " << mComputedHeightOffset);
+}
+
+double MotionEditorApp::computeGroundLevelForRange(int startFrame, int endFrame)
+{
+    if (!mMotion || !mCharacter) return 0.0;
+
+    auto skel = mCharacter->getSkeleton();
+    if (!skel) return 0.0;
+
+    // Clamp range
+    startFrame = std::max(0, startFrame);
+    endFrame = std::min(mMotion->getNumFrames() - 1, endFrame);
+    int numFrames = endFrame - startFrame + 1;
+    if (numFrames <= 0) return 0.0;
+
+    // Save current skeleton positions
+    Eigen::VectorXd savedPositions = skel->getPositions();
+
+    double totalMinY = 0.0;
+
+    for (int frame = startFrame; frame <= endFrame; ++frame) {
+        Eigen::VectorXd pose = mMotion->getPose(frame);
+        if (pose.size() != skel->getNumDofs()) continue;
+
+        skel->setPositions(pose);
+
+        double frameMinY = std::numeric_limits<double>::max();
+        for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
+            dart::dynamics::BodyNode* bn = skel->getBodyNode(i);
+            if (!bn) continue;
+
+            Eigen::Isometry3d transform = bn->getTransform();
+            Eigen::Vector3d pos = transform.translation();
+            Eigen::Vector3d size = getBodyNodeSize(bn);
+            double bottomY = pos[1] - size[1] / 2.0;
+            if (bottomY < frameMinY) {
+                frameMinY = bottomY;
+            }
+        }
+
+        if (frameMinY < std::numeric_limits<double>::max()) {
+            totalMinY += frameMinY;
+        }
+    }
+
+    // Restore skeleton positions
+    skel->setPositions(savedPositions);
+
+    double meanGroundLevel = totalMinY / numFrames;
+    return -meanGroundLevel;  // Offset to bring to Y=0
 }
 
 void MotionEditorApp::applyRotation()

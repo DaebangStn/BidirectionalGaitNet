@@ -61,6 +61,16 @@ struct ROMViolation {
     bool isUpperBound;          // true = exceeded upper, false = below lower
 };
 
+
+/**
+ * @brief Direction interval for consecutive frames with same walking direction
+ */
+struct DirectionInterval {
+    int startFrame;
+    int endFrame;
+    Timeline::GaitDirection direction;
+};
+
 /**
  * @brief Motion Editor Application
  *
@@ -145,8 +155,9 @@ private:
     float mPendingRotationAngle = 0.0f;     // degrees (preview always shown when != 0)
 
     // === Height Processing ===
-    double mComputedHeightOffset = 0.0;     // calculated offset
+    double mComputedHeightOffset = 0.0;     // calculated offset (single - for backward compat)
     bool mHeightOffsetComputed = false;     // whether calculation done
+    std::vector<double> mIntervalHeightOffsets;  // Per-interval height offsets
 
     // === Foot Contact Detection ===
     std::vector<Timeline::FootContactPhase> mDetectedPhases;
@@ -169,6 +180,13 @@ private:
     int mSelectedViolation = -1;
     bool mPreviewClampedPose = true;
 
+    // === Direction Cleanup ===
+    std::vector<DirectionInterval> mDirectionIntervals;
+    int mSelectedDirectionInterval = -1;
+    int mRotationStartFrame = 0;
+    int mRotationEndFrame = 0;
+    int mInterpolationFrames = 10;  // Number of frames to interpolate between intervals
+
     // === Initialization ===
     void loadRenderConfigImpl() override;
 
@@ -190,9 +208,12 @@ private:
     void drawFootContactSection();
     void drawStrideEstimationSection();
     void drawROMViolationSection();
+    void drawDirectionCleanupSection();
 
     // === Processing ===
     void detectROMViolations();
+    void detectDirectionIntervals();
+    void straightenBackwardIntervals();
 
     // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);
@@ -219,6 +240,7 @@ private:
     Eigen::VectorXd applyRotationToFrame(const Eigen::VectorXd& pose, float angleDegrees);
     void applyRotation();
     void computeGroundLevel();
+    double computeGroundLevelForRange(int startFrame, int endFrame);
     void applyHeightOffset();
     Eigen::Vector3d getBodyNodeSize(dart::dynamics::BodyNode* bn);
     void detectFootContacts();

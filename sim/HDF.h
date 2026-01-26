@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 #include <string>
 #include <map>
+#include <functional>
 
 // Forward declaration
 class Character;
@@ -77,10 +78,26 @@ public:
     void applyYRotation(double angleDegrees);
 
     /**
+     * @brief Apply Y-axis rotation to a range of frames
+     * @param startFrame Start frame (0-based, clamped to valid range)
+     * @param endFrame End frame (inclusive, clamped to valid range)
+     * @param angleDegrees Rotation angle in degrees
+     */
+    void applyYRotationToRange(int startFrame, int endFrame, double angleDegrees);
+
+    /**
      * @brief Apply height offset to all frames
      * @param offset Height offset to add to Y translation (index 4)
      */
     void applyHeightOffset(double offset);
+
+    /**
+     * @brief Apply height offset to a range of frames
+     * @param startFrame Start frame (0-based, clamped to valid range)
+     * @param endFrame End frame (inclusive, clamped to valid range)
+     * @param offset Height offset to add to Y translation (index 4)
+     */
+    void applyHeightOffsetToRange(int startFrame, int endFrame, double offset);
 
     /**
      * @brief Trim motion data in-place
@@ -88,6 +105,28 @@ public:
      * @param endFrame End frame (inclusive)
      */
     void trim(int startFrame, int endFrame);
+
+    /**
+     * @brief Keep only specified frame ranges, concatenating them in order
+     * @param ranges Vector of (startFrame, endFrame) pairs to keep
+     *
+     * Used for multi-interval trimming (e.g., after straightening backward intervals).
+     * Each range is inclusive. Ranges are concatenated in the order provided.
+     * Phase and time data are regenerated for the new frame count.
+     */
+    void keepFrameRanges(const std::vector<std::pair<int, int>>& ranges);
+
+    /**
+     * @brief Keep frame ranges with interpolation between them
+     * @param ranges Vector of (startFrame, endFrame) pairs to keep
+     * @param interpFrames Number of interpolation frames between consecutive ranges
+     * @param interpolateFunc Callback for pose interpolation (pose1, pose2, t) -> interpolated pose
+     */
+    using InterpolateFn = std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&, double)>;
+    void keepFrameRangesWithInterpolation(
+        const std::vector<std::pair<int, int>>& ranges,
+        int interpFrames,
+        InterpolateFn interpolateFunc);
 
     /**
      * @brief Export current motion data to HDF5 file

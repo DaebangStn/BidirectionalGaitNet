@@ -120,7 +120,8 @@ Result DrawTimelineTrackBar(
         // Draw foot contact phases
         if (!phases.empty()) {
             float halfHeight = trackHeight / 2.0f;
-            for (const auto& phase : phases) {
+            for (size_t i = 0; i < phases.size(); ++i) {
+                const auto& phase = phases[i];
                 float startX = frameToScreenX(phase.startFrame);
                 float endX = frameToScreenX(phase.endFrame);
 
@@ -131,26 +132,43 @@ Result DrawTimelineTrackBar(
                 ImU32 color = phase.isLeft ? IM_COL32(80, 120, 200, 180) : IM_COL32(200, 80, 80, 180);
                 drawList->AddRectFilled(ImVec2(startX, phaseY), ImVec2(endX, phaseY + halfHeight), color);
 
-                // Draw direction arrow at start of phase (if visible)
-                if (phase.direction != GaitDirection::Unknown && startX >= trackX && startX <= trackX + trackWidth) {
+                // Draw direction arrow from prev phase center to current phase center
+                if (i > 0 && phase.direction != GaitDirection::Unknown) {
+                    const auto& prevPhase = phases[i - 1];
+                    float prevCenterX = frameToScreenX((prevPhase.startFrame + prevPhase.endFrame) / 2);
+                    float currCenterX = frameToScreenX((phase.startFrame + phase.endFrame) / 2);
+
+                    // Check if arrow is at least partially visible
+                    float arrowStartX = std::min(prevCenterX, currCenterX);
+                    float arrowEndX = std::max(prevCenterX, currCenterX);
+                    if (arrowEndX < trackX || arrowStartX > trackX + trackWidth) continue;
+
                     float arrowY = trackY + halfHeight;
                     float arrowSize = 5.0f;
+                    float shaftThickness = 2.0f;
 
                     ImU32 arrowColor = (phase.direction == GaitDirection::Forward)
                         ? IM_COL32(80, 220, 80, 255)
                         : IM_COL32(255, 140, 40, 255);
 
+                    // Draw shaft from prev center to current center
+                    drawList->AddLine(
+                        ImVec2(prevCenterX, arrowY),
+                        ImVec2(currCenterX, arrowY),
+                        arrowColor, shaftThickness);
+
+                    // Draw arrow head at current phase center
                     if (phase.direction == GaitDirection::Forward) {
                         drawList->AddTriangleFilled(
-                            ImVec2(startX - arrowSize * 0.5f, arrowY - arrowSize),
-                            ImVec2(startX - arrowSize * 0.5f, arrowY + arrowSize),
-                            ImVec2(startX + arrowSize, arrowY),
+                            ImVec2(currCenterX - arrowSize * 0.5f, arrowY - arrowSize),
+                            ImVec2(currCenterX - arrowSize * 0.5f, arrowY + arrowSize),
+                            ImVec2(currCenterX + arrowSize, arrowY),
                             arrowColor);
                     } else {
                         drawList->AddTriangleFilled(
-                            ImVec2(startX + arrowSize * 0.5f, arrowY - arrowSize),
-                            ImVec2(startX + arrowSize * 0.5f, arrowY + arrowSize),
-                            ImVec2(startX - arrowSize, arrowY),
+                            ImVec2(currCenterX + arrowSize * 0.5f, arrowY - arrowSize),
+                            ImVec2(currCenterX + arrowSize * 0.5f, arrowY + arrowSize),
+                            ImVec2(currCenterX - arrowSize, arrowY),
                             arrowColor);
                     }
                 }
