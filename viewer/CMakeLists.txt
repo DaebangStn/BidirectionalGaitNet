@@ -183,3 +183,34 @@ target_link_libraries(test_viewer_base
     viewer_common
     dart-gui
 )
+
+# C3D Calibration CLI - Headless skeleton calibration from C3D files
+# This tool automates the calibration pipeline from C3DProcessorApp
+set(C3D_CALIBRATION_CLI_SOURCES
+    "../tools/c3d_calibration_cli_main.cpp"
+    "RenderCharacter.h"
+    "RenderCharacter.cpp"
+    "C3D_Reader.h"
+    "C3D_Reader.cpp"
+)
+
+add_executable(c3d_calibration_cli ${C3D_CALIBRATION_CLI_SOURCES})
+
+target_include_directories(c3d_calibration_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../sim
+    ${CMAKE_CURRENT_SOURCE_DIR}/../surgery
+    ${CMAKE_CURRENT_SOURCE_DIR}/../surgery/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libs/tinycolormap/include
+)
+
+target_link_libraries(c3d_calibration_cli
+    tinyxml2::tinyxml2
+    sim
+    dart
+    ezc3d
+    Boost::program_options
+    yaml-cpp
+    rm
+    ${HDF5_CXX_LIBRARIES}
+)
