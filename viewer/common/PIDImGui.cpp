@@ -307,8 +307,15 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
         if (ImGui::BeginListBox("##FileList", ImVec2(-1, fileListHeight))) {
             for (int i = 0; i < static_cast<int>(pImpl->files.size()); ++i) {
                 const auto& f = pImpl->files[i];
-                if (pImpl->fileFilterBuf[0] && f.find(pImpl->fileFilterBuf) == std::string::npos) {
-                    continue;
+                if (pImpl->fileFilterBuf[0]) {
+                    // Case-insensitive filtering
+                    std::string fLower = f;
+                    std::string filterLower = pImpl->fileFilterBuf;
+                    std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
+                    std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+                    if (fLower.find(filterLower) == std::string::npos) {
+                        continue;
+                    }
                 }
 
                 if (ImGui::Selectable(f.c_str(), i == pImpl->selectedFile)) {

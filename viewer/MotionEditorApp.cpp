@@ -636,6 +636,36 @@ void MotionEditorApp::drawTrimSection()
             mTrimEnd = totalFrames - 1;
         }
         ImGui::SameLine();
+
+        // Auto Trim button - trim from first right heel strike to frame before last right heel strike
+        // Example: contacts at 10-30, 100-120, 493-526 → trim to frames 10-492
+        if (ImGui::Button("Auto Trim (R)")) {
+            int firstRightStart = INT_MAX;
+            int lastRightStart = -1;
+
+            for (const auto& phase : mDetectedPhases) {
+                if (!phase.isLeft) {  // Right foot contact
+                    if (phase.startFrame < firstRightStart) {
+                        firstRightStart = phase.startFrame;
+                    }
+                    if (phase.startFrame > lastRightStart) {
+                        lastRightStart = phase.startFrame;
+                    }
+                }
+            }
+
+            // Trim end is one frame before the last right heel strike
+            int trimEnd = lastRightStart - 1;
+
+            if (firstRightStart != INT_MAX && trimEnd > firstRightStart) {
+                mTrimStart = firstRightStart;
+                mTrimEnd = trimEnd;
+                applyTrim();
+            } else {
+                LOG_WARN("[MotionEditor] Auto Trim: Need at least 2 right heel strikes");
+            }
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Apply Trim")) {
             applyTrim();
         }
@@ -915,54 +945,24 @@ void MotionEditorApp::drawStrideEstimationSection()
     ImGui::SetNextItemWidth(120);
     ImGui::Combo("##StrideBodyNode", &mStrideBodyNodeIdx, bodyNodes, IM_ARRAYSIZE(bodyNodes));
 
-    // Divider input
+    // Divider input (auto-computed from foot contacts, but editable)
     ImGui::Text("Divider:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);
-    ImGui::InputInt("##StrideDivider", &mStrideDivider);
-    if (mStrideDivider < 1) mStrideDivider = 1;
+    int dividerInput = mStrideDivider;
+    if (ImGui::InputInt("##StrideDivider", &dividerInput)) {
+        setStrideDivider(dividerInput);
+    }
 
     // Calculation mode radio
     ImGui::Text("Mode:");
     ImGui::SameLine();
-    ImGui::RadioButton("Z only", &mStrideCalcMode, 0);
+    if (ImGui::RadioButton("Z only", &mStrideCalcMode, 0)) {
+        computeStride();
+    }
     ImGui::SameLine();
-    ImGui::RadioButton("XZ magnitude", &mStrideCalcMode, 1);
-
-    // Calculate button
-    if (ImGui::Button("Calculate Stride")) {
-        std::string bnName = bodyNodes[mStrideBodyNodeIdx];
-        auto bn = skel->getBodyNode(bnName);
-        if (!bn) {
-            LOG_ERROR("BodyNode not found: " << bnName);
-        } else {
-            int numFrames = mMotion->getNumFrames();
-
-            // Save skeleton state
-            Eigen::VectorXd savedPositions = skel->getPositions();
-
-            // Get first frame position
-            skel->setPositions(mMotion->getPose(0));
-            Eigen::Vector3d startPos = bn->getTransform().translation();
-
-            // Get last frame position
-            skel->setPositions(mMotion->getPose(numFrames - 1));
-            Eigen::Vector3d endPos = bn->getTransform().translation();
-
-            // Restore skeleton state
-            skel->setPositions(savedPositions);
-
-            // Compute stride based on mode
-            if (mStrideCalcMode == 0) {
-                // Z only (forward)
-                mComputedStride = std::abs(endPos[2] - startPos[2]) / mStrideDivider;
-            } else {
-                // XZ magnitude
-                double dx = endPos[0] - startPos[0];
-                double dz = endPos[2] - startPos[2];
-                mComputedStride = std::sqrt(dx*dx + dz*dz) / mStrideDivider;
-            }
-        }
+    if (ImGui::RadioButton("XZ magnitude", &mStrideCalcMode, 1)) {
+        computeStride();
     }
 
     // Display result
@@ -1030,6 +1030,107 @@ void MotionEditorApp::detectFootContacts()
         [](const FootContactPhase& a, const FootContactPhase& b) {
             return a.startFrame < b.startFrame;
         });
+
+    // Detect gait direction for each phase based on root body displacement
+    if (mDetectedPhases.size() >= 2) {
+        mDetectedPhases[0].direction = GaitDirection::Unknown;
+
+        for (size_t i = 1; i < mDetectedPhases.size(); ++i) {
+            int prevFrame = mDetectedPhases[i - 1].startFrame;
+            int currFrame = mDetectedPhases[i].startFrame;
+
+            Eigen::VectorXd prevPose = mMotion->getPose(prevFrame);
+            Eigen::VectorXd currPose = mMotion->getPose(currFrame);
+
+            if (prevPose.size() >= 6 && currPose.size() >= 6) {
+                double deltaZ = currPose[5] - prevPose[5];  // pose[5] = root Z
+                const double threshold = 0.01;  // 1cm minimum displacement
+
+                if (deltaZ > threshold) {
+                    mDetectedPhases[i].direction = GaitDirection::Forward;
+                } else if (deltaZ < -threshold) {
+                    mDetectedPhases[i].direction = GaitDirection::Backward;
+                } else {
+                    mDetectedPhases[i].direction = GaitDirection::Unknown;
+                }
+            }
+        }
+    }
+
+    // Auto-compute stride divider based on contact counts
+    int leftContactCount = 0;
+    int rightContactCount = 0;
+    for (const auto& phase : mDetectedPhases) {
+        if (phase.isLeft) {
+            leftContactCount++;
+        } else {
+            rightContactCount++;
+        }
+    }
+    // Use the smaller of LCT and RCT (minimum 1)
+    int divider = 1;
+    if (leftContactCount > 0 && rightContactCount > 0) {
+        divider = std::min(leftContactCount, rightContactCount);
+    } else if (leftContactCount > 0) {
+        divider = leftContactCount;
+    } else if (rightContactCount > 0) {
+        divider = rightContactCount;
+    }
+    setStrideDivider(divider);
+}
+
+void MotionEditorApp::setStrideDivider(int divider)
+{
+    mStrideDivider = std::max(1, divider);
+    computeStride();
+}
+
+void MotionEditorApp::computeStride()
+{
+    if (!mMotion || !mCharacter) {
+        mComputedStride = 0.0;
+        return;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    const char* bodyNodes[] = {"TalusR", "TalusL", "Pelvis"};
+    std::string bnName = bodyNodes[mStrideBodyNodeIdx];
+    auto bn = skel->getBodyNode(bnName);
+    if (!bn) {
+        mComputedStride = 0.0;
+        return;
+    }
+
+    int numFrames = mMotion->getNumFrames();
+    if (numFrames < 2) {
+        mComputedStride = 0.0;
+        return;
+    }
+
+    // Save skeleton state
+    Eigen::VectorXd savedPositions = skel->getPositions();
+
+    // Get first frame position
+    skel->setPositions(mMotion->getPose(0));
+    Eigen::Vector3d startPos = bn->getTransform().translation();
+
+    // Get last frame position
+    skel->setPositions(mMotion->getPose(numFrames - 1));
+    Eigen::Vector3d endPos = bn->getTransform().translation();
+
+    // Restore skeleton state
+    skel->setPositions(savedPositions);
+
+    // Compute stride based on mode
+    if (mStrideCalcMode == 0) {
+        // Z only (forward)
+        mComputedStride = std::abs(endPos[2] - startPos[2]) / mStrideDivider;
+    } else {
+        // XZ magnitude
+        double dx = endPos[0] - startPos[0];
+        double dz = endPos[2] - startPos[2];
+        mComputedStride = std::sqrt(dx*dx + dz*dz) / mStrideDivider;
+    }
 }
 
 Eigen::Vector4d MotionEditorApp::getRenderColor(
@@ -1767,6 +1868,32 @@ void MotionEditorApp::drawTimelineTrackBar()
                 float phaseY = phase.isLeft ? trackY : trackY + halfHeight;
                 ImU32 color = phase.isLeft ? IM_COL32(80, 120, 200, 180) : IM_COL32(200, 80, 80, 180);
                 drawList->AddRectFilled(ImVec2(startX, phaseY), ImVec2(endX, phaseY + halfHeight), color);
+
+                // Draw direction arrow at start of phase
+                if (phase.direction != GaitDirection::Unknown) {
+                    float arrowY = trackY + halfHeight;  // Center line
+                    float arrowSize = 5.0f;
+
+                    ImU32 arrowColor = (phase.direction == GaitDirection::Forward)
+                        ? IM_COL32(80, 220, 80, 255)    // Green for forward (+Z)
+                        : IM_COL32(255, 140, 40, 255);  // Orange for backward (-Z)
+
+                    if (phase.direction == GaitDirection::Forward) {
+                        // Right-pointing arrow (→)
+                        drawList->AddTriangleFilled(
+                            ImVec2(startX - arrowSize * 0.5f, arrowY - arrowSize),
+                            ImVec2(startX - arrowSize * 0.5f, arrowY + arrowSize),
+                            ImVec2(startX + arrowSize, arrowY),
+                            arrowColor);
+                    } else {
+                        // Left-pointing arrow (←)
+                        drawList->AddTriangleFilled(
+                            ImVec2(startX + arrowSize * 0.5f, arrowY - arrowSize),
+                            ImVec2(startX + arrowSize * 0.5f, arrowY + arrowSize),
+                            ImVec2(startX - arrowSize, arrowY),
+                            arrowColor);
+                    }
+                }
             }
             drawList->AddLine(
                 ImVec2(trackX, trackY + halfHeight),

@@ -889,7 +889,8 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
         for (const auto* ref : markers) {
             if (ref->dataIndex >= 0 && ref->dataIndex < (int)globalP[k].size()) {
                 // Transform from world to bone-local coordinates
-                Eigen::Vector3d localPos = invTransform * globalP[k][ref->dataIndex];
+                Eigen::Vector3d globalPos = globalP[k][ref->dataIndex];
+                Eigen::Vector3d localPos = invTransform * globalPos;
                 p[k].push_back(localPos);
             } else {
                 LOG_WARN("[Fitting] Failed to transform marker: " << ref->name << " (dataIndex: " << ref->dataIndex << ")");

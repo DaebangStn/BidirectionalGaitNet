@@ -1272,6 +1272,14 @@ void C3DProcessorApp::drawSkeletonExportSection()
     if (collapsingHeaderWithControls("Skeleton Export")) {
         // Export path display
         const auto& pidState = mPIDNavigator->getState();
+        
+        // Guard against unselected PID (selectedPID == -1 or out of bounds)
+        if (pidState.selectedPID < 0 || 
+            pidState.selectedPID >= static_cast<int>(pidState.pidList.size())) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Select a PID first");
+            return;
+        }
+        
         std::string pid = pidState.pidList[pidState.selectedPID];
         std::string visit = pidState.preOp ? "pre" : "op1";
 
@@ -2818,7 +2826,7 @@ void C3DProcessorApp::drawClinicalDataSection()
 
         // Use cached calibration availability (updated when PID/visit changes)
         // Display calibration status with color coding
-        if (mPersonalizedCalibrationLoaded) {
+        if (mPersonalizedCalibrationLoaded) { 
             ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "Loaded");
         } else if (mHasPersonalizedCalibration) {
             ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "Available");
@@ -2839,6 +2847,15 @@ void C3DProcessorApp::drawClinicalDataSection()
                     }
                     if (loadPersonalizedCalibration(calibDir)) {
                         mPersonalizedCalibrationLoaded = true;
+
+                        // Recreate C3D_Reader with calibrated marker path
+                        // This ensures mMarkerSet has the personalized offsets
+                        if (mC3DReader) {
+                            delete mC3DReader;
+                        }
+                        mC3DReader = new C3D_Reader(mFittingConfigPath, mMarkerConfigPath,
+                                                    mFreeCharacter.get(), mMotionCharacter.get());
+                        LOG_INFO("[Load] Recreated C3D_Reader with calibrated markers: " << mMarkerConfigPath);
                     }
                 } catch (const rm::RMError& e) {
                     LOG_ERROR("[C3DProcessor] Failed to load calibration: " << e.what());

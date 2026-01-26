@@ -45,12 +45,22 @@ struct MotionEditorViewerState
 };
 
 /**
+ * @brief Gait direction between consecutive contact phases
+ */
+enum class GaitDirection {
+    Unknown,   // First contact or insufficient displacement
+    Forward,   // Movement in +Z direction
+    Backward   // Movement in -Z direction
+};
+
+/**
  * @brief Foot contact phase data
  */
 struct FootContactPhase {
     int startFrame;
     int endFrame;
     bool isLeft;
+    GaitDirection direction = GaitDirection::Unknown;
 };
 
 /**
@@ -226,6 +236,8 @@ private:
     void applyHeightOffset();
     Eigen::Vector3d getBodyNodeSize(dart::dynamics::BodyNode* bn);
     void detectFootContacts();
+    void setStrideDivider(int divider);
+    void computeStride();
     Eigen::Vector4d getRenderColor(const dart::dynamics::BodyNode* bn,
                                     const Eigen::Vector4d& defaultColor) const;
 
