@@ -306,7 +306,7 @@ void ViewerAppBase::resetCamera()
     mCamera.relTrans = Eigen::Vector3d::Zero();
     mCamera.zoom = 1.0;
     mCamera.persp = 45.0;
-    mCamera.focus = 0;
+    mCamera.focus = CameraFocusMode::FREE;
     mCamera.trackball = dart::gui::Trackball();
 }
 
@@ -354,7 +354,7 @@ void ViewerAppBase::mouseMove(double x, double y)
         Eigen::Vector3d delta = rot.transpose() * Eigen::Vector3d(dx * scale, -dy * scale, 0.0);
 
         // Update relTrans if in follow mode, otherwise update trans
-        if (mCamera.focus == 1) {
+        if (mCamera.focus == CameraFocusMode::FOLLOW_CHARACTER || mCamera.focus == CameraFocusMode::VIDEO_ORBIT) {
             mCamera.relTrans += delta;
         } else {
             mCamera.trans += delta;
@@ -399,8 +399,9 @@ void ViewerAppBase::keyPress(int key, int scancode, int action, int mods)
                 resetCamera();
                 break;
             case GLFW_KEY_F:
-                mCamera.focus = (mCamera.focus == 1) ? 0 : 1;
-                if (mCamera.focus == 0) {
+                mCamera.focus = (mCamera.focus == CameraFocusMode::FOLLOW_CHARACTER)
+                              ? CameraFocusMode::FREE : CameraFocusMode::FOLLOW_CHARACTER;
+                if (mCamera.focus == CameraFocusMode::FREE) {
                     mCamera.relTrans = Eigen::Vector3d::Zero();
                 }
                 break;
@@ -552,14 +553,18 @@ bool ViewerAppBase::startVideoRecording(const std::string& filename, int fps)
         return false;
     }
 
-    // Initialize recording state
+    // Initialize recording state using actual simulation time
     mVideoRecording = true;
+    mVideoCurrentPath = full_path;  // Store for GIF conversion
+    mVideoStartSimTime = getSimulationTime();
+    mVideoLastCaptureSimTime = mVideoStartSimTime;
     mVideoElapsedTime = 0.0;
     mVideoFrameCounter = 0;
     mVideoFrameSkip = 1;
 
     std::cout << "[Video] Started recording: " << full_path
-              << " (fps=" << fps << ", region=" << width << "x" << height << ")" << std::endl;
+              << " (fps=" << fps << ", startSimTime=" << std::fixed << std::setprecision(3) << mVideoStartSimTime
+              << ", region=" << width << "x" << height << ")" << std::endl;
     return true;
 }
 
@@ -570,15 +575,54 @@ void ViewerAppBase::stopVideoRecording()
         mFFmpegPipe = nullptr;
         mVideoRecording = false;
 
+        double videoDuration = static_cast<double>(mVideoFrameCounter) / mVideoFPS;
         std::cout << "[Video] Recording stopped. Duration: "
-                  << std::fixed << std::setprecision(1) << mVideoElapsedTime
-                  << "s, Frames: " << mVideoFrameCounter << std::endl;
+                  << std::fixed << std::setprecision(1) << videoDuration << "s"
+                  << ", Frames: " << mVideoFrameCounter << std::endl;
+
+        // Convert MP4 to GIF
+        if (!mVideoCurrentPath.empty()) {
+            // Replace .mp4 with .gif for output path
+            std::string gifPath = mVideoCurrentPath;
+            size_t dotPos = gifPath.rfind(".mp4");
+            if (dotPos != std::string::npos) {
+                gifPath.replace(dotPos, 4, ".gif");
+            } else {
+                gifPath += ".gif";
+            }
+
+            // FFmpeg command: generate palette then create high-quality GIF
+            std::string paletteCmd = "ffmpeg -y -i \"" + mVideoCurrentPath + "\" "
+                "-vf \"fps=" + std::to_string(mVideoFPS) + ",scale=-1:-1:flags=lanczos,palettegen\" "
+                "/tmp/palette.png 2>/dev/null";
+
+            std::string gifCmd = "ffmpeg -y -i \"" + mVideoCurrentPath + "\" -i /tmp/palette.png "
+                "-lavfi \"fps=" + std::to_string(mVideoFPS) + ",scale=-1:-1:flags=lanczos[x];[x][1:v]paletteuse\" "
+                "\"" + gifPath + "\" 2>/dev/null";
+
+            std::cout << "[Video] Converting to GIF: " << gifPath << std::endl;
+            int ret1 = system(paletteCmd.c_str());
+            int ret2 = system(gifCmd.c_str());
+
+            if (ret1 == 0 && ret2 == 0) {
+                std::cout << "[Video] GIF created: " << gifPath << std::endl;
+            } else {
+                std::cerr << "[Video] GIF conversion failed" << std::endl;
+            }
+
+            // Cleanup palette
+            std::remove("/tmp/palette.png");
+        }
     }
 }
 
 void ViewerAppBase::recordVideoFrame()
 {
     if (!mVideoRecording || !mFFmpegPipe) return;
+
+    // Get current simulation time and compute elapsed time
+    double currentSimTime = getSimulationTime();
+    mVideoElapsedTime = currentSimTime - mVideoStartSimTime;
 
     // Check maximum recording time
     if (mVideoMaxTime > 0 && mVideoElapsedTime >= mVideoMaxTime) {
@@ -588,6 +632,13 @@ void ViewerAppBase::recordVideoFrame()
         stopVideoRecording();
         return;
     }
+
+    // Capture whenever simulation time has advanced (one frame per simulation step)
+    // This ensures video FPS matches control Hz automatically
+    if (currentSimTime <= mVideoLastCaptureSimTime) {
+        return;  // Skip - simulation hasn't stepped yet
+    }
+    mVideoLastCaptureSimTime = currentSimTime;
 
     // Calculate capture region
     int x0 = (int)(mWidth * 0.5) + mCaptureX0;
@@ -641,7 +692,5 @@ void ViewerAppBase::recordVideoFrame()
     fflush(mFFmpegPipe);
 
     mVideoFrameCounter++;
-
-    // Update elapsed time (assume ~60fps rendering)
-    mVideoElapsedTime += 1.0 / 60.0;
+    // mVideoElapsedTime is computed from simulation time at the start of this function
 }

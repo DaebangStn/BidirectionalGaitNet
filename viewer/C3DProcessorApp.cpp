@@ -278,7 +278,7 @@ void C3DProcessorApp::onFrameStart()
 void C3DProcessorApp::updateCamera()
 {
     // Camera follow character (update mCamera.trans before setCamera applies it)
-    if (mCamera.focus == 1 && mMotion != nullptr && mFreeCharacter) {
+    if (mCamera.focus == CameraFocusMode::FOLLOW_CHARACTER && mMotion != nullptr && mFreeCharacter) {
         // Calculate current position based on cycle accumulation
         Motion* current_motion = mMotion;
         C3DViewerState& state = mMotionState;
@@ -1425,7 +1425,7 @@ void C3DProcessorApp::drawRightPanel()
         ImGui::Text("Zoom: %.3f", mCamera.zoom);
         ImGui::Text("Perspective: %.1f deg", mCamera.persp);
         ImGui::Separator();
-        ImGui::Text("Follow Mode: %s", mCamera.focus == 1 ? "ON" : "OFF");
+        ImGui::Text("Follow Mode: %s", mCamera.focus == CameraFocusMode::FOLLOW_CHARACTER ? "ON" : "OFF");
         ImGui::Text("Trackball Rotation:");
         Eigen::Matrix3d rotMat = mCamera.trackball.getRotationMatrix();
         Eigen::Vector3d euler = rotMat.eulerAngles(2, 1, 0) * 180.0 / M_PI;

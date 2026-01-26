@@ -91,7 +91,7 @@ void MotionEditorApp::onFrameStart()
 void MotionEditorApp::updateCamera()
 {
     // Camera follow character
-    if (mCamera.focus == 1 && mMotion != nullptr && mCharacter) {
+    if (mCamera.focus == CameraFocusMode::FOLLOW_CHARACTER && mMotion != nullptr && mCharacter) {
         int currentFrameIdx = mMotionState.manualFrameIndex;
         if (mMotionState.navigationMode == ME_SYNC) {
             double frameFloat = (mViewerTime / mCycleDuration) * mMotion->getTotalTimesteps();
@@ -589,9 +589,9 @@ void MotionEditorApp::drawPlaybackSection()
         }
 
         // Camera follow
-        bool follow = (mCamera.focus == 1);
+        bool follow = (mCamera.focus == CameraFocusMode::FOLLOW_CHARACTER);
         if (ImGui::Checkbox("Camera Follow", &follow)) {
-            mCamera.focus = follow ? 1 : 0;
+            mCamera.focus = follow ? CameraFocusMode::FOLLOW_CHARACTER : CameraFocusMode::FREE;
         }
     }
 }

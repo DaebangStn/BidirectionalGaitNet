@@ -71,7 +71,7 @@ protected:
 
             ImGui::Text("Camera State:");
             ImGui::Text("  Zoom: %.2f", mCamera.zoom);
-            ImGui::Text("  Focus: %d", mCamera.focus);
+            ImGui::Text("  Focus: %d", static_cast<int>(mCamera.focus));
             ImGui::Text("  Ground: %s", mRenderGround ? "On" : "Off");
         }
         ImGui::End();

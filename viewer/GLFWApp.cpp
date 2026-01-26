@@ -94,8 +94,8 @@ GLFWApp::GLFWApp(int argc, char **argv)
     // GLFWApp-specific input state
     mZooming = false;
 
-    // Set default camera focus mode (1 = follow character)
-    mCamera.focus = 1;
+    // Set default camera focus mode (follow character)
+    mCamera.focus = CameraFocusMode::FOLLOW_CHARACTER;
 
     // Rendering Options (mDrawFlags initialized with struct defaults)
     mStochasticPolicy = false;
@@ -934,6 +934,27 @@ void GLFWApp::onFrameStart()
             mIsPlaybackTooFast = false;
         }
     }
+}
+
+void GLFWApp::onMaxRecordingTimeReached()
+{
+    // Pause simulation when video recording reaches max time
+    mRolloutStatus.pause = true;
+    // Restore camera mode if orbit was enabled
+    if (mVideoOrbitEnabled) {
+        mCamera.focus = mPreRecordingFocusMode;
+    }
+    // Restore playback speed
+    mViewerPlaybackSpeed = mPreRecordingPlaybackSpeed;
+}
+
+double GLFWApp::getSimulationTime() const
+{
+    // Return actual simulation world time for accurate video recording timing
+    if (mRenderEnv && mRenderEnv->getWorld()) {
+        return mRenderEnv->getWorld()->getTime();
+    }
+    return 0.0;
 }
 
 void GLFWApp::initGL()
@@ -2409,9 +2430,11 @@ void GLFWApp::drawMuscleTabContent()
 }
 
 void GLFWApp::drawCaptureSection() {
-    if (ImGui::CollapsingHeader("Capture & Recording")) {
-        // Capture Region Section
-        ImGui::Text("Capture Region");
+    ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Capture & Recording");
+    ImGui::Separator();
+
+    // Capture Region Section
+    ImGui::Text("Capture Region");
         ImGui::SameLine();
         ImGui::Checkbox("Show##capture", &mCaptureShowRect);
         ImGui::SameLine();
@@ -2480,9 +2503,17 @@ void GLFWApp::drawCaptureSection() {
 
         // Video Recording Section
         ImGui::Text("Video Recording (30fps)");
+        ImGui::SameLine();
         if (mVideoRecording) {
             if (ImGui::Button("Stop Recording")) {
                 stopVideoRecording();
+                mRolloutStatus.pause = true;  // Pause simulation
+                // Restore camera mode
+                if (mVideoOrbitEnabled) {
+                    mCamera.focus = mPreRecordingFocusMode;
+                }
+                // Restore playback speed
+                mViewerPlaybackSpeed = mPreRecordingPlaybackSpeed;
             }
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "REC");
@@ -2490,6 +2521,13 @@ void GLFWApp::drawCaptureSection() {
             ImGui::Text("%.1fs  Frames: %d", mVideoElapsedTime, mVideoFrameCounter);
         } else {
             if (ImGui::Button("Start Recording")) {
+                // Save current focus mode and switch to orbit if enabled
+                if (mVideoOrbitEnabled) {
+                    mPreRecordingFocusMode = mCamera.focus;
+                    mCamera.focus = CameraFocusMode::VIDEO_ORBIT;
+                    mVideoOrbitAngle = 0.0;
+                }
+
                 // Generate timestamped filename
                 auto now = std::chrono::system_clock::now();
                 auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -2497,14 +2535,30 @@ void GLFWApp::drawCaptureSection() {
                 char timestamp[64];
                 std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &tm);
                 std::string filename = std::string("video_") + timestamp + ".mp4";
+
+                // Start simulation (unpause)
+                mRolloutStatus.pause = false;
+                mRolloutStatus.cycle = -1;  // Run indefinitely
+
+                // Force 1.0x playback speed for accurate video timing
+                mPreRecordingPlaybackSpeed = mViewerPlaybackSpeed;
+                mViewerPlaybackSpeed = 1.0f;
+
                 startVideoRecording(filename, 30);
             }
+            ImGui::SameLine();
+            ImGui::Checkbox("Orbit##video", &mVideoOrbitEnabled);
             ImGui::SameLine();
             ImGui::PushItemWidth(60);
             ImGui::InputDouble("Max(s)##video", &mVideoMaxTime, 0, 0, "%.0f");
             ImGui::PopItemWidth();
+            // Orbit speed (only show when orbit enabled)
+            if (mVideoOrbitEnabled) {
+                ImGui::PushItemWidth(80);
+                ImGui::InputFloat("deg/s##videoorbit", &mVideoOrbitSpeed, 1.0f, 10.0f, "%.1f");
+                ImGui::PopItemWidth();
+            }
         }
-    }
 }
 
 void GLFWApp::onPostRender() {
@@ -2553,6 +2607,15 @@ void GLFWApp::onPostRender() {
         glPopMatrix();
         glMatrixMode(GL_MODELVIEW);
         glPopMatrix();
+
+        // Draw size text using ImGui foreground draw list
+        int width = x1 - x0;
+        int height = y1 - y0;
+        char sizeText[32];
+        snprintf(sizeText, sizeof(sizeText), "%d x %d", width, height);
+        ImDrawList* drawList = ImGui::GetForegroundDrawList();
+        drawList->AddText(ImVec2((float)x0 + 5, (float)y0 + 5),
+                          IM_COL32(255, 100, 100, 255), sizeText);
     }
 }
 
@@ -2579,6 +2642,17 @@ void GLFWApp::drawCameraStatusSection() {
         Eigen::Quaterniond quat = mCamera.trackball.getCurrQuat();
         ImGui::Text("Quaternion: [%.3f, %.3f, %.3f, %.3f]",
                     quat.w(), quat.x(), quat.y(), quat.z());
+
+        // Focus Mode Selection
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Focus Mode:");
+        int focusInt = static_cast<int>(mCamera.focus);
+        // Only show Free and Follow; Orbit is controlled via recording checkbox
+        if (focusInt > 1) focusInt = 1;  // Clamp to valid range for radio buttons
+        ImGui::RadioButton("Free", &focusInt, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Follow", &focusInt, 1);
+        mCamera.focus = static_cast<CameraFocusMode>(focusInt);
 
         // Camera presets section
         ImGui::Separator();
@@ -4678,10 +4752,6 @@ void GLFWApp::keyPress(int key, int scancode, int action, int mods)
         case GLFW_KEY_C:
             printCameraInfo();
             break;
-        // case GLFW_KEY_F:
-            // mCamera.focus += 1;
-            // mCamera.focus %= 5;
-            // break;
         case GLFW_KEY_ESCAPE:
             glfwSetWindowShouldClose(mWindow, GLFW_TRUE);
             break;
@@ -4689,7 +4759,6 @@ void GLFWApp::keyPress(int key, int scancode, int action, int mods)
             mXminResizablePlotPane = getHeelStrikeTime();
             mXmin = mXminResizablePlotPane;
             break;
-
         case GLFW_KEY_0:
         case GLFW_KEY_KP_0:
             loadCameraPreset(0);
@@ -4704,10 +4773,6 @@ void GLFWApp::keyPress(int key, int scancode, int action, int mods)
             loadCameraPreset(2);
             // alignCameraToPlane(2);  // YZ plane
             break;
-        // case GLFW_KEY_3:
-        // case GLFW_KEY_KP_3:
-        //     alignCameraToPlane(3);  // ZX plane
-        //     break;
 
         default:
             break;
@@ -4783,26 +4848,26 @@ void GLFWApp::updateCamera()
 {
     if (mRenderEnv)
     {
-        if (mCamera.focus == 1)
+        if (mCamera.focus == CameraFocusMode::FOLLOW_CHARACTER)
         {
             mCamera.trans = -mRenderEnv->getCharacter()->getSkeleton()->getCOM();
             mCamera.trans[1] = -1;
         }
-        else if (mCamera.focus == 2)
+        else if (mCamera.focus == CameraFocusMode::VIDEO_ORBIT)
         {
-            mCamera.trans = -mRenderEnv->getRefPose().segment(3, 3);
+            // Follow character position (same as FOLLOW_CHARACTER)
+            mCamera.trans = -mRenderEnv->getCharacter()->getSkeleton()->getCOM();
             mCamera.trans[1] = -1;
-        }
-        else if (mCamera.focus == 3)
-        {
-            // C3D focus mode removed - moved to c3d_processor
-            mCamera.focus++;
-        }
-        else if (mCamera.focus == 4)
-        {
-            mCamera.trans[0] = -mFGNRootOffset[0];
-            mCamera.trans[1] = -1;
-            mCamera.trans[2] = -mFGNRootOffset[2];
+
+            // Update orbit angle (based on ~60fps)
+            double dt = 1.0 / 60.0;
+            mVideoOrbitAngle += mVideoOrbitSpeed * dt;
+            if (mVideoOrbitAngle >= 360.0) mVideoOrbitAngle -= 360.0;
+
+            // Apply rotation around Y-axis
+            double radians = mVideoOrbitAngle * M_PI / 180.0;
+            Eigen::Quaterniond orbitQuat(Eigen::AngleAxisd(radians, Eigen::Vector3d::UnitY()));
+            mCamera.trackball.setQuaternion(orbitQuat);
         }
     }
     else

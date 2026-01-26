@@ -171,7 +171,9 @@ protected:
     void keyPress(int key, int scancode, int action, int mods) override;
     void onInitialize() override;
     void loadRenderConfigImpl() override;
-    
+    void onMaxRecordingTimeReached() override;  // Pause simulation when recording ends
+    double getSimulationTime() const override;  // Return actual simulation time for video recording
+
 private:
     py::object mns;
     py::object loading_network;
@@ -468,6 +470,7 @@ private:
     double mViewerPhase;             // Phase value [0, 1) for cyclic motion
     float mViewerPlaybackSpeed;     // Playback speed multiplier (1.0 = normal speed)
     double mLastPlaybackSpeed;       // Previous playback speed for change detection
+    float mPreRecordingPlaybackSpeed = 1.0f;  // Saved playback speed before recording
     double mViewerCycleDuration;     // Duration of one motion cycle (default 2.0/1.1)
     double mLastRealTime;            // Last real time from glfwGetTime()
     double mSimulationStepDuration;  // Measured simulation step duration

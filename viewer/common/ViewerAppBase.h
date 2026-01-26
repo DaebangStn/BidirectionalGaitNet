@@ -15,6 +15,13 @@
 #include <memory>
 #include <set>
 
+// Camera focus modes
+enum class CameraFocusMode {
+    FREE = 0,             // Free camera (no following)
+    FOLLOW_CHARACTER = 1, // Follow simulated character COM
+    VIDEO_ORBIT = 2       // Orbit around character during video recording
+};
+
 /**
  * @brief Base class for GLFW-based viewer applications
  *
@@ -52,10 +59,16 @@ protected:
         Eigen::Vector3d relTrans = Eigen::Vector3d::Zero();  // User offset for follow mode
         double zoom = 1.0;
         double persp = 45.0;
-        int focus = 0;  // 0 = free camera, 1 = follow target
+        CameraFocusMode focus = CameraFocusMode::FREE;  // Camera focus mode
         dart::gui::Trackball trackball;
     };
     CameraState mCamera;
+
+    // Video orbit camera
+    float mVideoOrbitSpeed = 10.0f;    // Degrees per second
+    double mVideoOrbitAngle = 0.0;     // Current accumulated angle
+    bool mVideoOrbitEnabled = true;   // Enable orbit during recording
+    CameraFocusMode mPreRecordingFocusMode = CameraFocusMode::FOLLOW_CHARACTER;  // Saved mode before recording
 
     // ============================================================
     // Input State
@@ -115,14 +128,20 @@ protected:
     int mVideoFPS = 30;  // Fixed at 30fps
     double mVideoMaxTime = 30.0;
     char mVideoFilename[256] = "video.mp4";
+    std::string mVideoCurrentPath;  // Current recording path (for GIF conversion)
     int mVideoFrameCounter = 0;
     double mVideoElapsedTime = 0.0;
     int mVideoFrameSkip = 1;
     FILE* mFFmpegPipe = nullptr;
+    double mVideoStartSimTime = 0.0;      // Simulation time when recording started
+    double mVideoLastCaptureSimTime = 0.0; // Simulation time of last captured frame
 
     // Capture/video methods
     bool captureRegionPNG(const char* filename, int x0, int y0, int x1, int y1);
     bool startVideoRecording(const std::string& filename, int fps = 30);
+
+    // Override in derived class to provide current simulation time
+    virtual double getSimulationTime() const { return 0.0; }
     void stopVideoRecording();
     void recordVideoFrame();
 
