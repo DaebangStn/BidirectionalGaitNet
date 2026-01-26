@@ -364,6 +364,18 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
     if (isPreview) {
         glDisable(GL_BLEND);
     }
+
+    // Draw head facing direction arrow
+    auto headNode = skel->getBodyNode("Head");
+    if (headNode) {
+        Eigen::Vector3d headPos = headNode->getTransform().translation();
+        // Forward direction = local +Z axis (facing forward in skeleton convention)
+        Eigen::Vector3d headForward = headNode->getTransform().linear() * Eigen::Vector3d(0, 0, 1);
+
+        // Yellow arrow for head direction
+        GUI::DrawArrow3D(headPos, headForward, 0.15, 0.008,
+                         Eigen::Vector4d(1.0, 0.8, 0.0, 1.0));
+    }
 }
 
 // =============================================================================
