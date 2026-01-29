@@ -713,7 +713,8 @@ void HDF::keepFrameRangesWithInterpolation(
 
 void HDF::exportToFile(
     const std::string& outputPath,
-    const std::map<std::string, std::string>& metadata) const
+    const std::map<std::string, std::string>& metadata,
+    const KinematicsExportData* kinematics) const
 {
     try {
         H5::H5File file(outputPath, H5F_ACC_TRUNC);
@@ -776,6 +777,45 @@ void HDF::exportToFile(
         // Write custom metadata
         for (const auto& [key, value] : metadata) {
             writeStrAttr(key.c_str(), value);
+        }
+
+        // Write /kinematics group if provided
+        if (kinematics && kinematics->numCycles > 0 && !kinematics->jointKeys.empty()) {
+            H5::Group kinGroup = file.createGroup("/kinematics");
+
+            // Attributes
+            H5::DataSpace kinScalarSpace(H5S_SCALAR);
+            int nc = kinematics->numCycles;
+            H5::Attribute attrCycles = kinGroup.createAttribute("num_cycles", H5::PredType::NATIVE_INT, kinScalarSpace);
+            attrCycles.write(H5::PredType::NATIVE_INT, &nc);
+
+            int ns = 100;
+            H5::Attribute attrSamples = kinGroup.createAttribute("num_samples", H5::PredType::NATIVE_INT, kinScalarSpace);
+            attrSamples.write(H5::PredType::NATIVE_INT, &ns);
+
+            // Joint names as comma-separated string
+            std::string joinedNames;
+            for (size_t j = 0; j < kinematics->jointKeys.size(); ++j) {
+                if (j > 0) joinedNames += ",";
+                joinedNames += kinematics->jointKeys[j];
+            }
+            H5::StrType strType(H5::PredType::C_S1, joinedNames.size() + 1);
+            H5::Attribute attrNames = kinGroup.createAttribute("joint_names", strType, kinScalarSpace);
+            attrNames.write(strType, joinedNames.c_str());
+
+            // Datasets for each joint: mean and std
+            hsize_t dims100[1] = {100};
+            H5::DataSpace space100(1, dims100);
+            for (const auto& key : kinematics->jointKeys) {
+                auto itMean = kinematics->mean.find(key);
+                auto itStd = kinematics->std.find(key);
+                if (itMean != kinematics->mean.end() && itStd != kinematics->std.end()) {
+                    H5::DataSet dsMean = kinGroup.createDataSet(key + "_mean", H5::PredType::NATIVE_DOUBLE, space100);
+                    dsMean.write(itMean->second.data(), H5::PredType::NATIVE_DOUBLE);
+                    H5::DataSet dsStd = kinGroup.createDataSet(key + "_std", H5::PredType::NATIVE_DOUBLE, space100);
+                    dsStd.write(itStd->second.data(), H5::PredType::NATIVE_DOUBLE);
+                }
+            }
         }
 
         file.close();

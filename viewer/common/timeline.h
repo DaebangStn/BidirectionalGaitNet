@@ -2,6 +2,7 @@
 #define TIMELINE_H
 
 #include <vector>
+#include <utility>
 
 namespace Timeline {
 
@@ -38,6 +39,9 @@ struct Config {
     // Zoom state (caller-managed pointers for persistence)
     float* zoom = nullptr;          // Zoom level (1.0 = no zoom, >1 = magnified)
     float* scrollOffset = nullptr;  // Scroll offset in normalized [0,1] range
+
+    // Gait cycle boundaries (optional)
+    const std::vector<std::pair<int,int>>* gaitCycles = nullptr;
 };
 
 /**

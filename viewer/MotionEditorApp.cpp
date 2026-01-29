@@ -3,8 +3,10 @@
 #include "Log.h"
 #include <rm/global.hpp>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <memory>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -832,6 +834,19 @@ void MotionEditorApp::drawExportSection()
     // Auto suffix checkbox
     ImGui::Checkbox("Auto-suffix \"_edited\"", &mAutoSuffix);
 
+    // Summarize kinematics checkbox
+    ImGui::Checkbox("Summarize Kinematics", &mSummarizeKinematics);
+    if (mSummarizeKinematics) {
+        if (mKinematicsSummary.valid) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "(%d cycles)",
+                static_cast<int>(mKinematicsSummary.cycles.size()));
+        } else {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.8f, 0.5f, 0.2f, 1.0f), "(run Foot Contact first)");
+        }
+    }
+
     // Preview output filename
     std::string filename = strlen(mExportFilename) > 0
         ? mExportFilename
@@ -1111,6 +1126,7 @@ void MotionEditorApp::drawFootContactSection()
 
         ImGui::EndTable();
     }
+
 }
 
 void MotionEditorApp::drawStrideEstimationSection()
@@ -1263,6 +1279,140 @@ void MotionEditorApp::detectFootContacts()
         divider = rightContactCount;
     }
     setStrideDivider(divider);
+    computeKinematicsSummary();
+}
+
+void MotionEditorApp::computeKinematicsSummary()
+{
+    mKinematicsSummary = GaitCycleSummary();
+
+    if (!mMotion || !mCharacter) return;
+
+    // Extract right heel strikes from detected phases
+    std::vector<int> rightStrikes;
+    for (const auto& phase : mDetectedPhases) {
+        if (!phase.isLeft) {
+            rightStrikes.push_back(phase.startFrame);
+        }
+    }
+    std::sort(rightStrikes.begin(), rightStrikes.end());
+
+    // Remove duplicates
+    rightStrikes.erase(std::unique(rightStrikes.begin(), rightStrikes.end()), rightStrikes.end());
+
+    if (rightStrikes.empty()) return;
+
+    int numFrames = mMotion->getNumFrames();
+
+    // Build gait cycles from consecutive right strikes
+    for (size_t i = 0; i + 1 < rightStrikes.size(); ++i) {
+        mKinematicsSummary.cycles.push_back({rightStrikes[i], rightStrikes[i + 1] - 1});
+    }
+    // Partial last cycle: last right strike to end of motion
+    if (rightStrikes.back() < numFrames - 1) {
+        mKinematicsSummary.cycles.push_back({rightStrikes.back(), numFrames - 1});
+    }
+    auto skel = mCharacter->getSkeleton();
+
+    // Define the 8 joint angles: {key, jointName, dofIndex, negate}
+    struct JointDef {
+        std::string key;
+        std::string jointName;
+        int dofIndex;
+        bool negate;
+    };
+    std::vector<JointDef> jointDefs = {
+        {"HipR",      "FemurR", 0, true},
+        {"HipIRR",    "FemurR", 1, false},
+        {"HipAbR",    "FemurR", 2, false},
+        {"KneeR",     "TibiaR", 0, false},
+        {"AnkleR",    "TalusR", 0, true},
+        {"Rotation",  "Pelvis", 1, false},
+        {"Obliquity", "Pelvis", 2, false},
+        {"Tilt",      "Pelvis", 0, false},
+    };
+
+    // Filter to joints that exist in the skeleton
+    std::vector<JointDef> validDefs;
+    for (const auto& def : jointDefs) {
+        if (skel->getJoint(def.jointName)) {
+            validDefs.push_back(def);
+            mKinematicsSummary.jointKeys.push_back(def.key);
+        }
+    }
+    if (validDefs.empty()) return;
+
+    // Save skeleton state
+    Eigen::VectorXd savedPositions = skel->getPositions();
+
+    // Precompute joint angles for all frames
+    // angles[jointIdx][frame]
+    std::vector<std::vector<double>> angles(validDefs.size(), std::vector<double>(numFrames, 0.0));
+    for (int f = 0; f < numFrames; ++f) {
+        Eigen::VectorXd pose = mMotion->getPose(f);
+        if (pose.size() == skel->getNumDofs()) {
+            skel->setPositions(pose);
+            for (size_t j = 0; j < validDefs.size(); ++j) {
+                double val = skel->getJoint(validDefs[j].jointName)->getPosition(validDefs[j].dofIndex);
+                val *= 180.0 / M_PI;
+                if (validDefs[j].negate) val = -val;
+                angles[j][f] = val;
+            }
+        }
+    }
+
+    // Restore skeleton state
+    skel->setPositions(savedPositions);
+
+    int numCycles = static_cast<int>(mKinematicsSummary.cycles.size());
+
+    // Resample each cycle to 100 points and accumulate
+    for (size_t j = 0; j < validDefs.size(); ++j) {
+        const auto& key = validDefs[j].key;
+        std::array<double, 100> meanArr = {};
+        std::array<double, 100> stdArr = {};
+
+        // Collect resampled values per cycle: [cycle][sample]
+        std::vector<std::array<double, 100>> cycleValues(numCycles);
+
+        for (int c = 0; c < numCycles; ++c) {
+            int start = mKinematicsSummary.cycles[c].first;
+            int end = mKinematicsSummary.cycles[c].second;
+            for (int p = 0; p < 100; ++p) {
+                double frac = start + (p / 99.0) * (end - start);
+                int lo = static_cast<int>(std::floor(frac));
+                int hi = std::min(lo + 1, numFrames - 1);
+                double t = frac - lo;
+                cycleValues[c][p] = angles[j][lo] * (1.0 - t) + angles[j][hi] * t;
+            }
+        }
+
+        // Compute mean
+        for (int p = 0; p < 100; ++p) {
+            double sum = 0.0;
+            for (int c = 0; c < numCycles; ++c) {
+                sum += cycleValues[c][p];
+            }
+            meanArr[p] = sum / numCycles;
+        }
+
+        // Compute population stddev
+        for (int p = 0; p < 100; ++p) {
+            double sumSq = 0.0;
+            for (int c = 0; c < numCycles; ++c) {
+                double diff = cycleValues[c][p] - meanArr[p];
+                sumSq += diff * diff;
+            }
+            stdArr[p] = std::sqrt(sumSq / numCycles);
+        }
+
+        mKinematicsSummary.mean[key] = meanArr;
+        mKinematicsSummary.stddev[key] = stdArr;
+    }
+
+    mKinematicsSummary.valid = true;
+    LOG_INFO("[MotionEditor] Kinematics summary: " << numCycles << " gait cycles, "
+             << validDefs.size() << " joints");
 }
 
 void MotionEditorApp::detectDirectionIntervals()
@@ -1728,6 +1878,9 @@ void MotionEditorApp::refreshMotion()
     mDirectionIntervals.clear();
     mSelectedDirectionInterval = -1;
 
+    // Reset kinematics summary
+    mKinematicsSummary = GaitCycleSummary();
+
     // Reset rotation frame range to full motion
     mRotationStartFrame = 0;
     mRotationEndFrame = mMotion->getNumFrames() - 1;
@@ -1881,7 +2034,7 @@ void MotionEditorApp::exportMotion()
     std::string filename = strlen(mExportFilename) > 0
         ? mExportFilename
         : fs::path(mMotionSourcePath).stem().string();
-    if (mAutoSuffix) filename += "_trimmed";
+    if (mAutoSuffix) filename += "_edited";
 
     fs::path outputPath = fs::path(mMotionSourcePath).parent_path() / (filename + ".h5");
 
@@ -1899,7 +2052,22 @@ void MotionEditorApp::exportMotion()
     }
 
     try {
-        hdf->exportToFile(outputPath.string(), metadata);
+        // Build kinematics export data if enabled
+        std::unique_ptr<KinematicsExportData> kinData;
+        if (mSummarizeKinematics && mKinematicsSummary.valid) {
+            kinData = std::make_unique<KinematicsExportData>();
+            kinData->jointKeys = mKinematicsSummary.jointKeys;
+            kinData->numCycles = static_cast<int>(mKinematicsSummary.cycles.size());
+            for (const auto& key : mKinematicsSummary.jointKeys) {
+                auto itMean = mKinematicsSummary.mean.find(key);
+                auto itStd = mKinematicsSummary.stddev.find(key);
+                if (itMean != mKinematicsSummary.mean.end() && itStd != mKinematicsSummary.stddev.end()) {
+                    kinData->mean[key] = std::vector<double>(itMean->second.begin(), itMean->second.end());
+                    kinData->std[key] = std::vector<double>(itStd->second.begin(), itStd->second.end());
+                }
+            }
+        }
+        hdf->exportToFile(outputPath.string(), metadata, kinData.get());
         mLastExportMessage = "Success: Exported to " + outputPath.filename().string();
         mLastExportMessageTime = glfwGetTime();
 
@@ -2194,6 +2362,9 @@ void MotionEditorApp::drawTimelineTrackBar()
     config.trimEnd = mTrimEnd;
     config.zoom = &mTimelineZoom;
     config.scrollOffset = &mTimelineScrollOffset;
+    if (mKinematicsSummary.valid) {
+        config.gaitCycles = &mKinematicsSummary.cycles;
+    }
 
     auto result = Timeline::DrawTimelineTrackBar(
         mWidth, mHeight,

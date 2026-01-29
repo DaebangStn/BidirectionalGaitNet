@@ -12,6 +12,16 @@
 class Character;
 
 /**
+ * @brief Kinematics summary data for HDF5 export
+ */
+struct KinematicsExportData {
+    std::vector<std::string> jointKeys;
+    std::map<std::string, std::vector<double>> mean;   // 100-element vectors
+    std::map<std::string, std::vector<double>> std;    // 100-element vectors
+    int numCycles = 0;
+};
+
+/**
  * @brief HDF5 motion format implementation
  *
  * Loads motion data from HDF5 files containing:
@@ -141,7 +151,8 @@ public:
      */
     void exportToFile(
         const std::string& outputPath,
-        const std::map<std::string, std::string>& metadata = {}) const;
+        const std::map<std::string, std::string>& metadata = {},
+        const KinematicsExportData* kinematics = nullptr) const;
 
     /**
      * @brief Get stride attribute from HDF5 file

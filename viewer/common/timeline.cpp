@@ -117,6 +117,26 @@ Result DrawTimelineTrackBar(
     );
 
     if (totalFrames > 0) {
+        // Draw gait cycle backgrounds (alternating yellow/green)
+        if (config.gaitCycles && !config.gaitCycles->empty()) {
+            for (size_t i = 0; i < config.gaitCycles->size(); ++i) {
+                const auto& cycle = (*config.gaitCycles)[i];
+                float startX = frameToScreenX(cycle.first);
+                float endX = frameToScreenX(cycle.second);
+
+                // Skip if completely outside visible area
+                if (endX < trackX || startX > trackX + trackWidth) continue;
+
+                ImU32 color = (i % 2 == 0)
+                    ? IM_COL32(200, 180, 40, 90)   // yellow
+                    : IM_COL32(40, 180, 80, 90);    // green
+                drawList->AddRectFilled(
+                    ImVec2(startX, trackY),
+                    ImVec2(endX, trackY + trackHeight),
+                    color);
+            }
+        }
+
         // Draw foot contact phases
         if (!phases.empty()) {
             float halfHeight = trackHeight / 2.0f;

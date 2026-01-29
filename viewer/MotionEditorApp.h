@@ -13,6 +13,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
+#include <map>
 #include <set>
 
 /**
@@ -69,6 +71,17 @@ struct DirectionInterval {
     int startFrame;
     int endFrame;
     Timeline::GaitDirection direction;
+};
+
+/**
+ * @brief Gait cycle summary with resampled kinematics
+ */
+struct GaitCycleSummary {
+    std::vector<std::pair<int,int>> cycles;  // (startFrame, endFrame) per cycle
+    std::vector<std::string> jointKeys;
+    std::map<std::string, std::array<double, 100>> mean;
+    std::map<std::string, std::array<double, 100>> stddev;
+    bool valid = false;
 };
 
 /**
@@ -187,6 +200,10 @@ private:
     int mRotationEndFrame = 0;
     int mInterpolationFrames = 10;  // Number of frames to interpolate between intervals
 
+    // Kinematics summary
+    bool mSummarizeKinematics = true;
+    GaitCycleSummary mKinematicsSummary;
+
     // === Initialization ===
     void loadRenderConfigImpl() override;
 
@@ -246,6 +263,7 @@ private:
     void detectFootContacts();
     void setStrideDivider(int divider);
     void computeStride();
+    void computeKinematicsSummary();
     Eigen::Vector4d getRenderColor(const dart::dynamics::BodyNode* bn,
                                     const Eigen::Vector4d& defaultColor) const;
 
