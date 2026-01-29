@@ -3,7 +3,7 @@
 #include "rm/rm.hpp"
 #include <rm/global.hpp>
 #include "Log.h"
-#include "PlotUtils.h"
+#include "common/PlotUtils.h"
 #include <cstring>
 #include <algorithm>
 #include <fstream>

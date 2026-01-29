@@ -24,10 +24,10 @@ add_library(viewer_common STATIC
     common/timeline.h
     common/timeline.cpp
     # Shared rendering components
-    ShapeRenderer.h
-    ShapeRenderer.cpp
-    GLfunctions.h
-    GLfunctions.cpp
+    common/ShapeRenderer.h
+    common/ShapeRenderer.cpp
+    common/GLfunctions.h
+    common/GLfunctions.cpp
 )
 target_link_libraries(viewer_common PUBLIC
     rm
@@ -47,17 +47,13 @@ target_include_directories(viewer_common PUBLIC
 
 # Viewer sources
 set(VIEWER_SOURCES
-    "glfw_app_main.cpp"
-    "GLFWApp.h"
-    "GLFWApp.cpp"
+    "render_ckpt_main.cpp"
+    "RenderCkpt.h"
+    "RenderCkpt.cpp"
     "RenderEnvironment.h"
     "RenderEnvironment.cpp"
     "RenderCharacter.h"
     "RenderCharacter.cpp"
-    "ShapeRenderer.h"
-    "ShapeRenderer.cpp"
-    "GLfunctions.h"
-    "GLfunctions.cpp"
     "C3D_Reader.h"
     "C3D_Reader.cpp"
     # Motion processor infrastructure
@@ -71,9 +67,9 @@ set(VIEWER_SOURCES
     "motion/MotionProcessor.cpp"
 )
 
-add_executable(viewer ${VIEWER_SOURCES})
+add_executable(render_ckpt ${VIEWER_SOURCES})
 
-target_link_libraries(viewer
+target_link_libraries(render_ckpt
         ${Python3_LIBRARIES}
         tinyxml2::tinyxml2
         GL GLU glut glad pybind11::embed glfw imgui
@@ -110,14 +106,10 @@ set(C3D_PROCESSOR_SOURCES
     "C3DProcessorApp.cpp"
     "RenderCharacter.h"
     "RenderCharacter.cpp"
-    "ShapeRenderer.h"
-    "ShapeRenderer.cpp"
-    "GLfunctions.h"
-    "GLfunctions.cpp"
     "C3D_Reader.h"
     "C3D_Reader.cpp"
-    "PlotUtils.h"
-    "PlotUtils.cpp"
+    "common/PlotUtils.h"
+    "common/PlotUtils.cpp"
 )
 
 add_executable(c3d_processor ${C3D_PROCESSOR_SOURCES})
@@ -175,15 +167,6 @@ target_link_libraries(muscle_personalizer
     ${HDF5_CXX_LIBRARIES}
     Boost::program_options
     viewer_common        # Provides ViewerAppBase, ShapeRenderer, GLfunctions, ImGuiCommon
-)
-
-# Test ViewerAppBase - Minimal test application for base class
-add_executable(test_viewer_base
-    "test_viewer_base_main.cpp"
-)
-target_link_libraries(test_viewer_base
-    viewer_common
-    dart-gui
 )
 
 # C3D Calibration CLI - Headless skeleton calibration from C3D files

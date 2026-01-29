@@ -4,5 +4,5 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
 
-# Call the viewer binary directly using current shell environment
-exec build/release/viewer/viewer "$@"
+# Call the render_ckpt binary directly using current shell environment
+exec build/release/viewer/render_ckpt "$@"

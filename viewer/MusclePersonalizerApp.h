@@ -4,7 +4,7 @@
 #include "common/ViewerAppBase.h"
 #include "common/PIDImGui.h"
 #include "RenderCharacter.h"
-#include "ShapeRenderer.h"
+#include "common/ShapeRenderer.h"
 #include "rm/rm.hpp"
 #include "SurgeryExecutor.h"
 #include "common/imgui_common.h"

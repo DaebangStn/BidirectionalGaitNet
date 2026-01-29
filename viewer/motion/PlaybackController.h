@@ -13,9 +13,9 @@ struct PlaybackViewerState;
 /**
  * @brief Shared playback logic for motion processing
  *
- * Contains static utility methods extracted from GLFWApp that are common
+ * Contains static utility methods extracted from RenderCkpt that are common
  * to both HDF and C3D motion processing. This centralizes the playback
- * computation logic that was previously scattered throughout GLFWApp.cpp.
+ * computation logic that was previously scattered throughout RenderCkpt.cpp.
  *
  * Methods are static to avoid per-processor instantiation overhead.
  */

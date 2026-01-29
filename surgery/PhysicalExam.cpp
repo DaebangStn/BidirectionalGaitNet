@@ -2,7 +2,7 @@
 #include "PhysicalExam.h"
 #include "Log.h"
 #include "rm/rm.hpp"
-#include "GLfunctions.h"
+#include "common/GLfunctions.h"
 #include "SurgeryScript.h"
 #include "optimizer/ContractureOptimizer.h"
 #include "common/imgui_common.h"

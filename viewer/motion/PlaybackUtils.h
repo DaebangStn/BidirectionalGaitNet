@@ -5,7 +5,7 @@
 #include "imgui.h"
 
 // Note: This header uses PlaybackNavigationMode, MotionViewerState, and MarkerViewerState
-// which are defined in GLFWApp.h. Include this file AFTER GLFWApp.h in your .cpp file.
+// which are defined in RenderCkpt.h. Include this file AFTER RenderCkpt.h in your .cpp file.
 
 /**
  * @file PlaybackUtils.h

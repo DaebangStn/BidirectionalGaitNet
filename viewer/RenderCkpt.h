@@ -1,7 +1,7 @@
 #include "common/ViewerAppBase.h"
 #include "dart/gui/Trackball.hpp"
 #include "Environment.h"
-#include "GLfunctions.h"
+#include "common/GLfunctions.h"
 #include "CBufferData.h"
 #include "RenderEnvironment.h"
 #include "RenderCharacter.h"
@@ -155,11 +155,11 @@ struct PlaybackViewerState
     int manualFrameIndex = 0;                                        ///< Manual frame index when navigationMode == PLAYBACK_MANUAL_FRAME
 };
 
-class GLFWApp : public ViewerAppBase
+class RenderCkpt : public ViewerAppBase
 {
 public:
-    GLFWApp(int argc, char **argv);
-    ~GLFWApp() override;
+    RenderCkpt(int argc, char **argv);
+    ~RenderCkpt() override;
 
 protected:
     // ViewerAppBase overrides
@@ -267,8 +267,8 @@ private:
     CameraPreset mCameraPresets[3];
     int mCurrentCameraPreset;
 
-    // GLFWApp-specific flags (mRotate, mTranslate, mMouseDown, mMouseX, mMouseY inherited from ViewerAppBase)
-    bool mZooming;  // Middle mouse zoom (GLFWApp-specific)
+    // RenderCkpt-specific flags (mRotate, mTranslate, mMouseDown, mMouseX, mMouseY inherited from ViewerAppBase)
+    bool mZooming;  // Middle mouse zoom (RenderCkpt-specific)
 
     // Note: mWindow, mWidth, mHeight, mShapeRenderer inherited from ViewerAppBase
     // Note: Camera state (mCamera.zoom, .persp, .trackball, .trans, .eye, .up, .relTrans, .focus) inherited from ViewerAppBase

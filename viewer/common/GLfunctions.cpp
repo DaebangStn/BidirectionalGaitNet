@@ -1201,7 +1201,7 @@ void GUI::InitImGui(GLFWwindow* window, bool useImPlot)
 #include "dart/dynamics/CapsuleShape.hpp"
 #include "dart/dynamics/SphereShape.hpp"
 #include "dart/dynamics/CylinderShape.hpp"
-#include "ShapeRenderer.h"
+#include "common/ShapeRenderer.h"
 
 using namespace dart::dynamics;
 

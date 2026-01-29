@@ -4,7 +4,7 @@
 #include "common/ViewerAppBase.h"
 #include "common/timeline.h"
 #include "RenderCharacter.h"
-#include "ShapeRenderer.h"
+#include "common/ShapeRenderer.h"
 #include "Motion.h"
 #include "HDF.h"
 #include "rm/rm.hpp"

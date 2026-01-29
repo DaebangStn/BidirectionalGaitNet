@@ -7,7 +7,7 @@
 #include "../RenderCharacter.h"
 #include "Environment.h"
 #include "../C3D_Reader.h"
-#include "../GLFWApp.h"  // For PlaybackViewerState, PlaybackNavigationMode, DrawFlags
+#include "../RenderCkpt.h"  // For PlaybackViewerState, PlaybackNavigationMode, DrawFlags
 
 #include <iostream>
 #include <cmath>
@@ -153,9 +153,9 @@ void MotionProcessor::render(const MotionProcessorContext& context,
                               ShapeRenderer* renderer,
                               const DrawFlags& flags)
 {
-    // Render validation only - actual rendering is done by GLFWApp::drawSkeleton
-    // This method will be called from GLFWApp which has access to drawSkeleton
-    // The context provides currentPose which GLFWApp uses for rendering
+    // Render validation only - actual rendering is done by RenderCkpt::drawSkeleton
+    // This method will be called from RenderCkpt which has access to drawSkeleton
+    // The context provides currentPose which RenderCkpt uses for rendering
 
     if (!context.valid || !context.state || !context.state->render)
         return;
@@ -163,9 +163,9 @@ void MotionProcessor::render(const MotionProcessorContext& context,
     if (context.currentPose.size() == 0)
         return;
 
-    // Note: Actual skeleton rendering is handled by GLFWApp::drawSkeleton
+    // Note: Actual skeleton rendering is handled by RenderCkpt::drawSkeleton
     // which is called after computePlayback() populates context.currentPose
-    // Marker rendering is handled by GLFWApp using context.currentMarkers
+    // Marker rendering is handled by RenderCkpt using context.currentMarkers
     // The processor's responsibility is to populate context with pose and markers
 }
 

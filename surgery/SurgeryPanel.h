@@ -4,7 +4,7 @@
 #include "SurgeryExecutor.h"
 #include "SurgeryOperation.h"
 #include "Character.h"
-#include "ShapeRenderer.h"
+#include "common/ShapeRenderer.h"
 #include "Log.h"
 #include <imgui.h>
 #include <map>

@@ -13,7 +13,7 @@ class RenderCharacter;
  *
  * Contains all state needed to render motion at a specific point in time.
  * Replaces the separate MotionPlaybackContext and MarkerPlaybackContext
- * from the original GLFWApp implementation.
+ * from the original RenderCkpt implementation.
  *
  * Design Rationale:
  * - Single context handles both skeleton and marker data

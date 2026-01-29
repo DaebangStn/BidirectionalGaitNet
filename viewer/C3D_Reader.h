@@ -3,7 +3,7 @@
 #ifndef C3D_READER_H
 #define C3D_READER_H
 #include "Environment.h"
-#include "GLfunctions.h"
+#include "common/GLfunctions.h"
 #include "RenderCharacter.h"
 #include "C3D.h"
 #include "common/timeline.h"

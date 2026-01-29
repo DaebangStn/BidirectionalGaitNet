@@ -20,14 +20,14 @@ def get_micromamba_path():
         return "micromamba"
 
 
-def viewer():
+def render_ckpt():
     """
-    Run the viewer binary with checkpoint path
-    Usage: uv run viewer [checkpoint_path]
-    Example: uv run viewer data/trained_nn/base_0928
+    Run the render_ckpt binary with checkpoint path
+    Usage: uv run render_ckpt [checkpoint_path]
+    Example: uv run render_ckpt data/trained_nn/base_0928
     """
     project_root = get_project_root()
-    binary_path = project_root / "build/release/viewer/viewer"
+    binary_path = project_root / "build/release/viewer/render_ckpt"
 
     if not binary_path.exists():
         print(f"Error: Binary not found at {binary_path}", file=sys.stderr)

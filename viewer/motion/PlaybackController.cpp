@@ -1,7 +1,7 @@
 #include "PlaybackController.h"
 #include "Motion.h"
 #include "../RenderCharacter.h"
-#include "../GLFWApp.h"  // For PlaybackViewerState, PlaybackNavigationMode
+#include "../RenderCkpt.h"  // For PlaybackViewerState, PlaybackNavigationMode
 
 #include <algorithm>
 #include <iostream>

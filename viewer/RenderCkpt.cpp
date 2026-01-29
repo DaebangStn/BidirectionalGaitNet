@@ -1,10 +1,10 @@
-#include "GLFWApp.h"
-#include "PlaybackUtils.h"
+#include "RenderCkpt.h"
+#include "motion/PlaybackUtils.h"
 #include "common/imgui_common.h"
 #include "rm/rm.hpp"
 #include <rm/global.hpp>
 #include "stb_image.h"
-#include "stb_image_write.h"
+#include "common/stb_image_write.h"
 #include <filesystem>
 #include <algorithm>
 #include <numeric>
@@ -42,7 +42,7 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
     "PRESET|Foot view|0,0,1.26824|0,1,0|0,900,15|1|0.707,0.0,0.707,0.0",
 };
 
-GLFWApp::GLFWApp(int argc, char **argv)
+RenderCkpt::RenderCkpt(int argc, char **argv)
     : ViewerAppBase("MuscleSim", 2560, 1440)  // Base class handles GLFW/ImGui init
 {
     mRenderEnv = nullptr;
@@ -88,10 +88,10 @@ GLFWApp::GLFWApp(int argc, char **argv)
     mMotionProcessor = std::make_unique<MotionProcessor>();
 
     // Note: Base class already calls loadRenderConfig() and resetCamera()
-    // GLFWApp-specific config loaded via loadRenderConfigImpl() override
+    // RenderCkpt-specific config loaded via loadRenderConfigImpl() override
     updateResizablePlotsFromKeys();
 
-    // GLFWApp-specific input state
+    // RenderCkpt-specific input state
     mZooming = false;
 
     // Set default camera focus mode (follow character)
@@ -376,9 +376,9 @@ GLFWApp::GLFWApp(int argc, char **argv)
         // Initial PID scan
         mPIDNavigator->scanPIDs();
     } catch (const rm::RMError& e) {
-        LOG_WARN("[GLFWApp] Resource manager init failed: " << e.what());
+        LOG_WARN("[RenderCkpt] Resource manager init failed: " << e.what());
     } catch (...) {
-        LOG_WARN("[GLFWApp] Resource manager init failed");
+        LOG_WARN("[RenderCkpt] Resource manager init failed");
     }
 
     // Load simulation environment on startup if enabled (default: true)
@@ -389,7 +389,7 @@ GLFWApp::GLFWApp(int argc, char **argv)
     }
 }
 
-Eigen::Vector3d GLFWApp::computeMotionCycleDistance(Motion* motion)
+Eigen::Vector3d RenderCkpt::computeMotionCycleDistance(Motion* motion)
 {
     Eigen::Vector3d cycleDistance = Eigen::Vector3d::Zero();
 
@@ -420,9 +420,9 @@ Eigen::Vector3d GLFWApp::computeMotionCycleDistance(Motion* motion)
 
 // computeMarkerCycleDistance moved to c3d_processor
 
-// ViewerAppBase override: Load GLFWApp-specific config from render.yaml
+// ViewerAppBase override: Load RenderCkpt-specific config from render.yaml
 // (Base class already loads geometry, panel widths, default_open_panels)
-void GLFWApp::loadRenderConfigImpl()
+void RenderCkpt::loadRenderConfigImpl()
 {
     try {
         std::string resolved_path = rm::resolve("render.yaml");
@@ -473,7 +473,7 @@ void GLFWApp::loadRenderConfigImpl()
             }
         }
 
-        LOG_VERBOSE("[GLFWApp Config] Rollout: " << mDefaultRolloutCount
+        LOG_VERBOSE("[RenderCkpt Config] Rollout: " << mDefaultRolloutCount
                      << ", Playback Speed: " << mViewerPlaybackSpeed);
 
     } catch (const std::exception& e) {
@@ -481,15 +481,15 @@ void GLFWApp::loadRenderConfigImpl()
     }
 }
 
-void GLFWApp::onInitialize()
+void RenderCkpt::onInitialize()
 {
     // App-specific initialization after GLFW/ImGui is ready
     // (Most init is done in constructor; this is for things that need the window)
 }
 
-GLFWApp::~GLFWApp()
+RenderCkpt::~RenderCkpt()
 {
-    // Clean up GLFWApp-specific resources
+    // Clean up RenderCkpt-specific resources
     // (ImGui/GLFW cleanup handled by ViewerAppBase::~ViewerAppBase)
     delete mMotion;
     mMotion = nullptr;
@@ -498,7 +498,7 @@ GLFWApp::~GLFWApp()
     delete mMotionCharacter;
 }
 
-void GLFWApp::setWindowIcon(const char* icon_path)
+void RenderCkpt::setWindowIcon(const char* icon_path)
 {
     GLFWimage images[1];
     images[0].pixels = stbi_load(icon_path, &images[0].width, &images[0].height, 0, 4); // RGBA channels
@@ -512,7 +512,7 @@ void GLFWApp::setWindowIcon(const char* icon_path)
 
 // REMOVED: writeBVH() and exportBVH() - BVH format no longer supported
 
-void GLFWApp::update(bool _isSave)
+void RenderCkpt::update(bool _isSave)
 {
     if (!mRenderEnv) return;
     Eigen::VectorXf action = (mNetworks.size() > 0 ? mNetworks[0].joint.attr("get_action")(mRenderEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>() : mRenderEnv->getAction().cast<float>());
@@ -560,7 +560,7 @@ static float getPlotHeight(const std::string& title, float baseHeight = 300.0f)
 }
 
 // Member function that uses config system for default open state
-bool GLFWApp::collapsingHeaderWithControls(const std::string& title)
+bool RenderCkpt::collapsingHeaderWithControls(const std::string& title)
 {
     // Check config for default open state
     bool defaultOpen = isPanelDefaultOpen(title);
@@ -599,7 +599,7 @@ bool GLFWApp::collapsingHeaderWithControls(const std::string& title)
     return headerOpen;
 }
 
-void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
+void RenderCkpt::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
                             std::string postfix, bool show_stat, int color_ofs)
 {
     if (keys.empty() || !mGraphData) return;
@@ -695,7 +695,7 @@ void GLFWApp::plotGraphData(const std::vector<std::string>& keys, ImAxis y_axis,
 }
 
 std::map<std::string, std::map<std::string, double>>
-GLFWApp::statGraphData(const std::vector<std::string>& keys, double xMin, double xMax)
+RenderCkpt::statGraphData(const std::vector<std::string>& keys, double xMin, double xMax)
 {
     std::map<std::string, std::map<std::string, double>> result;
 
@@ -743,7 +743,7 @@ GLFWApp::statGraphData(const std::vector<std::string>& keys, double xMin, double
     return result;
 }
 
-void GLFWApp::plotPhaseBar(double x_min, double x_max, double y_min, double y_max)
+void RenderCkpt::plotPhaseBar(double x_min, double x_max, double y_min, double y_max)
 {
     if (!mGraphData || !mRenderEnv)
         return;
@@ -789,7 +789,7 @@ void GLFWApp::plotPhaseBar(double x_min, double x_max, double y_min, double y_ma
     ImPlot::PopStyleVar();
 }
 
-float GLFWApp::getHeelStrikeTime()
+float RenderCkpt::getHeelStrikeTime()
 {
     if (!mGraphData->key_exists("contact_phaseR"))
     {
@@ -842,7 +842,7 @@ float GLFWApp::getHeelStrikeTime()
     return heel_strike_time;
 }
 
-void GLFWApp::onFrameStart()
+void RenderCkpt::onFrameStart()
 {
     // Measure real-time delta
     double currentRealTime = glfwGetTime();
@@ -936,7 +936,7 @@ void GLFWApp::onFrameStart()
     }
 }
 
-void GLFWApp::onMaxRecordingTimeReached()
+void RenderCkpt::onMaxRecordingTimeReached()
 {
     // Pause simulation when video recording reaches max time
     mRolloutStatus.pause = true;
@@ -948,7 +948,7 @@ void GLFWApp::onMaxRecordingTimeReached()
     mViewerPlaybackSpeed = mPreRecordingPlaybackSpeed;
 }
 
-double GLFWApp::getSimulationTime() const
+double RenderCkpt::getSimulationTime() const
 {
     // Return actual simulation world time for accurate video recording timing
     if (mRenderEnv && mRenderEnv->getWorld()) {
@@ -957,7 +957,7 @@ double GLFWApp::getSimulationTime() const
     return 0.0;
 }
 
-void GLFWApp::initGL()
+void RenderCkpt::initGL()
 {
     static float ambient[] = {0.2, 0.2, 0.2, 1.0};
     static float diffuse[] = {0.6, 0.6, 0.6, 1.0};
@@ -1008,7 +1008,7 @@ void GLFWApp::initGL()
     glEnable(GL_MULTISAMPLE);
 }
 
-void GLFWApp::initializeMotionCharacter(const std::string& metadata)
+void RenderCkpt::initializeMotionCharacter(const std::string& metadata)
 {
     // Skip if already initialized
     if (mMotionCharacter) return;
@@ -1056,7 +1056,7 @@ void GLFWApp::initializeMotionCharacter(const std::string& metadata)
     }
 }
 
-void GLFWApp::initEnv(std::string metadata)
+void RenderCkpt::initEnv(std::string metadata)
 {
     if (mRenderEnv)
     {
@@ -1167,17 +1167,17 @@ void GLFWApp::initEnv(std::string metadata)
     // try {
     //     std::string npz_path = "data/npz_motions/Sim_Healthy.npz";
     //     if (fs::exists(npz_path)) {
-    //         std::cout << "[GLFWApp] Loading hardcoded reference motion: " << npz_path << std::endl;
+    //         std::cout << "[RenderCkpt] Loading hardcoded reference motion: " << npz_path << std::endl;
     //         NPZ* npz = new NPZ(npz_path);
     //         // CRITICAL: Use mMotionCharacter (NPZ-compatible) not mRenderEnv->getCharacter()
     //         npz->setRefMotion(mMotionCharacter, mRenderEnv->getWorld());
     //         mRenderEnv->setMotion(npz);
-    //         std::cout << "[GLFWApp] Successfully loaded hardcoded NPZ reference motion" << std::endl;
+    //         std::cout << "[RenderCkpt] Successfully loaded hardcoded NPZ reference motion" << std::endl;
     //     } else {
-    //         std::cerr << "[GLFWApp] Hardcoded NPZ file not found: " << npz_path << std::endl;
+    //         std::cerr << "[RenderCkpt] Hardcoded NPZ file not found: " << npz_path << std::endl;
     //     }
     // } catch (const std::exception& e) {
-    //     std::cerr << "[GLFWApp] Error loading hardcoded NPZ: " << e.what() << std::endl;
+    //     std::cerr << "[RenderCkpt] Error loading hardcoded NPZ: " << e.what() << std::endl;
     // }
 
     // Load networks
@@ -1235,7 +1235,7 @@ void GLFWApp::initEnv(std::string metadata)
     reset();
 }
 
-void GLFWApp::drawAxis()
+void RenderCkpt::drawAxis()
 {
     // Get character root position if available
     Eigen::Vector3d origin(0, 2E-3, 0);
@@ -1250,7 +1250,7 @@ void GLFWApp::drawAxis()
     GUI::DrawLine(origin, origin + Eigen::Vector3d(0.0, 0.0, 0.5), Eigen::Vector3d(0.0, 0.0, 1.0));
 }
 
-void GLFWApp::drawJointAxis(dart::dynamics::Joint* joint)
+void RenderCkpt::drawJointAxis(dart::dynamics::Joint* joint)
 {
     if (!joint) return;
 
@@ -1292,7 +1292,7 @@ void GLFWApp::drawJointAxis(dart::dynamics::Joint* joint)
     glEnable(GL_DEPTH_TEST);
 }
 
-void GLFWApp::drawKinematicsControlPanelContent()
+void RenderCkpt::drawKinematicsControlPanelContent()
 {
     // // FGN
     // ImGui::Checkbox("Draw FGN Result\t", &mDrawFlags.fgnSkeleton);
@@ -1577,7 +1577,7 @@ void GLFWApp::drawKinematicsControlPanelContent()
         // mRenderEnv->getCharacter()->updateRefSkelParam(mMotionCharacter->getSkeleton());
 }
 
-void GLFWApp::drawRightPanel()
+void RenderCkpt::drawRightPanel()
 {   
     ImGui::SetNextWindowSize(ImVec2(mPlotPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::Begin("Visualization", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
@@ -1635,7 +1635,7 @@ void GLFWApp::drawRightPanel()
 // ============================================================
 // Gait Tab Content
 // ============================================================
-void GLFWApp::drawGaitTabContent()
+void RenderCkpt::drawGaitTabContent()
 {
     // Status
     if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1865,7 +1865,7 @@ void GLFWApp::drawGaitTabContent()
 // ============================================================
 // Kinematics Tab Content
 // ============================================================
-void GLFWApp::drawKinematicsTabContent()
+void RenderCkpt::drawKinematicsTabContent()
 {
     // Center of Mass Trajectory
     if (collapsingHeaderWithControls("COM Trajectory"))
@@ -2132,7 +2132,7 @@ void GLFWApp::drawKinematicsTabContent()
 // ============================================================
 // Kinetics Tab Content
 // ============================================================
-void GLFWApp::drawKineticsTabContent()
+void RenderCkpt::drawKineticsTabContent()
 {
     // Use FilterableChecklist for joint DOF selection
     ImGuiCommon::FilterableChecklist("##PlotJointList", mPlotJointDofNames,
@@ -2292,7 +2292,7 @@ void GLFWApp::drawKineticsTabContent()
     }
 }
 
-void GLFWApp::drawMuscleTabContent()
+void RenderCkpt::drawMuscleTabContent()
 {
     // Mode selection radio buttons
     ImGuiCommon::RadioButtonGroup("MuscleMetricMode",
@@ -2429,7 +2429,7 @@ void GLFWApp::drawMuscleTabContent()
     }
 }
 
-void GLFWApp::drawCaptureSection() {
+void RenderCkpt::drawCaptureSection() {
     ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Capture & Recording");
     ImGui::Separator();
 
@@ -2561,7 +2561,7 @@ void GLFWApp::drawCaptureSection() {
         }
 }
 
-void GLFWApp::onPostRender() {
+void RenderCkpt::onPostRender() {
     // Record video frame if recording is active
     if (mVideoRecording) {
         recordVideoFrame();
@@ -2619,7 +2619,7 @@ void GLFWApp::onPostRender() {
     }
 }
 
-void GLFWApp::drawCameraStatusSection() {
+void RenderCkpt::drawCameraStatusSection() {
     if (ImGui::CollapsingHeader("Camera Status")) {
         // Current preset description
         if (mCurrentCameraPreset >= 0 && mCurrentCameraPreset < 3 &&
@@ -2674,7 +2674,7 @@ void GLFWApp::drawCameraStatusSection() {
     }
 }
 
-void GLFWApp::drawJointControlSection() {
+void RenderCkpt::drawJointControlSection() {
     if (ImGui::CollapsingHeader("Joint##control")) {
         if (!mRenderEnv || !mRenderEnv->getCharacter()) {
             ImGui::TextDisabled("Load environment first");
@@ -2798,7 +2798,7 @@ void GLFWApp::drawJointControlSection() {
     }
 }
 
-void GLFWApp::printCameraInfo() {
+void RenderCkpt::printCameraInfo() {
     Eigen::Quaterniond quat = mCamera.trackball.getCurrQuat();
 
     std::cout << "\n======================================" << std::endl;
@@ -2814,7 +2814,7 @@ void GLFWApp::printCameraInfo() {
     std::cout << "======================================\n" << std::endl;
 }
 
-void GLFWApp::initializeCameraPresets() {
+void RenderCkpt::initializeCameraPresets() {
     mCurrentCameraPreset = -1;
 
     for (int i = 0; i < 3; i++) {
@@ -2871,13 +2871,13 @@ void GLFWApp::initializeCameraPresets() {
     }
 }
 
-void GLFWApp::runRollout() {
+void RenderCkpt::runRollout() {
     mRolloutStatus.cycle = mRolloutCycles;
     mRolloutStatus.pause = false;
 }
 
 
-void GLFWApp::loadCameraPreset(int index) {
+void RenderCkpt::loadCameraPreset(int index) {
     if (index < 0 || index >= 3 || !mCameraPresets[index].isSet)
     {
         LOG_WARN("[Camera] Preset " << index << " is not valid");
@@ -2893,7 +2893,7 @@ void GLFWApp::loadCameraPreset(int index) {
     mCurrentCameraPreset = index;
 }
 
-void GLFWApp::alignCameraToPlane(int plane) {
+void RenderCkpt::alignCameraToPlane(int plane) {
     // Align camera to view a specific plane
     // 1 = XY plane (view from +Z, looking at -Z, up is +Y)
     // 2 = YZ plane (view from +X, looking at -X, up is +Z)
@@ -2927,7 +2927,7 @@ void GLFWApp::alignCameraToPlane(int plane) {
     LOG_INFO("[Camera] Aligned to " << planeName << " plane");
 }
 
-void GLFWApp::drawSimControlPanelContent()
+void RenderCkpt::drawSimControlPanelContent()
 {
     if (!mRenderEnv) {
         if (ImGui::Button("Load Environment")) initEnv(mCachedMetadata);
@@ -3364,7 +3364,7 @@ void GLFWApp::drawSimControlPanelContent()
     drawNoiseControlPanel();
 }
 
-void GLFWApp::updateUnifiedKeys()
+void RenderCkpt::updateUnifiedKeys()
 {
     std::string unified_str = "";
     for (int i = 0; i < mResizablePlots.size(); ++i) {
@@ -3382,7 +3382,7 @@ void GLFWApp::updateUnifiedKeys()
     mResizePlotKeys[sizeof(mResizePlotKeys) - 1] = '\0';
 }
 
-void GLFWApp::updateResizablePlotsFromKeys()
+void RenderCkpt::updateResizablePlotsFromKeys()
 {
     std::string unified_keys_str(mResizePlotKeys);
     std::vector<std::string> plot_key_groups;
@@ -3422,7 +3422,7 @@ void GLFWApp::updateResizablePlotsFromKeys()
     mResizePlotPane = true;
 }
 
-void GLFWApp::drawResizablePlotPane()
+void RenderCkpt::drawResizablePlotPane()
 {
     if (!mShowResizablePlotPane) return;
 
@@ -3610,7 +3610,7 @@ void GLFWApp::drawResizablePlotPane()
     ImGui::End();
 }
 
-void GLFWApp::drawRenderingContent()
+void RenderCkpt::drawRenderingContent()
 {
     if (!mRenderEnv) {
         ImGui::TextDisabled("No environment loaded");
@@ -3842,7 +3842,7 @@ void GLFWApp::drawRenderingContent()
     }
 }
 
-void GLFWApp::drawLeftPanel()
+void RenderCkpt::drawLeftPanel()
 {
     ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight), ImGuiCond_Once);
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
@@ -3934,7 +3934,7 @@ void GLFWApp::drawLeftPanel()
     ImGui::End();
 }
 
-void GLFWApp::drawUI()
+void RenderCkpt::drawUI()
 {
     drawLeftPanel();
     drawRightPanel();
@@ -3942,7 +3942,7 @@ void GLFWApp::drawUI()
     drawResizablePlotPane();
 }
 
-void GLFWApp::drawTimingPaneContent()
+void RenderCkpt::drawTimingPaneContent()
 {
     // Use fixed-width font for better alignment
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
@@ -4112,7 +4112,7 @@ void GLFWApp::drawTimingPaneContent()
     ImGui::PopFont();
 }
 
-void GLFWApp::drawTitlePanel()
+void RenderCkpt::drawTitlePanel()
 {
     if (!mShowTitlePanel) return;
 
@@ -4126,7 +4126,7 @@ void GLFWApp::drawTitlePanel()
     ImGui::End();
 }
 
-void GLFWApp::drawPhase(double phase, double normalized_phase)
+void RenderCkpt::drawPhase(double phase, double normalized_phase)
 {
     glPushAttrib(GL_ALL_ATTRIB_BITS);
 
@@ -4213,7 +4213,7 @@ void GLFWApp::drawPhase(double phase, double normalized_phase)
     glPopAttrib();
 }
 
-void GLFWApp::drawPlayableMotion()
+void RenderCkpt::drawPlayableMotion()
 {
     // Motion pose is computed in updateViewerTime(), this function only renders
     if (mMotion == nullptr || mMotionState.currentPose.size() == 0 || mMotionState.render == false) return;
@@ -4221,7 +4221,7 @@ void GLFWApp::drawPlayableMotion()
     drawSkeleton(mMotionState.currentPose, Eigen::Vector4d(0.8, 0.8, 0.2, 0.7));
 }
 
-bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std::string& sourceFile)
+bool RenderCkpt::isCurrentMotionFromSource(const std::string& sourceType, const std::string& sourceFile)
 {
     Motion* motion = mMotion;
     if (!motion) return false;
@@ -4236,7 +4236,7 @@ bool GLFWApp::isCurrentMotionFromSource(const std::string& sourceType, const std
     return motion->getName().find(sourceFile) != std::string::npos;
 }
 
-void GLFWApp::drawContent()
+void RenderCkpt::drawContent()
 {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -4353,7 +4353,7 @@ void GLFWApp::drawContent()
 
 }
 
-void GLFWApp::reset()
+void RenderCkpt::reset()
 {
     mSimStepDurationAvg = -1.0;
     mViewerTime = 0.0;
@@ -4381,7 +4381,7 @@ void GLFWApp::reset()
     alignMotionToSimulation();
 }
 
-double GLFWApp::computeFrameFloat(Motion* motion, double phase)
+double RenderCkpt::computeFrameFloat(Motion* motion, double phase)
 {
     // phase: [0, 1)
     double frame_float;
@@ -4433,7 +4433,7 @@ double GLFWApp::computeFrameFloat(Motion* motion, double phase)
 
 // motionPoseEval now delegates to the unified MotionProcessor
 // This eliminates ~60 lines of duplicated code
-void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
+void RenderCkpt::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
 {
     (void)motionIdx;  // Unused parameter kept for API compatibility
 
@@ -4458,7 +4458,7 @@ void GLFWApp::motionPoseEval(Motion* motion, int motionIdx, double frame_float)
     }
 }
 
-GLFWApp::ViewerClock GLFWApp::updateViewerClock(double dt)
+RenderCkpt::ViewerClock RenderCkpt::updateViewerClock(double dt)
 {
     ViewerClock clock;
 
@@ -4474,7 +4474,7 @@ GLFWApp::ViewerClock GLFWApp::updateViewerClock(double dt)
     return clock;
 }
 
-bool GLFWApp::computeMotionPlayback(MotionPlaybackContext& context)
+bool RenderCkpt::computeMotionPlayback(MotionPlaybackContext& context)
 {
     if (mMotion == nullptr)
     {
@@ -4512,7 +4512,7 @@ bool GLFWApp::computeMotionPlayback(MotionPlaybackContext& context)
 
 // computeMarkerPlayback and evaluateMarkerPlayback moved to c3d_processor
 
-void GLFWApp::evaluateMotionPlayback(const MotionPlaybackContext& context)
+void RenderCkpt::evaluateMotionPlayback(const MotionPlaybackContext& context)
 {
     if (!context.motion || !context.state || !context.character)
         return;
@@ -4526,7 +4526,7 @@ void GLFWApp::evaluateMotionPlayback(const MotionPlaybackContext& context)
     motionPoseEval(context.motion, 0, context.wrappedFrameFloat);  // motionIdx parameter kept for signature compatibility
 }
 
-double GLFWApp::computeMotionPhase()
+double RenderCkpt::computeMotionPhase()
 {
     if (mRenderEnv && mRenderEnv->getMotion() && mRenderEnv->getCadence() > 0.0)
     {
@@ -4544,7 +4544,7 @@ double GLFWApp::computeMotionPhase()
     return mViewerPhase;
 }
 
-double GLFWApp::determineMotionFrame(Motion* motion, PlaybackViewerState& state, double phase)
+double RenderCkpt::determineMotionFrame(Motion* motion, PlaybackViewerState& state, double phase)
 {
     if (!motion)
         return 0.0;
@@ -4560,7 +4560,7 @@ double GLFWApp::determineMotionFrame(Motion* motion, PlaybackViewerState& state,
     return static_cast<double>(state.manualFrameIndex);
 }
 
-void GLFWApp::updateMotionCycleAccumulation(Motion* current_motion,
+void RenderCkpt::updateMotionCycleAccumulation(Motion* current_motion,
                                             PlaybackViewerState& state,
                                             int current_frame_idx,
                                             RenderCharacter* character,
@@ -4588,7 +4588,7 @@ void GLFWApp::updateMotionCycleAccumulation(Motion* current_motion,
     state.lastFrameIdx = current_frame_idx;
 }
 
-double GLFWApp::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pose)
+double RenderCkpt::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pose)
 {
     if (!mMotionCharacter || !mMotionCharacter->getSkeleton()) {
         return 0.0;
@@ -4625,7 +4625,7 @@ double GLFWApp::computeMotionHeightCalibration(const Eigen::VectorXd& motion_pos
     return height_offset;
 }
  
-void GLFWApp::setMotion(Motion* motion)
+void RenderCkpt::setMotion(Motion* motion)
 {
     // Delete old motion and assign new one
     delete mMotion;
@@ -4642,7 +4642,7 @@ void GLFWApp::setMotion(Motion* motion)
     }
 }
 
-void GLFWApp::alignMotionToSimulation()
+void RenderCkpt::alignMotionToSimulation()
 {
     // Silently skip if no motion loaded (valid state, not an error)
     if (mMotion == nullptr) {
@@ -4689,7 +4689,7 @@ void GLFWApp::alignMotionToSimulation()
 
 // computeMarkerHeightCalibration and computeViewerMetric moved to c3d_processor
 
-void GLFWApp::updateViewerTime(double dt)
+void RenderCkpt::updateViewerTime(double dt)
 {
     ViewerClock clock = updateViewerClock(dt);
 
@@ -4706,7 +4706,7 @@ void GLFWApp::updateViewerTime(double dt)
     evaluateMotionPlayback(motionContext);
 }
 
-void GLFWApp::keyPress(int key, int scancode, int action, int mods)
+void RenderCkpt::keyPress(int key, int scancode, int action, int mods)
 {
     if (action == GLFW_PRESS)
     {
@@ -4779,7 +4779,7 @@ void GLFWApp::keyPress(int key, int scancode, int action, int mods)
         }
     }
 }
-void GLFWApp::drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr)
+void RenderCkpt::drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr)
 {
     glColor3f(0.5, 0.5, 0.5);
     // Just Connect the joint position
@@ -4833,7 +4833,7 @@ void GLFWApp::drawThinSkeleton(const dart::dynamics::SkeletonPtr skelptr)
     }
 }
 
-void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color)
+void RenderCkpt::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &color)
 {
     if (!mMotionCharacter) return;
     auto skel = mMotionCharacter->getSkeleton();
@@ -4844,7 +4844,7 @@ void GLFWApp::drawSkeleton(const Eigen::VectorXd &pos, const Eigen::Vector4d &co
 }
 
 
-void GLFWApp::updateCamera()
+void RenderCkpt::updateCamera()
 {
     if (mRenderEnv)
     {
@@ -4914,7 +4914,7 @@ void GLFWApp::updateCamera()
     }
 }
 
-void GLFWApp::drawCollision()
+void RenderCkpt::drawCollision()
 {
     glDisable(GL_LIGHTING);
     const auto result = mRenderEnv->getWorld()->getConstraintSolver()->getLastCollisionResult();
@@ -4963,7 +4963,7 @@ void GLFWApp::drawCollision()
     glEnable(GL_LIGHTING);
 }
 
-void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
+void RenderCkpt::drawMuscles(MuscleRenderingType renderingType)
 {
     int count = 0;
     glDisable(GL_LIGHTING);
@@ -5037,7 +5037,7 @@ void GLFWApp::drawMuscles(MuscleRenderingType renderingType)
     glEnable(GL_DEPTH_TEST);
 }
 
-void GLFWApp::drawFootStep()
+void RenderCkpt::drawFootStep()
 {
     Eigen::Vector3d current_foot = mRenderEnv->getCurrentFootStep();
     glColor4d(0.2, 0.2, 0.8, 0.5);
@@ -5061,7 +5061,7 @@ void GLFWApp::drawFootStep()
     glPopMatrix();
 }
 
-void GLFWApp::drawNoiseControlPanel()
+void RenderCkpt::drawNoiseControlPanel()
 {
     if (!mRenderEnv) return;
 
@@ -5342,7 +5342,7 @@ void GLFWApp::drawNoiseControlPanel()
     }
 }
 
-void GLFWApp::drawNoiseVisualizations()
+void RenderCkpt::drawNoiseVisualizations()
 {
     if (!mDrawFlags.noiseArrows || !mRenderEnv) return;
 
@@ -5383,7 +5383,7 @@ void GLFWApp::drawNoiseVisualizations()
     glPopMatrix();
 }
 
-void GLFWApp::drawShadow()
+void RenderCkpt::drawShadow()
 {
     Eigen::VectorXd pos = mRenderEnv->getCharacter()->getSkeleton()->getPositions();
 
@@ -5399,7 +5399,7 @@ void GLFWApp::drawShadow()
     glEnable(GL_LIGHTING);
 }
 
-void GLFWApp::loadNetworkFromPath(const std::string& path)
+void RenderCkpt::loadNetworkFromPath(const std::string& path)
 {
     if (loading_network.is_none()) {
         std::cerr << "Warning: loading_network not available, skipping: " << path << std::endl;
@@ -5485,7 +5485,7 @@ void GLFWApp::loadNetworkFromPath(const std::string& path)
     }
 }
 
-void GLFWApp::initializeMotionSkeleton()
+void RenderCkpt::initializeMotionSkeleton()
 {
     // Now uses mMotionCharacter->getSkeleton() instead of creating mMotionSkeleton
     if (!mMotionCharacter) {
@@ -5517,7 +5517,7 @@ void GLFWApp::initializeMotionSkeleton()
 // REMOVED: loadNPZMotion(), loadHDFRolloutMotion(), loadBVHMotion(), loadHDFMotion(), loadMotionFiles()
 // Motion loading is now on-demand via scanMotionFiles() + loadMotionFile()
 
-void GLFWApp::scanMotionFiles()
+void RenderCkpt::scanMotionFiles()
 {
     mMotionList.clear();
     namespace fs = std::filesystem;
@@ -5539,16 +5539,16 @@ void GLFWApp::scanMotionFiles()
     LOG_INFO("[Motion] Scanned " << mMotionList.size() << " motion files (HDF only, C3D moved to c3d_processor)");
 }
 
-void GLFWApp::onPIDFileSelected(const std::string& path,
+void RenderCkpt::onPIDFileSelected(const std::string& path,
                                  const std::string& filename)
 {
     // Load the HDF motion file using existing unified loader
     loadMotionFile(path);
 
-    LOG_INFO("[GLFWApp] Loaded PID HDF file: " << filename);
+    LOG_INFO("[RenderCkpt] Loaded PID HDF file: " << filename);
 }
 
-void GLFWApp::loadMotionFile(const std::string& path)
+void RenderCkpt::loadMotionFile(const std::string& path)
 {
     namespace fs = std::filesystem;
     std::string ext = fs::path(path).extension().string();
@@ -5598,7 +5598,7 @@ void GLFWApp::loadMotionFile(const std::string& path)
 // Clinical Data (PID-based HDF access) Methods
 // =============================================================================
 
-void GLFWApp::drawClinicalDataSection()
+void RenderCkpt::drawClinicalDataSection()
 {
     // Render PID Navigator UI with collapsing header
     if (mPIDNavigator) {
@@ -5613,7 +5613,7 @@ void GLFWApp::drawClinicalDataSection()
 
 // REMOVED: scanHDF5Structure() - HDF5 rollout format no longer used
 
-void GLFWApp::loadParametersFromCurrentMotion()
+void RenderCkpt::loadParametersFromCurrentMotion()
 {
     if (!mRenderEnv) {
         LOG_ERROR("Render environment not initialized");
@@ -5679,7 +5679,7 @@ void GLFWApp::loadParametersFromCurrentMotion()
     }
 }
 
-void GLFWApp::unloadMotion()
+void RenderCkpt::unloadMotion()
 {
     // Delete single motion
     delete mMotion;

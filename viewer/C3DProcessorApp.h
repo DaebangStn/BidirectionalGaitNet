@@ -3,7 +3,7 @@
 
 #include "common/ViewerAppBase.h"
 #include "RenderCharacter.h"
-#include "ShapeRenderer.h"
+#include "common/ShapeRenderer.h"
 #include "C3D_Reader.h"
 #include "C3D.h"
 #include "Motion.h"

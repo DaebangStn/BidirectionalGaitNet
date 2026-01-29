@@ -1,4 +1,4 @@
-#include "GLFWApp.h"
+#include "RenderCkpt.h"
 #include "Log.h"
 #include <pybind11/embed.h>
 #include <csignal>
@@ -27,7 +27,7 @@ int main(int argc, char **argv)
     pybind11::scoped_interpreter guard{};
     pybind11::module sys = pybind11::module::import("sys");
     py::module_::import("numpy");
-    GLFWApp app(argc, argv);
+    RenderCkpt app(argc, argv);
     app.startLoop();
 
     return -1;
