@@ -7,8 +7,7 @@ from python.forward_gaitnet import RefNN
 import argparse
 
 import torch.nn.utils as torch_utils
-from pysim import RayEnvManager
-from ray.rllib.utils.torch_utils import convert_to_torch_tensor
+from pysim import EnvManager
 import numpy as np
 import torch
 import torch.nn as nn
@@ -142,10 +141,10 @@ def log_comprehensive_vae_metrics(writer: SummaryWriter, iteration: int,
 def loading_distilled_network(path, device):
     print('loading distilled network from', path)
     state = pickle.load(open(path, "rb"))
-    env = RayEnvManager(state['metadata'])
+    env = EnvManager(state['metadata'])
     ref = RefNN(len(env.getNormalizedParamState()) + 2,
                 len(env.posToSixDof(env.getPositions())), device)
-    ref.load_state_dict(convert_to_torch_tensor(state['ref']))
+    ref.load_state_dict(state['ref'])
     return ref, env
 
 def loading_training_motion_fast(f):
@@ -222,7 +221,7 @@ class VAELearner:
         }
 
     def set_weights(self, weights) -> None:
-        weights = convert_to_torch_tensor(weights, device=self.device)
+        weights = {k: v.to(self.device) for k, v in weights.items()}
         self.model.load_state_dict(weights)
 
     def get_optimizer_weights(self) -> Dict:

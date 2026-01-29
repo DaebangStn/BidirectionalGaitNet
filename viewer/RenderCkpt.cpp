@@ -284,31 +284,11 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
 
     py::gil_scoped_acquire gil;
     
-    // Detect checkpoint format and import appropriate Python modules
-    std::string checkpoint_type = "unknown";
-    if (!mNetworkPaths.empty()) {
-        std::string path = mNetworkPaths.back();
-        if (path.substr(path.length() - 4) != ".xml") {
-            try {
-                py::object detector = py::module::import("python.checkpoint_detector");
-                checkpoint_type = detector.attr("detect_checkpoint_type")(path).cast<std::string>();
-                LOG_INFO("[Checkpoint] Detected checkpoint type: " << checkpoint_type);
-            } catch (const py::error_already_set& e) {
-                LOG_WARN("[Checkpoint] Warning: Failed to detect checkpoint type: " << e.what());
-                checkpoint_type = "ray_2.12.0";  // Default to Ray format
-            }
-        }
-    }
-
-    // Import appropriate loader based on checkpoint type
+    // Import checkpoint loader
     try {
-        if (checkpoint_type == "cleanrl") {
-            loading_network = py::module::import("python.cleanrl_model").attr("loading_network");
-        } else {
-            loading_network = py::module::import("python.ray_model").attr("loading_network");
-        }
+        loading_network = py::module::import("ppo.model").attr("loading_network");
     } catch (const py::error_already_set& e) {
-        LOG_WARN("[Checkpoint] Warning: Failed to import checkpoint loader: " << e.what());
+        LOG_WARN("[Checkpoint] Failed to import checkpoint loader: " << e.what());
         loading_network = py::none();
     }
 
@@ -320,23 +300,9 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
             mNetworkPaths.pop_back();
         } else {
             try {
-                py::object py_metadata;
-                if (checkpoint_type == "cleanrl") {
-                    py_metadata = py::module::import("python.cleanrl_model").attr("loading_metadata")(path);
-                } else {
-                    py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(path);
-                }
-
+                py::object py_metadata = py::module::import("ppo.model").attr("loading_metadata")(path);
                 if (!py_metadata.is_none()) {
-                    // Handle both Ray 2.0.1 (string) and Ray 2.12.0 (dict) metadata formats
-                    if (py::isinstance<py::str>(py_metadata)) {
-                        // Ray 2.0.1 or CleanRL: metadata is XML string
-                        mCachedMetadata = py_metadata.cast<std::string>();
-                    } else if (py::isinstance<py::dict>(py_metadata)) {
-                        // Ray 2.12.0: metadata is dict (usually empty)
-                        // For now, skip dict metadata as it doesn't contain XML config
-                        LOG_INFO("[Checkpoint] Checkpoint uses Ray 2.12.0 format with dict metadata (skipping)");
-                    }
+                    mCachedMetadata = py_metadata.cast<std::string>();
                 }
                 // Note: Keep path in mNetworkPaths - it's used later for checkpoint name and network loading
             } catch (const py::error_already_set& e) {

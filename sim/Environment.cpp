@@ -452,7 +452,7 @@ void Environment::parseEnvConfigXml(const std::string& metadata)
         mChildNetworks.clear();
         if (mUseCascading)
         {
-            loading_network = py::module::import("python.ray_model").attr("loading_network");
+            loading_network = py::module::import("ppo.model").attr("loading_network");
             auto networks = doc.FirstChildElement("cascading")->FirstChildElement();
             auto edges = doc.FirstChildElement("cascading")->LastChildElement();
             int idx = 0;
@@ -2622,7 +2622,7 @@ Network Environment::loadPrevNetworks(std::string path, bool isFirst)
         path = "data/trained_nn/merge_no_mesh_lbs";
     }
     // path, state size, action size, acuator type
-    py::object py_metadata = py::module::import("python.ray_model").attr("loading_metadata")(path);
+    py::object py_metadata = py::module::import("ppo.model").attr("loading_metadata")(path);
     std::string metadata = "";
     if (!py_metadata.is_none())
         metadata = py_metadata.cast<std::string>();

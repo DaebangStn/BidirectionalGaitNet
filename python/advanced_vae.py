@@ -1,4 +1,3 @@
-from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 import matplotlib.pyplot as plt
 import umap.plot
 import umap
@@ -266,6 +265,6 @@ def load_gaitvae(checkpoint_path, pose_dof, frame_num, num_knownparam, num_param
     print('called load_gaitvae')
     state = pickle.load(open(checkpoint_path, "rb"))
     GaitVAE = AdvancedVAE(pose_dof, frame_num, num_knownparam, num_paramstate)
-    w = convert_to_torch_tensor(state['gvae'])
+    w = state['gvae']
     GaitVAE.load_state_dict(w)
     return GaitVAE

@@ -4,14 +4,11 @@ import numpy as np
 import os
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
-from io import BytesIO
 import argparse
-import pickle
 import tempfile
 from datetime import datetime
 from tqdm import tqdm
 from python.rollout.pyrollout import RolloutEnvironment, RolloutRecord, RecordConfig
-from python.ray_model import SelectiveUnpickler
 from python.uri_resolver import resolve_path
 from python.log_config import log_verbose
 from python.rollout.rollout_worker import PolicyWorker, EnvWorker, FileWorker
@@ -143,7 +140,7 @@ def _run_with_parameters(env_workers, policy, file_worker, parameters, target_cy
 def _run_with_random_sampling(env_workers, policy, file_worker, target_cycles, num_samples):
     """
     Sample random parameters for each rollout.
-    reset(None) triggers random sampling in ray_env.py.
+    reset(None) triggers random sampling.
 
     Args:
         num_samples: Total number of random samples to generate
@@ -170,7 +167,7 @@ def _run_with_random_sampling(env_workers, policy, file_worker, target_cycles, n
             if not ws['active'] and assigned_count < target_sample_count:
                 sample_idx = assigned_count
 
-                # reset(None) -> random parameter in ray_env.py:50-52
+                # reset(None) -> random parameter sampling
                 state = ray.get(env_workers[worker_idx].reset.remote(None))
                 ws['active'] = True
                 ws['sample_idx'] = sample_idx
@@ -304,18 +301,9 @@ def run_rollout(checkpoint_path: str,
     num_states = len(state_sample)
 
     # Get action dimension from checkpoint
-    checkpoint_file = Path(checkpoint_path) if Path(checkpoint_path).is_file() else Path(checkpoint_path) / "max_checkpoint"
-    with open(checkpoint_file, 'rb') as f:
-        state = pickle.load(f)
-        # Get action space from observation/action space info
-        if "space" in state:
-            num_actions = state["space"]["action_space"].shape[0]
-        else:
-            # Fallback: infer from policy weights
-            worker_state = SelectiveUnpickler(BytesIO(state['worker'])).load()
-            policy_state = worker_state["state"]['default_policy']['weights']
-            # Get action dimension from last layer of p_fc
-            num_actions = policy_state['p_fc.6.weight'].shape[0]
+    agent_path = Path(checkpoint_path) / "agent.pt"
+    agent_state = torch.load(agent_path, map_location='cpu', weights_only=True)
+    num_actions = agent_state['actor_mean.6.weight'].shape[0]
 
     print(f"State dimension: {num_states}, Action dimension: {num_actions}")
 

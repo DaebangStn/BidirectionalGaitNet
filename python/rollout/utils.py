@@ -1,12 +1,9 @@
 """
-Non-ray utility functions for rollout module.
-
-These utilities can be used by both ray and non-ray rollout implementations.
+Utility functions for rollout module.
 """
 
 import numpy as np
 import yaml
-import pickle
 import subprocess
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, NamedTuple
@@ -25,45 +22,25 @@ class RolloutData(NamedTuple):
 
 
 def load_metadata_from_checkpoint(checkpoint_path: str) -> str:
-    """Load metadata XML string from checkpoint file or directory
+    """Load metadata YAML string from checkpoint directory.
 
     Args:
-        checkpoint_path: Path to checkpoint file or directory containing checkpoints
+        checkpoint_path: Path to checkpoint directory containing metadata.yaml
 
     Returns:
-        Metadata XML string
+        Metadata YAML string
     """
     checkpoint_path = Path(checkpoint_path)
 
-    # Case 1: Direct checkpoint file
-    if checkpoint_path.is_file():
-        with open(checkpoint_path, 'rb') as f:
-            state = pickle.load(f)
-            if "metadata" not in state:
-                raise RuntimeError(f"Checkpoint file {checkpoint_path} does not contain 'metadata' key")
-            return state["metadata"]
-
-    # Case 2: Directory containing checkpoints
     if not checkpoint_path.is_dir():
-        raise RuntimeError(f"Checkpoint path does not exist: {checkpoint_path}")
+        raise RuntimeError(f"Checkpoint path is not a directory: {checkpoint_path}")
 
-    # Try to load max_checkpoint (best model)
-    max_checkpoint = checkpoint_path / "max_checkpoint"
-    if max_checkpoint.exists():
-        with open(max_checkpoint, 'rb') as f:
-            state = pickle.load(f)
-            return state["metadata"]
+    metadata_yaml = checkpoint_path / "metadata.yaml"
+    if not metadata_yaml.exists():
+        raise RuntimeError(f"metadata.yaml not found in {checkpoint_path}")
 
-    # Fall back to finding the latest checkpoint file
-    checkpoint_files = list(checkpoint_path.glob("ckpt-*"))
-    if not checkpoint_files:
-        raise RuntimeError(f"No checkpoint files found in {checkpoint_path}")
-
-    # Sort by modification time and get the latest
-    latest_checkpoint = sorted(checkpoint_files, key=lambda p: p.stat().st_mtime)[-1]
-    with open(latest_checkpoint, 'rb') as f:
-        state = pickle.load(f)
-        return state["metadata"]
+    with open(metadata_yaml, 'r') as f:
+        return f.read()
 
 
 def load_config_yaml(config_path: str) -> dict:

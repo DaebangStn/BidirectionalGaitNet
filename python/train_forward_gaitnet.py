@@ -1,7 +1,6 @@
 import argparse
 import pickle
-from pysim import RayEnvManager
-from ray.rllib.utils.torch_utils import convert_to_torch_tensor
+from pysim import EnvManager
 import numpy as np
 import torch
 import os
@@ -171,7 +170,7 @@ class RefLearner:
         }
 
     def set_weights(self, weights) -> None:
-        weights = convert_to_torch_tensor(weights, device=self.device)
+        weights = {k: v.to(self.device) for k, v in weights.items()}
         self.model.load_state_dict(weights)
 
     def get_optimizer_weights(self) -> Dict:
@@ -330,7 +329,7 @@ def main(motion_file=None, env_file=None, name=None, max_iterations=None, exp_di
     file_idx = 0
 
     # Environment Loading
-    env = RayEnvManager(args.env)
+    env = EnvManager(args.env)
 
     # Loading all motion from file Data PreProcessing
     buffers = [[], []]  # {Param, Phi}, {Pose}

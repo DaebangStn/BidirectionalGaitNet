@@ -178,8 +178,7 @@ def run_forward_training(config: TrainingConfig, train_fgn):
     
     # Add original training imports
     from python.forward_gaitnet import RefNN
-    from pysim import RayEnvManager
-    from ray.rllib.utils.torch_utils import convert_to_torch_tensor
+    from pysim import EnvManager
     
     # Set up similar to original train_forward_gaitnet.py but with config
     device = torch.device("cuda" if torch.cuda.is_available() and config.trainer.device == "auto" else config.trainer.device)

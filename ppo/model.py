@@ -1,8 +1,7 @@
 """
-CleanRL Checkpoint Loader for Viewer
+Checkpoint Loader for Viewer
 
-Loads checkpoints saved by ppo/ppo_hierarchical.py and provides compatible
-interface with Ray checkpoint loader (PolicyNN/MuscleNN).
+Loads checkpoints saved by ppo/learn.py and provides PolicyNN/MuscleNN interface.
 """
 
 import os
@@ -16,8 +15,6 @@ from torch.distributions.normal import Normal
 class NoFilter:
     """
     Simple pass-through observation filter (no normalization).
-
-    Replaces Ray's NoFilter to avoid importing Ray dependencies.
     """
     def __init__(self, shape):
         self.shape = shape
@@ -41,9 +38,7 @@ def weights_init(m):
 
 class MuscleNN(nn.Module):
     """
-    Muscle control network (copied from ray_model.py to avoid Ray import).
-
-    Compatible with both Ray and CleanRL checkpoints.
+    Muscle control network for hierarchical muscle-tendon control.
     """
     def __init__(self, num_total_muscle_related_dofs, num_dofs, num_muscles, is_cpu=False, is_cascaded=False):
         super(MuscleNN, self).__init__()
@@ -344,9 +339,7 @@ def _load_cleanrl_checkpoint(checkpoint_dir, num_states, num_actions, use_mcn, d
 def loading_network(checkpoint_dir, num_states, num_actions, use_mcn, device="cpu",
                     num_muscles=None, num_muscle_dofs=None, num_actuator_action=None):
     """
-    Main entry point for loading CleanRL checkpoint.
-
-    Compatible interface with ray_model.loading_network().
+    Main entry point for loading checkpoint.
 
     Args:
         checkpoint_dir: Path to checkpoint directory
@@ -368,9 +361,7 @@ def loading_network(checkpoint_dir, num_states, num_actions, use_mcn, device="cp
 
 def loading_metadata(checkpoint_dir):
     """
-    Load metadata from CleanRL checkpoint.
-
-    Compatible interface with ray_model.loading_metadata().
+    Load metadata from checkpoint.
 
     Args:
         checkpoint_dir: Path to checkpoint directory

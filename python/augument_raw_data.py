@@ -2,7 +2,7 @@
 
 
 import argparse
-from pysim import RayEnvManager
+from pysim import EnvManager
 import numpy as np
 import os
 import sys
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     file_idx = 0
 
     # Environment Loeading
-    env = RayEnvManager(args.env)
+    env = EnvManager(args.env)
 
     # Loading all motion from file Data PreProcessing
     file_idx = 0

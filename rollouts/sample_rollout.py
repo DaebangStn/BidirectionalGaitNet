@@ -1,7 +1,7 @@
 """
 Single-core checkpoint rollout without Ray dependency.
 
-Loads checkpoint via cleanrl_model.py, runs rollouts sequentially using C++ libtorch
+Loads checkpoint via ppo/model.py, runs rollouts sequentially using C++ libtorch
 inference, saves results to HDF5.
 
 Usage:
@@ -24,8 +24,7 @@ from typing import Dict, List, Optional, Tuple
 # Import from local sample/ subdirectory
 from rollouts.sample.pysamplerollout import RolloutSampleEnv, RecordConfig
 
-# Use cleanrl_model.py for checkpoint loading (NOT ray_model.py)
-from python.cleanrl_model import loading_network, loading_metadata
+from ppo.model import loading_network, loading_metadata
 
 # Reuse utilities (non-ray)
 from python.rollout.utils import (
@@ -46,7 +45,7 @@ def _extract_agent_state_dict(policy_wrapper) -> dict:
     We need to reconstruct a state_dict that matches the C++ PolicyNet expectations.
 
     Args:
-        policy_wrapper: CleanRLPolicyWrapper instance from cleanrl_model.py
+        policy_wrapper: CleanRLPolicyWrapper instance from ppo/model.py
 
     Returns:
         dict: State dict with keys matching C++ PolicyNet layer names
@@ -130,7 +129,7 @@ def run_sample_rollout(
     record_config_path = resolve_path(record_config_path)
     record_config_path = str(Path(record_config_path).resolve())
 
-    # 2. Load checkpoint metadata using cleanrl_model.py
+    # 2. Load checkpoint metadata using ppo.model
     print(f"Loading metadata from checkpoint: {checkpoint_path}")
     metadata_xml = loading_metadata(checkpoint_path)
 
@@ -154,7 +153,7 @@ def run_sample_rollout(
     print(f"State dimension: {num_states}, Action dimension: {num_actions}")
     print(f"Hierarchical control: {use_mcn}")
 
-    # 4. Load policy/muscle weights using cleanrl_model.py
+    # 4. Load policy/muscle weights using ppo.model
     print("Loading network weights...")
     policy_wrapper, muscle_state_dict = loading_network(
         checkpoint_path,

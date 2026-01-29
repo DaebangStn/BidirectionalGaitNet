@@ -1,7 +1,7 @@
 """
 Ray-based rollout workers for distributed simulation.
 
-For non-ray utilities, import from python.rollout.utils directly.
+For utilities, import from python.rollout.utils directly.
 """
 
 import ray
@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 from python.rollout.pyrollout import RolloutEnvironment, RolloutRecord
-from python.ray_model import loading_network
+from ppo.model import loading_network
 
 # Import shared utilities
 from python.rollout.utils import (
@@ -108,7 +108,7 @@ class EnvWorker:
 
     def reset(self, param_dict: Optional[Dict[str, float]] = None) -> np.ndarray:
         """Reset environment and record buffer, optionally setting parameters"""
-        # Initialize parameters BEFORE reset (matches training setup in ray_env.py)
+        # Initialize parameters BEFORE reset (matches training setup)
         if param_dict is None:
             self.rollout_env.set_parameters({})  # Empty dict triggers default parameter sampling
         else:

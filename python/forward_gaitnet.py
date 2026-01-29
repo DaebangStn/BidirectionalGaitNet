@@ -4,8 +4,7 @@ import torch.nn as nn
 import numpy as np
 
 import pickle
-from ray.rllib.utils.torch_utils import convert_to_torch_tensor
-from pysim import RayEnvManager
+from pysim import EnvManager
 
 MultiVariateNormal = torch.distributions.Normal
 temp = MultiVariateNormal.log_prob
@@ -81,9 +80,9 @@ class RefNN(nn.Module):
 
 def load_FGN(checkpoint_file, num_paramstates, ref_dof):
     state = pickle.load(open(checkpoint_file, "rb"))
-    env = RayEnvManager(state['metadata'])
+    env = EnvManager(state['metadata'])
     num_paramstates = len(env.getParamState())
     ref_dof = len(env.posToSixDof(env.getPositions()))
     ref = RefNN(num_paramstates + 2, ref_dof, 'cpu')
-    ref.load_state_dict(convert_to_torch_tensor(state['ref']))
+    ref.load_state_dict(state['ref'])
     return ref, state['metadata']

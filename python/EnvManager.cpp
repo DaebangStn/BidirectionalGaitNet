@@ -72,17 +72,17 @@ Eigen::VectorXd toEigenVector(const py::array_t<float> &array)
     return vec;
 }
 
-class RayEnvManager : public Environment
+class EnvManager : public Environment
 {
 public:
     // Default: YAML content
-    RayEnvManager(std::string metadata) : Environment()
+    EnvManager(std::string metadata) : Environment()
     {
         Environment::initialize(metadata);
     }
 
     // Backward compatibility: XML content when is_xml=True
-    RayEnvManager(std::string metadata, bool is_xml) : Environment()
+    EnvManager(std::string metadata, bool is_xml) : Environment()
     {
         if (is_xml) {
             Environment::initialize_xml(metadata);
@@ -161,56 +161,56 @@ public:
 
 PYBIND11_MODULE(pysim, m)
 {
-    py::class_<RayEnvManager>(m, "RayEnvManager")
+    py::class_<EnvManager>(m, "EnvManager")
         .def(py::init<std::string>())  // Default: YAML content
         .def(py::init<std::string, bool>())  // (content, is_xml) for XML backward compatibility
-        // .def("initialize", &RayEnvManager::initialize)
-        .def("setAction", &RayEnvManager::setAction)
-        .def("step", &RayEnvManager::step)
-        .def("reset", &RayEnvManager::reset, py::arg("phase") = -1.0)
-        .def("isTerminated", &RayEnvManager::isTerminated)
-        .def("isTruncated", &RayEnvManager::isTruncated)
-        .def("getReward", &RayEnvManager::getReward)
-        .def("getInfoMap", &RayEnvManager::getInfoMap)
-        .def("getState", &RayEnvManager::getState)
-        .def("getAction", &RayEnvManager::getAction)
+        // .def("initialize", &EnvManager::initialize)
+        .def("setAction", &EnvManager::setAction)
+        .def("step", &EnvManager::step)
+        .def("reset", &EnvManager::reset, py::arg("phase") = -1.0)
+        .def("isTerminated", &EnvManager::isTerminated)
+        .def("isTruncated", &EnvManager::isTruncated)
+        .def("getReward", &EnvManager::getReward)
+        .def("getInfoMap", &EnvManager::getInfoMap)
+        .def("getState", &EnvManager::getState)
+        .def("getAction", &EnvManager::getAction)
 
-        .def("getNumAction", &RayEnvManager::getNumAction)
-        .def("getNumActuatorAction", &RayEnvManager::getNumActuatorAction)
-        .def("getNumMuscles", &RayEnvManager::getNumMuscles)
-        .def("getNumMuscleDof", &RayEnvManager::getNumMuscleDof)
+        .def("getNumAction", &EnvManager::getNumAction)
+        .def("getNumActuatorAction", &EnvManager::getNumActuatorAction)
+        .def("getNumMuscles", &EnvManager::getNumMuscles)
+        .def("getNumMuscleDof", &EnvManager::getNumMuscleDof)
 
-        .def("getMetadata", &RayEnvManager::getMetadata)
-        .def("getRandomMuscleTuple", &RayEnvManager::getRandomMuscleTuple)
-        .def("getUseMuscle", &RayEnvManager::getUseMuscle)
-        .def("setMuscleNetwork", &RayEnvManager::setMuscleNetwork)
-        .def("setMuscleNetworkWeight", &RayEnvManager::setMuscleNetworkWeight)
-        .def("isTwoLevelController", &RayEnvManager::isTwoLevelController)
+        .def("getMetadata", &EnvManager::getMetadata)
+        .def("getRandomMuscleTuple", &EnvManager::getRandomMuscleTuple)
+        .def("getUseMuscle", &EnvManager::getUseMuscle)
+        .def("setMuscleNetwork", &EnvManager::setMuscleNetwork)
+        .def("setMuscleNetworkWeight", &EnvManager::setMuscleNetworkWeight)
+        .def("isTwoLevelController", &EnvManager::isTwoLevelController)
 
-        .def("getUseCascading", &RayEnvManager::getUseCascading)
+        .def("getUseCascading", &EnvManager::getUseCascading)
 
-        .def("getParamState", &RayEnvManager::getParamState)
-        .def("updateParamState", &RayEnvManager::updateParamState)
+        .def("getParamState", &EnvManager::getParamState)
+        .def("updateParamState", &EnvManager::updateParamState)
          
         // For Rollout (Forward GaitNet)
-        .def("getNormalizedParamState", &RayEnvManager::getNormalizedParamState)
+        .def("getNormalizedParamState", &EnvManager::getNormalizedParamState)
 
-        .def("getPositions", &RayEnvManager::getPositions)
+        .def("getPositions", &EnvManager::getPositions)
 
-        .def("posToSixDof", &RayEnvManager::posToSixDof)
-        .def("sixDofToPos", &RayEnvManager::sixDofToPos)
+        .def("posToSixDof", &EnvManager::posToSixDof)
+        .def("sixDofToPos", &EnvManager::sixDofToPos)
 
-        .def("getMirrorParamState", &RayEnvManager::getMirrorParamState)
-        .def("getMirrorPositions", &RayEnvManager::getMirrorPositions)
-        .def("getParamStateFromNormalized", &RayEnvManager::getParamStateFromNormalized)
-        .def("getNormalizedParamStateFromParam", &RayEnvManager::getNormalizedParamStateFromParam)
-        .def("getNumKnownParam", &RayEnvManager::getNumKnownParam)
+        .def("getMirrorParamState", &EnvManager::getMirrorParamState)
+        .def("getMirrorPositions", &EnvManager::getMirrorPositions)
+        .def("getParamStateFromNormalized", &EnvManager::getParamStateFromNormalized)
+        .def("getNormalizedParamStateFromParam", &EnvManager::getNormalizedParamStateFromParam)
+        .def("getNumKnownParam", &EnvManager::getNumKnownParam)
 
-        .def("getNormalizedParamSample", &RayEnvManager::getNormalizedParamSample)
+        .def("getNormalizedParamSample", &EnvManager::getNormalizedParamSample)
 
         // get min v
-        .def("getParamMin", &RayEnvManager::getParamMin)
-        .def("getParamMax", &RayEnvManager::getParamMax)
+        .def("getParamMin", &EnvManager::getParamMin)
+        .def("getParamMax", &EnvManager::getParamMax)
 
         ;
 }
