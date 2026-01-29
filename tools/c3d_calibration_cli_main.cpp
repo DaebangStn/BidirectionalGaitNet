@@ -169,17 +169,23 @@ std::vector<std::string> discoverMotions(const std::string& gaitDir,
 
     if (!fs::exists(gaitDir)) return motions;
 
+    // Convert filter to lowercase for case-insensitive matching
+    std::string filterLower = motionFilter;
+    std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+
     for (const auto& entry : fs::directory_iterator(gaitDir)) {
         if (!entry.is_regular_file()) continue;
         if (entry.path().extension() != ".c3d") continue;
 
         std::string stem = entry.path().stem().string();
 
-        // Skip static files
-        if (stem.find("Static") != std::string::npos) continue;
+        // Skip static files (case-insensitive)
+        std::string stemLower = stem;
+        std::transform(stemLower.begin(), stemLower.end(), stemLower.begin(), ::tolower);
+        if (stemLower.find("static") != std::string::npos) continue;
 
-        // Apply filter if specified
-        if (!motionFilter.empty() && stem.find(motionFilter) == std::string::npos) {
+        // Apply filter if specified (case-insensitive)
+        if (!filterLower.empty() && stemLower.find(filterLower) == std::string::npos) {
             continue;
         }
 

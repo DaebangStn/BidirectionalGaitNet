@@ -1648,6 +1648,7 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
     const auto& mappings = config.markerMappings;
 
     if (mappings.empty()) {
+        LOG_WARN("[C3DProcessor] No marker mappings in fitting config - skeleton_fitting.yaml may not have been loaded");
         ImGui::Text("No marker mappings defined in skeleton_fitting.yaml");
         return;
     }

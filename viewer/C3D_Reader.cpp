@@ -471,6 +471,9 @@ C3D* C3D_Reader::loadC3DMarkersOnly(const std::string& path)
 {
     LOG_VERBOSE("[C3D_Reader] loadC3DMarkersOnly started for: " << path);
 
+    // Load skeleton fitting config (needed for marker mappings)
+    loadSkeletonFittingConfig();
+
     // Parse C3D file - creates C3D* with raw markers
     C3D* c3dData = parseC3DFile(path);
     if (!c3dData) {

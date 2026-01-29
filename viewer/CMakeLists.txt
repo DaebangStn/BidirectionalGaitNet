@@ -216,3 +216,22 @@ target_link_libraries(c3d_calibration_cli
     rm
     ${HDF5_CXX_LIBRARIES}
 )
+
+# Skeleton Global Export - Export global transforms of skeleton body nodes
+# Used for visualizing skeleton calibration variability across motion trials
+add_executable(skeleton_global_export
+    "../tools/skeleton_global_export.cpp"
+)
+
+target_include_directories(skeleton_global_export PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../sim
+)
+
+target_link_libraries(skeleton_global_export
+    sim
+    dart
+    Boost::program_options
+    yaml-cpp
+    rm
+)

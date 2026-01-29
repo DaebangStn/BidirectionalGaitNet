@@ -1312,12 +1312,142 @@ void inspectC3D(rm::ResourceManager& mgr, const std::string& uri) {
 }
 
 void printUsage(const char* progName) {
-    std::cerr << "Usage: " << progName << " [uri]\n\n";
+    std::cerr << "Usage: " << progName << " [options] [uri]\n\n";
     std::cerr << "Interactive mode (ncurses):\n";
     std::cerr << "  " << progName << "                      # interactive PID/file selection\n\n";
     std::cerr << "Direct inspection:\n";
     std::cerr << "  " << progName << " @pid:CP001/pre/gait/file.c3d\n";
-    std::cerr << "  " << progName << " /path/to/file.c3d\n";
+    std::cerr << "  " << progName << " /path/to/file.c3d\n\n";
+    std::cerr << "Batch operations:\n";
+    std::cerr << "  " << progName << " --batch-merge        # merge trimmed_* files for all PIDs\n";
+}
+
+// Non-interactive batch merge for all PIDs
+void runBatchMergeNonInteractive(rm::ResourceManager& mgr) {
+    std::string filterLower = "trimmed_";
+
+    // Get all PIDs
+    std::vector<std::string> pids;
+    try {
+        pids = mgr.list("@pid:");
+        std::sort(pids.begin(), pids.end());
+    } catch (const rm::RMError& e) {
+        std::cerr << "Error listing PIDs: " << e.what() << std::endl;
+        return;
+    }
+
+    std::cout << "Found " << pids.size() << " PIDs" << std::endl;
+
+    int total = pids.size() * 3;  // pre, op1, op2
+    int current = 0;
+    int merged = 0;
+
+    for (const auto& pid : pids) {
+        for (const auto& visit : {"pre", "op1", "op2"}) {
+            current++;
+            std::string uri = "@pid:" + pid + "/" + visit + "/gait";
+
+            // List and filter files
+            std::vector<std::string> trimmedFiles;
+            try {
+                auto files = mgr.list(uri);
+                for (const auto& f : files) {
+                    std::string fLower = f;
+                    std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
+
+                    if (fLower.find(filterLower) == 0 &&
+                        fLower.find("_unified.c3d") == std::string::npos) {
+                        trimmedFiles.push_back(f);
+                    }
+                }
+            } catch (const rm::RMError&) {
+                continue;  // Directory doesn't exist
+            }
+
+            if (trimmedFiles.empty()) {
+                continue;
+            }
+
+            std::sort(trimmedFiles.begin(), trimmedFiles.end());
+
+            std::cout << "[" << current << "/" << total << "] " << pid << "/" << visit
+                      << ": merging " << trimmedFiles.size() << " files..." << std::flush;
+
+            try {
+                // Load first file to get labels and frame rate
+                auto firstHandle = mgr.fetch(uri + "/" + trimmedFiles[0]);
+                ezc3d::c3d firstC3d(firstHandle.local_path().string());
+
+                double frameRate = firstC3d.header().frameRate();
+                std::vector<std::string> labels;
+                try {
+                    labels = firstC3d.parameters().group("POINT").parameter("LABELS").valuesAsString();
+                } catch (...) {}
+
+                // Create output c3d
+                ezc3d::c3d output;
+
+                ezc3d::ParametersNS::GroupNS::Parameter rateParam("RATE");
+                rateParam.set(frameRate);
+                output.parameter("POINT", rateParam);
+
+                if (!labels.empty()) {
+                    output.point(labels);
+                }
+
+                // Merge all frames
+                size_t totalFrames = 0;
+                for (const auto& filename : trimmedFiles) {
+                    auto handle = mgr.fetch(uri + "/" + filename);
+                    ezc3d::c3d inputC3d(handle.local_path().string());
+
+                    size_t numFrames = inputC3d.data().nbFrames();
+                    totalFrames += numFrames;
+                    for (size_t frameIdx = 0; frameIdx < numFrames; ++frameIdx) {
+                        const auto& srcFrame = inputC3d.data().frame(frameIdx);
+                        const auto& srcPoints = srcFrame.points();
+
+                        ezc3d::DataNS::Frame outFrame;
+                        ezc3d::DataNS::Points3dNS::Points outPts(srcPoints.nbPoints());
+
+                        for (size_t i = 0; i < srcPoints.nbPoints(); ++i) {
+                            const auto& srcPt = srcPoints.point(i);
+                            ezc3d::DataNS::Points3dNS::Point pt;
+                            pt.set(srcPt.x(), srcPt.y(), srcPt.z());
+                            outPts.point(pt, i);
+                        }
+                        outFrame.add(outPts);
+                        output.frame(outFrame);
+                    }
+                }
+
+                // Determine output path
+                std::string outputName = "trimmed_unified.c3d";
+                fs::path outputPath;
+
+                if (mgr.exists(uri + "/" + outputName)) {
+                    auto outputHandle = mgr.fetch(uri + "/" + outputName);
+                    outputPath = outputHandle.local_path();
+                } else {
+                    fs::path c3dDir = firstHandle.local_path().parent_path();
+                    if (c3dDir.filename() == "Generated_C3D_files") {
+                        outputPath = c3dDir.parent_path() / outputName;
+                    } else {
+                        outputPath = c3dDir / outputName;
+                    }
+                }
+
+                output.write(outputPath.string());
+                std::cout << " OK (" << totalFrames << " frames)" << std::endl;
+                merged++;
+
+            } catch (const std::exception& e) {
+                std::cout << " FAILED: " << e.what() << std::endl;
+            }
+        }
+    }
+
+    std::cout << "\nBatch merge complete: " << merged << " unified files created" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -1334,6 +1464,12 @@ int main(int argc, char* argv[]) {
 
     if (arg == "-h" || arg == "--help") {
         printUsage(argv[0]);
+        return 0;
+    }
+
+    if (arg == "--batch-merge") {
+        // Non-interactive batch merge
+        runBatchMergeNonInteractive(mgr);
         return 0;
     }
 
