@@ -5,10 +5,9 @@
 #include <iostream>
 
 RolloutSampleEnv::RolloutSampleEnv(const std::string& metadata) {
-    // Use initialize() which auto-detects XML vs YAML format
-    mEnv.initialize(metadata);
-    mEnv.reset();
-    mUseMuscle = mEnv.isTwoLevelController();
+    mEnv = std::make_unique<Environment>(metadata);
+    mEnv->reset();
+    mUseMuscle = mEnv->isTwoLevelController();
 }
 
 RolloutSampleEnv::~RolloutSampleEnv() = default;
@@ -20,19 +19,19 @@ void RolloutSampleEnv::LoadRecordConfig(const std::string& yaml_path) {
     if (mRecordConfig.metabolic.enabled) {
         const std::string& type = mRecordConfig.metabolic.type;
         if (type == "LEGACY") {
-            mEnv.getCharacter()->setMetabolicType(LEGACY);
+            mEnv->getCharacter()->setMetabolicType(LEGACY);
         } else if (type == "A") {
-            mEnv.getCharacter()->setMetabolicType(A);
+            mEnv->getCharacter()->setMetabolicType(A);
         } else if (type == "A2") {
-            mEnv.getCharacter()->setMetabolicType(A2);
+            mEnv->getCharacter()->setMetabolicType(A2);
         } else if (type == "MA") {
-            mEnv.getCharacter()->setMetabolicType(MA);
+            mEnv->getCharacter()->setMetabolicType(MA);
         } else if (type == "MA2") {
-            mEnv.getCharacter()->setMetabolicType(MA2);
+            mEnv->getCharacter()->setMetabolicType(MA2);
         } else {
             std::cerr << "Warning: Unknown MetabolicType '" << type
                       << "', using LEGACY" << std::endl;
-            mEnv.getCharacter()->setMetabolicType(LEGACY);
+            mEnv->getCharacter()->setMetabolicType(LEGACY);
         }
         std::cout << "MetabolicType set to: " << type << std::endl;
     }
@@ -67,22 +66,22 @@ void RolloutSampleEnv::LoadMuscleWeights(py::object weights) {
         std::cerr << "Warning: LoadMuscleWeights called but not using muscle network" << std::endl;
         return;
     }
-    mEnv.setMuscleNetworkWeight(weights);
+    mEnv->setMuscleNetworkWeight(weights);
     std::cout << "Muscle network weights loaded successfully" << std::endl;
 }
 
 void RolloutSampleEnv::SetParameters(const std::map<std::string, double>& params) {
     if (params.empty()) {
         // Empty parameters - sample from default distribution
-        mEnv.updateParamState();
+        mEnv->updateParamState();
         return;
     }
 
     // Get parameter names from environment
-    const std::vector<std::string>& param_names = mEnv.getParamName();
+    const std::vector<std::string>& param_names = mEnv->getParamName();
 
     // Get default parameter values
-    Eigen::VectorXd param_state = mEnv.getParamDefault();
+    Eigen::VectorXd param_state = mEnv->getParamDefault();
 
     // Fill in provided parameters (overriding defaults)
     for (size_t i = 0; i < param_names.size(); ++i) {
@@ -93,30 +92,30 @@ void RolloutSampleEnv::SetParameters(const std::map<std::string, double>& params
     }
 
     // Set the parameter state
-    mEnv.setParamState(param_state);
+    mEnv->setParamState(param_state);
 }
 
 Eigen::VectorXd RolloutSampleEnv::InterpolatePose(const Eigen::VectorXd& pose1,
                                                    const Eigen::VectorXd& pose2,
                                                    double t,
                                                    bool extrapolate_root) {
-    return mEnv.getCharacter()->interpolatePose(pose1, pose2, t, extrapolate_root);
+    return mEnv->getCharacter()->interpolatePose(pose1, pose2, t, extrapolate_root);
 }
 
 void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
     std::unordered_map<std::string, float> data;
 
     // Basic fields (always recorded)
-    data["step"] = mEnv.getSimulationCount();
-    data["time"] = mEnv.getSimTime();
-    data["cycle"] = mEnv.getGaitPhase()->getAdaptiveCycleCount();
+    data["step"] = mEnv->getSimulationCount();
+    data["time"] = mEnv->getSimTime();
+    data["cycle"] = mEnv->getGaitPhase()->getAdaptiveCycleCount();
 
-    auto skel = mEnv.getCharacter()->getSkeleton();
+    auto skel = mEnv->getCharacter()->getSkeleton();
 
     // Contact and GRF fields
     if (mRecordConfig.foot.enabled) {
-        Eigen::Vector2i contact = mEnv.getIsContact();
-        Eigen::Vector2d grf = mEnv.getFootGRF();
+        Eigen::Vector2i contact = mEnv->getIsContact();
+        Eigen::Vector2d grf = mEnv->getFootGRF();
 
         if (mRecordConfig.foot.contact_left) {
             data["contact/left"] = static_cast<float>(contact[0]);
@@ -136,7 +135,7 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
     if (mRecordConfig.kinematics.enabled) {
         // All joint positions as a single vector
         if (mRecordConfig.kinematics.all) {
-            record->addVector("motions", mEnv.getSimulationCount() - 1, skel->getPositions().cast<float>());
+            record->addVector("motions", mEnv->getSimulationCount() - 1, skel->getPositions().cast<float>());
         }
 
         // Root position
@@ -257,19 +256,19 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
 
     // Metabolic energy recording
     if (mRecordConfig.metabolic.enabled) {
-        float stepEnergy = mEnv.getCharacter()->getMetabolicStepEnergy();
+        float stepEnergy = mEnv->getCharacter()->getMetabolicStepEnergy();
         data["metabolic/step_energy"] = stepEnergy;
     }
 
     // Muscle recording (vector data -> matrix_data)
     if (mRecordConfig.muscle.enabled) {
-        auto character = mEnv.getCharacter();
+        auto character = mEnv->getCharacter();
         const auto& muscles = character->getMuscles();
         int numMuscles = muscles.size();
 
         if (mRecordConfig.muscle.activation) {
             Eigen::VectorXd activations = character->getActivations();
-            record->addVector("muscle/activation", mEnv.getSimulationCount() - 1,
+            record->addVector("muscle/activation", mEnv->getSimulationCount() - 1,
                              activations.cast<float>());
         }
 
@@ -278,7 +277,7 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
             for (int i = 0; i < numMuscles; i++) {
                 passive[i] = static_cast<float>(muscles[i]->Getf_p());
             }
-            record->addVector("muscle/passive", mEnv.getSimulationCount() - 1, passive);
+            record->addVector("muscle/passive", mEnv->getSimulationCount() - 1, passive);
         }
 
         if (mRecordConfig.muscle.force) {
@@ -286,7 +285,7 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
             for (int i = 0; i < numMuscles; i++) {
                 force[i] = static_cast<float>(muscles[i]->GetForce());
             }
-            record->addVector("muscle/force", mEnv.getSimulationCount() - 1, force);
+            record->addVector("muscle/force", mEnv->getSimulationCount() - 1, force);
         }
 
         if (mRecordConfig.muscle.lm_norm) {
@@ -294,11 +293,11 @@ void RolloutSampleEnv::RecordStep(PyRolloutRecord* record) {
             for (int i = 0; i < numMuscles; i++) {
                 lm_norm[i] = static_cast<float>(muscles[i]->GetLmNorm());
             }
-            record->addVector("muscle/lm_norm", mEnv.getSimulationCount() - 1, lm_norm);
+            record->addVector("muscle/lm_norm", mEnv->getSimulationCount() - 1, lm_norm);
         }
     }
 
-    record->add(mEnv.getSimulationCount() - 1, data);
+    record->add(mEnv->getSimulationCount() - 1, data);
 }
 
 py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
@@ -308,14 +307,14 @@ py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
 
     // 1. Set parameters (or sample random)
     if (param_dict.is_none()) {
-        mEnv.updateParamState();  // Random sampling
+        mEnv->updateParamState();  // Random sampling
     } else {
         auto params = param_dict.cast<std::map<std::string, double>>();
         SetParameters(params);
     }
 
     // 2. Reset environment
-    mEnv.reset();
+    mEnv->reset();
 
     // 3. Create record
     PyRolloutRecord record(mRecordConfig);
@@ -326,35 +325,35 @@ py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
     float cumulative_energy = 0.0f;
     int last_cycle = -1;
 
-    while (current_cycle < mTargetCycles && !mEnv.isTerminated()) {
+    while (current_cycle < mTargetCycles && !mEnv->isTerminated()) {
         // Get state
-        Eigen::VectorXd state_d = mEnv.getState();
+        Eigen::VectorXd state_d = mEnv->getState();
         Eigen::VectorXf state = state_d.cast<float>();
 
         // Policy inference (single forward pass)
         auto [action, value, logprob] = mPolicy->sample_action(state);
 
         // Step environment
-        mEnv.setAction(action.cast<double>().eval());
-        mEnv.preStep();
+        mEnv->setAction(action.cast<double>().eval());
+        mEnv->preStep();
 
-        int numSubSteps = mEnv.getNumSubSteps();
+        int numSubSteps = mEnv->getNumSubSteps();
         for (int i = 0; i < numSubSteps; i++) {
-            mEnv.muscleStep();
+            mEnv->muscleStep();
             // Clear gait cycle flag immediately after each muscleStep
             // to prevent mWorldPhaseCount from incrementing multiple times
-            mEnv.clearGaitCycleComplete();
+            mEnv->clearGaitCycleComplete();
             RecordStep(&record);
 
             // Track cumulative energy per cycle
             if (mRecordConfig.metabolic.enabled && mRecordConfig.metabolic.cumulative) {
-                cumulative_energy += mEnv.getCharacter()->getMetabolicStepEnergy();
+                cumulative_energy += mEnv->getCharacter()->getMetabolicStepEnergy();
             }
         }
-        mEnv.postStep();
+        mEnv->postStep();
 
         // Check cycle completion
-        current_cycle = mEnv.getGaitPhase()->getAdaptiveCycleCount();
+        current_cycle = mEnv->getGaitPhase()->getAdaptiveCycleCount();
 
         // Record cycle-level attributes when cycle changes
         if (current_cycle != last_cycle && last_cycle >= 0) {
@@ -382,7 +381,7 @@ py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
     result["fields"] = record.get_fields();
 
     // Parameter state
-    Eigen::VectorXd param_state = mEnv.getParamState(false);
+    Eigen::VectorXd param_state = mEnv->getParamState(false);
     py::array_t<float> param_arr(param_state.size());
     auto param_buf = param_arr.mutable_unchecked<1>();
     for (int i = 0; i < param_state.size(); ++i) {
@@ -397,7 +396,7 @@ py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
     py::dict metrics;
     metrics["steps"] = static_cast<int>(record.get_nrow());
     metrics["cycles"] = current_cycle;
-    metrics["terminated"] = mEnv.isTerminated();
+    metrics["terminated"] = mEnv->isTerminated();
     result["metrics"] = metrics;
 
     return result;
@@ -405,28 +404,28 @@ py::dict RolloutSampleEnv::CollectRollout(py::object param_dict) {
 
 int RolloutSampleEnv::GetStateDim() const {
     // Get state dimension from environment
-    return const_cast<Environment&>(mEnv).getState().size();
+    return const_cast<Environment&>(*mEnv).getState().size();
 }
 
 int RolloutSampleEnv::GetActionDim() const {
-    return const_cast<Environment&>(mEnv).getNumAction();
+    return const_cast<Environment&>(*mEnv).getNumAction();
 }
 
 int RolloutSampleEnv::GetSkeletonDOF() const {
-    return const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
+    return const_cast<Environment&>(*mEnv).getCharacter()->getSkeleton()->getNumDofs();
 }
 
 double RolloutSampleEnv::GetMass() const {
-    return const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getMass();
+    return const_cast<Environment&>(*mEnv).getCharacter()->getSkeleton()->getMass();
 }
 
 std::vector<std::string> RolloutSampleEnv::GetParameterNames() {
-    const std::vector<std::string>& param_names = mEnv.getParamName();
+    const std::vector<std::string>& param_names = mEnv->getParamName();
     return std::vector<std::string>(param_names.begin(), param_names.end());
 }
 
 std::vector<std::string> RolloutSampleEnv::GetMuscleNames() {
-    const auto& muscles = mEnv.getCharacter()->getMuscles();
+    const auto& muscles = mEnv->getCharacter()->getMuscles();
     std::vector<std::string> names;
     names.reserve(muscles.size());
     for (const auto& muscle : muscles) {
@@ -436,6 +435,6 @@ std::vector<std::string> RolloutSampleEnv::GetMuscleNames() {
 }
 
 std::vector<std::string> RolloutSampleEnv::GetRecordFields() const {
-    int skeleton_dof = const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
+    int skeleton_dof = const_cast<Environment&>(*mEnv).getCharacter()->getSkeleton()->getNumDofs();
     return RolloutRecord::FieldsFromConfig(mRecordConfig, skeleton_dof);
 }

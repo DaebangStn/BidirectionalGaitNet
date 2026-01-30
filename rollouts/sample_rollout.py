@@ -131,7 +131,7 @@ def run_sample_rollout(
 
     # 2. Load checkpoint metadata using ppo.model
     print(f"Loading metadata from checkpoint: {checkpoint_path}")
-    metadata_xml = loading_metadata(checkpoint_path)
+    metadata_path = loading_metadata(checkpoint_path)
 
     print(f"Loading rollout configuration: {record_config_path}")
     config = load_config_yaml(record_config_path)
@@ -142,7 +142,7 @@ def run_sample_rollout(
 
     # 3. Create environment
     print("Creating RolloutSampleEnv...")
-    env = RolloutSampleEnv(metadata_xml)
+    env = RolloutSampleEnv(metadata_path)
     env.load_config(record_config_path)
     env.set_target_cycles(target_cycles)
 
@@ -194,7 +194,7 @@ def run_sample_rollout(
     file_config = {
         'parameter_names': parameter_names,
         'checkpoint_path': checkpoint_path,
-        'metadata_xml': metadata_xml,
+        'metadata_path': metadata_path,
         'config_content': config_content,
         'rollout_time': datetime.now().isoformat(),
         'param_file': param_file if param_file else "random",

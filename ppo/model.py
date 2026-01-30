@@ -141,37 +141,6 @@ def _detect_cleanrl_checkpoint(path):
     return os.path.exists(agent_pt)
 
 
-def _load_metadata_yaml(checkpoint_dir):
-    """
-    Load metadata.yaml from CleanRL checkpoint directory.
-    Falls back to default A2_sep.yaml if not found.
-
-    Args:
-        checkpoint_dir: Path to checkpoint directory
-
-    Returns:
-        str: YAML metadata string
-    """
-    metadata_path = os.path.join(checkpoint_dir, "metadata.yaml")
-
-    if not os.path.exists(metadata_path):
-        # Use default environment config
-        default_config = "data/env/A.yaml"
-        if os.path.exists(default_config):
-            print(f"Warning: metadata.yaml not found in {checkpoint_dir}")
-            print(f"Using default environment config: {default_config}")
-            with open(default_config, 'r') as f:
-                return f.read()
-        else:
-            raise FileNotFoundError(
-                f"metadata.yaml not found in {checkpoint_dir} and default config not found at {default_config}\n"
-                f"Please copy environment config: cp data/env/A.yaml {checkpoint_dir}/metadata.yaml"
-            )
-
-    with open(metadata_path, 'r') as f:
-        return f.read()
-
-
 class CleanRLPolicyWrapper:
     """
     Wrapper to make CleanRL Agent compatible with viewer's PolicyNN interface.
@@ -361,12 +330,15 @@ def loading_network(checkpoint_dir, num_states, num_actions, use_mcn, device="cp
 
 def loading_metadata(checkpoint_dir):
     """
-    Load metadata from checkpoint.
+    Return path to metadata.yaml in checkpoint directory.
 
     Args:
         checkpoint_dir: Path to checkpoint directory
 
     Returns:
-        str: XML metadata content from metadata.yaml
+        str: Path to metadata.yaml file
     """
-    return _load_metadata_yaml(checkpoint_dir)
+    metadata_path = os.path.join(checkpoint_dir, "metadata.yaml")
+    if not os.path.exists(metadata_path):
+        raise FileNotFoundError(f"metadata.yaml not found in {checkpoint_dir}")
+    return metadata_path

@@ -7,7 +7,9 @@
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <random>
+#include <sstream>
 
 // Thread-safe random number generation
 // Each thread gets its own random number generator to avoid data races
@@ -27,12 +29,11 @@ namespace {
     }
 }
 
-Environment::Environment()
+Environment::Environment(const std::string& filepath)
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
-    mUseMirror(true), mLocalState(false), mLimitY(0.6)
+    mUseMirror(true), mLocalState(false), mLimitY(0.6), mIsResidual(true)
 {
     mWorld = std::make_shared<dart::simulation::World>();
-    mIsResidual = true;
     mSimulationCount = 0;
     mActionScale = 0.04;
     mIncludeMetabolicReward = true;
@@ -65,446 +66,17 @@ Environment::Environment()
     mHorizon = 600;
 
     // Initialize reward config with defaults (already set in struct definition)
-}
 
-Environment::~Environment()
-{
-}
-
-void Environment::initialize(std::string content)
-{
-    mMetadata = content;
-
-    // Auto-detect format by examining first non-whitespace character
-    size_t start = content.find_first_not_of(" \t\n\r");
-    if (start == std::string::npos) {
-        // Empty content - use YAML as default
-        parseEnvConfigYaml(content);
-        return;
-    }
-
-    // Detect format: XML starts with '<', YAML doesn't
-    if (content[start] == '<') parseEnvConfigXml(content);
-    else parseEnvConfigYaml(content);
-}
-
-void Environment::initialize_xml(std::string xml_content)
-{
-    // Backward compatibility: XML content
-    mMetadata = xml_content;
-    parseEnvConfigXml(xml_content);
-}
-
-void Environment::parseEnvConfigXml(const std::string& metadata)
-{
-    TiXmlDocument doc;
-    doc.Parse(metadata.c_str());
-
-    // Cascading Setting
-    if (doc.FirstChildElement("cascading") != NULL)
-        mUseCascading = true;
-
-    // Skeleton Loading
-    if (TiXmlElement* skeletonElem = doc.FirstChildElement("skeleton"))
-    {
-        std::string skeletonPath = Trim(std::string(skeletonElem->GetText()));
-        std::string resolvedSkeletonPath = rm::resolve(skeletonPath);
-        mCharacter = new Character(resolvedSkeletonPath, SKEL_DEFAULT);
-
-        std::string _actTypeString;
-        if (skeletonElem->Attribute("actuator") != NULL) _actTypeString = Trim(skeletonElem->Attribute("actuator"));
-        else if (skeletonElem->Attribute("actuactor") != NULL) _actTypeString = Trim(skeletonElem->Attribute("actuactor"));
-        ActuatorType _actType = getActuatorType(_actTypeString);
-        mCharacter->setActuatorType(_actType);
-
-        mRefPose = mCharacter->getSkeleton()->getPositions();
-        mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
-    }
-
-    // Muscle Loading
-    if (doc.FirstChildElement("muscle") != NULL)
-    {
-        // Check LBS Weight Setting
-        bool meshLbsWeight = false;
-
-        if (doc.FirstChildElement("meshLbsWeight") != NULL)
-            meshLbsWeight = doc.FirstChildElement("meshLbsWeight")->BoolText();
-
-        if (doc.FirstChildElement("useJointState") != NULL)
-            mUseJointState = doc.FirstChildElement("useJointState")->BoolText();
-
-        std::string muscle_path = Trim(std::string(doc.FirstChildElement("muscle")->GetText()));
-        std::string resolvedMusclePath = rm::resolve(muscle_path);
-        mCharacter->setMuscles(resolvedMusclePath, meshLbsWeight);
-        mUseMuscle = true;
-    }
-    
-    // Phase Displacement Reward
-    if (doc.FirstChildElement("timeWarping") != NULL)
-        mPhaseDisplacementScale = doc.FirstChildElement("timeWarping")->DoubleText();
-
-    // mAction Setting
-    ActuatorType _actType = mCharacter->getActuatorType();
-    if (_actType == tor || _actType == pd || _actType == mass || _actType == mass_lower)
-    {
-        mAction = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
-        mNumActuatorAction = mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
-    }
-    else if (_actType == mus)
-    {
-        mAction = Eigen::VectorXd::Zero(mCharacter->getMuscles().size() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
-        mNumActuatorAction = mCharacter->getMuscles().size();
-    }
-    // Ground Loading (hardcoded)
-    mGround = BuildFromFile(rm::resolve("@data/ground.xml"), SKEL_DEFAULT);
-
-    // Controller Setting (hardcoded)
-    mIsResidual = true;
-
-    // Simulation Setting
-    if (doc.FirstChildElement("simHz") != NULL)
-        mSimulationHz = doc.FirstChildElement("simHz")->IntText();
-    if (doc.FirstChildElement("controlHz") != NULL)
-        mControlHz = doc.FirstChildElement("controlHz")->IntText();
-
-    if (mSimulationHz % mControlHz != 0) {
-        std::cout << "[ERROR] Simulation Hz must be divisible by control Hz. Got " << mSimulationHz << " / " << mControlHz << " != 0" << std::endl;
-        exit(-1);
-    }
-    mNumSubSteps = mSimulationHz / mControlHz;
-
-    // Action Scale
-    if (doc.FirstChildElement("actionScale") != NULL)
-        mActionScale = doc.FirstChildElement("actionScale")->DoubleText();
-
-    // Inference Per Sim (hardcoded)
-    mInferencePerSim = 1;
-
-    if (doc.FirstChildElement("musclePoseOptimization") != NULL)
-    {
-        if (doc.FirstChildElement("musclePoseOptimization")->Attribute("rot") != NULL)
-        {
-            if (std::string(doc.FirstChildElement("musclePoseOptimization")->Attribute("rot")) == "one_foot")
-                mPoseOptimizationMode = 0;
-            else if (std::string(doc.FirstChildElement("musclePoseOptimization")->Attribute("rot")) == "mid_feet")
-                mPoseOptimizationMode = 1;
-        }
-        mMusclePoseOptimization = doc.FirstChildElement("musclePoseOptimization")->BoolText();
-    }
-
-    // Advanced settings (hardcoded)
-    mCharacter->setTorqueClipping(false);
-    mCharacter->setIncludeJtPinSPD(false);
-
-    if (doc.FirstChildElement("rewardType") != NULL)
-    {
-        std::string str_rewardType = doc.FirstChildElement("rewardType")->GetText();
-        if (str_rewardType == "deepmimic")
-            mRewardType = deepmimic;
-        if (str_rewardType == "gaitnet")
-            mRewardType = gaitnet;
-        if (str_rewardType == "scadiver")
-            mRewardType = scadiver;
-    }
-
-    // EOEType is always tuple (hardcoded)
-
-    // Simulation World Wetting
-    mWorld->setTimeStep(1.0 / mSimulationHz);
-    // mWorld->getConstraintSolver()->setLCPSolver(dart::common::make_unique<dart::constraint::PGSLCPSolver>(mWorld->getTimeStep));
-    // mWorld->setConstraintSolver(std::make_unique<dart::constraint::BoxedLcpConstraintSolver>(std::make_shared<dart::constraint::PgsBoxedLcpSolver>()));
-    mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
-    mWorld->setGravity(Eigen::Vector3d(0, -9.8, 0.0));
-    // Add Character
-    mWorld->addSkeleton(mCharacter->getSkeleton());
-    // Add Ground
-    mWorld->addSkeleton(mGround);
-
-    // Motion Loading (BVH or NPZ)
-    // World Setting 후에 함. 왜냐하면 Height Calibration 을 위해서는 충돌 감지를 필요로 하기 때문.
-    if (doc.FirstChildElement("bvh") != NULL)
-    {
-        std::string bvh_path = Trim(std::string(doc.FirstChildElement("bvh")->GetText()));
-        std::string resolvedBvhPath = rm::resolve(bvh_path);
-        LOG_VERBOSE("[Environment] BVH Path resolved: " << bvh_path << " -> " << resolvedBvhPath);
-        BVH *new_bvh = new BVH(resolvedBvhPath);
-        new_bvh->setMode(std::string(doc.FirstChildElement("bvh")->Attribute("symmetry")) == "true");
-
-        new_bvh->setRefMotion(mCharacter, mWorld);
-        mMotion = new_bvh;
-    }
-    else if (doc.FirstChildElement("npz") != NULL)
-    {
-        std::string npz_path = Trim(std::string(doc.FirstChildElement("npz")->GetText()));
-        std::string resolvedNpzPath = rm::resolve(npz_path);
-        LOG_VERBOSE("[Environment] NPZ Path resolved: " << npz_path << " -> " << resolvedNpzPath);
-        NPZ *new_npz = new NPZ(resolvedNpzPath);
-
-        new_npz->setRefMotion(mCharacter, mWorld);
-        mMotion = new_npz;
-    }
-    else if (doc.FirstChildElement("hdf") != NULL || doc.FirstChildElement("h5") != NULL)
-    {
-        TiXmlElement* hdfElement = doc.FirstChildElement("hdf");
-        if (hdfElement == NULL)
-            hdfElement = doc.FirstChildElement("h5");
-
-        std::string hdf_path = Trim(std::string(hdfElement->GetText()));
-        std::string resolvedHdfPath = rm::resolve(hdf_path);
-        LOG_VERBOSE("[Environment] HDF Path resolved: " << hdf_path << " -> " << resolvedHdfPath);
-
-        HDF *new_hdf = new HDF(resolvedHdfPath);
-        new_hdf->setRefMotion(mCharacter, mWorld);
-        mMotion = new_hdf;
-    }
-
-
-    if (isTwoLevelController())
-    {
-        Character *character = mCharacter;
-        // Create C++ MuscleNN (libtorch) for thread-safe inference
-        // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
-        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading, true);
-        mLoadedMuscleNN = true;
-    }
-
-    if (doc.FirstChildElement("Horizon") != NULL)
-        mHorizon = doc.FirstChildElement("Horizon")->IntText();
-
-    // =================== Reward ======================
-    // =================================================
-
-    // Use normalized param state (hardcoded)
-    mUseNormalizedParamState = false;
-
-    if (doc.FirstChildElement("HeadLinearAccWeight") != NULL)
-        mRewardConfig.head_linear_acc_weight = doc.FirstChildElement("HeadLinearAccWeight")->DoubleText();
-
-    if (doc.FirstChildElement("HeadRotWeight") != NULL)
-        mRewardConfig.head_rot_weight = doc.FirstChildElement("HeadRotWeight")->DoubleText();
-
-    if (doc.FirstChildElement("StepWeight") != NULL)
-        mRewardConfig.step_weight = doc.FirstChildElement("StepWeight")->DoubleText();
-
-    if (doc.FirstChildElement("MetabolicWeight") != NULL)
-        mRewardConfig.metabolic_weight = doc.FirstChildElement("MetabolicWeight")->DoubleText();
-
-    if (doc.FirstChildElement("AvgVelWeight") != NULL)
-        mRewardConfig.avg_vel_weight = doc.FirstChildElement("AvgVelWeight")->DoubleText();
-
-    if (doc.FirstChildElement("AvgVelWindowMult") != NULL)
-        mRewardConfig.avg_vel_window_mult = doc.FirstChildElement("AvgVelWindowMult")->DoubleText();
-
-    if (doc.FirstChildElement("AvgVelConsiderX") != NULL) {
-        if (doc.FirstChildElement("AvgVelConsiderX")->BoolText())
-            mRewardConfig.flags |= REWARD_AVG_VEL_CONSIDER_X;
-        else
-            mRewardConfig.flags &= ~REWARD_AVG_VEL_CONSIDER_X;
-    }
-
-    if (doc.FirstChildElement("DragX") != NULL) {
-        if (doc.FirstChildElement("DragX")->BoolText())
-            mRewardConfig.flags |= REWARD_DRAG_X;
-        else
-            mRewardConfig.flags &= ~REWARD_DRAG_X;
-    }
-
-    if (doc.FirstChildElement("DragWeight") != NULL)
-        mRewardConfig.drag_weight = doc.FirstChildElement("DragWeight")->DoubleText();
-
-    if (doc.FirstChildElement("DragXThreshold") != NULL)
-        mRewardConfig.drag_x_threshold = doc.FirstChildElement("DragXThreshold")->DoubleText();
-
-    if (doc.FirstChildElement("ScaleMetabolic") != NULL)
-        mRewardConfig.metabolic_scale = doc.FirstChildElement("ScaleMetabolic")->DoubleText();
-
-    if (doc.FirstChildElement("KneePainWeight") != NULL) {
-        mRewardConfig.flags |= REWARD_KNEE_PAIN;
-        mRewardConfig.knee_pain_weight = doc.FirstChildElement("KneePainWeight")->DoubleText();
-    }
-
-    if (doc.FirstChildElement("ScaleKneePain") != NULL)
-        mRewardConfig.knee_pain_scale = doc.FirstChildElement("ScaleKneePain")->DoubleText();
-
-    if (doc.FirstChildElement("UseMultiplicativeKneePain") != NULL)
-    {
-        std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeKneePain")->GetText()));
-        if (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE")
-            mRewardConfig.flags |= REWARD_KNEE_PAIN;
-    }
-
-    if (doc.FirstChildElement("UseKneePainTermination") != NULL)
-    {
-        std::string useTermStr = Trim(std::string(doc.FirstChildElement("UseKneePainTermination")->GetText()));
-        mRewardConfig.flags |= TERM_KNEE_PAIN;
-    }
-
-    if (doc.FirstChildElement("UseMultiplicativeMetabolic") != NULL)
-    {
-        std::string useMultStr = Trim(std::string(doc.FirstChildElement("UseMultiplicativeMetabolic")->GetText()));
-        if (useMultStr == "true" || useMultStr == "True" || useMultStr == "TRUE")
-            mRewardConfig.flags |= REWARD_METABOLIC;
-    }
-
-    // Parse MetabolicType configuration
-    if (doc.FirstChildElement("MetabolicType") != NULL)
-    {
-        std::string metabolicTypeStr = Trim(std::string(doc.FirstChildElement("MetabolicType")->GetText()));
-        if (metabolicTypeStr == "LEGACY") mCharacter->setMetabolicType(LEGACY);
-        else if (metabolicTypeStr == "A") mCharacter->setMetabolicType(A);
-        else if (metabolicTypeStr == "A2") mCharacter->setMetabolicType(A2);
-        else if (metabolicTypeStr == "MA") mCharacter->setMetabolicType(MA);
-        else if (metabolicTypeStr == "MA2") mCharacter->setMetabolicType(MA2);
-    }
-
-    // Parse TorqueCoeff configuration
-    if (doc.FirstChildElement("TorqueCoeff") != NULL)
-    {
-        double torqueCoeff = doc.FirstChildElement("TorqueCoeff")->DoubleText();
-        mCharacter->setTorqueEnergyCoeff(torqueCoeff);
-    }
-
-    // ============= For parameterization ==============
-    // =================================================
-
-    std::vector<double> minV;
-    std::vector<double> maxV;
-    std::vector<double> defaultV;
-    if (doc.FirstChildElement("parameter") != NULL)
-    {
-        auto parameter = doc.FirstChildElement("parameter");
-        for (TiXmlElement *group = parameter->FirstChildElement(); group != NULL; group = group->NextSiblingElement())
-        {
-            for (TiXmlElement *elem = group->FirstChildElement(); elem != NULL; elem = elem->NextSiblingElement())
-            {
-                minV.push_back(std::stod(elem->Attribute("min")));
-                maxV.push_back(std::stod(elem->Attribute("max")));
-                if (elem->Attribute("default") == NULL)
-                    defaultV.push_back(1.0);
-                else
-                    defaultV.push_back(std::stod(elem->Attribute("default")));
-
-                mParamName.push_back(std::string(group->Name()) + "_" + std::string(elem->Name()));
-
-                // Determine sampling strategy for this parameter
-                bool is_uniform = (elem->Attribute("sampling") != NULL) && (std::string(elem->Attribute("sampling")) == "uniform");
-
-                bool isExist = false;
-
-                if (elem->Attribute("group") != NULL)
-                {
-                    std::string group_name = std::string(group->Name()) + "_" + elem->Attribute("group");
-                    for (auto &p : mParamGroups)
-                    {
-                        if (p.name == group_name)
-                        {
-                            p.param_names.push_back(mParamName.back());
-                            p.param_idxs.push_back(mParamName.size() - 1);
-                            isExist = true;
-                        }
-                    }
-                    if (!isExist)
-                    {
-                        param_group p;
-                        p.name = group_name;
-                        p.param_idxs.push_back(mParamName.size() - 1);
-                        p.param_names.push_back(mParamName.back());
-                        double range = maxV.back() - minV.back();
-                        p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
-                        p.is_uniform = is_uniform;
-                        mParamGroups.push_back(p);
-                    }
-                }
-                else
-                {
-                    param_group p;
-                    p.name = mParamName.back();
-                    p.param_idxs.push_back(mParamName.size() - 1);
-                    p.param_names.push_back(mParamName.back());
-                    double range = maxV.back() - minV.back();
-                    p.v = (std::abs(range) < 1e-9) ? 0.0 : (defaultV.back() - minV.back()) / range;
-                    p.is_uniform = is_uniform;
-                    mParamGroups.push_back(p);
-                }
-            }
-        }
-    }
-
-    mParamMin = Eigen::VectorXd::Zero(minV.size());
-    mParamMax = Eigen::VectorXd::Zero(minV.size());
-    mParamDefault = Eigen::VectorXd::Zero(minV.size());
-
-    for (int i = 0; i < minV.size(); i++)
-    {
-        mParamMin[i] = minV[i];
-        mParamMax[i] = maxV[i];
-        mParamDefault[i] = defaultV[i];
-    }
-
-    mNumParamState = minV.size();
-
-    // ================== Cascading ====================
-
-    if (doc.FirstChildElement("cascading") != NULL)
-    {
-        mPrevNetworks.clear();
-        mEdges.clear();
-        mChildNetworks.clear();
-        if (mUseCascading)
-        {
-            loading_network = py::module::import("ppo.model").attr("loading_network");
-            auto networks = doc.FirstChildElement("cascading")->FirstChildElement();
-            auto edges = doc.FirstChildElement("cascading")->LastChildElement();
-            int idx = 0;
-            for (TiXmlElement *network = networks->FirstChildElement(); network != NULL; network = network->NextSiblingElement()) {
-                std::string networkPath = network->GetText();
-                std::string resolvedNetworkPath = rm::resolve(networkPath);
-                mPrevNetworks.push_back(loadPrevNetworks(resolvedNetworkPath, (idx++ == 0)));
-            }
-
-            for (TiXmlElement *edge_ = edges->FirstChildElement(); edge_ != NULL; edge_ = edge_->NextSiblingElement())
-            {
-                Eigen::Vector2i edge = Eigen::Vector2i(std::stoi(edge_->Attribute("start")), std::stoi(edge_->Attribute("end")));
-                mEdges.push_back(edge);
-            }
-
-            for (int i = 0; i < mPrevNetworks.size(); i++)
-            {
-                std::vector<int> child_elem;
-                mChildNetworks.push_back(child_elem);
-            }
-            for (auto e : mEdges)
-                mChildNetworks[e[1]].push_back(e[0]);
-        }
-    }
-
-    // =================================================
-    // =================================================
-    mUseWeights.clear();
-    for (int i = 0; i < mPrevNetworks.size() + 1; i++)
-    {
-        mUseWeights.push_back(true);
-        if (mUseMuscle)
-            mUseWeights.push_back(true);
-    }
-
-    // set num known param which is the dof of gait parameters and skeleton parameters
-    // find paramname which include "skeleton" or "stride" or "cadence"
-    mNumKnownParam = 0;
-    for(int i = 0; i < mParamName.size(); i++)
-    {
-        if (mParamName[i].find("skeleton") != std::string::npos || mParamName[i].find("stride") != std::string::npos || mParamName[i].find("cadence") != std::string::npos || mParamName[i].find("torsion") != std::string::npos)
-            mNumKnownParam++;
-    }
-    // std::cout << "Num Known Param : " << mNumKnownParam << std::endl;
-
-    // Initialize GaitPhase after all configuration is loaded (default to PHASE mode)
-    mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, GaitPhase::PHASE, mControlHz, mSimulationHz);
-}
-
-void Environment::parseEnvConfigYaml(const std::string& yaml_content)
-{
-    YAML::Node config = YAML::Load(yaml_content);
+    // Read config file
+    std::ifstream ifs(filepath);
+    if (!ifs.is_open())
+        throw std::runtime_error("Cannot open config: " + filepath);
+    std::stringstream ss;
+    ss << ifs.rdbuf();
+    mMetadata = ss.str();
+
+    // Parse YAML config (inlined from former parseEnvConfigYaml)
+    YAML::Node config = YAML::Load(mMetadata);
     if (!config["environment"]) {
         throw std::runtime_error("Missing 'environment' key in YAML config");
     }
@@ -589,21 +161,14 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         }
 
         // === Weight from metadata or direct value ===
-        // Supports:
-        //   weight_from: 70.5                       # direct numeric value
-        //   weight_from:                            # structured format
-        //     file: "@pid:xxx/gait/metadata.yaml"
-        //     prepost: "pre"
         if (env["skeleton"]["weight_from"]) {
             auto weightNode = env["skeleton"]["weight_from"];
 
             if (weightNode.IsScalar()) {
-                // Direct numeric value
                 double weight = weightNode.as<double>();
                 mCharacter->setBodyMass(weight);
                 LOG_VERBOSE("[Environment] Set body mass from direct value: " << weight << " kg");
             } else if (weightNode.IsMap() && weightNode["file"]) {
-                // Structured format: file + prepost
                 std::string metadataUri = weightNode["file"].as<std::string>();
                 std::string prepost = weightNode["prepost"].as<std::string>("pre");
 
@@ -691,12 +256,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     // === Ground === (hardcoded)
     mGround = BuildFromFile(rm::resolve("@data/ground.xml"), SKEL_DEFAULT);
 
-    // === Motion === (hardcoded)
-    // Height calibration is always applied in strict mode (no config needed)
-
-    // === Action (residual) === (hardcoded)
-    mIsResidual = true;
-
     // === Simulation ===
     if (env["simulation"]) {
         auto sim = env["simulation"];
@@ -750,7 +309,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         }
         else if (motionType == "bvh") {
             BVH *new_bvh = new BVH(resolved);
-            // Handle BVH attributes from YAML if needed
             new_bvh->setRefMotion(mCharacter, mWorld);
             mMotion = new_bvh;
         }
@@ -766,7 +324,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         // Get stride from motion if configured
         bool getStrideFromMotion = motion["get_stride_from_motion"].as<bool>(false);
         if (getStrideFromMotion && mMotion) {
-            // Only HDF supports stride attribute
             HDF* hdf = dynamic_cast<HDF*>(mMotion);
             if (hdf) {
                 double stride = hdf->getStrideAttribute(-1.0);
@@ -786,8 +343,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     // === Two-level controller ===
     if (isTwoLevelController()) {
         Character *character = mCharacter;
-        // Create C++ MuscleNN (libtorch) for thread-safe inference
-        // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
         mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading, true);
         mLoadedMuscleNN = true;
     }
@@ -835,20 +390,17 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
         // Parse step configuration (hierarchical or flat for backward compatibility)
         if (loco["step"]) {
-            // New hierarchical structure
             auto step = loco["step"];
             if (step["weight"])
                 mRewardConfig.step_weight = step["weight"].as<double>(2.0);
             if (step["clip"])
                 mRewardConfig.step_clip = step["clip"].as<double>(0.075);
         } else if (loco["step_weight"]) {
-            // Backward compatibility: flat structure (deprecated)
             mRewardConfig.step_weight = loco["step_weight"].as<double>(2.0);
         }
 
         // Parse avg_vel configuration (hierarchical or flat for backward compatibility)
         if (loco["avg_vel"]) {
-            // New hierarchical structure
             auto avg_vel = loco["avg_vel"];
             if (avg_vel["weight"])
                 mRewardConfig.avg_vel_weight = avg_vel["weight"].as<double>(6.0);
@@ -863,7 +415,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
                     mRewardConfig.flags &= ~REWARD_AVG_VEL_CONSIDER_X;
             }
         } else {
-            // Backward compatibility: flat structure (deprecated)
             bool found_flat = false;
             if (loco["avg_vel_weight"]) {
                 mRewardConfig.avg_vel_weight = loco["avg_vel_weight"].as<double>(6.0);
@@ -889,7 +440,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
 
         // Parse dragX configuration (hierarchical or flat for backward compatibility)
         if (loco["dragX"]) {
-            // New hierarchical structure
             auto dragX = loco["dragX"];
             if (dragX["use"]) {
                 if (dragX["use"].as<bool>(false))
@@ -902,7 +452,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             if (dragX["threshold"])
                 mRewardConfig.drag_x_threshold = dragX["threshold"].as<double>(0.0);
         } else {
-            // Backward compatibility: flat structure (deprecated)
             bool found_flat = false;
             if (loco["drag_x"]) {
                 if (loco["drag_x"].as<bool>(false))
@@ -959,8 +508,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
             else if (metaType == "MA2") mCharacter->setMetabolicType(MA2);
         }
 
-        // Torque energy coefficient (nested under metabolic)
-        // Support both flat and nested structure for backward compatibility
         if (metabolic_config["torque_coeff"]) {
             double coeff = metabolic_config["torque_coeff"].as<double>(1.0);
             mCharacter->setTorqueEnergyCoeff(coeff);
@@ -1014,7 +561,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
                 std::string full_name = "gait_" + param_name;
                 mParamName.push_back(full_name);
 
-                // Create param_group
                 param_group p;
                 p.name = full_name;
                 p.param_idxs.push_back(mParamName.size() - 1);
@@ -1035,7 +581,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
                 std::string bone_type = it->first.as<std::string>();
                 auto bone = it->second;
 
-                // Handle 2-level parameters (e.g., global)
                 if (bone["min"] && bone["max"])
                 {
                     minV.push_back(bone["min"].as<double>());
@@ -1054,7 +599,6 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
                     p.is_uniform = (bone["sampling"] && bone["sampling"].as<std::string>() == "uniform");
                     mParamGroups.push_back(p);
                 }
-                // Handle 3-level parameters (e.g., femur.left, femur.right)
                 else
                 {
                     for (YAML::const_iterator side_it = bone.begin(); side_it != bone.end(); ++side_it)
@@ -1156,29 +700,23 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
         mDiscConfig.reward_scale = disc["reward_scale"].as<double>(1.0);
         mDiscConfig.multiplicative = disc["multiplicative"].as<bool>(false);
 
-        // Parse upper_body config (supports both bool and nested map)
         if (disc["upper_body"]) {
             auto ub = disc["upper_body"];
             if (ub.IsMap()) {
-                // Nested config: upper_body: { enabled: true, scale: 0.01 }
                 mDiscConfig.upper_body = ub["enabled"].as<bool>(false);
                 mDiscConfig.upper_body_scale = ub["scale"].as<double>(1.0);
             } else {
-                // Simple bool: upper_body: true
                 mDiscConfig.upper_body = ub.as<bool>(false);
             }
         }
 
         if (mDiscConfig.enabled && mUseMuscle) {
-            // Cache upper body dimension if needed
             if (mDiscConfig.upper_body) {
                 int rootDof = mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
-                int lowerBodyDof = 18;  // First 18 DOFs after root are lower body
+                int lowerBodyDof = 18;
                 mUpperBodyDim = mCharacter->getSkeleton()->getNumDofs() - rootDof - lowerBodyDof;
             }
 
-            // Create C++ DiscriminatorNN (libtorch) for thread-safe inference
-            // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
             int disc_dim = getDiscObsDim();
             mDiscriminatorNN = make_discriminator_nn(disc_dim, true);
             mRandomDiscObs = Eigen::VectorXf::Zero(disc_dim);
@@ -1190,6 +728,10 @@ void Environment::parseEnvConfigYaml(const std::string& yaml_content)
     mGaitPhase = std::make_unique<GaitPhase>(mCharacter, mWorld, mMotion->getMaxTime(), mRefStride, mode, mControlHz, mSimulationHz);
     mGaitPhase->setContactDebounceAlpha(contactDebounceAlpha);
     mGaitPhase->setStepMinRatio(stepMinRatio);
+}
+
+Environment::~Environment()
+{
 }
 
 void Environment::setAction(Eigen::VectorXd _action)
@@ -2605,108 +2147,6 @@ void Environment::clearStepComplete()
 {
     // Clear the PD-level step completion flag after consumption
     mGaitPhase->clearStepComplete();
-}
-
-Network Environment::loadPrevNetworks(std::string path, bool isFirst)
-{
-    Network nn;
-    
-    // Fix hardcoded network paths from checkpoint metadata
-    if (path == "../data/trained_nn/skel_no_mesh_lbs") {
-        path = "data/trained_nn/skel_no_mesh_lbs";
-    } else if (path == "../data/trained_nn/hip_no_mesh_lbs") {
-        path = "data/trained_nn/hip_no_mesh_lbs";
-    } else if (path == "../data/trained_nn/ankle_no_mesh_lbs") {
-        path = "data/trained_nn/ankle_no_mesh_lbs";
-    } else if (path == "../data/trained_nn/merge_no_mesh_lbs") {
-        path = "data/trained_nn/merge_no_mesh_lbs";
-    }
-    // path, state size, action size, acuator type
-    py::object py_metadata = py::module::import("ppo.model").attr("loading_metadata")(path);
-    std::string metadata = "";
-    if (!py_metadata.is_none())
-        metadata = py_metadata.cast<std::string>();
-    std::pair<Eigen::VectorXd, Eigen::VectorXd> space = getSpace(metadata);
-
-    Eigen::VectorXd projState = getProjState(space.first, space.second).first;
-
-    py::tuple res = loading_network(path, projState.rows(), mAction.rows() - (isFirst ? 1 : 0), true);
-
-    nn.joint = res[0];
-
-    // Convert Python muscle state_dict to C++ MuscleNN
-    if (!res[1].is_none()) {
-        Character *character = mCharacter;
-        int num_muscles = character->getNumMuscles();
-        int num_muscle_dofs = character->getNumMuscleRelatedDof();
-        int num_actuator_action = getNumActuatorAction();
-        bool is_cascaded = false;  // Prev networks don't use cascading
-
-        // Create C++ MuscleNN
-        // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
-        nn.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded, true);
-
-        // res[1] is now a state_dict (Python dict), not a network object
-        py::dict state_dict = res[1].cast<py::dict>();
-
-        // Convert Python state_dict to C++ format
-        std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
-        for (auto item : state_dict) {
-            std::string key = item.first.cast<std::string>();
-            py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
-
-            auto buf = np_array.request();
-            std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
-
-            torch::Tensor tensor = torch::from_blob(
-                buf.ptr,
-                shape,
-                torch::TensorOptions().dtype(torch::kFloat32)
-            ).clone();
-
-            cpp_state_dict[key] = tensor;
-        }
-
-        nn.muscle->load_state_dict(cpp_state_dict);
-    }
-
-    nn.minV = space.first;
-    nn.maxV = space.second;
-    nn.name = path;
-
-    return nn;
-}
-
-std::pair<Eigen::VectorXd, Eigen::VectorXd> Environment::getSpace(std::string metadata)
-{
-    TiXmlDocument doc;
-    Eigen::VectorXd minV = Eigen::VectorXd::Ones(mNumParamState);
-    Eigen::VectorXd maxV = Eigen::VectorXd::Ones(mNumParamState);
-
-    doc.Parse(metadata.c_str());
-    if (doc.FirstChildElement("parameter") != NULL)
-    {
-        auto parameter = doc.FirstChildElement("parameter");
-        for (TiXmlElement *group = parameter->FirstChildElement(); group != NULL; group = group->NextSiblingElement())
-        {
-            for (TiXmlElement *elem = group->FirstChildElement(); elem != NULL; elem = elem->NextSiblingElement())
-            {
-                std::string name = std::string(group->Name()) + "_" + std::string(elem->Name());
-                for (int i = 0; i < mParamName.size(); i++)
-                {
-                    if (mParamName[i] == name)
-                    {
-                        minV[i] = std::stod(elem->Attribute("min"));
-                        maxV[i] = std::stod(elem->Attribute("max"));
-                    }
-                }
-            }
-        }
-    }
-    // std::cout <<"[MIN V] : " << minV.transpose() << std::endl;
-    // std::cout <<"[MAX V] : " << maxV.transpose() << std::endl;
-
-    return std::make_pair(minV, maxV);
 }
 
 void Environment::createNoiseInjector(const std::string& config_path)

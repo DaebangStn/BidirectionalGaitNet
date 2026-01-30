@@ -79,8 +79,13 @@ class RefNN(nn.Module):
 
 
 def load_FGN(checkpoint_file, num_paramstates, ref_dof):
+    import tempfile, os
     state = pickle.load(open(checkpoint_file, "rb"))
-    env = EnvManager(state['metadata'])
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+    tmp.write(state['metadata'])
+    tmp.close()
+    env = EnvManager(tmp.name)
+    os.unlink(tmp.name)
     num_paramstates = len(env.getParamState())
     ref_dof = len(env.posToSixDof(env.getPositions()))
     ref = RefNN(num_paramstates + 2, ref_dof, 'cpu')

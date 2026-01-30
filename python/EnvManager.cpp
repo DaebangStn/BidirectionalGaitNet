@@ -75,21 +75,7 @@ Eigen::VectorXd toEigenVector(const py::array_t<float> &array)
 class EnvManager : public Environment
 {
 public:
-    // Default: YAML content
-    EnvManager(std::string metadata) : Environment()
-    {
-        Environment::initialize(metadata);
-    }
-
-    // Backward compatibility: XML content when is_xml=True
-    EnvManager(std::string metadata, bool is_xml) : Environment()
-    {
-        if (is_xml) {
-            Environment::initialize_xml(metadata);
-        } else {
-            Environment::initialize(metadata);
-        }
-    }
+    EnvManager(std::string filepath) : Environment(filepath) {}
     py::array_t<float> getState() { return toNumPyArray(Environment::getState()); }
     py::array_t<float> getAction() { return toNumPyArray(Environment::getAction()); }
     py::list getRandomMuscleTuple()
@@ -162,8 +148,7 @@ public:
 PYBIND11_MODULE(pysim, m)
 {
     py::class_<EnvManager>(m, "EnvManager")
-        .def(py::init<std::string>())  // Default: YAML content
-        .def(py::init<std::string, bool>())  // (content, is_xml) for XML backward compatibility
+        .def(py::init<std::string>())  // filepath to YAML config
         // .def("initialize", &EnvManager::initialize)
         .def("setAction", &EnvManager::setAction)
         .def("step", &EnvManager::step)

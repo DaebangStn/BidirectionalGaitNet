@@ -47,11 +47,11 @@ public:
     /**
      * Construct BatchRolloutEnv with N environment instances.
      *
-     * @param yaml_content YAML configuration content (not file path!)
+     * @param filepath Path to YAML configuration file
      * @param num_envs Number of parallel environments
      * @param num_steps Rollout length (steps per trajectory)
      */
-    BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps);
+    BatchRolloutEnv(const std::string& filepath, int num_envs, int num_steps);
 
     /**
      * Reset all environments to initial state.

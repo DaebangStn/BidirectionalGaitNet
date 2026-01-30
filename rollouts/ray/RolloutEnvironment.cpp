@@ -4,8 +4,8 @@
 #include <iostream>
 
 RolloutEnvironment::RolloutEnvironment(const std::string& metadata_path) {
-    mEnv.initialize(metadata_path);
-    mEnv.reset();
+    mEnv = std::make_unique<Environment>(metadata_path);
+    mEnv->reset();
 }
 
 RolloutEnvironment::~RolloutEnvironment() = default;
@@ -17,19 +17,19 @@ void RolloutEnvironment::LoadRecordConfig(const std::string& yaml_path) {
     if (mRecordConfig.metabolic.enabled) {
         const std::string& type = mRecordConfig.metabolic.type;
         if (type == "LEGACY") {
-            mEnv.getCharacter()->setMetabolicType(LEGACY);
+            mEnv->getCharacter()->setMetabolicType(LEGACY);
         } else if (type == "A") {
-            mEnv.getCharacter()->setMetabolicType(A);
+            mEnv->getCharacter()->setMetabolicType(A);
         } else if (type == "A2") {
-            mEnv.getCharacter()->setMetabolicType(A2);
+            mEnv->getCharacter()->setMetabolicType(A2);
         } else if (type == "MA") {
-            mEnv.getCharacter()->setMetabolicType(MA);
+            mEnv->getCharacter()->setMetabolicType(MA);
         } else if (type == "MA2") {
-            mEnv.getCharacter()->setMetabolicType(MA2);
+            mEnv->getCharacter()->setMetabolicType(MA2);
         } else {
             std::cerr << "Warning: Unknown MetabolicType '" << type
                       << "', using LEGACY" << std::endl;
-            mEnv.getCharacter()->setMetabolicType(LEGACY);
+            mEnv->getCharacter()->setMetabolicType(LEGACY);
         }
         std::cout << "MetabolicType set to: " << type << std::endl;
     }
@@ -46,45 +46,45 @@ void RolloutEnvironment::LoadRecordConfig(const std::string& yaml_path) {
 }
 
 void RolloutEnvironment::Reset(double phase) {
-    mEnv.reset(phase);
+    mEnv->reset(phase);
 }
 
 Eigen::VectorXd RolloutEnvironment::GetState() {
-    return mEnv.getState();
+    return mEnv->getState();
 }
 
 void RolloutEnvironment::SetAction(const Eigen::VectorXd& action) {
-    mEnv.setAction(action);
+    mEnv->setAction(action);
 }
 
 void RolloutEnvironment::Step(RolloutRecord* record) {
     // Call environment step (no pGraphData)
-    mEnv.preStep();
-    for (int i = 0; i < mEnv.getNumSubSteps(); i++) {
-        mEnv.muscleStep();
+    mEnv->preStep();
+    for (int i = 0; i < mEnv->getNumSubSteps(); i++) {
+        mEnv->muscleStep();
         RecordStep(record);
     }
-    mEnv.postStep();
+    mEnv->postStep();
 }
 
 void RolloutEnvironment::SetMuscleNetworkWeight(py::object weights) {
-    mEnv.setMuscleNetworkWeight(weights);
+    mEnv->setMuscleNetworkWeight(weights);
 }
 
 void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     std::unordered_map<std::string, float> data;
 
     // Basic fields (always recorded)
-    data["step"] = mEnv.getSimulationCount();
-    data["time"] = mEnv.getSimTime();
-    data["cycle"] = mEnv.getGaitPhase()->getAdaptiveCycleCount();
+    data["step"] = mEnv->getSimulationCount();
+    data["time"] = mEnv->getSimTime();
+    data["cycle"] = mEnv->getGaitPhase()->getAdaptiveCycleCount();
 
-    auto skel = mEnv.getCharacter()->getSkeleton();
+    auto skel = mEnv->getCharacter()->getSkeleton();
 
     // Contact and GRF fields
     if (mRecordConfig.foot.enabled) {
-        Eigen::Vector2i contact = mEnv.getIsContact();
-        Eigen::Vector2d grf = mEnv.getFootGRF();
+        Eigen::Vector2i contact = mEnv->getIsContact();
+        Eigen::Vector2d grf = mEnv->getFootGRF();
 
         if (mRecordConfig.foot.contact_left) {
             data["contact/left"] = static_cast<float>(contact[0]);
@@ -104,7 +104,7 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
     if (mRecordConfig.kinematics.enabled) {
         // All joint positions as a single vector
         if (mRecordConfig.kinematics.all) {
-            record->addVector("motions", mEnv.getSimulationCount() - 1, skel->getPositions().cast<float>());
+            record->addVector("motions", mEnv->getSimulationCount() - 1, skel->getPositions().cast<float>());
         }
 
         // Root position
@@ -168,65 +168,65 @@ void RolloutEnvironment::RecordStep(RolloutRecord* record) {
 
     // Metabolic energy recording
     if (mRecordConfig.metabolic.enabled) {
-        float stepEnergy = mEnv.getCharacter()->getMetabolicStepEnergy();
+        float stepEnergy = mEnv->getCharacter()->getMetabolicStepEnergy();
         data["metabolic/step_energy"] = stepEnergy;
     }
 
-    record->add(mEnv.getSimulationCount() - 1, data);
+    record->add(mEnv->getSimulationCount() - 1, data);
 }
 
 std::vector<std::string> RolloutEnvironment::GetRecordFields() const {
-    int skeleton_dof = const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
+    int skeleton_dof = const_cast<Environment&>(*mEnv).getCharacter()->getSkeleton()->getNumDofs();
     return RolloutRecord::FieldsFromConfig(mRecordConfig, skeleton_dof);
 }
 
 int RolloutEnvironment::GetSkeletonDOF() const {
-    return const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getNumDofs();
+    return const_cast<Environment&>(*mEnv).getCharacter()->getSkeleton()->getNumDofs();
 }
 
 double RolloutEnvironment::GetMass() const {
-    return const_cast<Environment&>(mEnv).getCharacter()->getSkeleton()->getMass();
+    return const_cast<Environment&>(*mEnv).getCharacter()->getSkeleton()->getMass();
 }
 
 int RolloutEnvironment::GetSimulationHz() {
-    return mEnv.getSimulationHz();
+    return mEnv->getSimulationHz();
 }
 
 int RolloutEnvironment::GetControlHz() {
-    return mEnv.getControlHz();
+    return mEnv->getControlHz();
 }
 
 double RolloutEnvironment::GetWorldTime() {
-    return mEnv.getSimTime();
+    return mEnv->getSimTime();
 }
 
 int RolloutEnvironment::getGaitCycleCount() {
-    return mEnv.getGaitPhase()->getAdaptiveCycleCount();
+    return mEnv->getGaitPhase()->getAdaptiveCycleCount();
 }
 
 int RolloutEnvironment::GetCycleCount() {
-    return mEnv.getGaitPhase()->getAdaptiveCycleCount();
+    return mEnv->getGaitPhase()->getAdaptiveCycleCount();
 }
 
 Eigen::VectorXd RolloutEnvironment::InterpolatePose(const Eigen::VectorXd& pose1,
                                                      const Eigen::VectorXd& pose2,
                                                      double t,
                                                      bool extrapolate_root) {
-    return mEnv.getCharacter()->interpolatePose(pose1, pose2, t, extrapolate_root);
+    return mEnv->getCharacter()->interpolatePose(pose1, pose2, t, extrapolate_root);
 }
 
 void RolloutEnvironment::SetParameters(const std::map<std::string, double>& params) {
     if (params.empty()) {
         // Empty parameters - sample from default distribution (matches updateParamState)
-        mEnv.updateParamState();
+        mEnv->updateParamState();
         return;
     }
 
     // Get parameter names from environment
-    const std::vector<std::string>& param_names = mEnv.getParamName();
+    const std::vector<std::string>& param_names = mEnv->getParamName();
 
     // Get default parameter values (1.0 for skeleton scaling, etc.)
-    Eigen::VectorXd param_state = mEnv.getParamDefault();
+    Eigen::VectorXd param_state = mEnv->getParamDefault();
 
     // Fill in provided parameters (overriding defaults)
     for (size_t i = 0; i < param_names.size(); ++i) {
@@ -237,18 +237,18 @@ void RolloutEnvironment::SetParameters(const std::map<std::string, double>& para
     }
 
     // Set the parameter state
-    mEnv.setParamState(param_state);
+    mEnv->setParamState(param_state);
 }
 
 std::vector<std::string> RolloutEnvironment::GetParameterNames() {
-    const std::vector<std::string>& param_names = mEnv.getParamName();
+    const std::vector<std::string>& param_names = mEnv->getParamName();
     return std::vector<std::string>(param_names.begin(), param_names.end());
 }
 
 Eigen::VectorXd RolloutEnvironment::GetParamState(bool isMirror) {
-    return mEnv.getParamState(isMirror);
+    return mEnv->getParamState(isMirror);
 }
 
 Eigen::VectorXd RolloutEnvironment::GetParamDefault() {
-    return mEnv.getParamDefault();
+    return mEnv->getParamDefault();
 }

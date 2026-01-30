@@ -40,7 +40,7 @@ static py::array_t<float> toNumPyArray(const Eigen::MatrixXd& mat) {
     return arr;
 }
 
-BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, int num_steps)
+BatchRolloutEnv::BatchRolloutEnv(const std::string& filepath, int num_envs, int num_steps)
     : num_envs_(num_envs), num_steps_(num_steps)
 {
     if (num_envs <= 0) {
@@ -57,9 +57,8 @@ BatchRolloutEnv::BatchRolloutEnv(const std::string& yaml_content, int num_envs, 
     envs_.resize(num_envs);
 
     for (int i = 0; i < num_envs; ++i) {
-        pool_->enqueue([this, i, &yaml_content]() {
-            auto env = std::make_unique<Environment>();
-            env->initialize(yaml_content);
+        pool_->enqueue([this, i, &filepath]() {
+            auto env = std::make_unique<Environment>(filepath);
             env->reset();
             envs_[i] = std::move(env);
         });
@@ -421,18 +420,16 @@ PYBIND11_MODULE(batchrolloutenv, m) {
 
     py::class_<BatchRolloutEnv>(m, "BatchRolloutEnv")
         .def(py::init<std::string, int, int>(),
-             py::arg("yaml_content"),
+             py::arg("filepath"),
              py::arg("num_envs"),
              py::arg("num_steps"),
              "Create autonomous rollout environment\n\n"
              "Args:\n"
-             "    yaml_content (str): YAML configuration content (NOT file path!)\n"
+             "    filepath (str): Path to YAML configuration file\n"
              "    num_envs (int): Number of parallel environments\n"
              "    num_steps (int): Rollout length (steps per trajectory)\n\n"
              "Example:\n"
-             "    with open('data/env/config.yaml') as f:\n"
-             "        yaml_content = f.read()\n"
-             "    env = BatchRolloutEnv(yaml_content, num_envs=32, num_steps=64)")
+             "    env = BatchRolloutEnv('data/env/config.yaml', num_envs=32, num_steps=64)")
 
         .def("reset", &BatchRolloutEnv::reset,
              "Reset all environments to initial state\n\n"

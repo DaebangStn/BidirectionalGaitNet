@@ -139,9 +139,14 @@ def log_comprehensive_vae_metrics(writer: SummaryWriter, iteration: int,
 
 
 def loading_distilled_network(path, device):
+    import tempfile, os
     print('loading distilled network from', path)
     state = pickle.load(open(path, "rb"))
-    env = EnvManager(state['metadata'])
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+    tmp.write(state['metadata'])
+    tmp.close()
+    env = EnvManager(tmp.name)
+    os.unlink(tmp.name)
     ref = RefNN(len(env.getNormalizedParamState()) + 2,
                 len(env.posToSixDof(env.getPositions())), device)
     ref.load_state_dict(state['ref'])

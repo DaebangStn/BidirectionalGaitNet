@@ -76,7 +76,7 @@ private:
     void RecordStep(class PyRolloutRecord* record);
 
     // Environment
-    Environment mEnv;
+    std::unique_ptr<Environment> mEnv;
     RecordConfig mRecordConfig;
     int mTargetCycles = 5;
 

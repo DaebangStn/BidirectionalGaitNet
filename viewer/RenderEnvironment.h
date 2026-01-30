@@ -9,7 +9,7 @@
 
 class RenderEnvironment : public Environment {
 public:
-    RenderEnvironment(std::string metadata, CBufferData<double>* graph_data);
+    RenderEnvironment(const std::string& filepath, CBufferData<double>* graph_data);
     ~RenderEnvironment();
 
     // Override step to add automatic graph data recording

@@ -3,12 +3,11 @@
 #include <Eigen/Geometry>
 #include <cmath>
 
-RenderEnvironment::RenderEnvironment(std::string metadata, CBufferData<double>* graph_data)
-    : Environment(), mGraphData(graph_data),
+RenderEnvironment::RenderEnvironment(const std::string& filepath, CBufferData<double>* graph_data)
+    : Environment(filepath), mGraphData(graph_data),
       mVelocityX_Estimator(1000), mVelocityZ_Estimator(1000),
       mXZ_Regression(1000), mVelocityMethod(0)
 {
-    initialize(metadata);
     reset();
 }
 

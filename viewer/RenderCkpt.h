@@ -512,10 +512,6 @@ private:
     // Cached metadata path
     std::string mCachedMetadata;
 
-    // Override paths for skeleton and muscle config
-    std::string mSkeletonOverride;
-    std::string mMuscleOverride;
-
     // Helper methods for initEnv
     void loadNetworkFromPath(const std::string& path);
     void initializeMotionSkeleton();

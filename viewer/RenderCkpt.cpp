@@ -226,8 +226,6 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
 
     po::options_description desc("Viewer Options");
     desc.add_options()
-        ("skeleton,s", po::value<std::string>(), "Override skeleton config path")
-        ("muscle,m", po::value<std::string>(), "Override muscle config path")
         ("checkpoint", po::value<std::string>(), "Checkpoint or metadata path");
 
     po::variables_map vm;
@@ -243,16 +241,6 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
                      .run(), vm);
         po::notify(vm);
 
-        // Store override paths
-        if (vm.count("skeleton")) {
-            mSkeletonOverride = vm["skeleton"].as<std::string>();
-            LOG_INFO("[Override] Skeleton config: " << mSkeletonOverride);
-        }
-        if (vm.count("muscle")) {
-            mMuscleOverride = vm["muscle"].as<std::string>();
-            LOG_INFO("[Override] Muscle config: " << mMuscleOverride);
-        }
-
         // Store checkpoint/metadata path
         if (vm.count("checkpoint")) {
             std::string path = vm["checkpoint"].as<std::string>();
@@ -260,9 +248,7 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
         } else if (argc > 1) {
             // Fallback: treat first arg as checkpoint if not parsed
             std::string path = std::string(argv[1]);
-            if (path != "--skeleton" && path != "--muscle") {
-                mNetworkPaths.push_back(path);
-            }
+            mNetworkPaths.push_back(path);
         }
     } catch (const po::error& e) {
         LOG_ERROR("Argument parsing error: " << e.what());
@@ -292,25 +278,20 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
         loading_network = py::none();
     }
 
-    // Determine metadata path
+    // Determine metadata path (loading_metadata returns a filepath)
     if (!mNetworkPaths.empty()) {
         std::string path = mNetworkPaths.back();
-        if (path.substr(path.length() - 4) == ".xml") {
-            mCachedMetadata = path;
-            mNetworkPaths.pop_back();
-        } else {
-            try {
-                py::object py_metadata = py::module::import("ppo.model").attr("loading_metadata")(path);
-                if (!py_metadata.is_none()) {
-                    mCachedMetadata = py_metadata.cast<std::string>();
-                }
-                // Note: Keep path in mNetworkPaths - it's used later for checkpoint name and network loading
-            } catch (const py::error_already_set& e) {
-                LOG_ERROR("[Checkpoint] Error: Failed to load checkpoint from path: " << path);
-                LOG_ERROR("[Checkpoint] Reason: " << e.what());
-                LOG_ERROR("[Checkpoint] Please check that the checkpoint path exists and is in a valid format.");
-                std::exit(1);
+        try {
+            py::object py_metadata = py::module::import("ppo.model").attr("loading_metadata")(path);
+            if (!py_metadata.is_none()) {
+                mCachedMetadata = py_metadata.cast<std::string>();
             }
+            // Note: Keep path in mNetworkPaths - it's used later for checkpoint name and network loading
+        } catch (const py::error_already_set& e) {
+            LOG_ERROR("[Checkpoint] Error: Failed to load checkpoint from path: " << path);
+            LOG_ERROR("[Checkpoint] Reason: " << e.what());
+            LOG_ERROR("[Checkpoint] Please check that the checkpoint path exists and is in a valid format.");
+            std::exit(1);
         }
     }
 
@@ -979,32 +960,19 @@ void RenderCkpt::initializeMotionCharacter(const std::string& metadata)
     // Skip if already initialized
     if (mMotionCharacter) return;
 
-    // Extract skeleton path from metadata and create motion character
+    // Extract skeleton path from metadata file and create motion character
     // This allows motion playback without full simulation environment
     std::string skelPath;
 
-    // Detect format by examining first non-whitespace character
-    size_t start = metadata.find_first_not_of(" \t\n\r");
-    if (start != std::string::npos && metadata[start] == '<') {
-        // XML format
-        TiXmlDocument doc;
-        doc.Parse(metadata.c_str());
-        TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
-        if (skel_elem && skel_elem->GetText()) {
-            skelPath = Trim(std::string(skel_elem->GetText()));
+    try {
+        YAML::Node config = YAML::LoadFile(metadata);
+        if (config["environment"] && config["environment"]["skeleton"] && config["environment"]["skeleton"]["file"]) {
+            skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
+            skelPath = rm::resolve(skelPath);
         }
-    } else {
-        // YAML format
-        try {
-            YAML::Node config = YAML::Load(metadata);
-            if (config["environment"] && config["environment"]["skeleton"] && config["environment"]["skeleton"]["file"]) {
-                skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
-                skelPath = rm::resolve(skelPath);
-            }
-        } catch (const std::exception& e) {
-            LOG_WARN("[Motion] Failed to parse metadata for skeleton path: " << e.what());
-            return;
-        }
+    } catch (const std::exception& e) {
+        LOG_WARN("[Motion] Failed to parse metadata for skeleton path: " << e.what());
+        return;
     }
 
     if (skelPath.empty()) {
@@ -1030,61 +998,8 @@ void RenderCkpt::initEnv(std::string metadata)
         mRenderEnv = nullptr;
     }
 
-    // Apply skeleton and muscle overrides if specified
-    std::string modified_metadata = metadata;
-    if (!mSkeletonOverride.empty() || !mMuscleOverride.empty()) {
-        // Detect format
-        size_t start = metadata.find_first_not_of(" \t\n\r");
-        if (start != std::string::npos && metadata[start] == '<') {
-            // XML format - modify the skeleton/muscle paths using tinyxml2
-            TiXmlDocument doc;
-            doc.Parse(metadata.c_str());
-
-            if (!mSkeletonOverride.empty()) {
-                TiXmlElement* skel_elem = doc.FirstChildElement("skeleton");
-                if (skel_elem) {
-                    skel_elem->SetText(mSkeletonOverride.c_str());
-                    LOG_INFO("Overriding skeleton config: " << mSkeletonOverride);
-                }
-            }
-
-            if (!mMuscleOverride.empty()) {
-                TiXmlElement* muscle_elem = doc.FirstChildElement("muscle");
-                if (muscle_elem) {
-                    muscle_elem->SetText(mMuscleOverride.c_str());
-                    LOG_INFO("Overriding muscle config: " << mMuscleOverride);
-                }
-            }
-
-            tinyxml2::XMLPrinter printer;
-            doc.Print(&printer);
-            modified_metadata = printer.CStr();
-        } else {
-            // YAML format - modify the skeleton/muscle paths
-            YAML::Node config = YAML::Load(metadata);
-
-            if (!mSkeletonOverride.empty()) {
-                if (!config["environment"]) config["environment"] = YAML::Node();
-                if (!config["environment"]["skeleton"]) config["environment"]["skeleton"] = YAML::Node();
-                config["environment"]["skeleton"]["file"] = mSkeletonOverride;
-                LOG_INFO("Overriding skeleton config: " << mSkeletonOverride);
-            }
-
-            if (!mMuscleOverride.empty()) {
-                if (!config["environment"]) config["environment"] = YAML::Node();
-                if (!config["environment"]["muscle"]) config["environment"]["muscle"] = YAML::Node();
-                config["environment"]["muscle"]["file"] = mMuscleOverride;
-                LOG_INFO("Overriding muscle config: " << mMuscleOverride);
-            }
-
-            YAML::Emitter emitter;
-            emitter << config;
-            modified_metadata = emitter.c_str();
-        }
-    }
-
-    // Create RenderEnvironment wrapper with potentially modified metadata
-    mRenderEnv = new RenderEnvironment(modified_metadata, mGraphData);
+    // Create RenderEnvironment from metadata path
+    mRenderEnv = new RenderEnvironment(metadata, mGraphData);
 
     // Register muscle activation keys for graphing
     for (const auto& muscle: mRenderEnv->getCharacter()->getMuscles()) {

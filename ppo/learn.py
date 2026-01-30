@@ -355,12 +355,8 @@ if __name__ == "__main__":
         sys.path.insert(0, str(Path(__file__).parent))
         from batchrolloutenv import BatchRolloutEnv
 
-        # Read YAML content
-        with open(args.env_file, 'r') as f:
-            yaml_content = f.read()
-
         print(f"Creating BatchRolloutEnv: {args.num_envs} envs, {args.num_steps} steps")
-        envs = BatchRolloutEnv(yaml_content, args.num_envs, args.num_steps)
+        envs = BatchRolloutEnv(args.env_file, args.num_envs, args.num_steps)
 
         # Get dimensions
         num_states = envs.obs_size()

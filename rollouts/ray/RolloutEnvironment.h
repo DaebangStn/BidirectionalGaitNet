@@ -29,7 +29,7 @@ public:
     // Rollout status
     int GetCycleCount();
     int getGaitCycleCount();
-    bool isTerminated() { return mEnv.isTerminated(); }
+    bool isTerminated() { return mEnv->isTerminated(); }
     
     // Record configuration
     std::vector<std::string> GetRecordFields() const;
@@ -58,7 +58,7 @@ public:
 private:
     void RecordStep(RolloutRecord* record);
 
-    Environment mEnv;
+    std::unique_ptr<Environment> mEnv;
     RecordConfig mRecordConfig;
     int mTargetCycles = 5;
 };

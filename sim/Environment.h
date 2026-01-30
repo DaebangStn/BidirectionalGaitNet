@@ -121,13 +121,11 @@ struct DiscriminatorConfig
 class DLL_PUBLIC Environment
 {
 public:
-    Environment();
+    explicit Environment(const std::string& filepath);
     ~Environment();
 
     double getRefStride() { return mRefStride; }
     double getRefCadence() { return mMotion->getMaxTime(); }
-    void initialize(std::string yaml_content);  // Default: YAML content
-    void initialize_xml(std::string xml_content);  // Backward compatibility: XML content
 
     // Simulation environment configuration
 
@@ -381,8 +379,6 @@ public:
     Eigen::Vector2d getFootGRF();
 
     // For Cascading
-    Network loadPrevNetworks(std::string path, bool isFirst); // Neot
-    std::pair<Eigen::VectorXd, Eigen::VectorXd> getSpace(std::string metadata);
     std::vector<double> getWeights() { return mWeights; }
     std::vector<double> getDmins() { return mDmins; }
     std::vector<double> getBetas() { return mBetas; }
@@ -479,10 +475,6 @@ public:
     int getNumSubSteps() { return mNumSubSteps; }
     void postStep();
 private:
-    // Config parsing methods
-    void parseEnvConfigXml(const std::string& metadata);
-    void parseEnvConfigYaml(const std::string& filepath);
-
     // Step method components
     void calcActivation();
     void postMuscleStep();
