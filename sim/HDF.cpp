@@ -171,6 +171,83 @@ void HDF::loadFromFile(const std::string& filepath)
             // Stride attribute not present, keep default
         }
 
+        // Try to read /kinematics group (optional, from exported motion files)
+        try {
+            if (H5Lexists(file.getId(), "/kinematics", H5P_DEFAULT) > 0) {
+                H5::Group kinGroup = file.openGroup("/kinematics");
+
+                // Read joint_names attribute (comma-separated string)
+                if (kinGroup.attrExists("joint_names")) {
+                    H5::Attribute namesAttr = kinGroup.openAttribute("joint_names");
+                    H5::StrType strType = namesAttr.getStrType();
+                    size_t strSize = strType.getSize();
+                    std::vector<char> buffer(strSize + 1, '\0');
+                    namesAttr.read(strType, buffer.data());
+                    std::string namesStr(buffer.data());
+
+                    // Parse comma-separated joint names
+                    mReferenceKinematics.jointKeys.clear();
+                    std::stringstream ss(namesStr);
+                    std::string token;
+                    while (std::getline(ss, token, ',')) {
+                        if (!token.empty()) {
+                            mReferenceKinematics.jointKeys.push_back(token);
+                        }
+                    }
+                }
+
+                // Read num_cycles attribute
+                if (kinGroup.attrExists("num_cycles")) {
+                    H5::Attribute cyclesAttr = kinGroup.openAttribute("num_cycles");
+                    cyclesAttr.read(H5::PredType::NATIVE_INT, &mReferenceKinematics.numCycles);
+                }
+
+                // Read mean/std datasets for each joint key
+                for (const auto& key : mReferenceKinematics.jointKeys) {
+                    std::string meanName = key + "_mean";
+                    std::string stdName = key + "_std";
+
+                    // Check if datasets exist
+                    if (H5Lexists(kinGroup.getId(), meanName.c_str(), H5P_DEFAULT) > 0 &&
+                        H5Lexists(kinGroup.getId(), stdName.c_str(), H5P_DEFAULT) > 0) {
+
+                        // Read mean dataset (100 doubles)
+                        H5::DataSet dsMean = kinGroup.openDataSet(meanName);
+                        H5::DataSpace spaceMean = dsMean.getSpace();
+                        hsize_t dimsMean[1];
+                        spaceMean.getSimpleExtentDims(dimsMean);
+
+                        std::vector<double> meanVec(dimsMean[0]);
+                        dsMean.read(meanVec.data(), H5::PredType::NATIVE_DOUBLE);
+                        mReferenceKinematics.mean[key] = meanVec;
+
+                        // Read std dataset (100 doubles)
+                        H5::DataSet dsStd = kinGroup.openDataSet(stdName);
+                        H5::DataSpace spaceStd = dsStd.getSpace();
+                        hsize_t dimsStd[1];
+                        spaceStd.getSimpleExtentDims(dimsStd);
+
+                        std::vector<double> stdVec(dimsStd[0]);
+                        dsStd.read(stdVec.data(), H5::PredType::NATIVE_DOUBLE);
+                        mReferenceKinematics.std[key] = stdVec;
+                    }
+                }
+
+                mHasReferenceKinematics = !mReferenceKinematics.jointKeys.empty();
+                if (mHasReferenceKinematics) {
+                    LOG_VERBOSE("[HDF] Loaded reference kinematics for "
+                               << mReferenceKinematics.jointKeys.size() << " joints ("
+                               << mReferenceKinematics.numCycles << " cycles)");
+                }
+            }
+        } catch (const H5::Exception& e) {
+            // Kinematics are optional
+            LOG_VERBOSE("[HDF] No kinematics group in file (optional)");
+            mHasReferenceKinematics = false;
+        } catch (...) {
+            mHasReferenceKinematics = false;
+        }
+
         file.close();
 
         // Compute cycle distance for forward progression

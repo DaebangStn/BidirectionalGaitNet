@@ -191,6 +191,9 @@ private:
 
     void plotPhaseBar(double x_min, double x_max, double y_min, double y_max);
 
+    // Plot reference kinematics overlay (mean ± std band from loaded motion)
+    void plotReferenceKinematics(const std::vector<std::string>& keys);
+
     // Collapsing header with 2x height control (uses config system for default open)
     bool collapsingHeaderWithControls(const std::string& title);
     
@@ -362,6 +365,24 @@ private:
     Motion* mMotion;                            ///< Single active motion instance
     PlaybackViewerState mMotionState;           ///< Viewer state for active motion
     std::unique_ptr<MotionProcessor> mMotionProcessor;  ///< Unified motion processor
+
+    // Reference kinematics overlay (from loaded motion file's /kinematics group)
+    KinematicsExportData mReferenceKinematics;  ///< Cached reference kinematics data
+    bool mHasReferenceKinematics = false;       ///< True if current motion has kinematics
+    bool mShowReferenceKinematics = true;       ///< Toggle for displaying reference overlay
+
+    // Kinematics source selection (Motion-specific vs Normative reference)
+    enum class KinematicsSource { FromMotion = 0, FromNormative = 1 };
+    KinematicsSource mKinematicsSource = KinematicsSource::FromMotion;
+    int mKinematicsSourceInt = 0;  ///< For ImGui radio button
+
+    // Normative reference data (population-level from Gait120)
+    KinematicsExportData mNormativeKinematics;
+    bool mHasNormativeKinematics = false;
+
+    void loadNormativeKinematics();
+    const KinematicsExportData* getActiveKinematics() const;
+    std::string getActiveKinematicsLabel() const;
 
     MotionData mPredictedMotion;
 

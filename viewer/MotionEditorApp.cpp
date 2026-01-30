@@ -1322,14 +1322,14 @@ void MotionEditorApp::computeKinematicsSummary()
         bool negate;
     };
     std::vector<JointDef> jointDefs = {
-        {"HipR",      "FemurR", 0, true},
-        {"HipIRR",    "FemurR", 1, false},
-        {"HipAbR",    "FemurR", 2, false},
-        {"KneeR",     "TibiaR", 0, false},
-        {"AnkleR",    "TalusR", 0, true},
-        {"Rotation",  "Pelvis", 1, false},
-        {"Obliquity", "Pelvis", 2, false},
-        {"Tilt",      "Pelvis", 0, false},
+        {"angle_HipR",      "FemurR", 0, true},
+        {"angle_HipIRR",    "FemurR", 1, false},
+        {"angle_HipAbR",    "FemurR", 2, false},
+        {"angle_KneeR",     "TibiaR", 0, false},
+        {"angle_AnkleR",    "TalusR", 0, true},
+        {"angle_Rotation",  "Pelvis", 1, false},
+        {"angle_Obliquity", "Pelvis", 2, false},
+        {"angle_Tilt",      "Pelvis", 0, false},
     };
 
     // Filter to joints that exist in the skeleton

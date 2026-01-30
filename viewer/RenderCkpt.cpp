@@ -328,6 +328,9 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
         LOG_WARN("[RenderCkpt] Resource manager init failed");
     }
 
+    // Load normative kinematics (always available, independent of simulation)
+    loadNormativeKinematics();
+
     // Load simulation environment on startup if enabled (default: true)
     if (mLoadSimulationOnStartup) {
         initEnv(mCachedMetadata);
@@ -734,6 +737,218 @@ void RenderCkpt::plotPhaseBar(double x_min, double x_max, double y_min, double y
     }
 
     ImPlot::PopStyleVar();
+}
+
+void RenderCkpt::plotReferenceKinematics(const std::vector<std::string>& keys)
+{
+    const KinematicsExportData* kin = getActiveKinematics();
+    if (!kin || !mShowReferenceKinematics)
+        return;
+
+    // Get current plot limits for phase mapping
+    ImPlotRect limits = ImPlot::GetPlotLimits();
+    double x_min = limits.X.Min;
+    double x_max = limits.X.Max;
+
+    int colormapSize = ImPlot::GetColormapSize();
+    int keyIndex = 0;
+
+    for (const auto& key : keys)
+    {
+        // Check if this key exists in reference kinematics
+        // Try exact match first, then try without "angle_" prefix for backward compat
+        std::string lookupKey = key;
+        auto itMean = kin->mean.find(lookupKey);
+        auto itStd = kin->std.find(lookupKey);
+
+        if ((itMean == kin->mean.end() || itStd == kin->std.end())
+            && key.rfind("angle_", 0) == 0)
+        {
+            // Try without "angle_" prefix
+            lookupKey = key.substr(6);
+            itMean = kin->mean.find(lookupKey);
+            itStd = kin->std.find(lookupKey);
+        }
+
+        if (itMean == kin->mean.end() ||
+            itStd == kin->std.end())
+        {
+            keyIndex++;
+            continue;
+        }
+
+        const std::vector<double>& meanVec = itMean->second;
+        const std::vector<double>& stdVec = itStd->second;
+        int numSamples = static_cast<int>(meanVec.size());  // Typically 100
+
+        if (numSamples == 0)
+        {
+            keyIndex++;
+            continue;
+        }
+
+        // Map reference kinematics (phase 0-100%) to current x-axis range
+        // Reference kinematics is phase-based, so map to visible x range
+        std::vector<float> x_data(numSamples);
+        std::vector<float> mean_data(numSamples);
+        std::vector<float> upper_band(numSamples);
+        std::vector<float> lower_band(numSamples);
+
+        double visible_range = x_max - x_min;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            // Distribute samples across the visible x range
+            double phase = static_cast<double>(i) / (numSamples - 1);
+            x_data[i] = static_cast<float>(x_min + phase * visible_range);
+            mean_data[i] = static_cast<float>(meanVec[i]);
+            upper_band[i] = static_cast<float>(meanVec[i] + stdVec[i]);
+            lower_band[i] = static_cast<float>(meanVec[i] - stdVec[i]);
+        }
+
+        // Get color for this key (same index as plotGraphData to match)
+        int colorIndex = keyIndex % colormapSize;
+        ImVec4 baseColor = ImPlot::GetColormapColor(colorIndex);
+
+        // Plot std band as shaded region (transparent fill)
+        ImVec4 bandColor = ImVec4(baseColor.x, baseColor.y, baseColor.z, 0.2f);
+        ImPlot::PushStyleColor(ImPlotCol_Fill, bandColor);
+        ImPlot::PlotShaded(("##ref_band_" + key).c_str(),
+                           x_data.data(), lower_band.data(), upper_band.data(), numSamples);
+        ImPlot::PopStyleColor();
+
+        // Plot mean line as dashed line (lighter color, hidden from legend with ##)
+        ImVec4 lineColor = ImVec4(baseColor.x * 0.8f, baseColor.y * 0.8f, baseColor.z * 0.8f, 0.7f);
+        ImPlot::PushStyleColor(ImPlotCol_Line, lineColor);
+        ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, 1.5f);
+        ImPlot::PlotLine(("##ref_mean_" + key).c_str(),
+                         x_data.data(), mean_data.data(), numSamples);
+        ImPlot::PopStyleVar();
+        ImPlot::PopStyleColor();
+
+        keyIndex++;
+    }
+}
+
+void RenderCkpt::loadNormativeKinematics()
+{
+    std::string path = rm::resolve("data/normative_kinematics.h5");
+    if (path.empty() || !fs::exists(path)) {
+        LOG_WARN("[RenderCkpt] Normative kinematics not found: data/normative_kinematics.h5");
+        mHasNormativeKinematics = false;
+        return;
+    }
+
+    try {
+        H5::H5File file(path, H5F_ACC_RDONLY);
+
+        // Check if /kinematics group exists
+        if (H5Lexists(file.getId(), "/kinematics", H5P_DEFAULT) <= 0) {
+            LOG_WARN("[RenderCkpt] No /kinematics group in normative file");
+            mHasNormativeKinematics = false;
+            return;
+        }
+
+        H5::Group kinGroup = file.openGroup("/kinematics");
+
+        // Read joint_names attribute (fixed-length string, matching C++ HDF export format)
+        if (kinGroup.attrExists("joint_names")) {
+            H5::Attribute namesAttr = kinGroup.openAttribute("joint_names");
+            H5::StrType strType = namesAttr.getStrType();
+            size_t strSize = strType.getSize();
+            std::vector<char> buffer(strSize + 1, '\0');
+            namesAttr.read(strType, buffer.data());
+            std::string namesStr(buffer.data());
+
+            // Parse comma-separated joint names
+            mNormativeKinematics.jointKeys.clear();
+            std::stringstream ss(namesStr);
+            std::string token;
+            while (std::getline(ss, token, ',')) {
+                if (!token.empty()) {
+                    mNormativeKinematics.jointKeys.push_back(token);
+                }
+            }
+        }
+
+        // Read num_cycles attribute
+        if (kinGroup.attrExists("num_cycles")) {
+            H5::Attribute cyclesAttr = kinGroup.openAttribute("num_cycles");
+            cyclesAttr.read(H5::PredType::NATIVE_INT, &mNormativeKinematics.numCycles);
+        }
+
+        // Read mean and std datasets for each joint
+        mNormativeKinematics.mean.clear();
+        mNormativeKinematics.std.clear();
+
+        for (const auto& jointKey : mNormativeKinematics.jointKeys) {
+            std::string meanPath = jointKey + "_mean";
+            std::string stdPath = jointKey + "_std";
+
+            if (H5Lexists(kinGroup.getId(), meanPath.c_str(), H5P_DEFAULT) > 0 &&
+                H5Lexists(kinGroup.getId(), stdPath.c_str(), H5P_DEFAULT) > 0) {
+                H5::DataSet meanDs = kinGroup.openDataSet(meanPath);
+                H5::DataSet stdDs = kinGroup.openDataSet(stdPath);
+
+                H5::DataSpace meanSpace = meanDs.getSpace();
+                hsize_t dims[1];
+                meanSpace.getSimpleExtentDims(dims);
+
+                std::vector<double> meanVec(dims[0]);
+                std::vector<double> stdVec(dims[0]);
+
+                meanDs.read(meanVec.data(), H5::PredType::NATIVE_DOUBLE);
+                stdDs.read(stdVec.data(), H5::PredType::NATIVE_DOUBLE);
+
+                mNormativeKinematics.mean[jointKey] = meanVec;
+                mNormativeKinematics.std[jointKey] = stdVec;
+            }
+        }
+
+        mHasNormativeKinematics = !mNormativeKinematics.mean.empty();
+        if (mHasNormativeKinematics) {
+            LOG_INFO("[RenderCkpt] Loaded normative kinematics: " << mNormativeKinematics.numCycles
+                     << " cycles, " << mNormativeKinematics.mean.size() << " joints");
+        }
+
+    } catch (const H5::Exception& e) {
+        LOG_ERROR("[RenderCkpt] Failed to load normative kinematics: " << e.getCDetailMsg());
+        mHasNormativeKinematics = false;
+    }
+}
+
+const KinematicsExportData* RenderCkpt::getActiveKinematics() const
+{
+    if (mKinematicsSource == KinematicsSource::FromNormative && mHasNormativeKinematics)
+        return &mNormativeKinematics;
+    if (mKinematicsSource == KinematicsSource::FromMotion && mHasReferenceKinematics)
+        return &mReferenceKinematics;
+    return nullptr;
+}
+
+std::string RenderCkpt::getActiveKinematicsLabel() const
+{
+    if (mKinematicsSource == KinematicsSource::FromNormative && mHasNormativeKinematics) {
+        return "Normative (gait120)";
+    }
+    if (mKinematicsSource == KinematicsSource::FromMotion && mHasReferenceKinematics && mMotion) {
+        std::string fullPath = mMotion->getName();
+        // Try to get PID from navigator state
+        if (mPIDNavigator) {
+            std::string pid = mPIDNavigator->getState().getSelectedPID();
+            if (!pid.empty()) {
+                // Extract relative path after PID directory
+                // Path format: /base/path/{pid}/{visit}/{data_type}/{filename}
+                size_t pidPos = fullPath.find("/" + pid + "/");
+                if (pidPos != std::string::npos) {
+                    std::string relPath = fullPath.substr(pidPos + 1);  // {pid}/{visit}/...
+                    return "@pid:" + relPath;
+                }
+            }
+        }
+        // Fallback: just filename
+        return fs::path(fullPath).filename().string();
+    }
+    return "";
 }
 
 float RenderCkpt::getHeelStrikeTime()
@@ -1360,11 +1575,40 @@ void RenderCkpt::drawRightPanel()
     ImGui::SameLine();
     if (ImGui::Button("1.1")) mXmin = -1.1;
     ImGui::SameLine();
+    if (ImGui::Button("0")) mXmin = 0.0;
+    ImGui::SameLine();
     mPlotHideLegend = ImGui::Button("Hide"); ImGui::SameLine();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(30);
     ImGui::InputDouble("X(min)", &mXmin);
+    ImGui::SameLine();
 
+    // Reference kinematics source selector and overlay toggle
+    bool hasAnyKinematics = mHasReferenceKinematics || mHasNormativeKinematics;
+    if (hasAnyKinematics) {
+        ImGui::Checkbox("Ref Overlay", &mShowReferenceKinematics);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::BeginCombo("##RefSrc",
+            mKinematicsSource == KinematicsSource::FromMotion ? "Motion" : "Normative"))
+        {
+            if (mHasReferenceKinematics) {
+                if (ImGui::Selectable("Motion", mKinematicsSource == KinematicsSource::FromMotion)) {
+                    mKinematicsSource = KinematicsSource::FromMotion;
+                    mKinematicsSourceInt = 0;
+                }
+            }
+            if (mHasNormativeKinematics) {
+                if (ImGui::Selectable("Normative", mKinematicsSource == KinematicsSource::FromNormative)) {
+                    mKinematicsSource = KinematicsSource::FromNormative;
+                    mKinematicsSourceInt = 1;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    ImGui::SameLine();
     // Plot title control
     ImGui::Checkbox("Title##PlotTitleCheckbox", &mPlotTitle);
     ImGui::SameLine();
@@ -1780,24 +2024,124 @@ void RenderCkpt::drawKinematicsTabContent()
         ImGuiCommon::RadioButtonGroup("KinematicsAngle",
             {"Major", "Minor", "Pelvis", "Sway", "Anteversion"}, &angle_selection);
 
+        // Helper lambda for computing MSE against active kinematics source
+        // Computes MSE only for data within visible plot range [x_min, x_max]
+        auto computeMSE = [this](const std::string& key, double x_min, double x_max) -> double {
+            const KinematicsExportData* kin = getActiveKinematics();
+            if (!kin || !mGraphData || !mRenderEnv) return -1.0;
+
+            // Find reference data
+            std::string lookupKey = key;
+            auto itMean = kin->mean.find(lookupKey);
+            if (itMean == kin->mean.end() && key.rfind("angle_", 0) == 0) {
+                lookupKey = key.substr(6);
+                itMean = kin->mean.find(lookupKey);
+            }
+            if (itMean == kin->mean.end()) return -1.0;
+            if (!mGraphData->key_exists(key)) return -1.0;
+
+            const std::vector<double>& refMean = itMean->second;
+            std::vector<double> allSimData = mGraphData->get(key);
+            if (allSimData.empty() || refMean.empty()) return -1.0;
+
+            // Extract simulation data within visible plot range
+            const double timeStep = mRenderEnv->getWorld()->getTimeStep();
+            int bufferSize = static_cast<int>(allSimData.size());
+            std::vector<double> simData;
+            std::vector<double> simTime;
+
+            for (int i = 0; i < bufferSize; ++i) {
+                double t = -(bufferSize - 1 - i) * timeStep;
+                if (t >= x_min && t <= x_max) {
+                    simData.push_back(allSimData[i]);
+                    simTime.push_back(t);
+                }
+            }
+
+            if (simData.size() < 2) return -1.0;
+
+            // Resample simulation data to match reference (100 samples)
+            int numRefSamples = static_cast<int>(refMean.size());  // 100
+            double mse = 0.0;
+
+            for (int i = 0; i < numRefSamples; ++i) {
+                // Map reference phase [0, 1] to simulation time range [x_min, x_max]
+                double phase = static_cast<double>(i) / (numRefSamples - 1);
+                double targetTime = x_min + phase * (x_max - x_min);
+
+                // Linear interpolation to get simulation value at targetTime
+                double simValue = 0.0;
+                bool found = false;
+                for (size_t j = 0; j < simTime.size() - 1; ++j) {
+                    if (targetTime >= simTime[j] && targetTime <= simTime[j + 1]) {
+                        double alpha = (targetTime - simTime[j]) / (simTime[j + 1] - simTime[j]);
+                        simValue = simData[j] + alpha * (simData[j + 1] - simData[j]);
+                        found = true;
+                        break;
+                    }
+                }
+                // Handle edge case: targetTime at or beyond last sample
+                if (!found && targetTime >= simTime.back()) {
+                    simValue = simData.back();
+                } else if (!found && targetTime <= simTime.front()) {
+                    simValue = simData.front();
+                }
+
+                double diff = simValue - refMean[i];
+                mse += diff * diff;
+            }
+
+            return mse / numRefSamples;
+        };
+
         if (angle_selection == 0) { // Major joints
             ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -45, 60);
 
             std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
             float plotHeight = getPlotHeight("Kinematics");
+            double plotXMin = 0.0, plotXMax = 0.0;
             if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> jointKeys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
                 plotGraphData(jointKeys, ImAxis_Y1, "", stats);
+                plotReferenceKinematics(jointKeys);
 
-                // Overlay phase bars
+                // Get plot limits before EndPlot for MSE computation
                 ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotXMin = limits.X.Min;
+                plotXMax = limits.X.Max;
                 plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
 
                 ImPlot::EndPlot();
+            }
+            // MSE for major joints (using stored plot limits)
+            if (getActiveKinematics()) {
+                double mseHip = computeMSE("angle_HipR", plotXMin, plotXMax);
+                double mseKnee = computeMSE("angle_KneeR", plotXMin, plotXMax);
+                double mseAnkle = computeMSE("angle_AnkleR", plotXMin, plotXMax);
+
+                ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
+                ImGui::SetWindowFontScale(2.0f);
+                ImGui::Text("MSE: Hip:%.1f Knee:%.1f Ankle:%.1f", mseHip, mseKnee, mseAnkle);
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Hdr##MajorMSE")) {
+                    const char* hdr = "| Ckpt | Ref | Hip | Knee | Ankle |\n|------|-----|-----|------|-------|";
+                    std::cout << hdr << std::endl;
+                    glfwSetClipboardString(mWindow, hdr);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Row##MajorMSE")) {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %.1f | %.1f | %.1f |",
+                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mseHip, mseKnee, mseAnkle);
+                    std::cout << buf << std::endl;
+                    glfwSetClipboardString(mWindow, buf);
+                }
             }
             ImGui::Separator();
         }
@@ -1807,6 +2151,7 @@ void RenderCkpt::drawKinematicsTabContent()
             ImPlot::SetNextAxisLimits(3, -10, 15);
 
             std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
+            double plotXMin = 0.0, plotXMax = 0.0;
             if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
 
@@ -1814,12 +2159,39 @@ void RenderCkpt::drawKinematicsTabContent()
 
                 std::vector<std::string> jointKeys = {"angle_HipIRR", "angle_HipAbR"};
                 plotGraphData(jointKeys, ImAxis_Y1, "", stats);
+                plotReferenceKinematics(jointKeys);
 
-                // Overlay phase bars
+                // Get plot limits before EndPlot for MSE computation
                 ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotXMin = limits.X.Min;
+                plotXMax = limits.X.Max;
                 plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
 
                 ImPlot::EndPlot();
+            }
+            // MSE for minor joints (using stored plot limits)
+            if (getActiveKinematics()) {
+                double mseHipIR = computeMSE("angle_HipIRR", plotXMin, plotXMax);
+                double mseHipAb = computeMSE("angle_HipAbR", plotXMin, plotXMax);
+                ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
+                ImGui::SetWindowFontScale(2.0f);
+                ImGui::Text("MSE: HipIR:%.1f HipAb:%.1f", mseHipIR, mseHipAb);
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Hdr##MinorMSE")) {
+                    const char* hdr = "| Ckpt | Ref | HipIR | HipAb |\n|------|-----|-------|-------|";
+                    std::cout << hdr << std::endl;
+                    glfwSetClipboardString(mWindow, hdr);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Row##MinorMSE")) {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %.1f | %.1f |",
+                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mseHipIR, mseHipAb);
+                    std::cout << buf << std::endl;
+                    glfwSetClipboardString(mWindow, buf);
+                }
             }
             ImGui::Separator();
         }
@@ -1828,18 +2200,47 @@ void RenderCkpt::drawKinematicsTabContent()
             ImPlot::SetNextAxisLimits(3, -20, 20);
 
             std::string title_pelvis_joints = mPlotTitle ? mCheckpointName : "Pelvis Angles (deg)";
+            double plotXMin = 0.0, plotXMax = 0.0;
             if (ImPlot::BeginPlot((title_pelvis_joints + "##PelvisJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
                 std::vector<std::string> pelvisKeys = {"angle_Rotation", "angle_Obliquity", "angle_Tilt"};
                 plotGraphData(pelvisKeys, ImAxis_Y1, "", stats);
+                plotReferenceKinematics(pelvisKeys);
 
-                // Overlay phase bars
+                // Get plot limits before EndPlot for MSE computation
                 ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotXMin = limits.X.Min;
+                plotXMax = limits.X.Max;
                 plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
 
                 ImPlot::EndPlot();
+            }
+            // MSE for pelvis joints (using stored plot limits)
+            if (getActiveKinematics()) {
+                double mseRot = computeMSE("angle_Rotation", plotXMin, plotXMax);
+                double mseObl = computeMSE("angle_Obliquity", plotXMin, plotXMax);
+                double mseTilt = computeMSE("angle_Tilt", plotXMin, plotXMax);
+                ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
+                ImGui::SetWindowFontScale(2.0f);
+                ImGui::Text("MSE: Rot:%.1f Obl:%.1f Tilt:%.1f", mseRot, mseObl, mseTilt);
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Hdr##PelvisMSE")) {
+                    const char* hdr = "| Ckpt | Ref | Rot | Obl | Tilt |\n|------|-----|-----|-----|------|";
+                    std::cout << hdr << std::endl;
+                    glfwSetClipboardString(mWindow, hdr);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Row##PelvisMSE")) {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %.1f | %.1f | %.1f |",
+                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mseRot, mseObl, mseTilt);
+                    std::cout << buf << std::endl;
+                    glfwSetClipboardString(mWindow, buf);
+                }
             }
         }
 
@@ -5316,6 +5717,17 @@ void RenderCkpt::onPIDFileSelected(const std::string& path,
 {
     // Load the HDF motion file using existing unified loader
     loadMotionFile(path);
+
+    // Cache reference kinematics from the loaded motion if available
+    HDF* hdf = dynamic_cast<HDF*>(mMotion);
+    if (hdf && hdf->hasReferenceKinematics()) {
+        mReferenceKinematics = hdf->getReferenceKinematics();
+        mHasReferenceKinematics = true;
+        LOG_INFO("[RenderCkpt] Loaded reference kinematics for "
+                 << mReferenceKinematics.jointKeys.size() << " joints");
+    } else {
+        mHasReferenceKinematics = false;
+    }
 
     LOG_INFO("[RenderCkpt] Loaded PID HDF file: " << filename);
 }

@@ -161,6 +161,18 @@ public:
      */
     double getStrideAttribute(double defaultValue = -1.0) const;
 
+    /**
+     * @brief Check if reference kinematics data is available
+     * @return true if /kinematics group was loaded from file
+     */
+    bool hasReferenceKinematics() const { return mHasReferenceKinematics; }
+
+    /**
+     * @brief Get reference kinematics data (mean/std over gait cycle)
+     * @return Kinematics data with 100-element vectors per joint key
+     */
+    const KinematicsExportData& getReferenceKinematics() const { return mReferenceKinematics; }
+
 private:
     std::string mFilename;
 
@@ -186,6 +198,10 @@ private:
 
     // Stride from file attribute (-1 = not set)
     double mStrideAttribute = -1.0;
+
+    // Reference kinematics (loaded from /kinematics group if present)
+    KinematicsExportData mReferenceKinematics;  ///< Mean/std over 100 gait cycle bins
+    bool mHasReferenceKinematics = false;       ///< True if /kinematics group was loaded
 
     // ==================== Private Helper Methods ====================
 
