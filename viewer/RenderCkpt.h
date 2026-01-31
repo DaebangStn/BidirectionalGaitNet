@@ -426,6 +426,8 @@ private:
                                        int value_per_frame);
 
     bool mLoadSimulationOnStartup = true;  // Whether to load simulation environment on startup
+    std::string mDefaultPIDMotion;  // Default motion filename to auto-load when PID is set (from render.yaml)
+    bool mDefaultDoublePlotSize = true;  // Default state for 2x plot size checkbox (from render.yaml)
     void drawMotions(Eigen::VectorXd motion, Eigen::VectorXd skel_param, Eigen::Vector3d offset = Eigen::Vector3d(-1.0,0,0), Eigen::Vector4d color = Eigen::Vector4d(0.2,0.2,0.8,0.7)) {
         if (!mMotionCharacter || !mRenderEnv) return;
         auto skel = mMotionCharacter->getSkeleton();

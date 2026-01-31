@@ -379,47 +379,55 @@ void RenderCkpt::loadRenderConfigImpl()
         YAML::Node config = YAML::LoadFile(resolved_path);
 
         // Load glfwapp-specific settings
-        if (config["glfwapp"]) {
-            if (config["glfwapp"]["rollout"] && config["glfwapp"]["rollout"]["count"])
-                mDefaultRolloutCount = config["glfwapp"]["rollout"]["count"].as<int>();
+        if (config["render_ckpt"]) {
+            if (config["render_ckpt"]["rollout"] && config["render_ckpt"]["rollout"]["count"])
+                mDefaultRolloutCount = config["render_ckpt"]["rollout"]["count"].as<int>();
 
-            if (config["glfwapp"]["plot"]) {
-                if (config["glfwapp"]["plot"]["title"])
-                    mPlotTitle = config["glfwapp"]["plot"]["title"].as<bool>();
+            if (config["render_ckpt"]["plot"]) {
+                if (config["render_ckpt"]["plot"]["title"])
+                    mPlotTitle = config["render_ckpt"]["plot"]["title"].as<bool>();
 
-                if (config["glfwapp"]["plot"]["x_min"])
-                    mXmin = config["glfwapp"]["plot"]["x_min"].as<double>();
+                if (config["render_ckpt"]["plot"]["x_min"])
+                    mXmin = config["render_ckpt"]["plot"]["x_min"].as<double>();
             }
 
-            if (config["glfwapp"]["playback_speed"]) {
-                mViewerPlaybackSpeed = config["glfwapp"]["playback_speed"].as<float>();
+            if (config["render_ckpt"]["playback_speed"]) {
+                mViewerPlaybackSpeed = config["render_ckpt"]["playback_speed"].as<float>();
                 mLastPlaybackSpeed = mViewerPlaybackSpeed;
             }
 
-            if (config["glfwapp"]["resetPhase"]) {
-                mResetPhase = config["glfwapp"]["resetPhase"].as<double>();
+            if (config["render_ckpt"]["resetPhase"]) {
+                mResetPhase = config["render_ckpt"]["resetPhase"].as<double>();
                 LOG_VERBOSE("[Config] Reset phase set to: " << mResetPhase
                           << (mResetPhase < 0.0 ? " (randomized)" : ""));
             }
 
-            if (config["glfwapp"]["load_simulation"]) {
-                mLoadSimulationOnStartup = config["glfwapp"]["load_simulation"].as<bool>();
+            if (config["render_ckpt"]["load_simulation"]) {
+                mLoadSimulationOnStartup = config["render_ckpt"]["load_simulation"].as<bool>();
             }
 
-            if (config["glfwapp"]["resizable_plot"]) {
-                if (config["glfwapp"]["resizable_plot"]["x_min"])
-                    mXminResizablePlotPane = config["glfwapp"]["resizable_plot"]["x_min"].as<double>();
-                if (config["glfwapp"]["resizable_plot"]["y_min"])
-                    mYminResizablePlotPane = config["glfwapp"]["resizable_plot"]["y_min"].as<double>();
-                if (config["glfwapp"]["resizable_plot"]["y_max"])
-                    mYmaxResizablePlotPane = config["glfwapp"]["resizable_plot"]["y_max"].as<double>();
-                if (config["glfwapp"]["resizable_plot"]["keys"]) {
-                    std::string keys = config["glfwapp"]["resizable_plot"]["keys"].as<std::string>();
+            if (config["render_ckpt"]["default_pid_motion"]) {
+                mDefaultPIDMotion = config["render_ckpt"]["default_pid_motion"].as<std::string>();
+            }
+
+            if (config["render_ckpt"]["double_plot_size"]) {
+                mDefaultDoublePlotSize = config["render_ckpt"]["double_plot_size"].as<bool>();
+            }
+
+            if (config["render_ckpt"]["resizable_plot"]) {
+                if (config["render_ckpt"]["resizable_plot"]["x_min"])
+                    mXminResizablePlotPane = config["render_ckpt"]["resizable_plot"]["x_min"].as<double>();
+                if (config["render_ckpt"]["resizable_plot"]["y_min"])
+                    mYminResizablePlotPane = config["render_ckpt"]["resizable_plot"]["y_min"].as<double>();
+                if (config["render_ckpt"]["resizable_plot"]["y_max"])
+                    mYmaxResizablePlotPane = config["render_ckpt"]["resizable_plot"]["y_max"].as<double>();
+                if (config["render_ckpt"]["resizable_plot"]["keys"]) {
+                    std::string keys = config["render_ckpt"]["resizable_plot"]["keys"].as<std::string>();
                     strncpy(mResizePlotKeys, keys.c_str(), sizeof(mResizePlotKeys) - 1);
                     mResizePlotKeys[sizeof(mResizePlotKeys) - 1] = '\0';
                 }
-                if (config["glfwapp"]["resizable_plot"]["title"])
-                    mPlotTitleResizablePlotPane = config["glfwapp"]["resizable_plot"]["title"].as<bool>();
+                if (config["render_ckpt"]["resizable_plot"]["title"])
+                    mPlotTitleResizablePlotPane = config["render_ckpt"]["resizable_plot"]["title"].as<bool>();
             }
         }
 
@@ -434,7 +442,24 @@ void RenderCkpt::loadRenderConfigImpl()
 void RenderCkpt::onInitialize()
 {
     // App-specific initialization after GLFW/ImGui is ready
-    // (Most init is done in constructor; this is for things that need the window)
+    // Called after loadRenderConfigImpl(), so mDefaultPIDMotion is available
+
+    // Auto-load default PID motion if configured and environment has a PID set
+    if (mRenderEnv && mResourceManager && !mDefaultPIDMotion.empty()) {
+        const std::string& globalPid = mRenderEnv->getGlobalPid();
+        if (!globalPid.empty()) {
+            try {
+                std::string motionUri = "@pid:" + globalPid + "/motion/" + mDefaultPIDMotion;
+                auto handle = mResourceManager->fetch(motionUri);
+                std::string motionPath = handle.local_path().string();
+                LOG_INFO("[RenderCkpt] Auto-loading default PID motion: " << motionPath);
+                onPIDFileSelected(motionPath, mDefaultPIDMotion);
+            } catch (const rm::RMError&) {
+                // Motion not found, that's OK - user can select manually
+                LOG_VERBOSE("[RenderCkpt] Default PID motion not found: " << mDefaultPIDMotion);
+            }
+        }
+    }
 }
 
 RenderCkpt::~RenderCkpt()
@@ -490,6 +515,19 @@ void RenderCkpt::update(bool _isSave)
 
 }
 
+// Generate 3-character alphanumeric hash from string (for table UID)
+static std::string hashTo3Char(const std::string& str)
+{
+    static const char charset[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    size_t hash = std::hash<std::string>{}(str);
+    std::string result(3, '0');
+    for (int i = 0; i < 3; ++i) {
+        result[i] = charset[hash % 36];
+        hash /= 36;
+    }
+    return result;
+}
+
 // Shared static map to track double-size state for each plot title
 static std::map<std::string, bool>& getDoublePlotSizeMap()
 {
@@ -518,9 +556,9 @@ bool RenderCkpt::collapsingHeaderWithControls(const std::string& title)
     // Access shared static map to track double-size state
     auto& doublePlotSizeMap = getDoublePlotSizeMap();
 
-    // Initialize the map entry if it doesn't exist
+    // Initialize the map entry if it doesn't exist (use config default)
     if (doublePlotSizeMap.find(title) == doublePlotSizeMap.end()) {
-        doublePlotSizeMap[title] = false;
+        doublePlotSizeMap[title] = mDefaultDoublePlotSize;
     }
 
     // Calculate position for the 2x checkbox
@@ -1183,7 +1221,13 @@ void RenderCkpt::initializeMotionCharacter(const std::string& metadata)
         YAML::Node config = YAML::LoadFile(metadata);
         if (config["environment"] && config["environment"]["skeleton"] && config["environment"]["skeleton"]["file"]) {
             skelPath = config["environment"]["skeleton"]["file"].as<std::string>();
-            skelPath = rm::resolve(skelPath);
+
+            // Get global pid for @pid:/ URI expansion
+            std::string globalPid;
+            if (config["environment"]["pid"]) {
+                globalPid = config["environment"]["pid"].as<std::string>();
+            }
+            skelPath = rm::resolve(rm::expand_pid(skelPath, globalPid));
         }
     } catch (const std::exception& e) {
         LOG_WARN("[Motion] Failed to parse metadata for skeleton path: " << e.what());
@@ -1255,7 +1299,24 @@ void RenderCkpt::initEnv(std::string metadata)
     }
     glfwSetWindowTitle(mWindow, mCheckpointName.c_str());
 
-    // Initialize motion skeleton
+    // Navigate PID Navigator to the environment's global PID if specified
+    const std::string& globalPid = mRenderEnv->getGlobalPid();
+    if (mPIDNavigator && !globalPid.empty()) {
+        // Parse "PID/visit" format (e.g., "29792292/pre")
+        std::string pid = globalPid;
+        std::string visit = "pre";
+        size_t slashPos = globalPid.find('/');
+        if (slashPos != std::string::npos) {
+            pid = globalPid.substr(0, slashPos);
+            visit = globalPid.substr(slashPos + 1);
+        }
+
+        if (mPIDNavigator->navigateTo(pid, visit)) {
+            LOG_INFO("[RenderCkpt] PID Navigator initialized to " << pid << "/" << visit);
+        }
+    }
+
+    // Initialize motion skeleton first (needed for motion loading)
     initializeMotionSkeleton();
 
     // // Hardcoded: Load Sim_Healthy.npz as reference motion
@@ -2123,22 +2184,28 @@ void RenderCkpt::drawKinematicsTabContent()
                 double mseKnee = computeMSE("angle_KneeR", plotXMin, plotXMax);
                 double mseAnkle = computeMSE("angle_AnkleR", plotXMin, plotXMax);
 
+                double mseSum = mseHip + mseKnee + mseAnkle;
                 ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
                 ImGui::SetWindowFontScale(2.0f);
-                ImGui::Text("MSE: Hip:%.1f Knee:%.1f Ankle:%.1f", mseHip, mseKnee, mseAnkle);
+                ImGui::Text("MSE: Hip:%.1f Knee:%.1f Ankle:%.1f (%.1f)", mseHip, mseKnee, mseAnkle, mseSum);
                 ImGui::SetWindowFontScale(1.0f);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Hdr##MajorMSE")) {
-                    const char* hdr = "| Ckpt | Ref | Hip | Knee | Ankle |\n|------|-----|-----|------|-------|";
+                    const char* hdr = "| Hash | Ckpt | Ref | Hip | Knee | Ankle | Sum |\n|------|------|-----|-----|------|-------|-----|";
                     std::cout << hdr << std::endl;
                     glfwSetClipboardString(mWindow, hdr);
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##MajorMSE")) {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "| %s | %s | %.1f | %.1f | %.1f |",
+                    char content[256];
+                    snprintf(content, sizeof(content), "%s|%s|%.1f|%.1f|%.1f|%.1f",
                              mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mseHip, mseKnee, mseAnkle);
+                             mseHip, mseKnee, mseAnkle, mseSum);
+                    std::string hash = hashTo3Char(content);
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %.1f | %.1f | %.1f | %.1f |",
+                             hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mseHip, mseKnee, mseAnkle, mseSum);
                     std::cout << buf << std::endl;
                     glfwSetClipboardString(mWindow, buf);
                 }
@@ -2179,15 +2246,20 @@ void RenderCkpt::drawKinematicsTabContent()
                 ImGui::SetWindowFontScale(1.0f);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Hdr##MinorMSE")) {
-                    const char* hdr = "| Ckpt | Ref | HipIR | HipAb |\n|------|-----|-------|-------|";
+                    const char* hdr = "| Hash | Ckpt | Ref | HipIR | HipAb |\n|------|------|-----|-------|-------|";
                     std::cout << hdr << std::endl;
                     glfwSetClipboardString(mWindow, hdr);
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##MinorMSE")) {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "| %s | %s | %.1f | %.1f |",
+                    char content[256];
+                    snprintf(content, sizeof(content), "%s|%s|%.1f|%.1f",
                              mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mseHipIR, mseHipAb);
+                    std::string hash = hashTo3Char(content);
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %.1f | %.1f |",
+                             hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
                              mseHipIR, mseHipAb);
                     std::cout << buf << std::endl;
                     glfwSetClipboardString(mWindow, buf);
@@ -2228,15 +2300,20 @@ void RenderCkpt::drawKinematicsTabContent()
                 ImGui::SetWindowFontScale(1.0f);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Hdr##PelvisMSE")) {
-                    const char* hdr = "| Ckpt | Ref | Rot | Obl | Tilt |\n|------|-----|-----|-----|------|";
+                    const char* hdr = "| Hash | Ckpt | Ref | Rot | Obl | Tilt |\n|------|------|-----|-----|-----|------|";
                     std::cout << hdr << std::endl;
                     glfwSetClipboardString(mWindow, hdr);
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##PelvisMSE")) {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "| %s | %s | %.1f | %.1f | %.1f |",
+                    char content[256];
+                    snprintf(content, sizeof(content), "%s|%s|%.1f|%.1f|%.1f",
                              mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mseRot, mseObl, mseTilt);
+                    std::string hash = hashTo3Char(content);
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %.1f | %.1f | %.1f |",
+                             hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
                              mseRot, mseObl, mseTilt);
                     std::cout << buf << std::endl;
                     glfwSetClipboardString(mWindow, buf);

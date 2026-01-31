@@ -169,6 +169,62 @@ void PIDNavigator::scanFiles(const std::string& pid, const std::string& visit) {
 }
 
 
+bool PIDNavigator::navigateTo(const std::string& pid, const std::string& visit) {
+    if (!pImpl->resourceManager || pid.empty()) return false;
+
+    // Find the PID in the list
+    auto it = std::find(pImpl->state.pidList.begin(), pImpl->state.pidList.end(), pid);
+    if (it == pImpl->state.pidList.end()) {
+        return false;  // PID not found
+    }
+
+    int pidIndex = static_cast<int>(std::distance(pImpl->state.pidList.begin(), it));
+
+    // Select the PID
+    pImpl->state.selectedPID = pidIndex;
+
+    // Scan available visits for this PID (lazy loading)
+    auto& visits = pImpl->state.pidVisits[pidIndex];
+    if (visits.empty()) {
+        static const std::vector<std::string> VISIT_ORDER = {"pre", "op1", "op2"};
+        static const std::set<std::string> VALID_VISITS = {"pre", "op1", "op2"};
+        try {
+            auto entries = pImpl->resourceManager->list("@pid:" + pid);
+            std::set<std::string> foundVisits;
+            for (const auto& entry : entries) {
+                if (VALID_VISITS.count(entry)) {
+                    foundVisits.insert(entry);
+                }
+            }
+            for (const auto& v : VISIT_ORDER) {
+                if (foundVisits.count(v)) {
+                    visits.push_back(v);
+                }
+            }
+        } catch (...) {}
+        if (visits.empty()) visits.push_back("pre");  // Fallback
+    }
+
+    // Find and select the visit
+    auto visitIt = std::find(visits.begin(), visits.end(), visit);
+    if (visitIt != visits.end()) {
+        pImpl->state.selectedVisit = static_cast<int>(std::distance(visits.begin(), visitIt));
+    } else {
+        pImpl->state.selectedVisit = 0;  // Default to first visit
+    }
+    pImpl->state.preOp = (pImpl->state.getVisitDir() == "pre");
+
+    // Scan files for the selected PID/visit
+    scanFiles(pid, pImpl->state.getVisitDir());
+
+    // Invoke PID change callback if set
+    if (pImpl->pidChangeCallback) {
+        pImpl->pidChangeCallback(pid);
+    }
+
+    return true;
+}
+
 const PIDSelectionState& PIDNavigator::getState() const {
     return pImpl->state;
 }

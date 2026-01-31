@@ -174,6 +174,7 @@ public:
     int getControlHz() { return mControlHz; }
     int getSimulationStep() const { return mSimulationStep; }
     std::string getMetadata() { return mMetadata; }
+    const std::string& getGlobalPid() const { return mGlobalPid; }
 
     bool isMirror() { return mUseMirror && mGaitPhase->getAdaptivePhase() > 0.5; }
 

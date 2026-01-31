@@ -133,6 +133,16 @@ public:
     void setPIDChangeCallback(PIDChangeCallback callback);
 
     /**
+     * Programmatically navigate to a specific PID and visit.
+     * Useful for initializing from config files.
+     *
+     * @param pid The PID to select (e.g., "29792292")
+     * @param visit The visit to select (e.g., "pre", "op1")
+     * @return true if navigation was successful, false if PID not found
+     */
+    bool navigateTo(const std::string& pid, const std::string& visit = "pre");
+
+    /**
      * Renders full UI section with collapsing header.
      *
      * @param title Section title for collapsing header
