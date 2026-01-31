@@ -145,16 +145,15 @@ int main(int argc, char** argv) {
             out << YAML::Key << "size_meters" << YAML::Flow << bodySizes[name];
         } else {
             // Fallback: get from body node shape if available
-            auto shape = bn->getShapeNodesWith<dart::dynamics::VisualAspect>();
-            if (!shape.empty()) {
-                auto boxShape = std::dynamic_pointer_cast<dart::dynamics::BoxShape>(
-                    shape[0]->getShape());
+            bn->eachShapeNodeWith<dart::dynamics::VisualAspect>([&](dart::dynamics::ShapeNode* sn) {
+                auto boxShape = std::dynamic_pointer_cast<dart::dynamics::BoxShape>(sn->getShape());
                 if (boxShape) {
                     Eigen::Vector3d size = boxShape->getSize();
                     out << YAML::Key << "size_meters" << YAML::Flow
                         << std::vector<double>{size.x(), size.y(), size.z()};
                 }
-            }
+                return false;  // stop after first shape
+            });
         }
 
         // Global position

@@ -27,14 +27,25 @@ CACHE_DIR = PROJECT_ROOT / ".tmp" / "rm_cache"
 LOCK_FILE = PROJECT_ROOT / ".tmp" / "rm_cache.lock"
 
 
-def extract_pid_uris(config: dict) -> list[str]:
-    """Recursively extract all @pid: URIs from config dict."""
+def expand_pid_uri(uri: str, default_pid: str) -> str:
+    """Expand @pid:/path to @pid:{default_pid}/path if default_pid is set."""
+    if default_pid and uri.startswith("@pid:/"):
+        return f"@pid:{default_pid}/" + uri[6:]
+    return uri
+
+
+def extract_pid_uris(config: dict, default_pid: str = None) -> list[str]:
+    """Recursively extract all @pid: URIs from config dict.
+
+    If default_pid is provided, expands @pid:/path to @pid:{default_pid}/path.
+    """
     uris = []
 
     def walk(obj):
         if isinstance(obj, str):
             if obj.startswith("@pid:"):
-                uris.append(obj)
+                expanded = expand_pid_uri(obj, default_pid)
+                uris.append(expanded)
         elif isinstance(obj, dict):
             for v in obj.values():
                 walk(v)
@@ -54,8 +65,16 @@ def prefetch(env_file: str):
     with open(env_file) as f:
         config = yaml.safe_load(f)
 
-    # Extract @pid URIs
-    uris = extract_pid_uris(config)
+    # Get global pid for expanding @pid:/ URIs
+    # Try root level first, then environment.pid
+    default_pid = config.get("pid")
+    if not default_pid and "environment" in config:
+        default_pid = config["environment"].get("pid")
+    if default_pid:
+        print(f"Using global pid: {default_pid}")
+
+    # Extract @pid URIs (with expansion if default_pid is set)
+    uris = extract_pid_uris(config, default_pid)
     print(f"Found {len(uris)} @pid URIs to prefetch")
 
     if not uris:

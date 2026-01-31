@@ -92,8 +92,6 @@ public:
     std::vector<dart::dynamics::BodyNode *> getEndEffectors() { return mEndEffectors; }
     const Eigen::VectorXd& getKpVector() const { return mKp; }
     const Eigen::VectorXd& getKvVector() const { return mKv; }
-    void scaleKpKv(double kp_scale, double kv_scale);
-    void setJointDamping(double damping);
 
     Eigen::VectorXd heightCalibration(dart::simulation::WorldPtr _world);
     std::vector<Eigen::Matrix3d> getBodyNodeTransform() { return mBodyNodeTransform; }

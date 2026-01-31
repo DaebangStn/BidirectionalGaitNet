@@ -372,8 +372,6 @@ public:
     void updateParamState() { setParamState(getParamSample()); }
     double getLimitY() { return mLimitY; }
 
-    void poseOptimization(int iter = 100);
-
     // Contact detection (delegated to GaitPhase if available)
     Eigen::Vector2i getIsContact();
     Eigen::Vector2d getFootGRF();
@@ -506,6 +504,7 @@ private:
 
     // Metadata
     std::string mMetadata;
+    std::string mGlobalPid;  // Global pid for expanding @pid:/ URIs
 
     // Residual Control
     bool mIsResidual;
@@ -561,10 +560,6 @@ private:
     int mNumParamState;
 
     RewardConfig mRewardConfig;
-
-    // Pose Optimization
-    bool mMusclePoseOptimization;
-    int mPoseOptimizationMode;
 
     // Gait Analysis
     double mKneeLoadingMaxCycle;  // Maximum knee loading for current gait cycle

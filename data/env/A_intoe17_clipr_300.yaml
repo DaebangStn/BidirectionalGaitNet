@@ -5,14 +5,10 @@ environment:
   skeleton:
     file: "@data/skeleton/intoe17.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    kp: 200
-    kv: 40
-    damping: 0.1
     self_collide: true
 
   # Motion Reference
   motion:
-    type: "h5"  # h5, bvh, npz
     file: "@data/motion/walk.h5"
 
   # Muscle System
@@ -21,9 +17,6 @@ environment:
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
-    pose_optimization:
-      enabled: true
-      rot: "one_foot"  # one_foot or mid_feet
 
   # Simulation Timing
   simulation:

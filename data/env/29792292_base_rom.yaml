@@ -1,29 +1,23 @@
 # args:
 
 environment:
+  pid: "29792292/pre"
   # Skeleton and Character
   skeleton:
-    file: "@pid:29792292/pre/skeleton/dynamic.yaml"
+    file: "@pid:/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    kp: 200
-    kv: 40
-    damping: 0.1
 
   # Motion Reference
   motion:
-    type: "h5"  # h5, bvh, npz
     get_stride_from_motion: true
-    file: "@pid:29792292/pre/motion/walk01_single.h5"
+    file: "@pid:/motion/walk01_single.h5"
 
   # Muscle System
   muscle:
-    file: "@pid:29792292/pre/muscle/base_rom_0125_1102.yaml"
+    file: "@pid:/muscle/base_rom_0125_1102.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
-    pose_optimization:
-      enabled: true
-      rot: "one_foot"  # one_foot or mid_feet
 
   # Simulation Timing
   simulation:

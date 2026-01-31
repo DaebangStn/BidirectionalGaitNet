@@ -31,46 +31,20 @@ namespace {
 
 Environment::Environment(const std::string& filepath)
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
-    mUseMirror(true), mLocalState(false), mLimitY(0.6), mIsResidual(true)
+      mUseMirror(true), mLocalState(false), mLimitY(0.6), mIsResidual(true),
+      mSimulationCount(0), mActionScale(0.04), mIncludeMetabolicReward(true),
+      mRewardType(deepmimic), mRefStride(1.34), mStride(1.0), mCadence(1.0),
+      mPhaseDisplacementScale(-1.0), mNumActuatorAction(0), mLoadedMuscleNN(false),
+      mUseJointState(false), mNumParamState(0), mSimulationStep(0),
+      mKneeLoadingMaxCycle(0.0), mDragStartX(0.0), mUseCascading(false),
+      mUseNormalizedParamState(true),
+      mHorizon(600)
 {
     mWorld = std::make_shared<dart::simulation::World>();
-    mSimulationCount = 0;
-    mActionScale = 0.04;
-    mIncludeMetabolicReward = true;
-    mRewardType = deepmimic;
-
-    // GaitNet
-    mRefStride = 1.34;
-    mStride = 1.0;
-    mCadence = 1.0;
-    mPhaseDisplacementScale = -1.0;
-    mNumActuatorAction = 0;
-
-    mLoadedMuscleNN = false;
-    mUseJointState = false;
-    // Parameter
-    mNumParamState = 0;
-
-    // Simulation Setting
-    mSimulationStep = 0;
-
-    mKneeLoadingMaxCycle = 0.0;
-    mDragStartX = 0.0;
-
-    mMusclePoseOptimization = false;
-
-    mUseCascading = false;
-    mUseNormalizedParamState = true;
-    // 0 : one foot , 1 : mid feet
-    mPoseOptimizationMode = 0;
-    mHorizon = 600;
-
-    // Initialize reward config with defaults (already set in struct definition)
 
     // Read config file
     std::ifstream ifs(filepath);
-    if (!ifs.is_open())
-        throw std::runtime_error("Cannot open config: " + filepath);
+    if (!ifs.is_open()) throw std::runtime_error("Cannot open config: " + filepath);
     std::stringstream ss;
     ss << ifs.rdbuf();
     mMetadata = ss.str();
@@ -82,18 +56,20 @@ Environment::Environment(const std::string& filepath)
     }
     YAML::Node env = config["environment"];
 
-    // Local variable to track gait phase mode during parsing
-    std::string gaitUpdateMode = "phase";  // Default to phase-based mode
+    // === Global PID for @pid:/ URI expansion ===
+    // Supports both: pid: 20705431 or pid: "20705431/pre"
+    if (env["pid"]) {
+        mGlobalPid = env["pid"].as<std::string>();
+    }
 
     // === Cascading ===
-    if (config["cascading"])
-        mUseCascading = true;
+    if (config["cascading"]) mUseCascading = true;
 
     // === Skeleton ===
     if (env["skeleton"]) {
         auto skel = env["skeleton"];
         std::string skelPath = skel["file"].as<std::string>();
-        std::string resolved = rm::resolve(skelPath);
+        std::string resolved = rm::resolve(rm::expand_pid(skelPath, mGlobalPid));
         bool selfCollide = skel["self_collide"].as<bool>(false);
         int skelFlags = SKEL_DEFAULT;
         if (selfCollide) skelFlags |= SKEL_COLLIDE_ALL;
@@ -101,19 +77,6 @@ Environment::Environment(const std::string& filepath)
 
         std::string actType = skel["actuator"].as<std::string>();
         mCharacter->setActuatorType(getActuatorType(actType));
-
-        // Apply kp/kv scale coefficients (multiply skeleton's per-joint values)
-        double kp_scale = skel["kp_scale"].as<double>(1.0);
-        double kv_scale = skel["kv_scale"].as<double>(1.0);
-        if (kp_scale != 1.0 || kv_scale != 1.0) {
-            mCharacter->scaleKpKv(kp_scale, kv_scale);
-        }
-
-        // Apply joint damping (overrides skeleton/default values)
-        if (skel["damping"]) {
-            double damping = skel["damping"].as<double>();
-            mCharacter->setJointDamping(damping);
-        }
 
         // Enable upper body torque scaling based on body mass (stabilizes light bodies)
         if (skel["scale_tau_on_weight"]) {
@@ -150,7 +113,7 @@ Environment::Environment(const std::string& filepath)
         bool meshLbs = muscle["mesh_lbs_weight"].as<bool>(false);
 
         std::string musclePath = muscle["file"].as<std::string>();
-        std::string resolved = rm::resolve(musclePath);
+        std::string resolved = rm::resolve(rm::expand_pid(musclePath, mGlobalPid));
         mCharacter->setMuscles(resolved, meshLbs);
         mUseMuscle = true;
 
@@ -161,32 +124,36 @@ Environment::Environment(const std::string& filepath)
         }
 
         // === Weight from metadata or direct value ===
+        // Supports two formats:
+        //   weight_from: 17.7                      (direct numeric value)
+        //   weight_from: "@pid:/metadata.yaml"    (load from metadata["weight"])
         if (env["skeleton"]["weight_from"]) {
             auto weightNode = env["skeleton"]["weight_from"];
 
             if (weightNode.IsScalar()) {
-                double weight = weightNode.as<double>();
-                mCharacter->setBodyMass(weight);
-                LOG_VERBOSE("[Environment] Set body mass from direct value: " << weight << " kg");
-            } else if (weightNode.IsMap() && weightNode["file"]) {
-                std::string metadataUri = weightNode["file"].as<std::string>();
-                std::string prepost = weightNode["prepost"].as<std::string>("pre");
+                std::string val = weightNode.as<std::string>();
 
-                try {
-                    std::string resolvedMetadata = rm::resolve(metadataUri);
-                    YAML::Node metadata = YAML::LoadFile(resolvedMetadata);
+                // Check if it's a URI (starts with @)
+                if (!val.empty() && val[0] == '@') {
+                    try {
+                        std::string resolved = rm::resolve(rm::expand_pid(val, mGlobalPid));
+                        YAML::Node metadata = YAML::LoadFile(resolved);
 
-                    if (metadata[prepost] && metadata[prepost]["weight"]) {
-                        double weight = metadata[prepost]["weight"].as<double>();
-                        mCharacter->setBodyMass(weight);
-                        LOG_VERBOSE("[Environment] Set body mass from " << metadataUri
-                            << "[" << prepost << "]: " << weight << " kg");
-                    } else {
-                        LOG_WARN("[Environment] weight_from: '" << prepost
-                            << ".weight' not found in " << metadataUri);
+                        if (metadata["weight"]) {
+                            double weight = metadata["weight"].as<double>();
+                            mCharacter->setBodyMass(weight);
+                            LOG_VERBOSE("[Environment] Set body mass from " << val << ": " << weight << " kg");
+                        } else {
+                            LOG_WARN("[Environment] weight_from: 'weight' not found in " << val);
+                        }
+                    } catch (const std::exception& e) {
+                        LOG_WARN("[Environment] Failed to load weight from " << val << ": " << e.what());
                     }
-                } catch (const std::exception& e) {
-                    LOG_WARN("[Environment] Failed to load weight from " << metadataUri << ": " << e.what());
+                } else {
+                    // Direct numeric value
+                    double weight = weightNode.as<double>();
+                    mCharacter->setBodyMass(weight);
+                    LOG_VERBOSE("[Environment] Set body mass from direct value: " << weight << " kg");
                 }
             }
         }
@@ -202,13 +169,6 @@ Environment::Environment(const std::string& filepath)
 
         // Apply critical damping after body mass is set (Kv depends on mass matrix)
         mCharacter->updateCriticalDamping();
-
-        if (muscle["pose_optimization"]) {
-            auto poseOpt = muscle["pose_optimization"];
-            mMusclePoseOptimization = poseOpt["enabled"].as<bool>(false);
-            std::string rot = poseOpt["rot"].as<std::string>("one_foot");
-            mPoseOptimizationMode = (rot == "one_foot") ? 0 : 1;
-        }
     }
 
     // === Noise Injection ===
@@ -216,7 +176,7 @@ Environment::Environment(const std::string& filepath)
         auto ni = env["noise_injection"];
         if (ni["file"]) {
             std::string niPath = ni["file"].as<std::string>();
-            std::string resolved = rm::resolve(niPath);
+            std::string resolved = rm::resolve(rm::expand_pid(niPath, mGlobalPid));
             mNoiseInjector = std::make_unique<NoiseInjector>(resolved, mWorld->getTimeStep());
             LOG_INFO("[Environment] Loaded noise injection config: " << resolved);
         }
@@ -227,9 +187,10 @@ Environment::Environment(const std::string& filepath)
         LOG_VERBOSE("[Environment] Created default NoiseInjector (disabled)");
     }
 
-    // === Action ===
-    double contactDebounceAlpha = 0.25;  // Default value
-    double stepMinRatio = 0.3;  // Default value
+    // === Action & GaitPhase config ===
+    std::string gaitUpdateMode = "phase";
+    double contactDebounceAlpha = 0.25;
+    double stepMinRatio = 0.3;
     if (env["action"]) {
         auto action = env["action"];
         if (action["time_warping"])
@@ -298,31 +259,40 @@ Environment::Environment(const std::string& filepath)
     // === Motion Loading ===
     if (env["motion"]) {
         auto motion = env["motion"];
-        std::string motionPath = motion["file"].as<std::string>();
-        std::string resolved = rm::resolve(motionPath);
+        std::string motionPath;
+        bool getStrideFromMotion = false;
 
-        std::string motionType = motion["type"].as<std::string>();
-        if (motionType == "h5" || motionType == "hdf") {
+        // Support both formats: motion: "uri" or motion: {file: "uri", ...}
+        if (motion.IsScalar()) {
+            motionPath = motion.as<std::string>();
+        } else {
+            motionPath = motion["file"].as<std::string>();
+            mUseMirror = motion["use_mirror"].as<bool>(true);
+            mLocalState = motion["local_state"].as<bool>(false);
+            getStrideFromMotion = motion["get_stride_from_motion"].as<bool>(false);
+        }
+
+        std::string resolved = rm::resolve(rm::expand_pid(motionPath, mGlobalPid));
+
+        // Auto-detect type from file extension
+        std::string ext = resolved.substr(resolved.find_last_of('.') + 1);
+        if (ext == "h5" || ext == "hdf") {
             HDF *new_hdf = new HDF(resolved);
             new_hdf->setRefMotion(mCharacter, mWorld);
             mMotion = new_hdf;
         }
-        else if (motionType == "bvh") {
+        else if (ext == "bvh") {
             BVH *new_bvh = new BVH(resolved);
             new_bvh->setRefMotion(mCharacter, mWorld);
             mMotion = new_bvh;
         }
-        else if (motionType == "npz") {
+        else if (ext == "npz") {
             NPZ *new_npz = new NPZ(resolved);
             new_npz->setRefMotion(mCharacter, mWorld);
             mMotion = new_npz;
         }
 
-        mUseMirror = motion["use_mirror"].as<bool>(true);
-        mLocalState = motion["local_state"].as<bool>(false);
-
         // Get stride from motion if configured
-        bool getStrideFromMotion = motion["get_stride_from_motion"].as<bool>(false);
         if (getStrideFromMotion && mMotion) {
             HDF* hdf = dynamic_cast<HDF*>(mMotion);
             if (hdf) {
@@ -1522,121 +1492,6 @@ void Environment::postStep()
     checkTruncated();
 }
 
-void Environment::poseOptimization(int iter)
-{
-    if (!mUseMuscle) return;
-    auto skel = mCharacter->getSkeleton();
-
-    double step_size = 1E-4;
-    double threshold = 100.0;
-    int i = 0;
-    for (i = 0; i < iter; i++)
-    {
-        MuscleTuple mt = mCharacter->getMuscleTuple(false);
-        Eigen::VectorXd dp = Eigen::VectorXd::Zero(skel->getNumDofs());
-        dp.tail(mt.JtP.rows()) = mt.JtP;
-        bool isDone = true;
-        for (int j = 0; j < dp.rows(); j++)
-            if (std::abs(dp[j]) > threshold)
-            {
-                // std::cout << dp.transpose() << std::endl;
-                isDone = false;
-                break;
-            }
-
-        if (isDone)
-            break;
-        // Right Leg
-        dp[8] *= 0.1;
-        dp[11] *= 0.25;
-        dp[12] *= 0.25;
-
-        // Left Leg
-        dp[17] *= 0.1;
-        dp[20] *= 0.25;
-        dp[21] *= 0.25;
-
-        dp *= step_size;
-        skel->setPositions(skel->getPositions() + dp);
-    }
-
-    double phase = mGaitPhase->getAdaptivePhase();
-    // Note: mIsLeftLegStance removed - use GaitPhase instead if needed
-    // For pose optimization, we just need to set the phase state
-    bool isLeftLegStance = !((0.33 < phase) && (phase <= 0.83));
-
-    // Stance Leg Hip anlge Change
-    double angle_threshold = 1;
-    auto femur_joint = skel->getJoint((isLeftLegStance ? "FemurL" : "FemurR"));
-    auto foot_bn = skel->getBodyNode((isLeftLegStance ? "TalusL" : "TalusR"));
-    Eigen::VectorXd prev_angle = femur_joint->getPositions();
-    Eigen::VectorXd cur_angle = femur_joint->getPositions();
-    
-    Eigen::VectorXd initial_JtP = mCharacter->getMuscleTuple(false).JtP;
-
-    while (true)
-    {
-        prev_angle = cur_angle;
-        Eigen::Vector3d root_com = skel->getRootBodyNode()->getCOM();
-        Eigen::Vector3d foot_com = foot_bn->getCOM() - root_com;
-        Eigen::Vector3d target_com = skel->getBodyNode("Head")->getCOM() - root_com;
-        target_com[1] *= -1;
-        target_com[2] *= -1;
-
-        double angle_diff = atan2(target_com[1], target_com[2]) - atan2(foot_com[1], foot_com[2]);
-        // std::cout << "Angle Diff " << angle_diff << std::endl;
-        if (abs(angle_diff) < M_PI * 10 / 180.0) break;
-
-        double step = (angle_diff > 0 ? -1.0 : 1.0) * M_PI / 180.0;
-        cur_angle[0] += step;
-        femur_joint->setPositions(cur_angle);
-        Eigen::VectorXd current_Jtp = mCharacter->getMuscleTuple(false).JtP;
-        bool isDone = false;
-        for (int i = 0; i < current_Jtp.rows(); i++)
-        {
-            if (abs(current_Jtp[i]) > abs(initial_JtP[i]) + 1)
-            {
-                // std::cout << i << "-th Joint " << abs(current_Jtp[i]) - abs(initial_JtP[i]) << std::endl;
-                femur_joint->setPositions(prev_angle);
-                isDone = true;
-                break;
-            }
-        }
-        if (isDone) break;
-    }
-
-    // Rotation Change
-    Eigen::Vector3d com = skel->getCOM(skel->getRootBodyNode());
-    Eigen::Vector3d foot;
-    if (mPoseOptimizationMode == 0)
-        foot = skel->getBodyNode(isLeftLegStance ? "TalusL" : "TalusR")->getCOM(skel->getRootBodyNode());
-    else if (mPoseOptimizationMode == 1)
-        foot = (skel->getBodyNode("TalusL")->getCOM(skel->getRootBodyNode()) + skel->getBodyNode("TalusR")->getCOM(skel->getRootBodyNode())) * 0.5;
-    // is it stance boundary?
-    double global_diff = (skel->getCOM() - skel->getBodyNode(isLeftLegStance ? "TalusL" : "TalusR")->getCOM())[2];
-    if (-0.07 < global_diff && global_diff < 0.1)
-        return;
-
-    // Remove X Components;
-    com[0] = 0.0;
-    foot[0] = 0.0;
-
-    Eigen::Vector3d character_y = (com - foot).normalized();
-    Eigen::Vector3d unit_y = Eigen::Vector3d::UnitY();
-
-    double sin = character_y.cross(unit_y).norm();
-    double cos = character_y.dot(unit_y);
-
-    Eigen::VectorXd axis = character_y.cross(unit_y).normalized();
-    double angle = atan2(sin, cos);
-
-    Eigen::Matrix3d rot = Eigen::AngleAxisd(angle, axis).toRotationMatrix();
-
-    Eigen::Isometry3d rootTransform = FreeJoint::convertToTransform(skel->getPositions().head(6));
-    rootTransform.linear() = rot * rootTransform.linear();
-    skel->getRootJoint()->setPositions(FreeJoint::convertToPositions(rootTransform));
-}
-
 void Environment::reset(double phase)
 {
     // Clear info map (includes termination/truncation status)
@@ -1696,7 +1551,6 @@ void Environment::reset(double phase)
 
     updateTargetPosAndVel();
 
-    // if (mMusclePoseOptimization) poseOptimization();
     if (mRewardType == gaitnet)
     {
         Eigen::Vector3d ref_initial_vel = mTargetVelocities.segment(3, 3);

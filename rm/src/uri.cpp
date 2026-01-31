@@ -137,4 +137,24 @@ std::string URI::to_string() const {
     return path_;
 }
 
+std::string expand_pid(const std::string& uri, const std::string& default_pid) {
+    if (default_pid.empty()) {
+        return uri;
+    }
+
+    URI parsed = URI::parse(uri);
+
+    // Only expand @pid: URIs with empty prefix_arg
+    if (parsed.prefix() == "@pid" && parsed.prefix_arg().empty()) {
+        // Rebuild as @pid:{default_pid}/path
+        std::string result = "@pid:" + default_pid;
+        if (!parsed.path().empty()) {
+            result += "/" + parsed.path();
+        }
+        return result;
+    }
+
+    return uri;
+}
+
 } // namespace rm

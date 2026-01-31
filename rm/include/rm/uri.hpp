@@ -56,4 +56,8 @@ private:
     std::string prefix_arg_;  // "CP001" for @pid:CP001, empty otherwise
 };
 
+// Expand @pid:/path to @pid:{default_pid}/path when prefix_arg is empty
+// Returns original URI unchanged if not a @pid: URI or if prefix_arg is already set
+std::string expand_pid(const std::string& uri, const std::string& default_pid);
+
 } // namespace rm

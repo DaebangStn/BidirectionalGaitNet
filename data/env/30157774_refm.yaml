@@ -1,23 +1,19 @@
 # args:
 
 environment:
+  pid: "30157774/pre"
   # Skeleton and Character
   skeleton:
-    file: "@pid:30157774/pre/skeleton/dynamic.yaml"
+    file: "@pid:/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    kp_scale: 0.3
-    damping: 0.1
     self_collide: true
     use_critical_damping: true
     scale_tau_on_weight: true
-    weight_from:
-      file: "@pid:30157774/pre/metadata.yaml"
-      prepost: "pre"
+    weight_from: "@pid:/metadata.yaml"
 
   # Motion Reference
   motion:
-    type: "h5"  # h5, bvh, npz
-    file: "@pid:30157774/pre/motion/Trimmed_walk01-Dynamic_trimmed.h5"
+    file: "@pid:/motion/Trimmed_walk01-Dynamic_trimmed.h5"
     use_mirror: false
     get_stride_from_motion: true
 
@@ -28,9 +24,6 @@ environment:
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
-    pose_optimization:
-      enabled: true
-      rot: "one_foot"  # one_foot or mid_feet
 
   # Simulation Timing
   simulation:

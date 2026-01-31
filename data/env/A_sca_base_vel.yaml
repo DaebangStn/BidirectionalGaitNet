@@ -5,13 +5,9 @@ environment:
   skeleton:
     file: "@data/skeleton/base.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    kp: 200
-    kv: 40
-    damping: 0.1
 
   # Motion Reference
   motion:
-    type: "h5"  # h5, bvh, npz
     file: "@data/motion/walk_50dof.h5"
 
   # Muscle System
@@ -20,9 +16,6 @@ environment:
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
-    pose_optimization:
-      enabled: true
-      rot: "one_foot"  # one_foot or mid_feet
 
   # Simulation Timing
   simulation:

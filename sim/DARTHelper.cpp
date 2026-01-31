@@ -365,9 +365,7 @@ static Eigen::Isometry3d yaml_to_transform(const YAML::Node& R, const YAML::Node
 dart::dynamics::SkeletonPtr BuildFromXML(const std::string &path, int flags)
 {
 	std::string resolvedPath = rm::resolve(path);
-	
-	// Default damping (can be overridden by skeleton file or env YAML)
-	const double defaultDamping = 0.4;
+	const double defaultDamping = 0.1;
 
 	// Extract flags
 	bool isContact = (flags & SKEL_NO_COLLISION) == 0;  // Collision enabled unless NO_COLLISION flag set
@@ -595,8 +593,7 @@ dart::dynamics::SkeletonPtr BuildFromFile(const std::string &path, int flags)
 
 dart::dynamics::SkeletonPtr BuildFromYAML(const std::string &path, int flags)
 {
-	// Default damping (can be overridden by skeleton file or env YAML)
-	const double defaultDamping = 0.4;
+	const double defaultDamping = 0.1;
 
 	// Extract flags
 	bool isContact = (flags & SKEL_NO_COLLISION) == 0;

@@ -1616,32 +1616,6 @@ void Character::setBodyMass(double targetMass)
     updateMaxTorque();
 }
 
-void Character::scaleKpKv(double kp_scale, double kv_scale)
-{
-    // Skip root DOFs (first 6)
-    int rootDof = mSkeleton->getRootJoint()->getNumDofs();
-
-    for (int i = rootDof; i < mKp.size(); i++) {
-        mKp[i] *= kp_scale;
-        mKv[i] *= kv_scale;
-    }
-
-    LOG_VERBOSE("[Character] Scaled Kp by " << kp_scale << ", Kv by " << kv_scale);
-}
-
-void Character::setJointDamping(double damping)
-{
-    for (size_t i = 0; i < mSkeleton->getNumJoints(); i++) {
-        auto joint = mSkeleton->getJoint(i);
-        int dof = joint->getNumDofs();
-        for (int d = 0; d < dof; d++) {
-            joint->setDampingCoefficient(d, damping);
-        }
-    }
-
-    LOG_VERBOSE("[Character] Set joint damping to " << damping);
-}
-
 void Character::updateTorqueMassRatio()
 {
     double currentMass = mSkeleton->getMass();
