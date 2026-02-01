@@ -929,24 +929,22 @@ void RenderCkpt::drawRolloutTabContent()
                 }
                 ImGui::SetWindowFontScale(1.0f);
                 if (ImGui::SmallButton("Hdr##RolloutMajorMSE")) {
-                    const char* hdr = "| Hash | Ckpt | Ref | N | Hip(mse) | Knee(mse) | Ankle(mse) | Hip(kl) | Knee(kl) | Ankle(kl) | Hip(z) | Knee(z) | Ankle(z) |\n|------|------|-----|---|----------|-----------|------------|---------|----------|-----------|--------|---------|----------|";
+                    const char* hdr = "| Hash | Ckpt | Ref | N | Hip (mse) | Knee (mse) | Ankle (mse) | MSE (avg) | Hip (kl) | Knee (kl) | Ankle (kl) | KL (avg) | Hip (z) | Knee (z) | Ankle (z) | Z (avg) |\n|------|------|-----|---|----------|-----------|------------|-----------|---------|----------|-----------|---------|--------|---------|----------|--------|";
                     std::cout << hdr << std::endl;
                     glfwSetClipboardString(mWindow, hdr);
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##RolloutMajorMSE")) {
-                    char content[512];
-                    snprintf(content, sizeof(content), "%s|%s|%d|%.1f|%.1f|%.1f|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f",
-                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mRolloutStatus.numCycles(), mseHip, mseKnee, mseAnkle,
-                             klHip, klKnee, klAnkle, zHip, zKnee, zAnkle);
-                    std::string hash = hashTo3Char(content);
+                    double mseAvg = (mseHip + mseKnee + mseAnkle) / 3.0;
+                    double klAvg = (klHip + klKnee + klAnkle) / 3.0;
+                    double zAvg = (zHip + zKnee + zAnkle) / 3.0;
+                    std::string hash = hashTo3Char(mCheckpointName + "|" + getActiveKinematicsLabel());
                     char buf[512];
-                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |",
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |\n",
                              hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mRolloutStatus.numCycles(), mseHip, mseKnee, mseAnkle,
-                             klHip, klKnee, klAnkle, zHip, zKnee, zAnkle);
-                    std::cout << buf << std::endl;
+                             mRolloutStatus.numCycles(), mseHip, mseKnee, mseAnkle, mseAvg,
+                             klHip, klKnee, klAnkle, klAvg, zHip, zKnee, zAnkle, zAvg);
+                    std::cout << buf;
                     glfwSetClipboardString(mWindow, buf);
                 }
             }
@@ -998,18 +996,13 @@ void RenderCkpt::drawRolloutTabContent()
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##RolloutMinorMSE")) {
-                    char content[512];
-                    snprintf(content, sizeof(content), "%s|%s|%d|%.1f|%.1f|%.2f|%.2f|%.2f|%.2f",
-                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mRolloutStatus.numCycles(), mseHipIR, mseHipAb,
-                             klHipIR, klHipAb, zHipIR, zHipAb);
-                    std::string hash = hashTo3Char(content);
+                    std::string hash = hashTo3Char(mCheckpointName + "|" + getActiveKinematicsLabel());
                     char buf[512];
-                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f |",
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f |\n",
                              hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
                              mRolloutStatus.numCycles(), mseHipIR, mseHipAb,
                              klHipIR, klHipAb, zHipIR, zHipAb);
-                    std::cout << buf << std::endl;
+                    std::cout << buf;
                     glfwSetClipboardString(mWindow, buf);
                 }
             }
@@ -1068,18 +1061,13 @@ void RenderCkpt::drawRolloutTabContent()
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##RolloutPelvisMSE")) {
-                    char content[512];
-                    snprintf(content, sizeof(content), "%s|%s|%d|%.1f|%.1f|%.1f|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f",
-                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mRolloutStatus.numCycles(), mseTilt, mseObl, mseRot,
-                             klTilt, klObl, klRot, zTilt, zObl, zRot);
-                    std::string hash = hashTo3Char(content);
+                    std::string hash = hashTo3Char(mCheckpointName + "|" + getActiveKinematicsLabel());
                     char buf[512];
-                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |",
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |\n",
                              hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
                              mRolloutStatus.numCycles(), mseTilt, mseObl, mseRot,
                              klTilt, klObl, klRot, zTilt, zObl, zRot);
-                    std::cout << buf << std::endl;
+                    std::cout << buf;
                     glfwSetClipboardString(mWindow, buf);
                 }
             }
@@ -2795,11 +2783,7 @@ void RenderCkpt::drawKinematicsTabContent()
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##MajorMSE")) {
-                    char content[256];
-                    snprintf(content, sizeof(content), "%s|%s|%.1f|%.1f|%.1f|%.1f",
-                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mseHip, mseKnee, mseAnkle, mseSum);
-                    std::string hash = hashTo3Char(content);
+                    std::string hash = hashTo3Char(mCheckpointName + "|" + getActiveKinematicsLabel());
                     char buf[256];
                     snprintf(buf, sizeof(buf), "| %s | %s | %s | %.1f | %.1f | %.1f | %.1f |",
                              hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
@@ -2850,11 +2834,7 @@ void RenderCkpt::drawKinematicsTabContent()
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##MinorMSE")) {
-                    char content[256];
-                    snprintf(content, sizeof(content), "%s|%s|%.1f|%.1f",
-                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mseHipIR, mseHipAb);
-                    std::string hash = hashTo3Char(content);
+                    std::string hash = hashTo3Char(mCheckpointName + "|" + getActiveKinematicsLabel());
                     char buf[256];
                     snprintf(buf, sizeof(buf), "| %s | %s | %s | %.1f | %.1f |",
                              hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
@@ -2904,11 +2884,7 @@ void RenderCkpt::drawKinematicsTabContent()
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Row##PelvisMSE")) {
-                    char content[256];
-                    snprintf(content, sizeof(content), "%s|%s|%.1f|%.1f|%.1f",
-                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
-                             mseRot, mseObl, mseTilt);
-                    std::string hash = hashTo3Char(content);
+                    std::string hash = hashTo3Char(mCheckpointName + "|" + getActiveKinematicsLabel());
                     char buf[256];
                     snprintf(buf, sizeof(buf), "| %s | %s | %s | %.1f | %.1f | %.1f |",
                              hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
@@ -3801,9 +3777,15 @@ void RenderCkpt::drawSimControlPanelContent()
     
     // Rollout Control
     if (mRolloutCycles == -1) mRolloutCycles = mDefaultRolloutCount;
-    ImGui::SetNextItemWidth(70);
-    ImGui::InputInt("Cycles", &mRolloutCycles);
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputScalar("##Cycles", ImGuiDataType_S32, &mRolloutCycles, nullptr, nullptr);
     if (mRolloutCycles < 1) mRolloutCycles = 1;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("2")) mRolloutCycles = 2;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("20")) mRolloutCycles = 20;
+    ImGui::SameLine();
+    ImGui::Text("Cycles");
 
     ImGui::SameLine();
     ImGui::Checkbox("Record##RolloutRecord", &mRecordRollout);
@@ -4196,7 +4178,7 @@ void RenderCkpt::drawSimControlPanelContent()
         ImGui::Separator();
 
         // Step Min Ratio control
-        static float stepMinRatio = 0.5f;
+        static float stepMinRatio = 0.25f;
         ImGui::SetNextItemWidth(100);
         if (ImGui::InputFloat("Step Min Ratio", &stepMinRatio, 0.0f, 0.0f, "%.2f")) {
             stepMinRatio = std::max(0.1f, std::min(stepMinRatio, 1.0f));
@@ -4537,6 +4519,7 @@ void RenderCkpt::drawRenderingContent()
     }
 
     ImGui::Checkbox("Draw PD Target Motion", &mDrawFlags.pdTarget);
+    ImGui::Checkbox("Draw Playable Motion", &mDrawFlags.playableMotion);
     ImGui::Checkbox("Draw Ref Motion", &mDrawFlags.refMotion);
     ImGui::Checkbox("Draw Joint Sphere", &mDrawFlags.jointSphere);
     ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
@@ -5187,7 +5170,8 @@ void RenderCkpt::drawContent()
         }
     }
 
-    drawPlayableMotion();
+    if (mDrawFlags.playableMotion)
+        drawPlayableMotion();
 
     // FGN playback using viewer time (independent of mRenderEnv)
     if (!mRenderEnv && mDrawFlags.fgnSkeleton && !mFGN.is_none())
@@ -5588,11 +5572,9 @@ void RenderCkpt::keyPress(int key, int scancode, int action, int mods)
             break;
         case GLFW_KEY_R:
             if (mods == GLFW_MOD_CONTROL) {
-                mRolloutCycles = 2;
                 mRecordRollout = false;
                 runRollout();
             } else if (mods == GLFW_MOD_SHIFT) {
-                mRolloutCycles = 20;
                 mRecordRollout = true;
                 runRollout();
             } else reset();

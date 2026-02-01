@@ -72,7 +72,7 @@ public:
     SkeletonPtr getRefSkeleton() const { return mRefSkeleton; }
 
     // Skeleton export (bakes calibrated geometry)
-    void exportSkeletonYAML(const std::string& path) const;
+    void exportSkeletonYAML(const std::string& path, const std::string& motionFrom = "") const;
 
     // Body scale export/load (for static calibration persistence)
     void exportBodyScaleYAML(const std::string& path) const;

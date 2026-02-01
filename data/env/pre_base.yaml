@@ -1,32 +1,23 @@
 # args:
 
 environment:
-  pid: "20705431/pre"
-
+  pid: "29792292/pre"
   # Skeleton and Character
   skeleton:
-    file: "@pid:/skeleton/dynamic2.yaml"
+    file: "@pid:/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
-    self_collide: true
-    use_critical_damping: true
-    scale_tau_on_weight: true
-    weight_from: "@pid:/metadata.yaml"
-    
+
   # Motion Reference
   motion:
-    file: "@pid:/motion/Trimmed_walk02-Dynamic_trimmed.h5"
-    use_mirror: false
     get_stride_from_motion: true
+    file: "@pid:/motion/walk_single.h5"
 
   # Muscle System
   muscle:
-    file: "@data/muscle/base_vas.yaml"
-    scale_f0_on_weight: true  # Scale muscle f0 by mass^(2/3) 
-    # clip_lm_norm: 1.4
+    file: "@data/muscle/base.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
-
 
   # Simulation Timing
   simulation:
@@ -36,10 +27,10 @@ environment:
   # Action and Control
   action:
     scale: 0.04
-    time_warping: -1  # -1 means disabled
+    time_warping: -1
     gait_phase_mode: "contact"  # "contact" or "phase"
     contact_debounce_alpha: 0.4
-    step_min_ratio: 0.1
+    step_min_ratio: 0.25
 
   # Reward System
   reward:
@@ -53,7 +44,7 @@ environment:
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 40.0
     pos_weight: 20.0
-    vel_weight: 5.0
+    vel_weight: 0.05
     com_weight: 10.0
 
     # Metabolic configuration

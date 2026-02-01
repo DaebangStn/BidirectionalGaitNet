@@ -310,11 +310,15 @@ void C3D_Reader::loadSkeletonFittingConfig() {
         // Plantar correction parameters
         if (sf["plantar_correction"]) {
             auto pc = sf["plantar_correction"];
-            mFittingConfig.plantarCorrection.enabled = pc["enabled"].as<bool>(true);
+            mFittingConfig.plantarCorrection.detectPhases = pc["detect_phases"].as<bool>(true);
+            mFittingConfig.plantarCorrection.correctPosition = pc["correct_position"].as<bool>(false);
+            mFittingConfig.plantarCorrection.correctOrientation = pc["correct_orientation"].as<bool>(false);
             mFittingConfig.plantarCorrection.velocityThreshold = pc["velocity_threshold"].as<double>(0.005);
             mFittingConfig.plantarCorrection.minLockFrames = pc["min_lock_frames"].as<int>(5);
             mFittingConfig.plantarCorrection.blendFrames = pc["blend_frames"].as<int>(3);
-            LOG_VERBOSE("[Config] Plantar correction: enabled=" << mFittingConfig.plantarCorrection.enabled
+            LOG_VERBOSE("[Config] Plantar correction: detectPhases=" << mFittingConfig.plantarCorrection.detectPhases
+                     << ", correctPos=" << mFittingConfig.plantarCorrection.correctPosition
+                     << ", correctOri=" << mFittingConfig.plantarCorrection.correctOrientation
                      << ", threshold=" << mFittingConfig.plantarCorrection.velocityThreshold
                      << ", minFrames=" << mFittingConfig.plantarCorrection.minLockFrames
                      << ", blendFrames=" << mFittingConfig.plantarCorrection.blendFrames);
@@ -3156,9 +3160,9 @@ std::vector<Timeline::FootContactPhase> C3D_Reader::refineTalus()
 {
     std::vector<Timeline::FootContactPhase> emptyPhases;
 
-    // 1. Check if enabled
-    if (!mFittingConfig.plantarCorrection.enabled) {
-        LOG_VERBOSE("[TalusRefine] Plantar correction disabled");
+    // 1. Check if phase detection is enabled
+    if (!mFittingConfig.plantarCorrection.detectPhases) {
+        LOG_VERBOSE("[TalusRefine] Phase detection disabled");
         return emptyPhases;
     }
 
@@ -3286,11 +3290,19 @@ std::vector<Timeline::FootContactPhase> C3D_Reader::refineTalus()
     }
 
     if (allPhases.empty()) {
-        LOG_INFO("[TalusRefine] No lock phases detected, skipping correction");
+        LOG_INFO("[TalusRefine] No lock phases detected");
         return emptyPhases;
     }
 
-    // 8. Apply position + plantar correction to mFreeCharacter with smooth interpolation
+    // 8. Apply corrections if enabled
+    const bool doPosition = mFittingConfig.plantarCorrection.correctPosition;
+    const bool doOrientation = mFittingConfig.plantarCorrection.correctOrientation;
+
+    if (!doPosition && !doOrientation) {
+        LOG_INFO("[TalusRefine] Detected " << allPhases.size() << " phases (corrections disabled)");
+        return allPhases;
+    }
+
     auto freeSkel = mFreeCharacter->getSkeleton();
     const Eigen::Vector3d n_local(0, 1, 0);   // Foot's local up direction
     const Eigen::Vector3d n_target(0, 1, 0);  // World up
@@ -3317,18 +3329,22 @@ std::vector<Timeline::FootContactPhase> C3D_Reader::refineTalus()
             Eigen::Isometry3d T_world_current = talusBn->getWorldTransform();
 
             // Build target world transform
-            Eigen::Isometry3d T_world_target = Eigen::Isometry3d::Identity();
+            Eigen::Isometry3d T_world_target = T_world_current;
 
-            // Position: blend towards locked position
-            T_world_target.translation() = T_world_current.translation()
-                + blend * (lockedPosition - T_world_current.translation());
+            // Position: blend towards locked position (if enabled)
+            if (doPosition) {
+                T_world_target.translation() = T_world_current.translation()
+                    + blend * (lockedPosition - T_world_current.translation());
+            }
 
-            // Rotation: plantar correction with blend
-            Eigen::Matrix3d R_current = T_world_current.linear();
-            Eigen::Vector3d n_current_dir = (R_current * n_local).normalized();
-            Eigen::Matrix3d R_align = computeMinimalRotation(n_current_dir, n_target);
-            Eigen::Matrix3d R_plantar = R_align * R_current;
-            T_world_target.linear() = slerpRotation(R_current, R_plantar, blend);
+            // Rotation: plantar correction with blend (if enabled)
+            if (doOrientation) {
+                Eigen::Matrix3d R_current = T_world_current.linear();
+                Eigen::Vector3d n_current_dir = (R_current * n_local).normalized();
+                Eigen::Matrix3d R_align = computeMinimalRotation(n_current_dir, n_target);
+                Eigen::Matrix3d R_plantar = R_align * R_current;
+                T_world_target.linear() = slerpRotation(R_current, R_plantar, blend);
+            }
 
             // Use existing helper to back-solve for FreeJoint DOFs
             Eigen::VectorXd jointPos = computeJointPositions(talusBn, T_world_target);
@@ -3344,8 +3360,8 @@ std::vector<Timeline::FootContactPhase> C3D_Reader::refineTalus()
         }
     }
 
-    LOG_INFO("[TalusRefine] Corrected position + plantar for " << allPhases.size()
-             << " lock phases (blend=" << blendFrames << " frames)");
+    LOG_INFO("[TalusRefine] Applied corrections (pos=" << doPosition << ", ori=" << doOrientation
+             << ") for " << allPhases.size() << " lock phases (blend=" << blendFrames << " frames)");
 
     return allPhases;
 }

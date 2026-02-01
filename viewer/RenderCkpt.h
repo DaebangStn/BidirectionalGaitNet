@@ -153,6 +153,7 @@ struct DrawFlags
     bool noiseArrows = true;
     bool fgnSkeleton = false;
     bool obj = true;
+    bool playableMotion = false;
     RenderMode skeletonRenderMode = RenderMode::Primitive;
 };
 

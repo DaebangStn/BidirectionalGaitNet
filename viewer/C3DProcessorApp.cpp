@@ -1207,7 +1207,7 @@ void C3DProcessorApp::drawSkeletonExportSection()
                     : "skeleton";
                 std::string outputPath = outputDir + "/" + filename + ".yaml";
 
-                mMotionCharacter->exportSkeletonYAML(outputPath);
+                mMotionCharacter->exportSkeletonYAML(outputPath, mMotionPath);
                 LOG_INFO("[C3DProcessor] Exported calibrated skeleton to: " << outputPath);
                 std::string skelURI = "@pid:" + pid + "/" + visit + "/skeleton/" + filename + ".yaml";
                 LOG_INFO("[C3DProcessor] URI: " << skelURI);

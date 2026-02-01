@@ -881,7 +881,7 @@ static std::string getCurrentTimestamp() {
     return ss.str();
 }
 
-void RenderCharacter::exportSkeletonYAML(const std::string& path) const
+void RenderCharacter::exportSkeletonYAML(const std::string& path, const std::string& motionFrom) const
 {
     std::ofstream ofs(path);
     if (!ofs.is_open()) {
@@ -899,6 +899,9 @@ void RenderCharacter::exportSkeletonYAML(const std::string& path) const
     ofs << "  timestamp: \"" << getCurrentTimestamp() << "\"" << std::endl;
     ofs << "  version: v1" << std::endl;
     ofs << "  skeleton_from: \"" << mSkeletonPath << "\"" << std::endl;
+    if (!motionFrom.empty()) {
+        ofs << "  motion_from: \"" << motionFrom << "\"" << std::endl;
+    }
     ofs << std::endl;
 
     // Write skeleton section

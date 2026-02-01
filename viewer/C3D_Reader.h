@@ -195,7 +195,9 @@ struct SkeletonFittingConfig {
 
     // Plantar correction configuration (for refineTalus)
     struct PlantarCorrectionConfig {
-        bool enabled = true;
+        bool detectPhases = true;          // Detect foot lock phases for timeline visualization
+        bool correctPosition = false;      // Lock position during stance phase
+        bool correctOrientation = false;   // Align foot with ground (plantar correction)
         double velocityThreshold = 0.005;  // m/frame (5mm)
         int minLockFrames = 5;
         int blendFrames = 3;               // frames for smooth transition at boundaries
