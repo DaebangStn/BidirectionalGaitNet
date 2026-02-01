@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <memory>
 #include <cmath>
+#include <set>
 #include <filesystem>
 #include <locale.h>
 #include <ncurses.h>
@@ -38,7 +39,10 @@ public:
         mShowSaveDialog(false), mShowExitConfirm(false), mModified(false),
         mSelectedDirEntry(0), mDirScrollOffset(0),
         mConcatMode(false), mConcatFilter("trimmed_"), mShowConcatDialog(false),
-        mBatchProcessing(false) {}
+        mBatchProcessing(false),
+        mNanInspectMode(false), mNanMarkerCursor(0), mNanMarkerScrollOffset(0),
+        mSelectedNanMarker(-1), mNanFrameCursor(0), mNanFrameScrollOffset(0),
+        mNanContextFrames(5), mNanShowFrameDetail(false) {}
 
     void run();
 
@@ -86,6 +90,19 @@ private:
     bool mBatchProcessing;            // For batch mode progress
     std::string mBatchStatus;         // Status message during batch
 
+    // NaN inspection mode state
+    bool mNanInspectMode;
+    int mNanMarkerCursor;
+    int mNanMarkerScrollOffset;
+    std::vector<int> mNanMarkerIndices;      // markers with nanCounts > 0
+    int mSelectedNanMarker;
+    std::vector<size_t> mNanFrameList;       // frames where selected marker has NaN
+    int mNanFrameCursor;
+    int mNanFrameScrollOffset;
+    int mNanContextFrames;                   // default: 5
+    bool mNanShowFrameDetail;
+    std::set<size_t> mInterpolatedFrames;   // frames that have been interpolated
+
     void loadPIDs();
     void loadPIDMetadata();
     void loadFiles();
@@ -117,6 +134,16 @@ private:
     void concatenateFiles(const std::string& uri, const std::vector<std::string>& files, const std::string& outputName);
     void runBatchMerge();
     void drawBatchProgress(int current, int total, const std::string& currentPid, const std::string& visit);
+
+    // NaN inspection methods
+    void buildNanMarkerList();
+    void findNanFramesForMarker(int markerIndex);
+    void drawNanInspectView();
+    void handleNanInspectInput(int ch);
+    bool interpolateNanFrame(int markerIndex, size_t nanFrame);
+    void dropCurrentNanFrame(size_t frameToRemove);
+    void dropAllNanFrames();
+    void recalculateNanCounts();
 };
 
 void C3DInspectorUI::loadPIDs() {
@@ -201,6 +228,18 @@ void C3DInspectorUI::loadC3DInfo() {
     mModified = false;
     mShowSaveDialog = false;
     mShowExitConfirm = false;
+
+    // Reset NaN inspection state
+    mNanInspectMode = false;
+    mNanMarkerCursor = 0;
+    mNanMarkerScrollOffset = 0;
+    mNanMarkerIndices.clear();
+    mSelectedNanMarker = -1;
+    mNanFrameList.clear();
+    mNanFrameCursor = 0;
+    mNanFrameScrollOffset = 0;
+    mNanShowFrameDetail = false;
+    mInterpolatedFrames.clear();
 
     if (mFiles.empty()) return;
 
@@ -445,10 +484,10 @@ void C3DInspectorUI::drawInspectView() {
         }
     } else {
         if (mModified) {
-            mvprintw(maxY - 1, 0, "[UP/DOWN] Scroll  [e] Edit  [s] Save  [BACKSPACE] Back  [q] Quit  (%d/%d)",
+            mvprintw(maxY - 1, 0, "[UP/DOWN] Scroll  [e] Edit  [n] NaN inspect  [s] Save  [BACKSPACE] Back  [q] Quit  (%d/%d)",
                      mC3DInfo.labels.empty() ? 0 : mScrollOffset + 1, (int)mC3DInfo.labels.size());
         } else {
-            mvprintw(maxY - 1, 0, "[UP/DOWN] Scroll  [e] Edit  [BACKSPACE] Back  [q] Quit  (%d/%d)",
+            mvprintw(maxY - 1, 0, "[UP/DOWN] Scroll  [e] Edit  [n] NaN inspect  [BACKSPACE] Back  [q] Quit  (%d/%d)",
                      mC3DInfo.labels.empty() ? 0 : mScrollOffset + 1, (int)mC3DInfo.labels.size());
         }
     }
@@ -462,7 +501,7 @@ std::string C3DInspectorUI::getDefaultSaveFilename() {
     if (pos != std::string::npos) {
         filename = filename.substr(0, pos);
     }
-    return filename + "_fix.c3d";
+    return filename + ".c3d";
 }
 
 void C3DInspectorUI::swapMarkerData(int idx1, int idx2) {
@@ -778,6 +817,453 @@ void C3DInspectorUI::runBatchMerge() {
     mBatchStatus = "Batch merge complete";
 }
 
+
+void C3DInspectorUI::buildNanMarkerList() {
+    mNanMarkerIndices.clear();
+    for (size_t i = 0; i < mC3DInfo.nanCounts.size(); ++i) {
+        if (mC3DInfo.nanCounts[i] > 0) {
+            mNanMarkerIndices.push_back((int)i);
+        }
+    }
+}
+
+void C3DInspectorUI::findNanFramesForMarker(int markerIndex) {
+    mNanFrameList.clear();
+    if (!mC3D || markerIndex < 0 || markerIndex >= (int)mC3DInfo.labels.size()) return;
+
+    for (size_t f = 0; f < mC3DInfo.numFrames; ++f) {
+        const auto& points = mC3D->data().frame(f).points();
+        const auto& p = points.point(markerIndex);
+        if (std::isnan(p.x()) || std::isnan(p.y()) || std::isnan(p.z())) {
+            mNanFrameList.push_back(f);
+        }
+    }
+}
+
+bool C3DInspectorUI::interpolateNanFrame(int markerIndex, size_t nanFrame) {
+    if (!mC3D || markerIndex < 0 || markerIndex >= (int)mC3DInfo.labels.size()) {
+        return false;
+    }
+    if (nanFrame >= mC3DInfo.numFrames) return false;
+
+    // Find nearest valid frame BEFORE nanFrame
+    int beforeFrame = -1;
+    for (int f = (int)nanFrame - 1; f >= 0; --f) {
+        const auto& points = mC3D->data().frame(f).points();
+        const auto& p = points.point(markerIndex);
+        if (!std::isnan(p.x()) && !std::isnan(p.y()) && !std::isnan(p.z())) {
+            beforeFrame = f;
+            break;
+        }
+    }
+
+    // Find nearest valid frame AFTER nanFrame
+    int afterFrame = -1;
+    for (size_t f = nanFrame + 1; f < mC3DInfo.numFrames; ++f) {
+        const auto& points = mC3D->data().frame(f).points();
+        const auto& p = points.point(markerIndex);
+        if (!std::isnan(p.x()) && !std::isnan(p.y()) && !std::isnan(p.z())) {
+            afterFrame = (int)f;
+            break;
+        }
+    }
+
+    // Determine interpolation values
+    double newX, newY, newZ;
+    if (beforeFrame >= 0 && afterFrame >= 0) {
+        // Linear interpolation between before and after
+        const auto& pBefore = mC3D->data().frame(beforeFrame).points().point(markerIndex);
+        const auto& pAfter = mC3D->data().frame(afterFrame).points().point(markerIndex);
+        double t = (double)(nanFrame - beforeFrame) / (double)(afterFrame - beforeFrame);
+        newX = pBefore.x() + t * (pAfter.x() - pBefore.x());
+        newY = pBefore.y() + t * (pAfter.y() - pBefore.y());
+        newZ = pBefore.z() + t * (pAfter.z() - pBefore.z());
+    } else if (beforeFrame >= 0) {
+        // Extrapolate from before (just copy)
+        const auto& pBefore = mC3D->data().frame(beforeFrame).points().point(markerIndex);
+        newX = pBefore.x();
+        newY = pBefore.y();
+        newZ = pBefore.z();
+    } else if (afterFrame >= 0) {
+        // Extrapolate from after (just copy)
+        const auto& pAfter = mC3D->data().frame(afterFrame).points().point(markerIndex);
+        newX = pAfter.x();
+        newY = pAfter.y();
+        newZ = pAfter.z();
+    } else {
+        // No valid frames found, cannot interpolate
+        return false;
+    }
+
+    // Update the C3D data
+    ezc3d::DataNS::Frame newFrame = mC3D->data().frame(nanFrame);
+    auto& points = newFrame.points();
+    auto& p = points.point(markerIndex);
+    p.x(newX);
+    p.y(newY);
+    p.z(newZ);
+    mC3D->frame(newFrame, nanFrame);
+
+    // Track as interpolated for visual distinction
+    mInterpolatedFrames.insert(nanFrame);
+    mModified = true;
+    return true;
+}
+
+void C3DInspectorUI::recalculateNanCounts() {
+    size_t numMarkers = mC3DInfo.labels.size();
+    mC3DInfo.nanCounts.assign(numMarkers, 0);
+    for (size_t f = 0; f < mC3DInfo.numFrames; ++f) {
+        const auto& points = mC3D->data().frame(f).points();
+        for (size_t m = 0; m < numMarkers; ++m) {
+            const auto& p = points.point(m);
+            if (std::isnan(p.x()) || std::isnan(p.y()) || std::isnan(p.z())) {
+                mC3DInfo.nanCounts[m]++;
+            }
+        }
+    }
+}
+
+void C3DInspectorUI::dropCurrentNanFrame(size_t frameToRemove) {
+    if (!mC3D || frameToRemove >= mC3DInfo.numFrames) return;
+
+    // Get labels and frame rate from current C3D
+    double frameRate = mC3D->header().frameRate();
+    std::vector<std::string> labels = mC3DInfo.labels;
+
+    // Create new C3D with only the frames we want to keep
+    ezc3d::c3d newC3D;
+
+    // Set frame rate parameter
+    ezc3d::ParametersNS::GroupNS::Parameter rateParam("RATE");
+    rateParam.set(frameRate);
+    newC3D.parameter("POINT", rateParam);
+
+    if (!labels.empty()) {
+        newC3D.point(labels);
+    }
+
+    // Copy all frames except the one to remove
+    for (size_t f = 0; f < mC3DInfo.numFrames; ++f) {
+        if (f != frameToRemove) {
+            const auto& srcFrame = mC3D->data().frame(f);
+            const auto& srcPoints = srcFrame.points();
+
+            ezc3d::DataNS::Frame outFrame;
+            ezc3d::DataNS::Points3dNS::Points outPts(srcPoints.nbPoints());
+
+            for (size_t i = 0; i < srcPoints.nbPoints(); ++i) {
+                const auto& srcPt = srcPoints.point(i);
+                ezc3d::DataNS::Points3dNS::Point pt;
+                pt.set(srcPt.x(), srcPt.y(), srcPt.z());
+                outPts.point(pt, i);
+            }
+            outFrame.add(outPts);
+            newC3D.frame(outFrame);
+        }
+    }
+
+    // Replace current C3D
+    *mC3D = std::move(newC3D);
+
+    // Update state
+    mC3DInfo.numFrames = mC3D->data().nbFrames();
+    mC3DInfo.duration = mC3DInfo.numFrames / mC3DInfo.frameRate;
+
+    // Adjust interpolated frames tracking (shift indices)
+    std::set<size_t> newInterpolated;
+    for (size_t f : mInterpolatedFrames) {
+        if (f < frameToRemove) {
+            newInterpolated.insert(f);
+        } else if (f > frameToRemove) {
+            newInterpolated.insert(f - 1);
+        }
+    }
+    mInterpolatedFrames = std::move(newInterpolated);
+
+    recalculateNanCounts();
+    mModified = true;
+}
+
+void C3DInspectorUI::dropAllNanFrames() {
+    if (!mC3D) return;
+
+    // Collect all frames that have ANY NaN in ANY marker
+    std::set<size_t> framesToDrop;
+    for (size_t f = 0; f < mC3DInfo.numFrames; ++f) {
+        const auto& points = mC3D->data().frame(f).points();
+        for (size_t m = 0; m < mC3DInfo.labels.size(); ++m) {
+            const auto& p = points.point(m);
+            if (std::isnan(p.x()) || std::isnan(p.y()) || std::isnan(p.z())) {
+                framesToDrop.insert(f);
+                break;
+            }
+        }
+    }
+
+    if (framesToDrop.empty()) return;
+
+    // Get labels and frame rate from current C3D
+    double frameRate = mC3D->header().frameRate();
+    std::vector<std::string> labels = mC3DInfo.labels;
+
+    // Create new C3D with only valid frames
+    ezc3d::c3d newC3D;
+
+    // Set frame rate parameter
+    ezc3d::ParametersNS::GroupNS::Parameter rateParam("RATE");
+    rateParam.set(frameRate);
+    newC3D.parameter("POINT", rateParam);
+
+    if (!labels.empty()) {
+        newC3D.point(labels);
+    }
+
+    // Add only non-NaN frames
+    for (size_t f = 0; f < mC3DInfo.numFrames; ++f) {
+        if (framesToDrop.count(f) == 0) {
+            const auto& srcFrame = mC3D->data().frame(f);
+            const auto& srcPoints = srcFrame.points();
+
+            ezc3d::DataNS::Frame outFrame;
+            ezc3d::DataNS::Points3dNS::Points outPts(srcPoints.nbPoints());
+
+            for (size_t i = 0; i < srcPoints.nbPoints(); ++i) {
+                const auto& srcPt = srcPoints.point(i);
+                ezc3d::DataNS::Points3dNS::Point pt;
+                pt.set(srcPt.x(), srcPt.y(), srcPt.z());
+                outPts.point(pt, i);
+            }
+            outFrame.add(outPts);
+            newC3D.frame(outFrame);
+        }
+    }
+
+    // Replace current C3D
+    *mC3D = std::move(newC3D);
+
+    // Update state
+    mC3DInfo.numFrames = mC3D->data().nbFrames();
+    mC3DInfo.duration = mC3DInfo.numFrames / mC3DInfo.frameRate;
+
+    // Clear interpolated frames (all shifted)
+    mInterpolatedFrames.clear();
+
+    // Recalculate NaN counts (should be 0 now)
+    std::fill(mC3DInfo.nanCounts.begin(), mC3DInfo.nanCounts.end(), 0);
+
+    mModified = true;
+}
+
+void C3DInspectorUI::drawNanInspectView() {
+    int maxY, maxX;
+    getmaxyx(stdscr, maxY, maxX);
+
+    // Header
+    attron(A_BOLD);
+    if (mNanShowFrameDetail) {
+        mvprintw(0, 0, "NaN Inspection - %s [Frame Detail]",
+                 mC3DInfo.labels[mSelectedNanMarker].c_str());
+    } else {
+        mvprintw(0, 0, "NaN Inspection - %s", mC3DInfo.filename.c_str());
+    }
+    attroff(A_BOLD);
+    mvhline(1, 0, '-', maxX);
+
+    if (mNanShowFrameDetail) {
+        // Frame detail view
+        if (mNanFrameList.empty()) {
+            mvprintw(3, 2, "No NaN frames for this marker");
+        } else {
+            int currentNanIndex = mNanFrameCursor;
+            size_t nanFrame = mNanFrameList[currentNanIndex];
+
+            mvprintw(3, 2, ">>> NaN #%d at frame %zu <<<", currentNanIndex + 1, nanFrame);
+            mvprintw(4, 2, "Marker: %s (index %d)", 
+                     mC3DInfo.labels[mSelectedNanMarker].c_str(), mSelectedNanMarker);
+            mvprintw(5, 2, "Context: +/- %d frames", mNanContextFrames);
+
+            // Table header
+            mvprintw(7, 2, "%-8s  %12s  %12s  %12s  %s", "Frame", "X", "Y", "Z", "Status");
+            mvhline(8, 2, '-', 60);
+
+            // Calculate frame range
+            int startFrame = std::max(0, (int)nanFrame - mNanContextFrames);
+            int endFrame = std::min((int)mC3DInfo.numFrames - 1, (int)nanFrame + mNanContextFrames);
+
+            int maxVisibleFrames = maxY - 12;
+            int displayStart = startFrame;
+            int displayEnd = std::min(endFrame, displayStart + maxVisibleFrames - 1);
+
+            for (int f = displayStart; f <= displayEnd; ++f) {
+                int row = 9 + (f - displayStart);
+                const auto& points = mC3D->data().frame(f).points();
+                const auto& p = points.point(mSelectedNanMarker);
+
+                bool isNan = std::isnan(p.x()) || std::isnan(p.y()) || std::isnan(p.z());
+                bool isCurrentNan = ((size_t)f == nanFrame);
+                bool wasInterpolated = mInterpolatedFrames.count((size_t)f) > 0;
+
+                if (isCurrentNan) {
+                    attron(A_BOLD | COLOR_PAIR(2));
+                } else if (wasInterpolated) {
+                    attron(COLOR_PAIR(3));  // Green for interpolated
+                }
+
+                if (isNan) {
+                    mvprintw(row, 2, "%-8d  %12s  %12s  %12s  %s",
+                             f,
+                             std::isnan(p.x()) ? "NaN" : std::to_string(p.x()).substr(0, 10).c_str(),
+                             std::isnan(p.y()) ? "NaN" : std::to_string(p.y()).substr(0, 10).c_str(),
+                             std::isnan(p.z()) ? "NaN" : std::to_string(p.z()).substr(0, 10).c_str(),
+                             isCurrentNan ? "<-- NaN" : "");
+                } else if (wasInterpolated) {
+                    mvprintw(row, 2, "%-8d [%11.3f] [%11.3f] [%11.3f]  <-- interp",
+                             f, p.x(), p.y(), p.z());
+                } else {
+                    mvprintw(row, 2, "%-8d  %12.3f  %12.3f  %12.3f",
+                             f, p.x(), p.y(), p.z());
+                }
+
+                if (isCurrentNan) {
+                    attroff(A_BOLD | COLOR_PAIR(2));
+                } else if (wasInterpolated) {
+                    attroff(COLOR_PAIR(3));
+                }
+            }
+        }
+
+        // Footer for frame detail view
+        mvhline(maxY - 2, 0, '-', maxX);
+        mvprintw(maxY - 1, 0, "[UP/DN] Nav  [i] Interp  [d] Drop frame  [+/-] Ctx (%d)  [ESC] Back  (%d/%zu)",
+                 mNanContextFrames, mNanFrameCursor + 1, mNanFrameList.size());
+    } else {
+        // Marker list view
+        if (mNanMarkerIndices.empty()) {
+            mvprintw(3, 2, "No markers with NaN values found");
+        } else {
+            mvprintw(3, 2, "Markers with NaN values (%zu):", mNanMarkerIndices.size());
+            mvhline(4, 2, '-', 50);
+
+            int maxVisible = maxY - 8;
+            int startIdx = mNanMarkerScrollOffset;
+            int endIdx = std::min(startIdx + maxVisible, (int)mNanMarkerIndices.size());
+
+            for (int i = startIdx; i < endIdx; ++i) {
+                int row = 5 + (i - startIdx);
+                int markerIdx = mNanMarkerIndices[i];
+                bool isCursor = (i == mNanMarkerCursor);
+
+                if (isCursor) {
+                    attron(A_REVERSE);
+                }
+
+                attron(COLOR_PAIR(2));  // Red for NaN markers
+                mvprintw(row, 2, "%4d: %-30s (%zu NaN frames)",
+                         markerIdx, mC3DInfo.labels[markerIdx].c_str(), mC3DInfo.nanCounts[markerIdx]);
+                attroff(COLOR_PAIR(2));
+
+                if (isCursor) {
+                    attroff(A_REVERSE);
+                }
+            }
+        }
+
+        // Footer for marker list view
+        mvhline(maxY - 2, 0, '-', maxX);
+        mvprintw(maxY - 1, 0, "[UP/DN] Nav  [ENTER] View  [d] Drop ALL NaN frames  [ESC] Back  (%d/%zu)",
+                 mNanMarkerIndices.empty() ? 0 : mNanMarkerCursor + 1, mNanMarkerIndices.size());
+    }
+}
+
+void C3DInspectorUI::handleNanInspectInput(int ch) {
+    int maxY, maxX;
+    getmaxyx(stdscr, maxY, maxX);
+    (void)maxX;
+
+    if (mNanShowFrameDetail) {
+        // Frame detail view navigation
+        if (ch == KEY_UP && mNanFrameCursor > 0) {
+            mNanFrameCursor--;
+        } else if (ch == KEY_DOWN && mNanFrameCursor < (int)mNanFrameList.size() - 1) {
+            mNanFrameCursor++;
+        } else if (ch == '+' || ch == '=') {
+            if (mNanContextFrames < 20) mNanContextFrames++;
+        } else if (ch == '-' || ch == '_') {
+            if (mNanContextFrames > 1) mNanContextFrames--;
+        } else if (ch == 'i' || ch == 'I') {
+            // Interpolate current NaN frame for this marker
+            if (!mNanFrameList.empty()) {
+                size_t nanFrame = mNanFrameList[mNanFrameCursor];
+                if (interpolateNanFrame(mSelectedNanMarker, nanFrame)) {
+                    // Update nanCounts and NaN frame list
+                    mC3DInfo.nanCounts[mSelectedNanMarker]--;
+                    mNanFrameList.erase(mNanFrameList.begin() + mNanFrameCursor);
+                    if (mNanFrameCursor >= (int)mNanFrameList.size()) {
+                        mNanFrameCursor = std::max(0, (int)mNanFrameList.size() - 1);
+                    }
+                    // If no more NaN frames for this marker, go back to marker list
+                    if (mNanFrameList.empty()) {
+                        mNanShowFrameDetail = false;
+                        buildNanMarkerList();
+                        if (mNanMarkerIndices.empty()) {
+                            mNanInspectMode = false;
+                        }
+                    }
+                }
+            }
+        } else if (ch == 'd' || ch == 'D') {
+            // Drop current frame entirely (all markers)
+            if (!mNanFrameList.empty()) {
+                size_t frameToRemove = mNanFrameList[mNanFrameCursor];
+                dropCurrentNanFrame(frameToRemove);
+                findNanFramesForMarker(mSelectedNanMarker);  // Rebuild frame list
+                if (mNanFrameList.empty()) {
+                    mNanShowFrameDetail = false;
+                    buildNanMarkerList();
+                    if (mNanMarkerIndices.empty()) {
+                        mNanInspectMode = false;
+                    }
+                } else {
+                    mNanFrameCursor = std::min(mNanFrameCursor, (int)mNanFrameList.size() - 1);
+                }
+            }
+        } else if (ch == 27) {  // ESC
+            mNanShowFrameDetail = false;
+        }
+    } else {
+        // Marker list navigation
+        int maxVisibleMarkers = maxY - 8;
+
+        if (ch == KEY_UP && mNanMarkerCursor > 0) {
+            mNanMarkerCursor--;
+            if (mNanMarkerCursor < mNanMarkerScrollOffset) {
+                mNanMarkerScrollOffset = mNanMarkerCursor;
+            }
+        } else if (ch == KEY_DOWN && mNanMarkerCursor < (int)mNanMarkerIndices.size() - 1) {
+            mNanMarkerCursor++;
+            if (mNanMarkerCursor >= mNanMarkerScrollOffset + maxVisibleMarkers) {
+                mNanMarkerScrollOffset = mNanMarkerCursor - maxVisibleMarkers + 1;
+            }
+        } else if ((ch == '\n' || ch == KEY_ENTER) && !mNanMarkerIndices.empty()) {
+            mSelectedNanMarker = mNanMarkerIndices[mNanMarkerCursor];
+            findNanFramesForMarker(mSelectedNanMarker);
+            mNanFrameCursor = 0;
+            mNanFrameScrollOffset = 0;
+            mNanShowFrameDetail = true;
+        } else if (ch == 'd' || ch == 'D') {
+            // Drop ALL frames containing any NaN
+            dropAllNanFrames();
+            buildNanMarkerList();  // Rebuild (should be empty now)
+            if (mNanMarkerIndices.empty()) {
+                mNanInspectMode = false;  // Exit NaN mode, no more NaNs
+            }
+        } else if (ch == 27) {  // ESC
+            mNanInspectMode = false;
+        }
+    }
+}
+
 void C3DInspectorUI::drawSaveDialog() {
     int maxY, maxX;
     getmaxyx(stdscr, maxY, maxX);
@@ -932,6 +1418,18 @@ void C3DInspectorUI::loadC3DFromPath(const std::string& path) {
     mShowSaveDialog = false;
     mShowExitConfirm = false;
 
+    // Reset NaN inspection state
+    mNanInspectMode = false;
+    mNanMarkerCursor = 0;
+    mNanMarkerScrollOffset = 0;
+    mNanMarkerIndices.clear();
+    mSelectedNanMarker = -1;
+    mNanFrameList.clear();
+    mNanFrameCursor = 0;
+    mNanFrameScrollOffset = 0;
+    mNanShowFrameDetail = false;
+    mInterpolatedFrames.clear();
+
     try {
         mLocalPath = path;
         mC3DInfo.uri = path;
@@ -1067,7 +1565,7 @@ void C3DInspectorUI::handleInput(int ch) {
             mStage = INSPECT_VIEW;
         } else if (ch == 'c' || ch == 'C') {
             // Enter concatenation mode
-            mConcatFilter = "trimmed_";  // Default filter
+            mConcatFilter = "trimmed";  // Default filter
             applyFileFilter();           // Populate mFilteredIndices
             mShowConcatDialog = true;
         } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
@@ -1079,6 +1577,12 @@ void C3DInspectorUI::handleInput(int ch) {
         int maxY, maxX;
         getmaxyx(stdscr, maxY, maxX);
         (void)maxX;
+
+        // Handle NaN inspection mode
+        if (mNanInspectMode) {
+            handleNanInspectInput(ch);
+            break;
+        }
 
         if (mEditMode) {
             // Edit mode navigation and selection
@@ -1136,6 +1640,14 @@ void C3DInspectorUI::handleInput(int ch) {
                 mCursorPos = mScrollOffset;  // Start cursor at current scroll position
                 mFirstMarker = -1;
                 mSecondMarker = -1;
+            } else if (ch == 'n' || ch == 'N') {
+                // Enter NaN inspection mode
+                buildNanMarkerList();
+                mNanMarkerCursor = 0;
+                mNanMarkerScrollOffset = 0;
+                mSelectedNanMarker = -1;
+                mNanShowFrameDetail = false;
+                mNanInspectMode = true;
             } else if ((ch == 's' || ch == 'S') && mModified) {
                 // Open save dialog
                 mSaveFilename = getDefaultSaveFilename();
@@ -1234,7 +1746,11 @@ void C3DInspectorUI::run() {
             drawFileSelect();
             break;
         case INSPECT_VIEW:
-            drawInspectView();
+            if (mNanInspectMode) {
+                drawNanInspectView();
+            } else {
+                drawInspectView();
+            }
             break;
         case DIR_BROWSE:
             drawDirBrowse();
@@ -1254,7 +1770,7 @@ void C3DInspectorUI::run() {
 
         int ch = getch();
         if (ch == 'q' || ch == 'Q') {
-            if (!mShowSaveDialog && !mShowExitConfirm && !mShowConcatDialog && !mEditMode) {
+            if (!mShowSaveDialog && !mShowExitConfirm && !mShowConcatDialog && !mEditMode && !mNanInspectMode) {
                 running = false;
             }
         } else if (mShowExitConfirm) {

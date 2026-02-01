@@ -38,8 +38,8 @@ environment:
     num_ref_in_state: 2
     include_ref_velocity: false
     clip:
-      step: 50
-      value: 0.1
+      step: 100
+      value: 0.05
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 40.0
