@@ -91,6 +91,21 @@ PYBIND11_MODULE(pyrm, m) {
         .def("resolve_backend_names", [](rm::ResourceManager& mgr, const rm::URI& uri) {
             return mgr.resolve_backend_names(uri.to_string());
         }, py::arg("uri"), "Get backend names for a URI")
+        // resolve_dir: resolve @pid: URI to directory path
+        .def("resolve_dir", [](rm::ResourceManager& mgr, const std::string& uri) {
+            auto path = mgr.resolveDir(uri);
+            if (path.empty()) {
+                throw rm::RMError(rm::ErrorCode::NotFound, "Directory not found: " + uri);
+            }
+            return path.string();
+        }, py::arg("uri"), "Resolve a @pid: URI to directory path")
+        .def("resolve_dir", [](rm::ResourceManager& mgr, const rm::URI& uri) {
+            auto path = mgr.resolveDir(uri.to_string());
+            if (path.empty()) {
+                throw rm::RMError(rm::ErrorCode::NotFound, "Directory not found: " + uri.to_string());
+            }
+            return path.string();
+        }, py::arg("uri"), "Resolve a @pid: URI to directory path")
         // __call__: URI-based access with metadata section support
         // Supports both old-style (pre, post) and new-style (pre, op1, op2) section names
         .def("__call__", [](rm::ResourceManager& mgr, const std::string& uri) -> py::object {

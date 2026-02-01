@@ -92,10 +92,20 @@ def prefetch(env_file: str):
     rm = pyrm.ResourceManager(CONFIG_PATH)
 
     # Fetch each URI (triggers caching)
+    # Try directory first (for checkpoint URIs), then file
     success = 0
     for uri in uris:
         try:
             print(f"  Fetching: {uri} ... ", end="", flush=True)
+            # Try as directory first (for checkpoint directories)
+            try:
+                path = rm.resolve_dir(uri)
+                print(f"OK (directory: {path})")
+                success += 1
+                continue
+            except pyrm.RMError:
+                pass  # Not a directory, try as file
+            # Try as file
             handle = rm.fetch(uri)
             print(f"OK ({handle.size()} bytes)")
             success += 1

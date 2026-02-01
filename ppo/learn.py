@@ -130,6 +130,10 @@ class Args:
     """if True, save full training state (optimizer, iteration) for resume"""
     resume_from: Optional[str] = None
     """path to checkpoint directory to resume training from"""
+    pd_from: Optional[str] = None
+    """path to checkpoint dir - loads ONLY agent.pt (fresh training state)"""
+    ckpt_from: Optional[str] = None
+    """path to checkpoint dir - loads FULL checkpoint (resume training)"""
     no_clear_cache: bool = False
     """if toggled, skip clearing rm_cache at startup (for prefetched data)"""
 
@@ -320,6 +324,36 @@ if __name__ == "__main__":
             else:
                 print(f"Warning: Unknown arg '{key}' in YAML config, ignoring")
 
+    # Check for pd_from or ckpt_from in train section
+    if 'train' in env_config:
+        train_cfg = env_config['train']
+
+        # Get default pid for expanding @pid:/ URIs (same logic as prefetch.py)
+        default_pid = env_config.get('pid')
+        if not default_pid and 'environment' in env_config:
+            default_pid = env_config['environment'].get('pid')
+
+        # Helper to expand @pid: URIs (keeps as URI for later fetch)
+        def expand_ckpt_uri(uri):
+            if not uri:
+                return None
+            if uri.startswith('@pid:'):
+                # Expand @pid:/path to @pid:{default_pid}/path
+                if default_pid and uri.startswith('@pid:/'):
+                    return f"@pid:{default_pid}/" + uri[6:]
+                return uri
+            return uri  # Already absolute path
+
+        # pd_from: load only agent.pt (fresh training)
+        if 'pd_from' in train_cfg and train_cfg['pd_from']:
+            args.pd_from = expand_ckpt_uri(train_cfg['pd_from'])
+            print(f"pd_from: {args.pd_from}")
+
+        # ckpt_from: full checkpoint resume
+        if 'ckpt_from' in train_cfg and train_cfg['ckpt_from']:
+            args.ckpt_from = expand_ckpt_uri(train_cfg['ckpt_from'])
+            print(f"ckpt_from: {args.ckpt_from}")
+
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
@@ -430,25 +464,59 @@ if __name__ == "__main__":
         envs.update_discriminator_weights(disc_state_dict)
 
     # Resume from checkpoint if specified
+    # Priority: resume_from > ckpt_from > pd_from
     start_iteration = 1
     global_step = 0
-    resumed_from = args.resume_from  # Track lineage for metadata
+    ckpt_path = args.resume_from or args.ckpt_from  # Full checkpoint loading
+    pd_only_path = args.pd_from if not ckpt_path else None  # Agent.pt only
+    resumed_from = ckpt_path or pd_only_path  # Track lineage for metadata
 
-    if args.resume_from:
-        ckpt = Path(args.resume_from)
-        print(f"Resuming from checkpoint: {ckpt}")
+    # Helper to fetch checkpoint file (supports @pid: URIs and local paths)
+    def fetch_ckpt_file(base_path: str, filename: str) -> str:
+        """Fetch checkpoint file, returns local path. Supports @pid: URIs."""
+        if base_path.startswith('@pid:'):
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent.parent / "rm/python"))
+            import pyrm
+            rm_config = str(Path(__file__).parent.parent / "data/rm_config.yaml")
+            rm = pyrm.ResourceManager(rm_config)
+            uri = f"{base_path}/{filename}"
+            handle = rm.fetch(uri)
+            return handle.local_path()
+        else:
+            return str(Path(base_path) / filename)
+
+    def ckpt_file_exists(base_path: str, filename: str) -> bool:
+        """Check if checkpoint file exists. Supports @pid: URIs."""
+        if base_path.startswith('@pid:'):
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent.parent / "rm/python"))
+            import pyrm
+            rm_config = str(Path(__file__).parent.parent / "data/rm_config.yaml")
+            rm = pyrm.ResourceManager(rm_config)
+            uri = f"{base_path}/{filename}"
+            return rm.exists(uri)
+        else:
+            return (Path(base_path) / filename).exists()
+
+    if ckpt_path:
+        # Full checkpoint resume (loads agent, muscle, optimizer, training_state)
+        print(f"Resuming from checkpoint: {ckpt_path}")
 
         # Load agent weights
-        agent.load_state_dict(torch.load(ckpt / "agent.pt", map_location=device))
+        agent_file = fetch_ckpt_file(ckpt_path, "agent.pt")
+        agent.load_state_dict(torch.load(agent_file, map_location=device))
 
         # Load muscle learner if exists
-        if muscle_learner and (ckpt / "muscle.pt").exists():
-            has_full_state = (ckpt / "training_state.pt").exists()
-            muscle_learner.load(str(ckpt / "muscle.pt"), load_optimizer=has_full_state)
+        if muscle_learner and ckpt_file_exists(ckpt_path, "muscle.pt"):
+            has_full_state = ckpt_file_exists(ckpt_path, "training_state.pt")
+            muscle_file = fetch_ckpt_file(ckpt_path, "muscle.pt")
+            muscle_learner.load(muscle_file, load_optimizer=has_full_state)
 
         # Load full training state if available
-        if (ckpt / "training_state.pt").exists():
-            state = torch.load(ckpt / "training_state.pt", map_location=device)
+        if ckpt_file_exists(ckpt_path, "training_state.pt"):
+            state_file = fetch_ckpt_file(ckpt_path, "training_state.pt")
+            state = torch.load(state_file, map_location=device)
 
             # Validate args compatibility
             saved_args = state.get('args', {})
@@ -458,7 +526,8 @@ if __name__ == "__main__":
                     print(f"Warning: {arg} differs: saved={saved_args[arg]}, current={getattr(args, arg)}")
 
             # Load PPO optimizer
-            optimizer.load_state_dict(torch.load(ckpt / "optimizer.pt", map_location=device))
+            optimizer_file = fetch_ckpt_file(ckpt_path, "optimizer.pt")
+            optimizer.load_state_dict(torch.load(optimizer_file, map_location=device))
 
             # Restore training progress
             start_iteration = state['iteration'] + 1
@@ -467,6 +536,14 @@ if __name__ == "__main__":
             print(f"Resumed: iteration={start_iteration}, global_step={global_step}")
         else:
             print("Warning: No training_state.pt found, starting from iteration 1 with loaded weights")
+
+    elif pd_only_path:
+        # pd_from: Load ONLY agent.pt (fresh training state)
+        print(f"Loading pre-trained policy from: {pd_only_path}")
+        agent_file = fetch_ckpt_file(pd_only_path, "agent.pt")
+        agent.load_state_dict(torch.load(agent_file, map_location=device))
+        print(f"Loaded agent.pt only - starting fresh training from iteration 1")
+        # Do NOT load optimizer, training_state, or muscle
 
     # Initialize C++ policy weights
     agent_state_cpu = {k: v.cpu() for k, v in agent.state_dict().items()}
