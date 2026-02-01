@@ -21,6 +21,11 @@ void RenderEnvironment::step() {
     for (int i = 0; i < getNumSubSteps(); i++) {
         muscleStep();
         RecordGraphData();
+
+        // Call registered callback if set (for per-substep data collection)
+        if (mOnSubStepCallback) {
+            mOnSubStepCallback();
+        }
     }
     postStep();
 
@@ -48,6 +53,7 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("contact_left", static_cast<double>(contact[0]));
     if (mGraphData->key_exists("contact_right"))
         mGraphData->push("contact_right", static_cast<double>(contact[1]));
+    // NOTE: contact_phaseR stores raw contact state, not GaitPhase state transitions
     if (mGraphData->key_exists("contact_phaseR"))
         mGraphData->push("contact_phaseR", static_cast<double>(contact[1]));
 

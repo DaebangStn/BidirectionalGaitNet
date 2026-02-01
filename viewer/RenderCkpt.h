@@ -43,30 +43,42 @@ enum MuscleRenderingType
 
 struct RolloutStatus
 {
-    std::string name, settingPath, fileContents, storeKey;
-    char memo[64];
-    int cycle; // Remaining gait cycles. if -1, rollout continues indefinitely, if 0, rollout is finished
+    // === KEPT: Actually used fields ===
+    std::string name;
+    int cycle;   // Remaining gait cycles. -1=indefinite, 0=finished
     bool pause;
-    bool modulate;
-    bool isAlarmed;
-    bool store;
-    bool fake_assist;
+
+    // === NEW: Analysis fields ===
+    bool collectData = false;
+
+    // Current cycle buffer - populated by reading latest values from mGraphData
+    std::map<std::string, std::vector<double>> currentCycleBuffer;
+
+    // Completed cycles (each resampled to 100 points)
+    std::vector<std::map<std::string, std::vector<double>>> completedCycles;
+
+    // Statistics across completed cycles
+    std::map<std::string, std::vector<double>> mean;   // 100-point mean
+    std::map<std::string, std::vector<double>> std;    // 100-point std
+    std::map<std::string, double> mse;                 // MSE vs reference
+    std::map<std::string, double> kl;                  // KL divergence vs reference
+    std::map<std::string, double> zscore;              // Mean |zscore| vs reference
 
     RolloutStatus() { reset(); }
 
     void reset()
     {
+        name = "";
         cycle = -1;
         pause = true;
-        modulate = false;
-        isAlarmed = false;
-        store = false;
-        fake_assist = false;
-        name = "";
-        settingPath = "";
-        fileContents = "";
-        storeKey = "";
-        std::memset(memo, 0, sizeof(memo));
+        collectData = false;
+        currentCycleBuffer.clear();
+        completedCycles.clear();
+        mean.clear();
+        std.clear();
+        mse.clear();
+        kl.clear();
+        zscore.clear();
     }
 
     void step()
@@ -74,6 +86,19 @@ struct RolloutStatus
         if (cycle > 0) cycle--;
         if (cycle == 0) pause = true;
     }
+
+    void clearAnalysis()
+    {
+        currentCycleBuffer.clear();
+        completedCycles.clear();
+        mean.clear();
+        std.clear();
+        mse.clear();
+        kl.clear();
+        zscore.clear();
+    }
+
+    int numCycles() const { return static_cast<int>(completedCycles.size()); }
 };
 
 // Legacy ViewerMotion struct - replaced by Motion* polymorphic interface
@@ -528,6 +553,7 @@ private:
 
     // Rollout configuration
     int mDefaultRolloutCount, mRolloutCycles = -1;
+    bool mRecordRollout = false;  // Checkbox state for recording rollout analysis data
 
     // Reset phase configuration
     double mResetPhase;  // -1.0 for randomized, 0.0-1.0 for specific phase
@@ -542,6 +568,14 @@ private:
     void updateUnifiedKeys();
     void updateResizablePlotsFromKeys();
     void runRollout();
+
+    // Rollout analysis functions
+    void collectCurrentCycleData();
+    void finalizeCycleData();
+    std::vector<double> resampleTo100Points(const std::vector<double>& data);
+    void computeRolloutStatistics();
+    void drawRolloutTabContent();
+    void drawRolloutKinematicsPlot(int angleSelection);
 
     // Motion navigation helper - NEW: using Motion* interface
     double computeFrameFloat(Motion* motion, double phase);

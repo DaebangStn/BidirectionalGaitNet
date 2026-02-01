@@ -4,6 +4,7 @@
 #include "Environment.h"
 #include "CBufferData.h"
 #include "IncrementalLeastSquares.h"
+#include <functional>
 #include <map>
 #include <string>
 
@@ -22,6 +23,9 @@ public:
     void setVelocityMethod(int method) { mVelocityMethod = method; }
     int getVelocityMethod() const { return mVelocityMethod; }
 
+    // Substep callback for per-substep data collection
+    void setOnSubStepCallback(std::function<void()> callback) { mOnSubStepCallback = callback; }
+
 private:
     void RecordGraphData();
     void RecordInfoData();
@@ -37,6 +41,9 @@ private:
 
     // Velocity calculation method: 0 = Least Squares, 1 = Avg Horizon
     int mVelocityMethod;
+
+    // Substep callback for external data collection
+    std::function<void()> mOnSubStepCallback;
 };
 
 #endif // RENDER_ENVIRONMENT_H

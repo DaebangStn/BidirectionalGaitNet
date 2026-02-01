@@ -1524,7 +1524,6 @@ void Environment::reset(double phase)
     mWorld->getConstraintSolver()->setCollisionDetector(dart::collision::BulletCollisionDetector::create());
     mWorld->getConstraintSolver()->clearLastCollisionResult();
 
-    mGaitPhase->reset(time);
     mWorld->setTime(time);
 
     // Reset Skeletons

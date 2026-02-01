@@ -6,8 +6,8 @@
 // ============================================================================
 // Debug Flags
 // ============================================================================
-// #define LOG_STATE_CHANGES 0  // Set to 1 to enable state change logging, 0 to disable
-#define LOG_STATE_CHANGES 1
+#define LOG_STATE_CHANGES 0  // Set to 1 to enable state change logging, 0 to disable
+// #define LOG_STATE_CHANGES 1
 
 GaitPhase::GaitPhase(Character* character,
                      dart::simulation::WorldPtr world,
@@ -23,10 +23,8 @@ GaitPhase::GaitPhase(Character* character,
       mRefStride(refStride),
       mCadence(1.0),
       mStride(1.0),
-
       mSimTime(0.0),
       mAdaptiveTime(0.0),
-
       mControlHz(controlHz),
       mSimulationHz(simulationHz),
       mPhaseAction(0.0),
@@ -39,25 +37,6 @@ GaitPhase::GaitPhase(Character* character,
       mGaitCycleCompletePD(false),
       mIsStepComplete(false),
       mStepCompletePD(false),
-      mSwingTimeR(0.0),
-      mSwingTimeL(0.0),
-      mStanceTimeR(0.0),
-      mStanceTimeL(0.0),
-      mFootPrevRz(0.0),
-      mFootPrevLz(0.0),
-      mRightPhaseUpTime(0.0),
-      mLeftPhaseUpTime(0.0),
-      mPhaseTotalR(0.0),
-      mPhaseTotalL(0.0),
-      mStrideLengthR(0.0),
-      mStrideLengthL(0.0),
-      mCycleTime(0.0),
-      mCurCycleTime(0.0),
-      mPrevCycleTime(0.0),
-      mCycleDist(0.0),
-      mCurrentCadence(0.0),
-      mStanceRatioR(0.0),
-      mStanceRatioL(0.0),
       mStepMinRatio(0.3),
       mGRFThreshold(0.2),
       mContactDebounceAlpha(0.25),
@@ -109,9 +88,9 @@ void GaitPhase::reset(double time)
 
     // Get initial state from skeleton and motion
     auto skel = mCharacter->getSkeleton();
-    LOG_VERBOSE("=== Right Foot Lowest Point ===");
+    LOG_INFO("=== Right Foot Lowest Point ===");
     Eigen::Vector3d footRPos = getLowestPointFromBodyNodes({"TalusR", "FootPinkyR", "FootThumbR"});
-    LOG_VERBOSE("=== Left Foot Lowest Point ===");
+    LOG_INFO("=== Left Foot Lowest Point ===");
     Eigen::Vector3d footLPos = getLowestPointFromBodyNodes({"TalusL", "FootPinkyL", "FootThumbL"});
 
 
@@ -280,7 +259,7 @@ Eigen::Vector3d GaitPhase::getLowestPointFromBodyNodes(const std::vector<std::st
         }
     }
 
-    // LOG_VERBOSE("Lowest point Y: " << lowestY << " at position: ["
+    // LOG_INFO("Lowest point Y: " << lowestY << " at position: ["
                 // << lowestPoint[0] << ", " << lowestPoint[1] << ", " << lowestPoint[2] << "]");
 
     return lowestPoint;
@@ -372,9 +351,9 @@ void GaitPhase::updateFromContact()
 
     double time = mWorld->getTime();
     auto skel = mCharacter->getSkeleton();
-    // LOG_VERBOSE("=== Right Foot Lowest Point ===");
+    // LOG_INFO("=== Right Foot Lowest Point ===");
     Eigen::Vector3d footRPos = getLowestPointFromBodyNodes({"TalusR", "FootPinkyR", "FootThumbR"});
-    // LOG_VERBOSE("=== Left Foot Lowest Point ===");
+    // LOG_INFO("=== Left Foot Lowest Point ===");
     Eigen::Vector3d footLPos = getLowestPointFromBodyNodes({"TalusL", "FootPinkyL", "FootThumbL"});
 
     // Calculate target stride and minimum step using stored parameters
@@ -395,7 +374,7 @@ void GaitPhase::updateFromContact()
                 mLeftPhaseUpTime = time;
                 mPhaseTotalL = mStanceTimeL + mSwingTimeL;
 #if LOG_STATE_CHANGES
-                LOG_VERBOSE("✓ STATE CHANGE: RIGHT_STANCE → LEFT_TAKEOFF (swing left)");
+                LOG_INFO("✓ STATE CHANGE: RIGHT_STANCE → LEFT_TAKEOFF (swing left)");
 #endif
             } else {
 #if LOG_STATE_CHANGES
@@ -404,7 +383,7 @@ void GaitPhase::updateFromContact()
                 oss << "✗ RIGHT_STANCE held | Reasons: ";
                 if (!contactR) oss << "[No right contact] ";
                 if (contactL) oss << "[Left still in contact] ";
-                LOG_VERBOSE(oss.str());
+                LOG_INFO(oss.str());
 #endif
             }
             break;
@@ -424,7 +403,7 @@ void GaitPhase::updateFromContact()
                 oss << std::setprecision(3)
                     << "✓ STATE CHANGE: LEFT_TAKEOFF → LEFT_STANCE | Step: " << progression
                     << " (min: " << stepMin << ")";
-                LOG_VERBOSE(oss.str());
+                LOG_INFO(oss.str());
 #endif
 
                 mState = LEFT_STANCE;
@@ -453,7 +432,7 @@ void GaitPhase::updateFromContact()
                 if (!contactL) oss << "[No left contact] ";
                 if (grfNorm[0] <= mGRFThreshold) oss << "[Low left GRF: " << grfNorm[0] << " ≤ " << mGRFThreshold << "] ";
                 if (progression <= stepMin) oss << "[Short step: " << progression << " ≤ " << stepMin << "] ";
-                LOG_VERBOSE(oss.str());
+                LOG_INFO(oss.str());
 #endif
             }
             break;
@@ -471,7 +450,7 @@ void GaitPhase::updateFromContact()
                 mRightPhaseUpTime = time;
                 mPhaseTotalR = mStanceTimeR + mSwingTimeR;
 #if LOG_STATE_CHANGES
-                LOG_VERBOSE("✓ STATE CHANGE: LEFT_STANCE → RIGHT_TAKEOFF (swing right)");
+                LOG_INFO("✓ STATE CHANGE: LEFT_STANCE → RIGHT_TAKEOFF (swing right)");
 #endif
             } else {
 #if LOG_STATE_CHANGES
@@ -480,7 +459,7 @@ void GaitPhase::updateFromContact()
                 oss << "✗ LEFT_STANCE held | Reasons: ";
                 if (!contactL) oss << "[No left contact] ";
                 if (contactR) oss << "[Right still in contact] ";
-                LOG_VERBOSE(oss.str());
+                LOG_INFO(oss.str());
 #endif
             }
             break;
@@ -501,7 +480,7 @@ void GaitPhase::updateFromContact()
                 oss << std::setprecision(3)
                     << "✓ STATE CHANGE: RIGHT_TAKEOFF → RIGHT_STANCE | Step: " << progression
                     << " (min: " << stepMin << ") [CYCLE COMPLETE]";
-                LOG_VERBOSE(oss.str());
+                LOG_INFO(oss.str());
 #endif
 
                 mState = RIGHT_STANCE;
@@ -548,7 +527,7 @@ void GaitPhase::updateFromContact()
                 if (!contactR) oss << "[No right contact] ";
                 if (grfNorm[1] <= mGRFThreshold) oss << "[Low right GRF: " << grfNorm[1] << " ≤ " << mGRFThreshold << "] ";
                 if (progression <= stepMin) oss << "[Short step: " << progression << " ≤ " << stepMin << "] ";
-                LOG_VERBOSE(oss.str());
+                LOG_INFO(oss.str());
 #endif
             }
             break;

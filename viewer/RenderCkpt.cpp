@@ -42,6 +42,13 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
     "PRESET|Foot view|0,0,1.26824|0,1,0|0,900,15|1|0.707,0.0,0.707,0.0",
 };
 
+// Key joint keys for rollout analysis
+static const std::vector<std::string> kRolloutKinKeys = {
+    "angle_HipR", "angle_KneeR", "angle_AnkleR",
+    "angle_HipIRR", "angle_HipAbR",
+    "angle_Tilt", "angle_Obliquity", "angle_Rotation"
+};
+
 RenderCkpt::RenderCkpt(int argc, char **argv)
     : ViewerAppBase("MuscleSim", 2560, 1440)  // Base class handles GLFW/ImGui init
 {
@@ -501,19 +508,590 @@ void RenderCkpt::update(bool _isSave)
     }
     else mRenderEnv->step();
 
+    // NOTE: collectCurrentCycleData() is now called per-substep via RenderEnvironment callback
+    // This provides higher resolution data collection (simulation Hz instead of control Hz)
+
     // Check for gait cycle completion AFTER step (PD-level check)
     if (mRenderEnv->isGaitCycleComplete())
     {
+        // Finalize cycle data before stepping rollout status
+        if (mRolloutStatus.collectData && !mRolloutStatus.currentCycleBuffer.empty())
+        {
+            finalizeCycleData();
+        }
+
         mRolloutStatus.step();
         mRenderEnv->clearGaitCycleComplete();  // Clear flag after consuming
         if (mRolloutStatus.cycle == 0)
         {
             mRolloutStatus.pause = true; // Pause simulation when rollout completes
+
+            // Auto-compute statistics if recording was enabled
+            if (mRolloutStatus.collectData && !mRolloutStatus.completedCycles.empty())
+            {
+                mRolloutStatus.collectData = false;  // Stop recording
+                computeRolloutStatistics();
+            }
             return;
         }
     }
 
 }
+
+// ============================================================================
+// Rollout Analysis Functions
+// ============================================================================
+
+// Forward declarations for functions used in rollout tab
+static std::string hashTo3Char(const std::string& str);
+static float getPlotHeight(const std::string& title, float baseHeight = 300.0f);
+
+void RenderCkpt::collectCurrentCycleData()
+{
+    if (!mGraphData) return;
+
+    for (const auto& key : kRolloutKinKeys)
+    {
+        if (mGraphData->key_exists(key) && mGraphData->size(key) > 0)
+        {
+            // Get the latest value (just pushed by RecordGraphData)
+            try {
+                double latestValue = mGraphData->get_latest(key);
+                mRolloutStatus.currentCycleBuffer[key].push_back(latestValue);
+            } catch (const std::runtime_error&) {
+                // Buffer empty, skip
+            }
+        }
+    }
+}
+
+void RenderCkpt::finalizeCycleData()
+{
+    std::map<std::string, std::vector<double>> resampledCycle;
+
+    for (const auto& key : kRolloutKinKeys)
+    {
+        auto it = mRolloutStatus.currentCycleBuffer.find(key);
+        if (it != mRolloutStatus.currentCycleBuffer.end() && !it->second.empty())
+        {
+            resampledCycle[key] = resampleTo100Points(it->second);
+        }
+    }
+
+    if (!resampledCycle.empty())
+    {
+        mRolloutStatus.completedCycles.push_back(resampledCycle);
+    }
+
+    mRolloutStatus.currentCycleBuffer.clear();  // Reset for next cycle
+}
+
+std::vector<double> RenderCkpt::resampleTo100Points(const std::vector<double>& data)
+{
+    std::vector<double> result(100, 0.0);
+    if (data.empty()) return result;
+
+    int n = static_cast<int>(data.size());
+    if (n == 1)
+    {
+        // Single point: fill all with the same value
+        std::fill(result.begin(), result.end(), data[0]);
+        return result;
+    }
+
+    for (int i = 0; i < 100; ++i)
+    {
+        double phase = static_cast<double>(i) / 99.0;
+        double idx = phase * (n - 1);
+        int j = std::min(static_cast<int>(idx), n - 2);
+        double alpha = idx - j;
+        result[i] = data[j] + alpha * (data[j + 1] - data[j]);
+    }
+    return result;
+}
+
+void RenderCkpt::computeRolloutStatistics()
+{
+    if (mRolloutStatus.completedCycles.empty()) return;
+
+    int n = mRolloutStatus.numCycles();
+    const KinematicsExportData* refKin = getActiveKinematics();
+
+    mRolloutStatus.mean.clear();
+    mRolloutStatus.std.clear();
+    mRolloutStatus.mse.clear();
+    mRolloutStatus.kl.clear();
+    mRolloutStatus.zscore.clear();
+
+    for (const auto& key : kRolloutKinKeys)
+    {
+        // Count how many cycles have this key
+        int cyclesWithKey = 0;
+        for (const auto& cycle : mRolloutStatus.completedCycles)
+        {
+            if (cycle.count(key)) cyclesWithKey++;
+        }
+        if (cyclesWithKey == 0) continue;
+
+        // Compute mean
+        std::vector<double> mean(100, 0.0);
+        for (const auto& cycle : mRolloutStatus.completedCycles)
+        {
+            auto it = cycle.find(key);
+            if (it != cycle.end())
+            {
+                for (int i = 0; i < 100; ++i)
+                    mean[i] += it->second[i];
+            }
+        }
+        for (auto& v : mean) v /= cyclesWithKey;
+
+        // Compute std
+        std::vector<double> stddev(100, 0.0);
+        for (const auto& cycle : mRolloutStatus.completedCycles)
+        {
+            auto it = cycle.find(key);
+            if (it != cycle.end())
+            {
+                for (int i = 0; i < 100; ++i)
+                {
+                    double diff = it->second[i] - mean[i];
+                    stddev[i] += diff * diff;
+                }
+            }
+        }
+        for (auto& v : stddev) v = std::sqrt(v / cyclesWithKey);
+
+        // Compute MSE, KL divergence, and z-score vs reference
+        double mse = 0.0;
+        double klDiv = 0.0;
+        double zscoreSum = 0.0;
+        int validPoints = 0;
+
+        if (refKin)
+        {
+            // Try exact key first, then without "angle_" prefix
+            std::string lookupKey = key;
+            auto itRefMean = refKin->mean.find(lookupKey);
+            auto itRefStd = refKin->std.find(lookupKey);
+            if (itRefMean == refKin->mean.end() && key.rfind("angle_", 0) == 0)
+            {
+                lookupKey = key.substr(6);
+                itRefMean = refKin->mean.find(lookupKey);
+                itRefStd = refKin->std.find(lookupKey);
+            }
+
+            if (itRefMean != refKin->mean.end())
+            {
+                const auto& refMean = itRefMean->second;
+                const std::vector<double>* refStd = (itRefStd != refKin->std.end()) ? &itRefStd->second : nullptr;
+
+                for (int i = 0; i < 100 && i < static_cast<int>(refMean.size()); ++i)
+                {
+                    double diff = mean[i] - refMean[i];
+                    mse += diff * diff;
+
+                    // KL divergence: KL(sim||ref) = log(σ_ref/σ_sim) + (σ_sim² + (μ_sim - μ_ref)²)/(2σ_ref²) - 0.5
+                    // For numerical stability, use small epsilon for std
+                    double simStd = std::max(stddev[i], 0.1);
+                    double refStdVal = (refStd && i < static_cast<int>(refStd->size())) ? std::max((*refStd)[i], 0.1) : 1.0;
+
+                    double klPoint = std::log(refStdVal / simStd)
+                                   + (simStd * simStd + diff * diff) / (2.0 * refStdVal * refStdVal)
+                                   - 0.5;
+                    klDiv += std::max(klPoint, 0.0);  // KL should be non-negative
+
+                    // Z-score: |μ_sim - μ_ref| / σ_ref
+                    if (refStdVal > 0.1)
+                    {
+                        zscoreSum += std::abs(diff) / refStdVal;
+                        validPoints++;
+                    }
+                }
+                mse /= 100.0;
+                klDiv /= 100.0;
+            }
+        }
+
+        mRolloutStatus.mean[key] = mean;
+        mRolloutStatus.std[key] = stddev;
+        mRolloutStatus.mse[key] = mse;
+        mRolloutStatus.kl[key] = klDiv;
+        mRolloutStatus.zscore[key] = (validPoints > 0) ? zscoreSum / validPoints : 0.0;
+    }
+}
+
+void RenderCkpt::drawRolloutKinematicsPlot(int angleSelection)
+{
+    const KinematicsExportData* refKin = getActiveKinematics();
+
+    // X-axis: 0-100 phases
+    static std::vector<double> xAxis(100);
+    for (int i = 0; i < 100; ++i) xAxis[i] = static_cast<double>(i);
+
+    // Select keys based on angle selection
+    std::vector<std::string> keys;
+    std::string plotTitle;
+    double yMin, yMax;
+
+    if (angleSelection == 0) {  // Major
+        keys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
+        plotTitle = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
+        yMin = -50; yMax = 70;
+    } else if (angleSelection == 1) {  // Minor
+        keys = {"angle_HipIRR", "angle_HipAbR"};
+        plotTitle = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
+        yMin = -20; yMax = 20;
+    } else {  // Pelvis
+        keys = {"angle_Tilt", "angle_Obliquity", "angle_Rotation"};
+        plotTitle = mPlotTitle ? mCheckpointName : "Pelvis Angles (deg)";
+        yMin = -20; yMax = 20;
+    }
+
+    // Fixed x-axis 0-100, configurable y-axis
+    ImPlot::SetNextAxisLimits(ImAxis_X1, 0, 100, ImPlotCond_Always);
+    ImPlot::SetNextAxisLimits(ImAxis_Y1, yMin, yMax, ImPlotCond_Once);
+
+    float plotHeight = 500.0f;
+    if (ImPlot::BeginPlot((plotTitle + "##RolloutPlot").c_str(), ImVec2(-1, plotHeight)))
+    {
+        ImPlot::SetupAxes("Phase (%)", "Angle (deg)");
+
+        int colorIdx = 0;
+        for (const auto& key : keys)
+        {
+            ImVec4 baseColor = ImPlot::GetColormapColor(colorIdx);
+
+            // Look up reference data
+            std::string lookupKey = key;
+            const std::vector<double>* refMean = nullptr;
+            const std::vector<double>* refStd = nullptr;
+            if (refKin && mShowReferenceKinematics)
+            {
+                auto itMean = refKin->mean.find(lookupKey);
+                auto itStd = refKin->std.find(lookupKey);
+                if (itMean == refKin->mean.end() && key.rfind("angle_", 0) == 0)
+                {
+                    lookupKey = key.substr(6);
+                    itMean = refKin->mean.find(lookupKey);
+                    itStd = refKin->std.find(lookupKey);
+                }
+                if (itMean != refKin->mean.end()) refMean = &itMean->second;
+                if (itStd != refKin->std.end()) refStd = &itStd->second;
+            }
+
+            // Plot reference std band first (behind simulation)
+            if (refMean && refStd)
+            {
+                std::vector<double> refUpper(100), refLower(100);
+                for (int i = 0; i < 100 && i < static_cast<int>(refMean->size()); ++i)
+                {
+                    refUpper[i] = (*refMean)[i] + (*refStd)[i];
+                    refLower[i] = (*refMean)[i] - (*refStd)[i];
+                }
+
+                // Reference band - same color, fainter than simulation
+                ImVec4 refBandColor = ImVec4(baseColor.x, baseColor.y, baseColor.z, 0.15f);
+                ImPlot::PushStyleColor(ImPlotCol_Fill, refBandColor);
+                ImPlot::PlotShaded(("##ref_band_" + key).c_str(),
+                                   xAxis.data(), refLower.data(), refUpper.data(), 100);
+                ImPlot::PopStyleColor();
+
+                // Reference line - same color, fainter than simulation
+                ImVec4 refLineColor = ImVec4(baseColor.x, baseColor.y, baseColor.z, 0.8f);
+                ImPlot::PushStyleColor(ImPlotCol_Line, refLineColor);
+                ImPlot::PlotLine(("##ref_mean_" + key).c_str(), xAxis.data(), refMean->data(), 100);
+                ImPlot::PopStyleColor();
+            }
+
+            // Plot simulation (rollout) data
+            if (mRolloutStatus.mean.count(key) > 0)
+            {
+                auto& mean = mRolloutStatus.mean[key];
+                auto& stddev = mRolloutStatus.std[key];
+
+                // Compute upper and lower bands
+                std::vector<double> upper(100), lower(100);
+                for (int i = 0; i < 100; ++i)
+                {
+                    upper[i] = mean[i] + stddev[i];
+                    lower[i] = mean[i] - stddev[i];
+                }
+
+                // Simulation std band
+                ImVec4 bandColor = ImVec4(baseColor.x, baseColor.y, baseColor.z, 0.25f);
+                ImPlot::PushStyleColor(ImPlotCol_Fill, bandColor);
+                ImPlot::PlotShaded(("##sim_band_" + key).c_str(),
+                                   xAxis.data(), lower.data(), upper.data(), 100);
+                ImPlot::PopStyleColor();
+
+                // Simulation mean line (shown in legend)
+                ImPlot::PushStyleColor(ImPlotCol_Line, baseColor);
+                ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, 2.5f);
+                ImPlot::PlotLine(key.c_str(), xAxis.data(), mean.data(), 100);
+                ImPlot::PopStyleVar();
+                ImPlot::PopStyleColor();
+            }
+
+            colorIdx++;
+        }
+        ImPlot::EndPlot();
+    }
+}
+
+void RenderCkpt::drawRolloutTabContent()
+{
+    // Recording status indicator
+    if (mRolloutStatus.collectData) {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Recording...");
+    } else if (mRolloutStatus.numCycles() > 0) {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 1.0f, 1.0f), "Complete");
+    } else {
+        ImGui::TextDisabled("Not recording");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear##RolloutClear")) {
+        mRolloutStatus.clearAnalysis();
+    }
+
+    // Current progress display
+    int currentSamples = 0;
+    if (!mRolloutStatus.currentCycleBuffer.empty()) {
+        currentSamples = static_cast<int>(mRolloutStatus.currentCycleBuffer.begin()->second.size());
+    }
+    ImGui::Text("Cycles: %d (current: %d samples)", mRolloutStatus.numCycles(), currentSamples);
+
+    // Radio buttons for angle selection
+    static int rolloutAngleSelection = 0;
+    ImGuiCommon::RadioButtonGroup("RolloutAngle", {"Major", "Minor", "Pelvis"}, &rolloutAngleSelection);
+
+    ImGui::Separator();
+
+    // Draw plot if we have data
+    if (!mRolloutStatus.mean.empty())
+    {
+        drawRolloutKinematicsPlot(rolloutAngleSelection);
+
+        // MSE + KL + Z-score display and printer
+        if (getActiveKinematics())
+        {
+            // Helper lambda to get values with default
+            auto getVal = [&](const std::map<std::string, double>& m, const std::string& k) {
+                return m.count(k) ? m.at(k) : 0.0;
+            };
+
+            if (rolloutAngleSelection == 0) {  // Major joints
+                double mseHip = getVal(mRolloutStatus.mse, "angle_HipR");
+                double mseKnee = getVal(mRolloutStatus.mse, "angle_KneeR");
+                double mseAnkle = getVal(mRolloutStatus.mse, "angle_AnkleR");
+                double klHip = getVal(mRolloutStatus.kl, "angle_HipR");
+                double klKnee = getVal(mRolloutStatus.kl, "angle_KneeR");
+                double klAnkle = getVal(mRolloutStatus.kl, "angle_AnkleR");
+                double zHip = getVal(mRolloutStatus.zscore, "angle_HipR");
+                double zKnee = getVal(mRolloutStatus.zscore, "angle_KneeR");
+                double zAnkle = getVal(mRolloutStatus.zscore, "angle_AnkleR");
+
+                ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
+                ImGui::SetWindowFontScale(2.0f);
+                if (ImGui::BeginTable("RolloutMajorMetrics", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("Metric");
+                    ImGui::TableSetupColumn("Hip");
+                    ImGui::TableSetupColumn("Knee");
+                    ImGui::TableSetupColumn("Ankle");
+                    ImGui::TableSetupColumn("Avg");
+                    ImGui::TableHeadersRow();
+
+                    // MSE row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("MSE");
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseHip);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseKnee);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseAnkle);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", (mseHip+mseKnee+mseAnkle)/3.0);
+
+                    // KL row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("KL");
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klHip);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klKnee);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klAnkle);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", (klHip+klKnee+klAnkle)/3.0);
+
+                    // Z-score row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("Z");
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zHip);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zKnee);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zAnkle);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", (zHip+zKnee+zAnkle)/3.0);
+
+                    ImGui::EndTable();
+                }
+                ImGui::SetWindowFontScale(1.0f);
+                if (ImGui::SmallButton("Hdr##RolloutMajorMSE")) {
+                    const char* hdr = "| Hash | Ckpt | Ref | N | Hip(mse) | Knee(mse) | Ankle(mse) | Hip(kl) | Knee(kl) | Ankle(kl) | Hip(z) | Knee(z) | Ankle(z) |\n|------|------|-----|---|----------|-----------|------------|---------|----------|-----------|--------|---------|----------|";
+                    std::cout << hdr << std::endl;
+                    glfwSetClipboardString(mWindow, hdr);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Row##RolloutMajorMSE")) {
+                    char content[512];
+                    snprintf(content, sizeof(content), "%s|%s|%d|%.1f|%.1f|%.1f|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f",
+                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mRolloutStatus.numCycles(), mseHip, mseKnee, mseAnkle,
+                             klHip, klKnee, klAnkle, zHip, zKnee, zAnkle);
+                    std::string hash = hashTo3Char(content);
+                    char buf[512];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |",
+                             hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mRolloutStatus.numCycles(), mseHip, mseKnee, mseAnkle,
+                             klHip, klKnee, klAnkle, zHip, zKnee, zAnkle);
+                    std::cout << buf << std::endl;
+                    glfwSetClipboardString(mWindow, buf);
+                }
+            }
+            else if (rolloutAngleSelection == 1) {  // Minor joints
+                double mseHipIR = getVal(mRolloutStatus.mse, "angle_HipIRR");
+                double mseHipAb = getVal(mRolloutStatus.mse, "angle_HipAbR");
+                double klHipIR = getVal(mRolloutStatus.kl, "angle_HipIRR");
+                double klHipAb = getVal(mRolloutStatus.kl, "angle_HipAbR");
+                double zHipIR = getVal(mRolloutStatus.zscore, "angle_HipIRR");
+                double zHipAb = getVal(mRolloutStatus.zscore, "angle_HipAbR");
+
+                ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
+                ImGui::SetWindowFontScale(2.0f);
+                if (ImGui::BeginTable("RolloutMinorMetrics", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("Metric");
+                    ImGui::TableSetupColumn("HipIR");
+                    ImGui::TableSetupColumn("HipAb");
+                    ImGui::TableSetupColumn("Avg");
+                    ImGui::TableHeadersRow();
+
+                    // MSE row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("MSE");
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseHipIR);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseHipAb);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", (mseHipIR+mseHipAb)/2.0);
+
+                    // KL row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("KL");
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klHipIR);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klHipAb);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", (klHipIR+klHipAb)/2.0);
+
+                    // Z-score row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("Z");
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zHipIR);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zHipAb);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", (zHipIR+zHipAb)/2.0);
+
+                    ImGui::EndTable();
+                }
+                ImGui::SetWindowFontScale(1.0f);
+                if (ImGui::SmallButton("Hdr##RolloutMinorMSE")) {
+                    const char* hdr = "| Hash | Ckpt | Ref | N | HipIR(mse) | HipAb(mse) | HipIR(kl) | HipAb(kl) | HipIR(z) | HipAb(z) |\n|------|------|-----|---|------------|------------|-----------|-----------|----------|----------|";
+                    std::cout << hdr << std::endl;
+                    glfwSetClipboardString(mWindow, hdr);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Row##RolloutMinorMSE")) {
+                    char content[512];
+                    snprintf(content, sizeof(content), "%s|%s|%d|%.1f|%.1f|%.2f|%.2f|%.2f|%.2f",
+                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mRolloutStatus.numCycles(), mseHipIR, mseHipAb,
+                             klHipIR, klHipAb, zHipIR, zHipAb);
+                    std::string hash = hashTo3Char(content);
+                    char buf[512];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f |",
+                             hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mRolloutStatus.numCycles(), mseHipIR, mseHipAb,
+                             klHipIR, klHipAb, zHipIR, zHipAb);
+                    std::cout << buf << std::endl;
+                    glfwSetClipboardString(mWindow, buf);
+                }
+            }
+            else {  // Pelvis
+                double mseTilt = getVal(mRolloutStatus.mse, "angle_Tilt");
+                double mseObl = getVal(mRolloutStatus.mse, "angle_Obliquity");
+                double mseRot = getVal(mRolloutStatus.mse, "angle_Rotation");
+                double klTilt = getVal(mRolloutStatus.kl, "angle_Tilt");
+                double klObl = getVal(mRolloutStatus.kl, "angle_Obliquity");
+                double klRot = getVal(mRolloutStatus.kl, "angle_Rotation");
+                double zTilt = getVal(mRolloutStatus.zscore, "angle_Tilt");
+                double zObl = getVal(mRolloutStatus.zscore, "angle_Obliquity");
+                double zRot = getVal(mRolloutStatus.zscore, "angle_Rotation");
+
+                ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
+                ImGui::SetWindowFontScale(2.0f);
+                if (ImGui::BeginTable("RolloutPelvisMetrics", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("Metric");
+                    ImGui::TableSetupColumn("Tilt");
+                    ImGui::TableSetupColumn("Obl");
+                    ImGui::TableSetupColumn("Rot");
+                    ImGui::TableSetupColumn("Avg");
+                    ImGui::TableHeadersRow();
+
+                    // MSE row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("MSE");
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseTilt);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseObl);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", mseRot);
+                    ImGui::TableNextColumn(); ImGui::Text("%.1f", (mseTilt+mseObl+mseRot)/3.0);
+
+                    // KL row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("KL");
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klTilt);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klObl);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", klRot);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", (klTilt+klObl+klRot)/3.0);
+
+                    // Z-score row
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("Z");
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zTilt);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zObl);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", zRot);
+                    ImGui::TableNextColumn(); ImGui::Text("%.2f", (zTilt+zObl+zRot)/3.0);
+
+                    ImGui::EndTable();
+                }
+                ImGui::SetWindowFontScale(1.0f);
+                if (ImGui::SmallButton("Hdr##RolloutPelvisMSE")) {
+                    const char* hdr = "| Hash | Ckpt | Ref | N | Tilt(mse) | Obl(mse) | Rot(mse) | Tilt(kl) | Obl(kl) | Rot(kl) | Tilt(z) | Obl(z) | Rot(z) |\n|------|------|-----|---|-----------|----------|----------|----------|---------|---------|---------|--------|--------|";
+                    std::cout << hdr << std::endl;
+                    glfwSetClipboardString(mWindow, hdr);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Row##RolloutPelvisMSE")) {
+                    char content[512];
+                    snprintf(content, sizeof(content), "%s|%s|%d|%.1f|%.1f|%.1f|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f",
+                             mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mRolloutStatus.numCycles(), mseTilt, mseObl, mseRot,
+                             klTilt, klObl, klRot, zTilt, zObl, zRot);
+                    std::string hash = hashTo3Char(content);
+                    char buf[512];
+                    snprintf(buf, sizeof(buf), "| %s | %s | %s | %d | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |",
+                             hash.c_str(), mCheckpointName.c_str(), getActiveKinematicsLabel().c_str(),
+                             mRolloutStatus.numCycles(), mseTilt, mseObl, mseRot,
+                             klTilt, klObl, klRot, zTilt, zObl, zRot);
+                    std::cout << buf << std::endl;
+                    glfwSetClipboardString(mWindow, buf);
+                }
+            }
+        }
+    }
+    else
+    {
+        ImGui::TextDisabled("No rollout data. Check 'Record' and click 'Run' to collect data.");
+    }
+}
+
+// ============================================================================
 
 // Generate 3-character alphanumeric hash from string (for table UID)
 static std::string hashTo3Char(const std::string& str)
@@ -536,7 +1114,7 @@ static std::map<std::string, bool>& getDoublePlotSizeMap()
 }
 
 // Get plot height based on double height setting
-static float getPlotHeight(const std::string& title, float baseHeight = 300.0f)
+static float getPlotHeight(const std::string& title, float baseHeight)
 {
     auto& doublePlotSizeMap = getDoublePlotSizeMap();
 
@@ -731,6 +1309,13 @@ RenderCkpt::statGraphData(const std::vector<std::string>& keys, double xMin, dou
     return result;
 }
 
+// NOTE: This function displays RAW CONTACT CHANGES (right foot contact on/off),
+// NOT the actual gait phase transitions counted by GaitPhase state machine.
+// GaitPhase requires multiple conditions for state transitions:
+//   - Both contact conditions (one foot on, other off)
+//   - GRF threshold exceeded (for heel strikes)
+//   - Minimum step progression achieved
+// Therefore, vertical lines shown here may be more frequent than actual gait cycles.
 void RenderCkpt::plotPhaseBar(double x_min, double x_max, double y_min, double y_max)
 {
     if (!mGraphData || !mRenderEnv)
@@ -742,7 +1327,7 @@ void RenderCkpt::plotPhaseBar(double x_min, double x_max, double y_min, double y
         return;
     }
 
-    // Get phase buffer data
+    // Raw right foot contact data (not gait state transitions)
     std::vector<double> phase_values = mGraphData->get("contact_phaseR");
 
     // Ensure there are at least two points to compare
@@ -1260,6 +1845,13 @@ void RenderCkpt::initEnv(std::string metadata)
     // Create RenderEnvironment from metadata path
     mRenderEnv = new RenderEnvironment(metadata, mGraphData);
 
+    // Register substep callback for per-substep data collection
+    mRenderEnv->setOnSubStepCallback([this]() {
+        if (mRolloutStatus.collectData) {
+            collectCurrentCycleData();
+        }
+    });
+
     // Register muscle activation keys for graphing
     for (const auto& muscle: mRenderEnv->getCharacter()->getMuscles()) {
         const auto& muscle_name = muscle->GetName();
@@ -1657,12 +2249,14 @@ void RenderCkpt::drawRightPanel()
                 if (ImGui::Selectable("Motion", mKinematicsSource == KinematicsSource::FromMotion)) {
                     mKinematicsSource = KinematicsSource::FromMotion;
                     mKinematicsSourceInt = 0;
+                    computeRolloutStatistics();  // Recalculate stats with new reference
                 }
             }
             if (mHasNormativeKinematics) {
                 if (ImGui::Selectable("Normative", mKinematicsSource == KinematicsSource::FromNormative)) {
                     mKinematicsSource = KinematicsSource::FromNormative;
                     mKinematicsSourceInt = 1;
+                    computeRolloutStatistics();  // Recalculate stats with new reference
                 }
             }
             ImGui::EndCombo();
@@ -1693,6 +2287,10 @@ void RenderCkpt::drawRightPanel()
         }
         if (ImGui::BeginTabItem("Kinematics")) {
             drawKinematicsTabContent();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Rollout")) {
+            drawRolloutTabContent();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Kinetics")) {
@@ -2377,6 +2975,7 @@ void RenderCkpt::drawKinematicsTabContent()
             }
         }
     }
+
 }
 
 // ============================================================
@@ -3124,6 +3723,12 @@ void RenderCkpt::initializeCameraPresets() {
 void RenderCkpt::runRollout() {
     mRolloutStatus.cycle = mRolloutCycles;
     mRolloutStatus.pause = false;
+
+    // Start recording if checkbox is checked
+    if (mRecordRollout) {
+        mRolloutStatus.clearAnalysis();  // Clear previous data
+        mRolloutStatus.collectData = true;
+    }
 }
 
 
@@ -3200,6 +3805,8 @@ void RenderCkpt::drawSimControlPanelContent()
     ImGui::InputInt("Cycles", &mRolloutCycles);
     if (mRolloutCycles < 1) mRolloutCycles = 1;
 
+    ImGui::SameLine();
+    ImGui::Checkbox("Record##RolloutRecord", &mRecordRollout);
     ImGui::SameLine();
 
     if (ImGui::Button("Run##Rollout")) runRollout();
@@ -4980,8 +5587,15 @@ void RenderCkpt::keyPress(int key, int scancode, int action, int mods)
             }
             break;
         case GLFW_KEY_R:
-            if (mods == GLFW_MOD_CONTROL) runRollout();
-            else reset();
+            if (mods == GLFW_MOD_CONTROL) {
+                mRolloutCycles = 2;
+                mRecordRollout = false;
+                runRollout();
+            } else if (mods == GLFW_MOD_SHIFT) {
+                mRolloutCycles = 20;
+                mRecordRollout = true;
+                runRollout();
+            } else reset();
             break;
         case GLFW_KEY_O:
             // Cycle through render modes: Primitive -> Mesh -> Wireframe -> Primitive
