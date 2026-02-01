@@ -43,7 +43,7 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    checkpoint_interval: int = 1000
+    checkpoint_interval: int = 10
     """save checkpoint every K iterations"""
 
     # Algorithm specific arguments
@@ -503,46 +503,55 @@ if __name__ == "__main__":
         # Full checkpoint resume (loads agent, muscle, optimizer, training_state)
         print(f"Resuming from checkpoint: {ckpt_path}")
 
-        # Load agent weights
-        agent_file = fetch_ckpt_file(ckpt_path, "agent.pt")
-        agent.load_state_dict(torch.load(agent_file, map_location=device))
+        # Check if agent.pt exists before loading
+        if ckpt_file_exists(ckpt_path, "agent.pt"):
+            agent_file = fetch_ckpt_file(ckpt_path, "agent.pt")
+            agent.load_state_dict(torch.load(agent_file, map_location=device))
 
-        # Load muscle learner if exists
-        if muscle_learner and ckpt_file_exists(ckpt_path, "muscle.pt"):
-            has_full_state = ckpt_file_exists(ckpt_path, "training_state.pt")
-            muscle_file = fetch_ckpt_file(ckpt_path, "muscle.pt")
-            muscle_learner.load(muscle_file, load_optimizer=has_full_state)
+            # Load muscle learner if exists
+            if muscle_learner and ckpt_file_exists(ckpt_path, "muscle.pt"):
+                has_full_state = ckpt_file_exists(ckpt_path, "training_state.pt")
+                muscle_file = fetch_ckpt_file(ckpt_path, "muscle.pt")
+                muscle_learner.load(muscle_file, load_optimizer=has_full_state)
 
-        # Load full training state if available
-        if ckpt_file_exists(ckpt_path, "training_state.pt"):
-            state_file = fetch_ckpt_file(ckpt_path, "training_state.pt")
-            state = torch.load(state_file, map_location=device)
+            # Load full training state if available
+            if ckpt_file_exists(ckpt_path, "training_state.pt"):
+                state_file = fetch_ckpt_file(ckpt_path, "training_state.pt")
+                state = torch.load(state_file, map_location=device)
 
-            # Validate args compatibility
-            saved_args = state.get('args', {})
-            critical_args = ['num_envs', 'num_steps', 'learning_rate', 'lr_final']
-            for arg in critical_args:
-                if arg in saved_args and getattr(args, arg) != saved_args[arg]:
-                    print(f"Warning: {arg} differs: saved={saved_args[arg]}, current={getattr(args, arg)}")
+                # Validate args compatibility
+                saved_args = state.get('args', {})
+                critical_args = ['num_envs', 'num_steps', 'learning_rate', 'lr_final']
+                for arg in critical_args:
+                    if arg in saved_args and getattr(args, arg) != saved_args[arg]:
+                        print(f"Warning: {arg} differs: saved={saved_args[arg]}, current={getattr(args, arg)}")
 
-            # Load PPO optimizer
-            optimizer_file = fetch_ckpt_file(ckpt_path, "optimizer.pt")
-            optimizer.load_state_dict(torch.load(optimizer_file, map_location=device))
+                # Load PPO optimizer
+                optimizer_file = fetch_ckpt_file(ckpt_path, "optimizer.pt")
+                optimizer.load_state_dict(torch.load(optimizer_file, map_location=device))
 
-            # Restore training progress
-            start_iteration = state['iteration'] + 1
-            global_step = state['global_step']
+                # Restore training progress
+                start_iteration = state['iteration'] + 1
+                global_step = state['global_step']
 
-            print(f"Resumed: iteration={start_iteration}, global_step={global_step}")
+                print(f"Resumed: iteration={start_iteration}, global_step={global_step}")
+            else:
+                print("Warning: No training_state.pt found, starting from iteration 1 with loaded weights")
         else:
-            print("Warning: No training_state.pt found, starting from iteration 1 with loaded weights")
+            print(f"Warning: agent.pt not found at {ckpt_path}, starting fresh training")
+            resumed_from = None  # Clear lineage since checkpoint was not loaded
 
     elif pd_only_path:
         # pd_from: Load ONLY agent.pt (fresh training state)
         print(f"Loading pre-trained policy from: {pd_only_path}")
-        agent_file = fetch_ckpt_file(pd_only_path, "agent.pt")
-        agent.load_state_dict(torch.load(agent_file, map_location=device))
-        print(f"Loaded agent.pt only - starting fresh training from iteration 1")
+
+        if ckpt_file_exists(pd_only_path, "agent.pt"):
+            agent_file = fetch_ckpt_file(pd_only_path, "agent.pt")
+            agent.load_state_dict(torch.load(agent_file, map_location=device))
+            print(f"Loaded agent.pt only - starting fresh training from iteration 1")
+        else:
+            print(f"Warning: agent.pt not found at {pd_only_path}, starting fresh training")
+            resumed_from = None  # Clear lineage since checkpoint was not loaded
         # Do NOT load optimizer, training_state, or muscle
 
     # Initialize C++ policy weights
