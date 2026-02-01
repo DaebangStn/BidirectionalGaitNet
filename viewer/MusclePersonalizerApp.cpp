@@ -1733,6 +1733,24 @@ void MusclePersonalizerApp::drawExportSection()
                 muscleDir = rm::getManager().resolveDirCreate(musclePrefix);
                 musclePath = muscleDir / muscleFilename;
             }
+
+            // Set modification record for export metadata
+            PMuscle::MuscleModificationRecord record;
+
+            // Populate from stored contracture trials
+            record.contracture_trials = mContractureUsedTrials;
+
+            // Populate from waypoint results
+            if (!mWaypointOptResults.empty()) {
+                // Extract filename from mHDFPath
+                fs::path hdfPath(mHDFPath);
+                record.waypoint_motion_file = hdfPath.filename().string();
+                for (const auto& r : mWaypointOptResults) {
+                    record.waypoint_muscles.push_back(r.muscle_name);
+                }
+            }
+
+            mExecutor->setModificationRecord(record);
             mExecutor->exportMuscles(musclePath.string());
             LOG_INFO("[MusclePersonalizer] Muscle exported to: " << musclePrefix << muscleFilename );
         } catch (const std::exception& e) {
@@ -2557,6 +2575,12 @@ void MusclePersonalizerApp::runContractureEstimation()
     if (configs.empty()) {
         LOG_WARN("[MusclePersonalizer] No valid ROM configs (need clinical data or manual ROM values)" );
         return;
+    }
+
+    // Store configs for export metadata (name + rom_angle)
+    mContractureUsedTrials.clear();
+    for (const auto& cfg : configs) {
+        mContractureUsedTrials.push_back({cfg.name, cfg.rom_angle});
     }
 
     // Configure optimizer

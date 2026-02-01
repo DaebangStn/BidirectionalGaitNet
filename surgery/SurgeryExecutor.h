@@ -11,6 +11,22 @@
 
 namespace PMuscle {
 
+// Shared type for contracture trial input (used by both App and Executor)
+struct ContractureTrialInput {
+    std::string name;
+    double rom_angle;  // degrees
+};
+
+// Modification history record for export metadata
+struct MuscleModificationRecord {
+    // Contracture estimation input
+    std::vector<ContractureTrialInput> contracture_trials;
+
+    // Waypoint optimization input
+    std::string waypoint_motion_file;
+    std::vector<std::string> waypoint_muscles;
+};
+
 // Progress callback for waypoint optimization: (current, total, muscleName)
 using WaypointProgressCallback = std::function<void(int, int, const std::string&)>;
 
@@ -118,7 +134,12 @@ public:
     std::string getSkeletonBaseName() const;
     std::string getMuscleBaseName() const;
 
+    // Modification record for export metadata
+    void setModificationRecord(const MuscleModificationRecord& record);
+
 private:
+    // Muscle modification history (for export metadata)
+    MuscleModificationRecord mModificationRecord;
     // Muscle export helper functions
     void exportMusclesXML(const std::string& path);
     void exportMusclesYAML(const std::string& path);

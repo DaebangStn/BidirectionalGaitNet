@@ -26,6 +26,10 @@ SurgeryExecutor::~SurgeryExecutor() {
     // Derived classes should manage Character lifetime if they own it
 }
 
+void SurgeryExecutor::setModificationRecord(const MuscleModificationRecord& record) {
+    mModificationRecord = record;
+}
+
 void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::string& muscle_path,
                                    ActuatorType actuator_type) {
     // Store subject skeleton/muscle paths
@@ -791,6 +795,36 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
         }
     }
     mfs << std::endl;
+
+    // Write modifications section if any modifications were recorded
+    bool hasContracture = !mModificationRecord.contracture_trials.empty();
+    bool hasWaypoint = !mModificationRecord.waypoint_muscles.empty();
+
+    if (hasContracture || hasWaypoint) {
+        mfs << "modifications:" << std::endl;
+
+        if (hasContracture) {
+            mfs << "  contracture_estimation:" << std::endl;
+            mfs << "    trials:" << std::endl;
+            for (const auto& trial : mModificationRecord.contracture_trials) {
+                mfs << "      - {name: \"" << trial.name << "\", rom_angle: "
+                    << std::fixed << std::setprecision(1) << trial.rom_angle << "}" << std::endl;
+            }
+        }
+
+        if (hasWaypoint) {
+            mfs << "  waypoint_optimization:" << std::endl;
+            mfs << "    motion_file: \"" << mModificationRecord.waypoint_motion_file << "\"" << std::endl;
+            mfs << "    muscles: [";
+            for (size_t i = 0; i < mModificationRecord.waypoint_muscles.size(); ++i) {
+                if (i > 0) mfs << ", ";
+                mfs << "\"" << mModificationRecord.waypoint_muscles[i] << "\"";
+            }
+            mfs << "]" << std::endl;
+        }
+
+        mfs << std::endl;
+    }
 
     // Sort muscles by L/R pairs (maintain symmetry structure for Character loading)
     // Expected format: L_muscle1, R_muscle1, L_muscle2, R_muscle2, ...

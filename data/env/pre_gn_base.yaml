@@ -56,3 +56,6 @@ environment:
       torque:
         coeff: 0.1
         separate: true
+
+train: 
+  pd_from: "@pid:/ckpt/gn_clinic/260125_213615/29792292_clinic-16000-0125_213615"

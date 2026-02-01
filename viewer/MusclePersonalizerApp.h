@@ -226,6 +226,9 @@ private:
     // Tiered optimization results (dual-tier: search groups + optimization groups)
     std::optional<PMuscle::TieredContractureOptResult> mTieredContractureResult;
 
+    // Store configs used for contracture estimation (for export metadata)
+    std::vector<PMuscle::ContractureTrialInput> mContractureUsedTrials;
+
     // UI state for contracture results tab
     int mContractureSelectedGroupIdx = -1;
     int mContractureSelectedTrialIdx = -1;
