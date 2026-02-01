@@ -62,6 +62,7 @@ enum RewardFlags
     REWARD_AVG_VEL_CONSIDER_X = 1 << 5,  // 0x20
     REWARD_DRAG_X = 1 << 6,  // 0x40
     REWARD_PHASE = 1 << 7,  // 0x80
+    REWARD_IGNORE_TOE_IMIT = 1 << 8,  // 0x100
 };
 
 // Centralized reward configuration
@@ -561,6 +562,7 @@ private:
     int mNumParamState;
 
     RewardConfig mRewardConfig;
+    Eigen::ArrayXd mToeImitMask;  // Mask for ignore_toe_imit (0.0 for toe joints, 1.0 elsewhere)
 
     // Gait Analysis
     double mKneeLoadingMaxCycle;  // Maximum knee loading for current gait cycle

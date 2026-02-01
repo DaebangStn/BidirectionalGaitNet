@@ -3906,7 +3906,7 @@ void RenderCkpt::drawSimControlPanelContent()
             // End-effector weight
             float eeWeight = static_cast<float>(mRenderEnv->getEEWeight());
             ImGui::SetNextItemWidth(100);
-            if (ImGui::InputFloat("EE Weight", &eeWeight, 0.0f, 0.0f, "%.1f"))
+            if (ImGui::InputFloat("EE Weight", &eeWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setEEWeight(static_cast<double>(eeWeight));
             }
@@ -3914,7 +3914,7 @@ void RenderCkpt::drawSimControlPanelContent()
             // Position weight
             float posWeight = static_cast<float>(mRenderEnv->getPosWeight());
             ImGui::SetNextItemWidth(100);
-            if (ImGui::InputFloat("Pos Weight", &posWeight, 0.0f, 0.0f, "%.1f"))
+            if (ImGui::InputFloat("Pos Weight", &posWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setPosWeight(static_cast<double>(posWeight));
             }
@@ -3922,7 +3922,7 @@ void RenderCkpt::drawSimControlPanelContent()
             // Velocity weight
             float velWeight = static_cast<float>(mRenderEnv->getVelWeight());
             ImGui::SetNextItemWidth(100);
-            if (ImGui::InputFloat("Vel Weight", &velWeight, 0.0f, 0.0f, "%.1f"))
+            if (ImGui::InputFloat("Vel Weight", &velWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setVelWeight(static_cast<double>(velWeight));
             }
@@ -3930,7 +3930,7 @@ void RenderCkpt::drawSimControlPanelContent()
             // COM weight
             float comWeight = static_cast<float>(mRenderEnv->getCOMWeight());
             ImGui::SetNextItemWidth(100);
-            if (ImGui::InputFloat("COM Weight", &comWeight, 0.0f, 0.0f, "%.1f"))
+            if (ImGui::InputFloat("COM Weight", &comWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setCOMWeight(static_cast<double>(comWeight));
             }

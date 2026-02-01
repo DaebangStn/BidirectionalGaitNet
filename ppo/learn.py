@@ -43,7 +43,7 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    checkpoint_interval: int = 10
+    checkpoint_interval: int = 1000
     """save checkpoint every K iterations"""
 
     # Algorithm specific arguments
@@ -507,12 +507,14 @@ if __name__ == "__main__":
         if ckpt_file_exists(ckpt_path, "agent.pt"):
             agent_file = fetch_ckpt_file(ckpt_path, "agent.pt")
             agent.load_state_dict(torch.load(agent_file, map_location=device))
+            print(f"  Loaded agent.pt from {agent_file}")
 
             # Load muscle learner if exists
             if muscle_learner and ckpt_file_exists(ckpt_path, "muscle.pt"):
                 has_full_state = ckpt_file_exists(ckpt_path, "training_state.pt")
                 muscle_file = fetch_ckpt_file(ckpt_path, "muscle.pt")
                 muscle_learner.load(muscle_file, load_optimizer=has_full_state)
+                print(f"  Loaded muscle.pt from {muscle_file}")
 
             # Load full training state if available
             if ckpt_file_exists(ckpt_path, "training_state.pt"):

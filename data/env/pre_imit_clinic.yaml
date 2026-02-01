@@ -43,8 +43,8 @@ environment:
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 40.0
-    pos_weight: 20.0
-    vel_weight: 0.05
+    pos_weight: 0.05
+    vel_weight: 0.003
     com_weight: 10.0
 
     # Metabolic configuration
@@ -59,4 +59,4 @@ environment:
 
 train: 
   # pd_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
-  ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
+  # ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
