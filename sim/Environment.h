@@ -106,6 +106,9 @@ struct RewardConfig
     // Reward clipping for initial simulation steps
     int clip_step = 0;
     double clip_value = 0.0;
+
+    // Termination reward (penalty)
+    double terminated_reward = 0.0;
 };
 
 // ADD-style discriminator configuration (energy efficiency via muscle activation minimization)

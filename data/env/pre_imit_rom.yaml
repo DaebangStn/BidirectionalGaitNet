@@ -36,14 +36,15 @@ environment:
     type: "scadiver"  # deepmimic, gaitnet, scadiver
     num_ref_in_state: 2
     include_ref_velocity: false
+    ignore_toe_imit: true
     clip:
       step: 50
       value: 0.1
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 40.0
-    pos_weight: 0.05
-    vel_weight: 0.003
+    pos_weight: 0.2
+    vel_weight: 0.005
     com_weight: 10.0
 
     # Metabolic configuration

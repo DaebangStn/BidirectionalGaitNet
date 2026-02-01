@@ -43,7 +43,7 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    checkpoint_interval: int = 1000
+    checkpoint_interval: int = 500
     """save checkpoint every K iterations"""
 
     # Algorithm specific arguments
@@ -325,8 +325,8 @@ if __name__ == "__main__":
                 print(f"Warning: Unknown arg '{key}' in YAML config, ignoring")
 
     # Check for pd_from or ckpt_from in train section
-    if 'train' in env_config:
-        train_cfg = env_config['train']
+    train_cfg = env_config.get('train')
+    if train_cfg:
 
         # Get default pid for expanding @pid:/ URIs (same logic as prefetch.py)
         default_pid = env_config.get('pid')

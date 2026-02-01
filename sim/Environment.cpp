@@ -336,6 +336,11 @@ Environment::Environment(const std::string& filepath)
             mRewardConfig.clip_value = std::abs(clip["value"].as<double>(mRewardConfig.clip_value));
     }
 
+    // === Termination reward ===
+    if (env["reward"] && env["reward"]["terminated"]) {
+        mRewardConfig.terminated_reward = env["reward"]["terminated"].as<double>(0.0);
+    }
+
     // === DeepMimic/ScaDiver imitation coefficients ===
     if (env["reward"]) {
         auto reward = env["reward"];
@@ -931,6 +936,9 @@ void Environment::checkTruncated()
 
 double Environment::calcReward()
 {
+    // NOTE: This function assumes checkTerminated() has been called before it.
+    // The calling order in postStep() must be: checkTerminated() -> checkTruncated() -> calcReward()
+
     double r = 0.0;
     if (mRewardType == deepmimic || mRewardType == scadiver)
     {
@@ -1061,6 +1069,15 @@ double Environment::calcReward()
     if (mRewardConfig.clip_step > 0 && mSimulationStep < mRewardConfig.clip_step) {
         r = std::min(r, mRewardConfig.clip_value);
     }
+
+    // Add termination reward (penalty) if terminated
+    // NOTE: Requires checkTerminated() to be called before calcReward()
+    double r_terminated = 0.0;
+    if (mInfoMap["terminated"] > 0.5 && mRewardConfig.terminated_reward != 0.0) {
+        r_terminated = mRewardConfig.terminated_reward;
+        r += r_terminated;
+    }
+    mInfoMap["r_terminated"] = r_terminated;
 
     // Always store total reward
     mInfoMap.insert(std::make_pair("r", r));
@@ -1459,10 +1476,18 @@ void Environment::muscleStep()
 {
     if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower) {
         calcActivation();
+    } else if (mCharacter->getActuatorType() == tor) {
+        // For torque mode, store the applied torque for visualization (set before step)
+        mLastDesiredTorque = mCharacter->getTorque();
     }
 
     if (mNoiseInjector) mNoiseInjector->step(mCharacter);
     mCharacter->step();
+
+    // For PD mode, get torque after step (computed inside step by SPD controller)
+    if (mCharacter->getActuatorType() == pd) {
+        mLastDesiredTorque = mCharacter->getTorque();
+    }
 
     mWorld->step();
     postMuscleStep();
@@ -1494,18 +1519,19 @@ void Environment::postStep()
     mInfoMap.clear();
     mCharacter->evalStep();
     mKneeLoadingMaxCycle = std::max(mKneeLoadingMaxCycle, mCharacter->getKneeLoadingMax());
-    mReward = calcReward();
-
+    
     // Add mean_activation to info map for tensorboard logging (always enabled)
     // Average over all substeps
     mInfoMap["mean_activation"] = mMeanActivation / static_cast<double>(mNumSubSteps);
-
+    
     // Reset disc_obs filled flag for next control step
     mDiscObsFilled = false;
-
+    
     // Check and cache termination/truncation status
+    // NOTE: checkTerminated() must be called before calcReward() for termination reward
     checkTerminated();
     checkTruncated();
+    mReward = calcReward();
 }
 
 void Environment::reset(double phase)

@@ -327,6 +327,7 @@ void RenderEnvironment::RecordGraphData() {
 
     // Log torque per DOF (excluding root joint)
     const Eigen::VectorXd& torques = getLastDesiredTorque();
+    const int expectedTorqueSize = skel->getNumDofs();
     std::vector<std::string> axisSuffixes = {"_x", "_y", "_z"};
     for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root (i=0)
         auto joint = skel->getJoint(i);
@@ -338,7 +339,9 @@ void RenderEnvironment::RecordGraphData() {
             std::string key = "torque_" + jointName + suffix;
             if (mGraphData->key_exists(key)) {
                 int dofIdx = joint->getIndexInSkeleton(d);
-                mGraphData->push(key, torques[dofIdx]);
+                // Guard against empty/uninitialized torque vector
+                double torqueVal = (torques.size() == expectedTorqueSize) ? torques[dofIdx] : 0.0;
+                mGraphData->push(key, torqueVal);
             }
         }
     }
