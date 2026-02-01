@@ -6459,7 +6459,14 @@ void RenderCkpt::drawClinicalDataSection()
 {
     // Render PID Navigator UI with collapsing header
     if (mPIDNavigator) {
-        mPIDNavigator->renderUI("Clinical Data", 150.0f, 150.0f, false);
+        try {
+            mPIDNavigator->renderUI("Clinical Data", 150.0f, 150.0f, false);
+        } catch (const std::exception& e) {
+            if (ImGui::CollapsingHeader("Clinical Data", 0)) {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f),
+                                 "Error: %s", e.what());
+            }
+        }
     } else {
         if (ImGui::CollapsingHeader("Clinical Data", 0)) {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),

@@ -17,6 +17,7 @@ environment:
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
+    clip_lm_norm: 1.25 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:

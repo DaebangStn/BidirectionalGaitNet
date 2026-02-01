@@ -1,4 +1,5 @@
 #include "PIDImGui.h"
+#include "Log.h"
 #include <rm/rm.hpp>
 #include <algorithm>
 #include <cstring>
@@ -321,11 +322,20 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
 
                     pImpl->state.selectedVisit = 0;  // Reset to first visit
                     pImpl->state.preOp = (pImpl->state.getVisitDir() == "pre");
-                    scanFiles(pid, pImpl->state.getVisitDir());
+                    try {
+                        scanFiles(pid, pImpl->state.getVisitDir());
+                    } catch (const std::exception& e) {
+                        LOG_WARN("[PIDNavigator] Failed to scan PID files: " << e.what());
+                        pImpl->files.clear();
+                    }
 
                     // Invoke PID change callback if set
                     if (pImpl->pidChangeCallback) {
-                        pImpl->pidChangeCallback(pid);
+                        try {
+                            pImpl->pidChangeCallback(pid);
+                        } catch (const std::exception& e) {
+                            LOG_WARN("[PIDNavigator] PID change callback error: " << e.what());
+                        }
                     }
                 }
             }
@@ -342,7 +352,12 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
                 if (pImpl->state.selectedVisit != v) {
                     pImpl->state.selectedVisit = v;
                     pImpl->state.preOp = (visits[v] == "pre");  // Legacy compatibility
-                    scanFiles(pImpl->state.pidList[pImpl->state.selectedPID], visits[v]);
+                    try {
+                        scanFiles(pImpl->state.pidList[pImpl->state.selectedPID], visits[v]);
+                    } catch (const std::exception& e) {
+                        LOG_WARN("[PIDNavigator] Failed to scan visit: " << e.what());
+                        pImpl->files.clear();
+                    }
                 }
             }
         }
@@ -394,8 +409,8 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
                             auto handle = pImpl->resourceManager->fetch(uri);
                             std::filesystem::path localPath = handle.local_path();
                             pImpl->fileSelectionCallback(localPath.string(), f);
-                        } catch (const rm::RMError&) {
-                            // Silently handle fetch errors
+                        } catch (const std::exception& e) {
+                            LOG_WARN("[PIDNavigator] Failed to fetch file: " << e.what());
                         }
                     }
                 }
