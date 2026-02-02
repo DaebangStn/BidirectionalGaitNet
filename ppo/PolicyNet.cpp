@@ -1,5 +1,6 @@
 #include "PolicyNet.h"
 #include <torch/torch.h>
+#include <torch/script.h>
 #include <pybind11/numpy.h>
 #include <cmath>
 #include <stdexcept>
@@ -296,4 +297,98 @@ void PolicyNetImpl::load_state_dict(const py::dict& state_dict) {
 
     // Ensure all parameters are on correct device
     this->to(device_);
+}
+
+void PolicyNetImpl::load_state_dict(const std::unordered_map<std::string, torch::Tensor>& state_dict) {
+    torch::NoGradGuard no_grad;
+
+    for (const auto& [key, value] : state_dict) {
+        // Load weights based on key (same mapping as Python version)
+        if (key == "critic.0.weight") {
+            critic_fc1->weight.copy_(value);
+        } else if (key == "critic.0.bias") {
+            critic_fc1->bias.copy_(value);
+        } else if (key == "critic.2.weight") {
+            critic_fc2->weight.copy_(value);
+        } else if (key == "critic.2.bias") {
+            critic_fc2->bias.copy_(value);
+        } else if (key == "critic.4.weight") {
+            critic_fc3->weight.copy_(value);
+        } else if (key == "critic.4.bias") {
+            critic_fc3->bias.copy_(value);
+        } else if (key == "critic.6.weight") {
+            critic_value->weight.copy_(value);
+        } else if (key == "critic.6.bias") {
+            critic_value->bias.copy_(value);
+        } else if (key == "actor_mean.0.weight") {
+            actor_fc1->weight.copy_(value);
+        } else if (key == "actor_mean.0.bias") {
+            actor_fc1->bias.copy_(value);
+        } else if (key == "actor_mean.2.weight") {
+            actor_fc2->weight.copy_(value);
+        } else if (key == "actor_mean.2.bias") {
+            actor_fc2->bias.copy_(value);
+        } else if (key == "actor_mean.4.weight") {
+            actor_fc3->weight.copy_(value);
+        } else if (key == "actor_mean.4.bias") {
+            actor_fc3->bias.copy_(value);
+        } else if (key == "actor_mean.6.weight") {
+            actor_mean->weight.copy_(value);
+        } else if (key == "actor_mean.6.bias") {
+            actor_mean->bias.copy_(value);
+        } else if (key == "actor_logstd") {
+            actor_logstd.copy_(value);
+        }
+        // Ignore unknown keys
+    }
+
+    // Ensure all parameters are on correct device
+    this->to(device_);
+}
+
+std::unordered_map<std::string, torch::Tensor>
+loadStateDict(const std::string& path) {
+    std::unordered_map<std::string, torch::Tensor> state_dict;
+
+    try {
+        auto module = torch::jit::load(path);
+
+        // TorchScript saves buffers with underscores instead of dots
+        // e.g., "critic_0_weight" instead of "critic.0.weight"
+        for (const auto& item : module.named_buffers()) {
+            std::string key = item.name;
+
+            // Convert underscores back to dots for first two positions
+            // critic_0_weight -> critic.0.weight
+            // actor_mean_0_weight -> actor_mean.0.weight
+            size_t pos = 0;
+            int dot_count = 0;
+
+            // Find and replace underscores that represent layer separators
+            // The pattern is: <module>_<layer_idx>_<param_type>
+            while ((pos = key.find('_', pos)) != std::string::npos) {
+                // Check if next char is a digit (layer index)
+                if (pos + 1 < key.size() && std::isdigit(key[pos + 1])) {
+                    key[pos] = '.';
+                    ++pos;
+                    // Find the next underscore after the digit(s)
+                    while (pos < key.size() && std::isdigit(key[pos])) ++pos;
+                    if (pos < key.size() && key[pos] == '_') {
+                        key[pos] = '.';
+                    }
+                }
+                ++pos;
+            }
+
+            state_dict[key] = item.value.clone();
+        }
+    } catch (const c10::Error&) {
+        // Not a TorchScript file, return empty map
+        return {};
+    } catch (const std::exception&) {
+        // Other errors, return empty map
+        return {};
+    }
+
+    return state_dict;
 }

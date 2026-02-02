@@ -23,6 +23,7 @@
 #include <yaml-cpp/yaml.h>
 #include <H5Cpp.h>
 #include "ImGuiFileDialog.h"
+#include "PolicyNet.h"
 #include <memory>
 #include <set>
 
@@ -30,6 +31,22 @@ struct ResizablePlot {
     std::vector<std::string> keys;
     char newKeyInput[256] = {0};
     int selectedKey = -1;
+};
+
+/**
+ * @brief Unified network struct supporting both C++ and Python policy loading.
+ *
+ * C++ loading (TorchScript format): Uses policy for inference, no Python dependency.
+ * Python loading (pickle format): Uses joint for inference, requires Python.
+ *
+ * Note: The base Network struct is defined in Environment.h.
+ */
+struct ViewerNetwork {
+    std::string name;       ///< Network path/identifier
+    PolicyNet policy;       ///< C++ policy network (if TorchScript loaded)
+    py::object joint;       ///< Python policy network (fallback for pickle)
+    MuscleNN muscle;        ///< C++ muscle activation network
+    bool useCpp = false;    ///< True if using C++ policy, false if Python fallback
 };
 
 enum MuscleRenderingType
@@ -307,7 +324,8 @@ private:
     // mMotionSkeleton removed - use mMotionCharacter->getSkeleton() instead
 
     std::vector<std::string> mNetworkPaths;
-    std::vector<Network> mNetworks;
+    std::vector<Network> mNetworks;                 ///< Legacy networks (Python-only)
+    std::vector<ViewerNetwork> mViewerNetworks;     ///< Dual-mode networks (C++ preferred)
 
     // Graph Data Buffer
     CBufferData<double>* mGraphData;

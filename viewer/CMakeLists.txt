@@ -65,9 +65,16 @@ set(VIEWER_SOURCES
     # Unified motion processor (replaces HDF/C3D processors)
     "motion/MotionProcessor.h"
     "motion/MotionProcessor.cpp"
+    # PolicyNet for C++ TorchScript loading (Phase 1: backward compatible)
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ppo/PolicyNet.cpp"
 )
 
 add_executable(render_ckpt ${VIEWER_SOURCES})
+
+# Add ppo include for PolicyNet
+target_include_directories(render_ckpt PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ppo
+)
 
 target_link_libraries(render_ckpt
         ${Python3_LIBRARIES}

@@ -497,7 +497,30 @@ void RenderCkpt::setWindowIcon(const char* icon_path)
 void RenderCkpt::update(bool _isSave)
 {
     if (!mRenderEnv) return;
-    Eigen::VectorXf action = (mNetworks.size() > 0 ? mNetworks[0].joint.attr("get_action")(mRenderEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>() : mRenderEnv->getAction().cast<float>());
+
+    // Get action from network (prefer C++ if available)
+    Eigen::VectorXf action;
+    if (!mViewerNetworks.empty()) {
+        auto& net = mViewerNetworks[0];
+        if (net.useCpp && net.policy) {
+            // C++ inference (TorchScript format)
+            // Note: sample_action returns stochastic samples; for deterministic mode,
+            // the Python wrapper handles this, but C++ always samples for now
+            auto [act, value, logprob] = net.policy->sample_action(
+                mRenderEnv->getState().cast<float>());
+            action = act;
+        } else if (!net.joint.is_none()) {
+            // Python fallback (pickle format)
+            action = net.joint.attr("get_action")(mRenderEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>();
+        } else {
+            action = mRenderEnv->getAction().cast<float>();
+        }
+    } else if (!mNetworks.empty()) {
+        // Legacy fallback
+        action = mNetworks[0].joint.attr("get_action")(mRenderEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>();
+    } else {
+        action = mRenderEnv->getAction().cast<float>();
+    }
 
     mRenderEnv->setAction(action.cast<double>());
 
@@ -6247,85 +6270,120 @@ void RenderCkpt::drawShadow()
 
 void RenderCkpt::loadNetworkFromPath(const std::string& path)
 {
-    if (loading_network.is_none()) {
-        std::cerr << "Warning: loading_network not available, skipping: " << path << std::endl;
-        return;
-    }
-
     try {
         auto character = mRenderEnv->getCharacter();
-        Network new_elem;
+        ViewerNetwork new_elem;
         new_elem.name = path;
 
+        int num_states = mRenderEnv->getState().rows();
+        int num_actions = mRenderEnv->getAction().rows();
         bool use_muscle = (character->getActuatorType() == mass || character->getActuatorType() == mass_lower);
 
-        // Prepare arguments for loading_network
-        py::tuple res;
-        if (use_muscle) {
-            // Pass muscle dimensions for CleanRL checkpoint compatibility
-            int num_muscles = character->getNumMuscles();
-            int num_muscle_dofs = character->getNumMuscleRelatedDof();
-            int num_actuator_action = mRenderEnv->getNumActuatorAction();
+        // Try C++ TorchScript loading first
+        std::string agent_path = path + "/agent.pt";
+        auto policy_weights = loadStateDict(agent_path);
 
-            res = loading_network(
-                path.c_str(),
-                mRenderEnv->getState().rows(),
-                mRenderEnv->getAction().rows(),
-                use_muscle,
-                "cpu",  // device
-                num_muscles,
-                num_muscle_dofs,
-                num_actuator_action
-            );
-        } else {
-            // No muscle network needed
-            res = loading_network(
-                path.c_str(),
-                mRenderEnv->getState().rows(),
-                mRenderEnv->getAction().rows(),
-                use_muscle
-            );
-        }
+        if (!policy_weights.empty()) {
+            // TorchScript format detected - use pure C++ loading
+            LOG_INFO("Loading TorchScript checkpoint (C++): " << path);
+            new_elem.policy = std::make_shared<PolicyNetImpl>(num_states, num_actions);
+            new_elem.policy->load_state_dict(policy_weights);
+            new_elem.useCpp = true;
 
-        new_elem.joint = res[0];
-
-        // Convert Python muscle state_dict to C++ MuscleNN
-        if (use_muscle && !res[1].is_none()) {
-            int num_muscles = character->getNumMuscles();
-            int num_muscle_dofs = character->getNumMuscleRelatedDof();
-            int num_actuator_action = mRenderEnv->getNumActuatorAction();
-            bool is_cascaded = false;  // TODO: detect from network structure if needed
-
-            // Create C++ MuscleNN
-            // Force CPU to avoid CUDA context allocation issues in multi-process scenarios
-            new_elem.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded, true);
-            py::dict state_dict = res[1].cast<py::dict>();
-
-            // Store the Python state_dict for transfer to Environment
-            mMuscleStateDict = res[1];
-
-            // Convert Python state_dict to C++ format
-            std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
-            for (auto item : state_dict) {
-                std::string key = item.first.cast<std::string>();
-                py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
-
-                auto buf = np_array.request();
-                std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
-
-                torch::Tensor tensor = torch::from_blob(
-                    buf.ptr,
-                    shape,
-                    torch::TensorOptions().dtype(torch::kFloat32)
-                ).clone();
-
-                cpp_state_dict[key] = tensor;
+            // Load muscle network if needed (TorchScript format)
+            if (use_muscle) {
+                std::string muscle_path = path + "/muscle.pt";
+                auto muscle_weights = loadStateDict(muscle_path);
+                if (!muscle_weights.empty()) {
+                    // Load weights into Environment's MuscleNN (created during initialize())
+                    auto* muscle_nn = mRenderEnv->getMuscleNN();
+                    if (muscle_nn && *muscle_nn) {
+                        (*muscle_nn)->load_state_dict(muscle_weights);
+                        new_elem.muscle = *muscle_nn;  // Store reference
+                        LOG_INFO("Loaded TorchScript muscle network");
+                    }
+                }
             }
 
-            new_elem.muscle->load_state_dict(cpp_state_dict);
-        }
+            mViewerNetworks.push_back(new_elem);
+        } else {
+            // Pickle format - fall back to Python loading
+            if (loading_network.is_none()) {
+                LOG_ERROR("No TorchScript checkpoint and loading_network not available: " << path);
+                return;
+            }
 
-        mNetworks.push_back(new_elem);
+            LOG_INFO("Loading pickle checkpoint via Python: " << path);
+            new_elem.useCpp = false;
+
+            // Legacy Python loading
+            Network legacy_elem;
+            legacy_elem.name = path;
+
+            py::tuple res;
+            if (use_muscle) {
+                int num_muscles = character->getNumMuscles();
+                int num_muscle_dofs = character->getNumMuscleRelatedDof();
+                int num_actuator_action = mRenderEnv->getNumActuatorAction();
+
+                res = loading_network(
+                    path.c_str(),
+                    num_states,
+                    num_actions,
+                    use_muscle,
+                    "cpu",
+                    num_muscles,
+                    num_muscle_dofs,
+                    num_actuator_action
+                );
+            } else {
+                res = loading_network(
+                    path.c_str(),
+                    num_states,
+                    num_actions,
+                    use_muscle
+                );
+            }
+
+            legacy_elem.joint = res[0];
+            new_elem.joint = res[0];  // Also store in ViewerNetwork
+
+            // Convert Python muscle state_dict to C++ MuscleNN
+            if (use_muscle && !res[1].is_none()) {
+                int num_muscles = character->getNumMuscles();
+                int num_muscle_dofs = character->getNumMuscleRelatedDof();
+                int num_actuator_action = mRenderEnv->getNumActuatorAction();
+                bool is_cascaded = false;
+
+                legacy_elem.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded, true);
+                py::dict state_dict = res[1].cast<py::dict>();
+
+                mMuscleStateDict = res[1];
+
+                std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
+                for (auto item : state_dict) {
+                    std::string key = item.first.cast<std::string>();
+                    py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+
+                    auto buf = np_array.request();
+                    std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+
+                    torch::Tensor tensor = torch::from_blob(
+                        buf.ptr,
+                        shape,
+                        torch::TensorOptions().dtype(torch::kFloat32)
+                    ).clone();
+
+                    cpp_state_dict[key] = tensor;
+                }
+
+                legacy_elem.muscle->load_state_dict(cpp_state_dict);
+                new_elem.muscle = legacy_elem.muscle;  // Share the muscle network
+            }
+
+            mNetworks.push_back(legacy_elem);
+            mViewerNetworks.push_back(new_elem);
+        }
     } catch (const std::exception& e) {
         LOG_ERROR("Error loading network from " << path << ": " << e.what());
     }

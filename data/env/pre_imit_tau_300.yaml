@@ -41,12 +41,11 @@ environment:
     clip:
       step: 50
       value: 0.1
-    terminated: -1.0
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 40.0
-    pos_weight: 0.2
-    vel_weight: 0.05
+    pos_weight: 0.7
+    vel_weight: 0.005
     com_weight: 10.0
 
     # Metabolic configuration

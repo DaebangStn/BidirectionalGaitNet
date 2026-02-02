@@ -166,6 +166,7 @@ class Args:
             num_steps=32,
             muscle_batch_size=32,
             num_minibatches=1,
+            checkpoint_interval=50,
         )
 
 
@@ -180,6 +181,31 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
+
+
+def save_state_dict_as_torchscript(state_dict: dict, path: str) -> None:
+    """Save state_dict as TorchScript module for C++ loading.
+
+    Creates a ScriptModule with tensors stored as buffers. Buffer names use
+    underscores instead of dots (TorchScript requirement). The C++ loadStateDict()
+    function converts them back.
+
+    Args:
+        state_dict: PyTorch state_dict to save
+        path: Output file path
+    """
+    # Create a simple module and add buffers dynamically
+    module = torch.nn.Module()
+
+    for key, tensor in state_dict.items():
+        # Replace dots with underscores for TorchScript compatibility
+        safe_key = key.replace('.', '_')
+        module.register_buffer(safe_key, tensor.clone().detach().cpu())
+
+    # Use torch.jit.trace with a dummy forward to create ScriptModule
+    # Since we only need buffers, we can just save the module directly
+    scripted = torch.jit.script(module)
+    scripted.save(path)
 
 
 def save_checkpoint(
@@ -207,11 +233,14 @@ def save_checkpoint(
         global_step: Total environment steps (required if save_full_state=True)
         args: Training args for validation on resume
         resumed_from: Original checkpoint path if this is a resumed run
+
+    Note:
+        Saves in TorchScript format for C++ loading without Python dependency.
     """
     os.makedirs(checkpoint_path, exist_ok=True)
 
-    # Save policy agent checkpoint
-    torch.save(agent.state_dict(), f"{checkpoint_path}/agent.pt")
+    # Save policy agent checkpoint as TorchScript
+    save_state_dict_as_torchscript(agent.state_dict(), f"{checkpoint_path}/agent.pt")
 
     # Save muscle learner checkpoint if hierarchical
     if muscle_learner is not None:

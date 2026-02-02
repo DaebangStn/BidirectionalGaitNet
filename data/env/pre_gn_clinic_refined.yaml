@@ -10,14 +10,15 @@ environment:
   # Motion Reference
   motion:
     get_stride_from_motion: true
-    file: "@pid:/motion/walk_single.h5"
+    file: "@pid:/motion/walk01_single.h5"
 
   # Muscle System
   muscle:
-    file: "@pid:/muscle/base_rom_0125_1102.yaml"
+    file: "@pid:/muscle/clinic_0125_1925.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
+    clip_lm_norm: 1.25 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:

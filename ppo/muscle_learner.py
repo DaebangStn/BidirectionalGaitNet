@@ -282,12 +282,23 @@ class MuscleLearner:
         """
         Save model and optionally optimizer to disk.
 
+        Saves in TorchScript format for C++ loading without Python dependency.
+
         Args:
             path: Path to save model weights
             save_optimizer: If True, also save optimizer state for training resume
         """
         path = Path(path)
-        torch.save(self.model.state_dict(), path)
+
+        # Save as TorchScript for C++ loading
+        state_dict = self.model.state_dict()
+        module = torch.nn.Module()
+        for key, tensor in state_dict.items():
+            safe_key = key.replace('.', '_')
+            module.register_buffer(safe_key, tensor.clone().detach().cpu())
+        scripted = torch.jit.script(module)
+        scripted.save(str(path))
+
         if save_optimizer:
             torch.save(
                 self.optimizer.state_dict(),

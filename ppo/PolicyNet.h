@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <memory>
 #include <tuple>
+#include <unordered_map>
 #include <pybind11/pybind11.h>
 
 namespace py = pybind11;
@@ -67,11 +68,18 @@ public:
     get_action_and_value(torch::Tensor x, torch::Tensor action = {});
 
     /**
-     * Load weights from PyTorch state_dict.
+     * Load weights from PyTorch state_dict (Python).
      *
      * @param state_dict Python dictionary with network weights
      */
     void load_state_dict(const py::dict& state_dict);
+
+    /**
+     * Load weights from C++ state_dict (no Python dependency).
+     *
+     * @param state_dict C++ map of parameter name -> tensor
+     */
+    void load_state_dict(const std::unordered_map<std::string, torch::Tensor>& state_dict);
 
     /**
      * Get current device.
@@ -106,3 +114,14 @@ private:
 
 // Convenience alias
 using PolicyNet = std::shared_ptr<PolicyNetImpl>;
+
+/**
+ * Load state_dict from TorchScript container file.
+ *
+ * Converts TorchScript buffer names (with underscores) back to original
+ * parameter names (with dots) for compatibility with load_state_dict().
+ *
+ * @param path Path to TorchScript .pt file
+ * @return Map of parameter name -> tensor, empty if not TorchScript format
+ */
+std::unordered_map<std::string, torch::Tensor> loadStateDict(const std::string& path);

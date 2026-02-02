@@ -5,24 +5,24 @@ environment:
   # Skeleton and Character
   skeleton:
     file: "@pid:/skeleton/dynamic.yaml"
-    actuator: "pd"  # pd, torque, muscle, mass, mass_lower
+    actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
 
   # Motion Reference
   motion:
-    file: "@pid:/motion/unified_ankle_angle.h5"
+    file: "@pid:/motion/walk_single.h5"
 
   # Muscle System
-  # muscle:
-  #   file: "@pid:/muscle/clinic_0125_1925.yaml"
-  #   mesh_lbs_weight: false
-  #   use_velocity_force: false
-  #   use_joint_state: true
-  #   clip_lm_norm: 1.25 # to disable, remove or set to -1
+  muscle:
+    file: "@pid:/muscle/clinic_0125_1925.yaml"
+    mesh_lbs_weight: false
+    use_velocity_force: false
+    use_joint_state: true
+    clip_lm_norm: 1.25 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:
-    sim_hz: 300
-    control_hz: 50
+    sim_hz: 180
+    control_hz: 30
 
   # Action and Control
   action:
@@ -37,15 +37,15 @@ environment:
     type: "scadiver"  # deepmimic, gaitnet, scadiver
     num_ref_in_state: 2
     include_ref_velocity: false
+    ignore_toe_imit: true
     clip:
       step: 50
       value: 0.1
-    terminated: -1.0
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 100.0
-    pos_weight: 0.7
-    vel_weight: 0.05
+    pos_weight: 0.2
+    vel_weight: 0.003
     com_weight: 10.0
 
     # Metabolic configuration
@@ -61,8 +61,3 @@ environment:
 train: 
   # pd_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
   # ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
-  curriculum:
-    imit_mask:
-      - op: mask
-        joints: ["FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL"]
-        from_iteration: 0
