@@ -523,6 +523,7 @@ private:
     int mSimulationCount, mSimulationStep;
     bool mUseMirror;
     bool mLocalState;
+    bool mZeroAnkle0OnReset;
 
     // Muscle Learning Tuple
     bool mTupleFilled;

@@ -24,6 +24,7 @@ environment:
   simulation:
     sim_hz: 300
     control_hz: 50
+    zero_ankle0_on_reset: true
 
   # Action and Control
   action:

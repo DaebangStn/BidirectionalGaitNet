@@ -31,7 +31,7 @@ namespace {
 
 Environment::Environment(const std::string& filepath)
     : mSimulationHz(600), mControlHz(30), mUseMuscle(false), mInferencePerSim(1),
-      mUseMirror(true), mLocalState(false), mLimitY(0.6), mIsResidual(true),
+      mUseMirror(true), mLocalState(false), mZeroAnkle0OnReset(false), mLimitY(0.6), mIsResidual(true),
       mSimulationCount(0), mActionScale(0.04), mIncludeMetabolicReward(true),
       mRewardType(deepmimic), mRefStride(1.34), mStride(1.0), mCadence(1.0),
       mPhaseDisplacementScale(-1.0), mNumActuatorAction(0), mLoadedMuscleNN(false),
@@ -231,6 +231,7 @@ Environment::Environment(const std::string& filepath)
             exit(-1);
         }
         mNumSubSteps = mSimulationHz / mControlHz;
+        mZeroAnkle0OnReset = sim["zero_ankle0_on_reset"].as<bool>(false);
     }
 
     // === Action scale ===
@@ -1575,6 +1576,18 @@ void Environment::reset(double phase)
     }
     
     mCharacter->getSkeleton()->setPositions(mRefPose);
+
+    // Zero ankle 0 DOF on reset if flag is set
+    if (mZeroAnkle0OnReset) {
+        auto skel = mCharacter->getSkeleton();
+        Eigen::VectorXd pos = skel->getPositions();
+        auto talusR = skel->getJoint("TalusR");
+        auto talusL = skel->getJoint("TalusL");
+        if (talusR) pos[talusR->getIndexInSkeleton(0)] = 0.0;
+        if (talusL) pos[talusL->getIndexInSkeleton(0)] = 0.0;
+        skel->setPositions(pos);
+    }
+
     mCharacter->getSkeleton()->setVelocities(mTargetVelocities);
 
     updateTargetPosAndVel();
