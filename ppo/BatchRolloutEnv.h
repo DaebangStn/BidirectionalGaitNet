@@ -133,6 +133,10 @@ public:
     float getDiscRewardScale() const;
     int getDiscObsDim() const;
 
+    // Curriculum learning: mask/demask joints from imitation reward
+    void mask_imit_joint(const std::string& jointName);
+    void demask_imit_joint(const std::string& jointName);
+
 private:
     // Environment instances
     std::vector<std::unique_ptr<Environment>> envs_;

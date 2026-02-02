@@ -105,8 +105,8 @@ Environment::Environment(const std::string& filepath)
         mRefPose = mCharacter->getSkeleton()->getPositions();
         mTargetVelocities = mCharacter->getSkeleton()->getVelocities();
 
-        // Initialize toe imitation mask (1.0 everywhere, 0.0 for toe joints if ignore_toe_imit enabled later)
-        mToeImitMask = Eigen::ArrayXd::Ones(mCharacter->getSkeleton()->getNumDofs());
+        // Initialize imitation mask (1.0 = active, 0.0 = masked via curriculum)
+        mImitMask = Eigen::ArrayXd::Ones(mCharacter->getSkeleton()->getNumDofs());
     }
 
     // === Muscle ===
@@ -356,19 +356,6 @@ Environment::Environment(const std::string& filepath)
             mRewardConfig.num_ref_in_state = reward["num_ref_in_state"].as<int>(1);
         if (reward["include_ref_velocity"])
             mRewardConfig.include_ref_velocity = reward["include_ref_velocity"].as<bool>(true);
-        if (reward["ignore_toe_imit"] && reward["ignore_toe_imit"].as<bool>(false)) {
-            mRewardConfig.flags |= REWARD_IGNORE_TOE_IMIT;
-            // Apply toe mask: zero out toe joint DOFs
-            auto skel = mCharacter->getSkeleton();
-            const std::vector<std::string> toeJointNames = {
-                "FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL"
-            };
-            for (const auto& name : toeJointNames) {
-                auto joint = skel->getJoint(name);
-                if (joint && joint->getNumDofs() > 0)
-                    mToeImitMask[joint->getIndexInSkeleton(0)] = 0.0;
-            }
-        }
     }
 
     // === Locomotion rewards ===
@@ -976,8 +963,8 @@ double Environment::calcReward()
 
         double r_p, r_v, r_ee, r_com, r_metabolic;
         r_ee = exp(-mRewardConfig.ee_weight * ee_diff.squaredNorm() / ee_diff.rows());
-        r_p = exp(-mRewardConfig.pos_weight * (mToeImitMask * pos_diff.array().square()).sum());
-        r_v = exp(-mRewardConfig.vel_weight * (mToeImitMask * vel_diff.array().square()).sum());
+        r_p = exp(-mRewardConfig.pos_weight * (mImitMask * pos_diff.array().square()).sum());
+        r_v = exp(-mRewardConfig.vel_weight * (mImitMask * vel_diff.array().square()).sum());
         r_com = exp(-mRewardConfig.com_weight * com_diff.squaredNorm() / com_diff.rows());
         r_metabolic = getEnergyReward();
 
@@ -2042,6 +2029,30 @@ void Environment::clearStepComplete()
 {
     // Clear the PD-level step completion flag after consumption
     mGaitPhase->clearStepComplete();
+}
+
+void Environment::maskImitJoint(const std::string& jointName)
+{
+    auto skel = mCharacter->getSkeleton();
+    auto joint = skel->getJoint(jointName);
+    if (joint && joint->getNumDofs() > 0) {
+        // Mask ALL DOFs of this joint (handles multi-DOF joints like ball joints)
+        for (size_t i = 0; i < joint->getNumDofs(); i++) {
+            mImitMask[joint->getIndexInSkeleton(i)] = 0.0;
+        }
+    }
+}
+
+void Environment::demaskImitJoint(const std::string& jointName)
+{
+    auto skel = mCharacter->getSkeleton();
+    auto joint = skel->getJoint(jointName);
+    if (joint && joint->getNumDofs() > 0) {
+        // Demask ALL DOFs of this joint (restore to active)
+        for (size_t i = 0; i < joint->getNumDofs(); i++) {
+            mImitMask[joint->getIndexInSkeleton(i)] = 1.0;
+        }
+    }
 }
 
 void Environment::createNoiseInjector(const std::string& config_path)

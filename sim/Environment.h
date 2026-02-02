@@ -62,7 +62,6 @@ enum RewardFlags
     REWARD_AVG_VEL_CONSIDER_X = 1 << 5,  // 0x20
     REWARD_DRAG_X = 1 << 6,  // 0x40
     REWARD_PHASE = 1 << 7,  // 0x80
-    REWARD_IGNORE_TOE_IMIT = 1 << 8,  // 0x100
 };
 
 // Centralized reward configuration
@@ -477,6 +476,10 @@ public:
     void muscleStep();
     int getNumSubSteps() { return mNumSubSteps; }
     void postStep();
+
+    // Curriculum learning: mask/demask joints from imitation reward
+    void maskImitJoint(const std::string& jointName);
+    void demaskImitJoint(const std::string& jointName);
 private:
     // Step method components
     void calcActivation();
@@ -565,7 +568,7 @@ private:
     int mNumParamState;
 
     RewardConfig mRewardConfig;
-    Eigen::ArrayXd mToeImitMask;  // Mask for ignore_toe_imit (0.0 for toe joints, 1.0 elsewhere)
+    Eigen::ArrayXd mImitMask;  // Mask for imitation reward (0.0 = masked, 1.0 = active), set via curriculum
 
     // Gait Analysis
     double mKneeLoadingMaxCycle;  // Maximum knee loading for current gait cycle

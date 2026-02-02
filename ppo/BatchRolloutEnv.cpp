@@ -404,6 +404,18 @@ int BatchRolloutEnv::getDiscObsDim() const {
     return envs_[0]->getDiscObsDim();
 }
 
+void BatchRolloutEnv::mask_imit_joint(const std::string& jointName) {
+    for (int i = 0; i < num_envs_; ++i) {
+        envs_[i]->maskImitJoint(jointName);
+    }
+}
+
+void BatchRolloutEnv::demask_imit_joint(const std::string& jointName) {
+    for (int i = 0; i < num_envs_; ++i) {
+        envs_[i]->demaskImitJoint(jointName);
+    }
+}
+
 // ===== PYBIND11 MODULE =====
 
 PYBIND11_MODULE(batchrolloutenv, m) {
@@ -507,5 +519,13 @@ PYBIND11_MODULE(batchrolloutenv, m) {
         .def("getDiscRewardScale", &BatchRolloutEnv::getDiscRewardScale,
              "Get discriminator reward scale factor")
         .def("getDiscObsDim", &BatchRolloutEnv::getDiscObsDim,
-             "Get discriminator observation dimension");
+             "Get discriminator observation dimension")
+
+        // Curriculum learning
+        .def("mask_imit_joint", &BatchRolloutEnv::mask_imit_joint,
+             py::arg("joint_name"),
+             "Mask a joint from imitation reward (curriculum learning)")
+        .def("demask_imit_joint", &BatchRolloutEnv::demask_imit_joint,
+             py::arg("joint_name"),
+             "Demask a joint to restore imitation reward (curriculum learning)");
 }

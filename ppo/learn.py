@@ -354,6 +354,19 @@ if __name__ == "__main__":
             args.ckpt_from = expand_ckpt_uri(train_cfg['ckpt_from'])
             print(f"ckpt_from: {args.ckpt_from}")
 
+    # Parse curriculum config for imitation masking
+    imit_curriculum = []
+    if train_cfg and 'curriculum' in train_cfg:
+        curriculum = train_cfg['curriculum']
+        if 'imit_mask' in curriculum:
+            imit_curriculum = sorted(curriculum['imit_mask'], key=lambda x: x['from_iteration'])
+            print(f"Imitation mask curriculum: {len(imit_curriculum)} stages")
+            for stage in imit_curriculum:
+                op = stage.get('op', 'mask')  # default to mask for backward compatibility
+                print(f"  - iteration {stage['from_iteration']}: {op} {stage['joints']}")
+
+    imit_curriculum_applied_stages = set()
+
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
@@ -591,6 +604,18 @@ if __name__ == "__main__":
     print(f"Training loop started with {args.num_iterations} iterations (starting from {start_iteration})")
 
     for iteration in tqdm(range(start_iteration, args.num_iterations + 1), desc="Iterations", ncols=100, disable=not use_tqdm):
+        # Apply curriculum masking/demasking for imitation reward
+        for idx, stage in enumerate(imit_curriculum):
+            if idx not in imit_curriculum_applied_stages and iteration >= stage['from_iteration']:
+                op = stage.get('op', 'mask')
+                for joint_name in stage['joints']:
+                    if op == 'demask':
+                        envs.demask_imit_joint(joint_name)
+                    else:
+                        envs.mask_imit_joint(joint_name)
+                print(f"[Iteration {iteration}] Curriculum: {op} {stage['joints']}")
+                imit_curriculum_applied_stages.add(idx)
+
         # Log progress periodically when tqdm is disabled (SLURM batch jobs)
         if not use_tqdm and iteration % args.log_interval == 0:
             elapsed = time.time() - start_time
