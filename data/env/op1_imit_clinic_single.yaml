@@ -1,7 +1,7 @@
 # args:
 
 environment:
-  pid: "29792292/pre"
+  pid: "29792292/op1"
   # Skeleton and Character
   skeleton:
     file: "@pid:/skeleton/dynamic.yaml"
@@ -9,15 +9,15 @@ environment:
 
   # Motion Reference
   motion:
-    get_stride_from_motion: true
     file: "@pid:/motion/walk_single.h5"
 
   # Muscle System
   muscle:
-    file: "@data/muscle/rom_0203_1043.yaml"
+    file: "@pid:/muscle/clinic_0202_2047.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
+    clip_lm_norm: 1.25 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:
@@ -34,39 +34,19 @@ environment:
 
   # Reward System
   reward:
-    type: "gaitnet"  # deepmimic, gaitnet, scadiver
+    type: "scadiver"  # deepmimic, gaitnet, scadiver
+    num_ref_in_state: 2
+    include_ref_velocity: false
+    ignore_toe_imit: true
     clip:
       step: 50
-      value: 0.2
+      value: 0.1
 
-    # Locomotion rewards (for gaitnet)
-    locomotion:
-      head_linear_acc_weight: 4.0
-      head_rot_weight: 4.0
-      step:
-        weight: 2.0
-        clip: 0.05  # Z-axis clipping value (forward progression tolerance)
-      avg_vel:
-        weight: 4.0
-        window_mult: 1.0
-        clip: 0.2  # clip velocity difference magnitude
-        consider_x: false
-      dragX:
-        use: true
-        weight: 1.0
-        threshold: 0.2
-      phase:
-        use: false
-        weight: 1.0
-
-    # Penalty/auxiliary rewards
-    knee_pain:
-      use: false
-      weight: 1.0
-      scale: 1.0
-      termination: false
-      use_max: false
-      max_weight: 0.1
+    # Imitation reward coefficients (deepmimic/scadiver)
+    ee_weight: 100.0
+    pos_weight: 0.2
+    vel_weight: 0.005
+    com_weight: 10.0
 
     # Metabolic configuration
     metabolic:

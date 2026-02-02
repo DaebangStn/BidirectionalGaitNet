@@ -1,7 +1,7 @@
 # args:
 
 environment:
-  pid: "29792292/pre"
+  pid: "29792292/op1"
   # Skeleton and Character
   skeleton:
     file: "@pid:/skeleton/dynamic.yaml"
@@ -14,10 +14,11 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@data/muscle/rom_0203_1043.yaml"
+    file: "@pid:/muscle/clinic_0202_2047.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
+    clip_lm_norm: 1.25 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:

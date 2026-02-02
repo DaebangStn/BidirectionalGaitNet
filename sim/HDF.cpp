@@ -892,6 +892,14 @@ void HDF::exportToFile(
                     H5::DataSet dsStd = kinGroup.createDataSet(key + "_std", H5::PredType::NATIVE_DOUBLE, space100);
                     dsStd.write(itStd->second.data(), H5::PredType::NATIVE_DOUBLE);
                 }
+                auto itMin = kinematics->min.find(key);
+                auto itMax = kinematics->max.find(key);
+                if (itMin != kinematics->min.end() && itMax != kinematics->max.end()) {
+                    H5::DataSet dsMin = kinGroup.createDataSet(key + "_min", H5::PredType::NATIVE_DOUBLE, space100);
+                    dsMin.write(itMin->second.data(), H5::PredType::NATIVE_DOUBLE);
+                    H5::DataSet dsMax = kinGroup.createDataSet(key + "_max", H5::PredType::NATIVE_DOUBLE, space100);
+                    dsMax.write(itMax->second.data(), H5::PredType::NATIVE_DOUBLE);
+                }
             }
         }
 

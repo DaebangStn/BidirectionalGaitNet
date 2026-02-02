@@ -1,8 +1,32 @@
 """Per-patient ROM tabular view."""
 import streamlit as st
 import streamlit.components.v1 as components
-from core.data import load_rom_data, get_rom_value, load_surgery_info
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+from core.data import load_rom_data, get_rom_value, load_surgery_info, load_kinematics_data
 from core.normative import get_dof_list, get_normative_value
+
+
+# Ordered list of joints for display
+JOINT_ORDER = [
+    'Pelvis[0]', 'Pelvis[1]', 'Pelvis[2]',
+    'FemurR[0]', 'FemurR[1]', 'FemurR[2]',
+    'TibiaR[0]',
+    'TalusR[0]',
+]
+
+JOINT_DISPLAY_NAMES = {
+    'Pelvis[0]': 'Pelvis Tilt',
+    'Pelvis[1]': 'Pelvis Rotation',
+    'Pelvis[2]': 'Pelvis Obliquity',
+    'FemurR[0]': 'Hip Flex/Ext',
+    'FemurR[1]': 'Hip Abduction',
+    'FemurR[2]': 'Hip Int Rotation',
+    'TibiaR[0]': 'Knee Flexion',
+    'TalusR[0]': 'Ankle Dorsiflex',
+}
 
 
 def get_color(value: float, normative: float) -> str:
@@ -29,6 +53,108 @@ def get_bar_width(value: float, normative: float) -> float:
         return 0
     diff = abs(value - normative)
     return max(0, 100 - (diff * 2))
+
+
+def render_kinematics_table(kin_data: dict):
+    """Render kinematics range table as a single table with all joints."""
+    if not kin_data:
+        return
+
+    # Build table data in order
+    rows = []
+    for joint in JOINT_ORDER:
+        if joint in kin_data:
+            data = kin_data[joint]
+            rows.append({
+                'Joint': joint,
+                'Min': f"{data['range_min']:.1f}",
+                'Max': f"{data['range_max']:.1f}",
+                'Range': f"{data['range']:.1f}",
+            })
+
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def render_kinematics_plot(kin_data: dict):
+    """Render gait cycle plot with mean ± std shaded regions."""
+    if not kin_data:
+        return
+
+    # Filter to ordered joints that exist in data
+    joints_to_plot = [j for j in JOINT_ORDER if j in kin_data]
+    if not joints_to_plot:
+        return
+
+    n_joints = len(joints_to_plot)
+    n_cols = 2
+    n_rows = (n_joints + 1) // 2
+
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols,
+        subplot_titles=[JOINT_DISPLAY_NAMES.get(j, j) for j in joints_to_plot],
+        vertical_spacing=0.08,
+        horizontal_spacing=0.08,
+    )
+
+    x = np.linspace(0, 100, 100)  # Gait cycle 0-100%
+
+    for idx, joint in enumerate(joints_to_plot):
+        row = idx // n_cols + 1
+        col = idx % n_cols + 1
+
+        data = kin_data[joint]
+        mean = data['mean']
+        std = data['std']
+
+        # Shaded region (mean ± std)
+        fig.add_trace(
+            go.Scatter(
+                x=np.concatenate([x, x[::-1]]),
+                y=np.concatenate([mean + std, (mean - std)[::-1]]),
+                fill='toself',
+                fillcolor='rgba(99, 110, 250, 0.3)',
+                line=dict(color='rgba(255,255,255,0)'),
+                showlegend=False,
+                hoverinfo='skip',
+            ),
+            row=row, col=col
+        )
+
+        # Mean line
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=mean,
+                mode='lines',
+                line=dict(color='rgb(99, 110, 250)', width=2),
+                showlegend=False,
+                name=joint,
+            ),
+            row=row, col=col
+        )
+
+        # Update axes
+        fig.update_xaxes(
+            title_text='Gait Cycle (%)' if row == n_rows else '',
+            range=[0, 100],
+            row=row, col=col
+        )
+        fig.update_yaxes(
+            title_text='Angle (°)',
+            row=row, col=col
+        )
+
+    fig.update_layout(
+        height=250 * n_rows,
+        showlegend=False,
+        margin=dict(t=40, b=40, l=60, r=20),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_surgery_table(surgery_list: list):
@@ -66,7 +192,7 @@ def render_surgery_table(surgery_list: list):
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render(pid_info: dict, visit: str):
+def render(pid_info: dict, visit: str, motion_file: str = None):
     pid = pid_info['pid']
     name = pid_info['name']
     gmfcs = pid_info['gmfcs']
@@ -238,8 +364,22 @@ def render(pid_info: dict, visit: str):
     height = 150 + (total_rows * 60) + (len(joints) * 80)
     components.html(full_html, height=height, scrolling=True)
 
+    # Display kinematics section if motion file provided
+    if motion_file:
+        kin_data = load_kinematics_data(pid, visit, motion_file)
+        if kin_data:
+            st.divider()
+            st.markdown("### Kinematics (Gait Cycle)")
+            st.caption(f"Motion: {motion_file}")
 
-def render_compare(pid_info: dict, visits: list):
+            # Table with joint ranges
+            render_kinematics_table(kin_data)
+
+            # Gait cycle plot
+            render_kinematics_plot(kin_data)
+
+
+def render_compare(pid_info: dict, visits: list, motion_file: str = None):
     """Render comparison view showing all visits side by side."""
     pid = pid_info['pid']
     name = pid_info['name']
@@ -490,3 +630,18 @@ def render_compare(pid_info: dict, visits: list):
     # Calculate height based on content
     height = 150 + (total_rows * 80) + (len(joints) * 80)
     components.html(full_html, height=height, scrolling=True)
+
+    # Display kinematics section if motion file provided (use first visit)
+    if motion_file and visits:
+        first_visit = visits[0]
+        kin_data = load_kinematics_data(pid, first_visit, motion_file)
+        if kin_data:
+            st.divider()
+            st.markdown(f"### Kinematics (Gait Cycle) - {first_visit}")
+            st.caption(f"Motion: {motion_file}")
+
+            # Table with joint ranges
+            render_kinematics_table(kin_data)
+
+            # Gait cycle plot
+            render_kinematics_plot(kin_data)

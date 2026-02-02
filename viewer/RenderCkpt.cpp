@@ -39,7 +39,7 @@ const std::vector<std::string> CHANNELS =
 const char* CAMERA_PRESET_DEFINITIONS[] = {
     "PRESET|Frontal view|0,0,3.0|0,1,0|0,0,0|1|1,0,0,0",
     "PRESET|Sagittal view|0,0,3.0|0,1,0|0,0,0|1|0.707,0.0,0.707,0.0",
-    "PRESET|Foot view|0,0,1.26824|0,1,0|0,900,15|1|0.707,0.0,0.707,0.0",
+        "PRESET|Frontal view|0,0,3.0|0,1,0|0,0,0|1|1,0,0,0",
 };
 
 // Key joint keys for rollout analysis
@@ -3800,11 +3800,13 @@ void RenderCkpt::drawSimControlPanelContent()
     
     // Rollout Control
     if (mRolloutCycles == -1) mRolloutCycles = mDefaultRolloutCount;
-    ImGui::SetNextItemWidth(50);
+    ImGui::SetNextItemWidth(35);
     ImGui::InputScalar("##Cycles", ImGuiDataType_S32, &mRolloutCycles, nullptr, nullptr);
     if (mRolloutCycles < 1) mRolloutCycles = 1;
     ImGui::SameLine();
     if (ImGui::SmallButton("2")) mRolloutCycles = 2;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("10")) mRolloutCycles = 10;
     ImGui::SameLine();
     if (ImGui::SmallButton("20")) mRolloutCycles = 20;
     ImGui::SameLine();

@@ -81,6 +81,8 @@ struct GaitCycleSummary {
     std::vector<std::string> jointKeys;
     std::map<std::string, std::array<double, 100>> mean;
     std::map<std::string, std::array<double, 100>> stddev;
+    std::map<std::string, std::array<double, 100>> min;
+    std::map<std::string, std::array<double, 100>> max;
     bool valid = false;
 };
 
@@ -215,6 +217,7 @@ private:
     void drawRightPanel();
     void drawPIDBrowserTab();  // Updated to use PIDNavigator
     void drawDirectPathTab();
+    void drawRootInfoTab();
     void drawSkeletonSection();
     void drawPlaybackSection();
     void drawMotionInfoSection();

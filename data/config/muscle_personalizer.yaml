@@ -15,8 +15,8 @@ paths:
   # Reference character for waypoint optimization (standard/ideal muscle behavior)
   reference_skeleton: "@data/skeleton/base.yaml"
   reference_muscle: "@data/muscle/base.yaml"
-  muscle_groups: "@data/config/muscle_groups.yaml"
-  # muscle_groups: "@data/config/muscle_groups_detailed3.yaml"
+  # muscle_groups: "@data/config/muscle_groups.yaml"
+  muscle_groups: "@data/config/muscle_groups_detailed2.yaml"
 
 # Weight scaling defaults
 weight_scaling:
@@ -130,8 +130,10 @@ contracture_estimation:
     - "dorsi_k90_R"
     # - "plantar_L"
     # - "plantar_R"
-    # - "popliteal_L"
-    # - "popliteal_R"
+    - "popliteal_L"
+    - "popliteal_L_relax"
+    - "popliteal_R"
+    - "popliteal_R_relax"
     - "staheliExtension_L"
     - "staheliExtension_R"
     - "add_L"
@@ -140,10 +142,10 @@ contracture_estimation:
     - "abd_k0_R"
     # - "abd_k90_L"
     # - "abd_k90_R"
-    # - "intRot_L"
-    # - "intRot_R"
-    # - "extRot_L"
-    # - "extRot_R"
+    - "intRot_L"
+    - "intRot_R"
+    - "extRot_L"
+    - "extRot_R"
 
 # Muscle visualization
 visualization:

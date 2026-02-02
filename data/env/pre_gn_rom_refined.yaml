@@ -9,11 +9,12 @@ environment:
 
   # Motion Reference
   motion:
-    file: "@pid:/motion/trimmed_unified_edited.h5"
+    get_stride_from_motion: true
+    file: "@pid:/motion/walk01_single.h5"
 
   # Muscle System
   muscle:
-    file: "@pid:/muscle/clinic_0125_1925.yaml"
+    file: "@data/muscle/rom_0203_1043.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
@@ -34,19 +35,39 @@ environment:
 
   # Reward System
   reward:
-    type: "scadiver"  # deepmimic, gaitnet, scadiver
-    num_ref_in_state: 2
-    include_ref_velocity: false
-    ignore_toe_imit: true
+    type: "gaitnet"  # deepmimic, gaitnet, scadiver
     clip:
-      step: 100
-      value: 0.05
+      step: 50
+      value: 0.2
 
-    # Imitation reward coefficients (deepmimic/scadiver)
-    ee_weight: 40.0
-    pos_weight: 0.2
-    vel_weight: 0.005
-    com_weight: 10.0
+    # Locomotion rewards (for gaitnet)
+    locomotion:
+      head_linear_acc_weight: 4.0
+      head_rot_weight: 4.0
+      step:
+        weight: 2.0
+        clip: 0.05  # Z-axis clipping value (forward progression tolerance)
+      avg_vel:
+        weight: 4.0
+        window_mult: 1.0
+        clip: 0.2  # clip velocity difference magnitude
+        consider_x: false
+      dragX:
+        use: true
+        weight: 1.0
+        threshold: 0.2
+      phase:
+        use: false
+        weight: 1.0
+
+    # Penalty/auxiliary rewards
+    knee_pain:
+      use: false
+      weight: 1.0
+      scale: 1.0
+      termination: false
+      use_max: false
+      max_weight: 0.1
 
     # Metabolic configuration
     metabolic:
@@ -60,4 +81,4 @@ environment:
 
 train: 
   # pd_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
-  ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
+  # ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"

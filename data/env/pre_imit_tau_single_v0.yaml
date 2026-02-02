@@ -1,5 +1,6 @@
 args:
-  checkpoint_interval: 100
+  checkpoint_interval: 2000
+  total_timesteps: 500000000
 
 environment:
   pid: "29792292/pre"
@@ -10,7 +11,7 @@ environment:
 
   # Motion Reference
   motion:
-    file: "@pid:/motion/trimmed_unified_edited.h5"
+    file: "@pid:/motion/walk_single.h5"
 
   # Muscle System
   # muscle:
@@ -22,8 +23,8 @@ environment:
 
   # Simulation Timing
   simulation:
-    sim_hz: 300
-    control_hz: 50
+    sim_hz: 180
+    control_hz: 30
 
   # Action and Control
   action:
@@ -38,15 +39,15 @@ environment:
     type: "scadiver"  # deepmimic, gaitnet, scadiver
     num_ref_in_state: 2
     include_ref_velocity: false
+    ignore_toe_imit: true
     clip:
       step: 50
       value: 0.1
-    terminated: -1.0
 
     # Imitation reward coefficients (deepmimic/scadiver)
-    ee_weight: 40.0
-    pos_weight: 0.7
-    vel_weight: 0.05
+    ee_weight: 100.0
+    pos_weight: 0.5
+    vel_weight: -1
     com_weight: 10.0
 
     # Metabolic configuration
@@ -59,17 +60,6 @@ environment:
         coeff: 0.1
         separate: true
 
-train:
+train: 
   # pd_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
   # ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
-
-  # Curriculum learning for imitation reward masking
-  curriculum:
-    imit_mask:
-      - op: mask
-        joints: ["FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL", "TalusR", "TalusL", "TibiaR", "TibiaL"]
-        from_iteration: 0
-      - op: demask
-        joints: ["TalusR", "TalusL", "TibiaR", "TibiaL"]
-        from_iteration: 1500
-         

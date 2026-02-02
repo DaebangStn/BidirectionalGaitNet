@@ -18,6 +18,8 @@ struct KinematicsExportData {
     std::vector<std::string> jointKeys;
     std::map<std::string, std::vector<double>> mean;   // 100-element vectors
     std::map<std::string, std::vector<double>> std;    // 100-element vectors
+    std::map<std::string, std::vector<double>> min;    // 100-element vectors
+    std::map<std::string, std::vector<double>> max;    // 100-element vectors
     int numCycles = 0;
 };
 

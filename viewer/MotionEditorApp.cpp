@@ -403,22 +403,7 @@ void MotionEditorApp::drawLeftPanel()
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Root Info")) {
-            if (mMotion && mMotionState.currentPose.size() >= 6) {
-                // Root position from current pose (indices 3,4,5 = X,Y,Z translation)
-                ImGui::Text("Frame: %d", mMotionState.manualFrameIndex);
-                ImGui::Separator();
-                ImGui::Text("Root Position:");
-                ImGui::Text("  X: %.4f", mMotionState.currentPose[3]);
-                ImGui::Text("  Y: %.4f", mMotionState.currentPose[4]);
-                ImGui::Text("  Z: %.4f", mMotionState.currentPose[5]);
-                ImGui::Separator();
-                ImGui::Text("Root Rotation:");
-                ImGui::Text("  R0: %.4f", mMotionState.currentPose[0]);
-                ImGui::Text("  R1: %.4f", mMotionState.currentPose[1]);
-                ImGui::Text("  R2: %.4f", mMotionState.currentPose[2]);
-            } else {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
-            }
+            drawRootInfoTab();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -573,6 +558,103 @@ void MotionEditorApp::drawSkeletonSection()
         ImGui::SameLine();
         if (ImGui::RadioButton("Wire", renderModeInt == 1)) mAppRenderMode = MotionEditorRenderMode::Wireframe;
     }
+}
+
+void MotionEditorApp::drawRootInfoTab()
+{
+    if (!mMotion || !mCharacter) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+        return;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    if (!skel) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No skeleton loaded");
+        return;
+    }
+
+    // Increase font size by 1.5x
+    ImGui::SetWindowFontScale(1.5f);
+
+    ImGui::Text("Frame: %d", mMotionState.manualFrameIndex);
+
+    // Root collapsing header
+    if (ImGui::CollapsingHeader("Root")) {
+        if (mMotionState.currentPose.size() >= 6) {
+            ImGui::Text("Position:");
+            ImGui::Text("  X: %.4f", mMotionState.currentPose[3]);
+            ImGui::Text("  Y: %.4f", mMotionState.currentPose[4]);
+            ImGui::Text("  Z: %.4f", mMotionState.currentPose[5]);
+            ImGui::Separator();
+            ImGui::Text("Rotation:");
+            ImGui::Text("  R0: %.4f", mMotionState.currentPose[0]);
+            ImGui::Text("  R1: %.4f", mMotionState.currentPose[1]);
+            ImGui::Text("  R2: %.4f", mMotionState.currentPose[2]);
+        }
+    }
+
+    // Joints collapsing header
+    if (ImGui::CollapsingHeader("Joints", ImGuiTreeNodeFlags_DefaultOpen)) {
+        Eigen::VectorXd pos_lower = skel->getPositionLowerLimits();
+        Eigen::VectorXd pos_upper = skel->getPositionUpperLimits();
+
+        const char* dof_labels[] = {"X", "Y", "Z", "tX", "tY", "tZ"};
+
+        int dof_idx = 0;
+        for (size_t j = 0; j < skel->getNumJoints(); j++) {
+            auto joint = skel->getJoint(j);
+            std::string joint_name = joint->getName();
+            int num_dofs = joint->getNumDofs();
+
+            if (num_dofs == 0) continue;
+
+            // Skip root joint (already shown above)
+            if (j == 0) {
+                dof_idx += num_dofs;
+                continue;
+            }
+
+            ImGui::Text("%s:", joint_name.c_str());
+            ImGui::Indent();
+
+            for (int d = 0; d < num_dofs; d++) {
+                // Create label
+                std::string label;
+                if (num_dofs > 1 && d < 6) {
+                    label = dof_labels[d];
+                } else if (num_dofs > 1) {
+                    label = "DOF " + std::to_string(d);
+                } else {
+                    label = "";
+                }
+
+                // Get current value from pose
+                double value_rad = 0.0;
+                if (dof_idx < mMotionState.currentPose.size()) {
+                    value_rad = mMotionState.currentPose[dof_idx];
+                }
+                double value_deg = value_rad * (180.0 / M_PI);
+
+                // Get limits for display
+                double lower_deg = pos_lower[dof_idx] * (180.0 / M_PI);
+                double upper_deg = pos_upper[dof_idx] * (180.0 / M_PI);
+
+                // Display: label value [min, max]
+                if (!label.empty()) {
+                    ImGui::Text("%s: %7.2f° [%.1f, %.1f]", label.c_str(), value_deg, lower_deg, upper_deg);
+                } else {
+                    ImGui::Text("%7.2f° [%.1f, %.1f]", value_deg, lower_deg, upper_deg);
+                }
+
+                dof_idx++;
+            }
+
+            ImGui::Unindent();
+        }
+    }
+
+    // Reset font scale
+    ImGui::SetWindowFontScale(1.0f);
 }
 
 void MotionEditorApp::drawPlaybackSection()
@@ -1406,8 +1488,23 @@ void MotionEditorApp::computeKinematicsSummary()
             stdArr[p] = std::sqrt(sumSq / numCycles);
         }
 
+        // Compute min and max
+        std::array<double, 100> minArr, maxArr;
+        for (int p = 0; p < 100; ++p) {
+            double minVal = cycleValues[0][p];
+            double maxVal = cycleValues[0][p];
+            for (int c = 1; c < numCycles; ++c) {
+                minVal = std::min(minVal, cycleValues[c][p]);
+                maxVal = std::max(maxVal, cycleValues[c][p]);
+            }
+            minArr[p] = minVal;
+            maxArr[p] = maxVal;
+        }
+
         mKinematicsSummary.mean[key] = meanArr;
         mKinematicsSummary.stddev[key] = stdArr;
+        mKinematicsSummary.min[key] = minArr;
+        mKinematicsSummary.max[key] = maxArr;
     }
 
     mKinematicsSummary.valid = true;
@@ -2061,9 +2158,15 @@ void MotionEditorApp::exportMotion()
             for (const auto& key : mKinematicsSummary.jointKeys) {
                 auto itMean = mKinematicsSummary.mean.find(key);
                 auto itStd = mKinematicsSummary.stddev.find(key);
+                auto itMin = mKinematicsSummary.min.find(key);
+                auto itMax = mKinematicsSummary.max.find(key);
                 if (itMean != mKinematicsSummary.mean.end() && itStd != mKinematicsSummary.stddev.end()) {
                     kinData->mean[key] = std::vector<double>(itMean->second.begin(), itMean->second.end());
                     kinData->std[key] = std::vector<double>(itStd->second.begin(), itStd->second.end());
+                }
+                if (itMin != mKinematicsSummary.min.end() && itMax != mKinematicsSummary.max.end()) {
+                    kinData->min[key] = std::vector<double>(itMin->second.begin(), itMin->second.end());
+                    kinData->max[key] = std::vector<double>(itMax->second.begin(), itMax->second.end());
                 }
             }
         }

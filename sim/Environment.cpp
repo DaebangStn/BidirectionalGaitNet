@@ -963,10 +963,11 @@ double Environment::calcReward()
         skel->setPositions(pos);
 
         double r_p, r_v, r_ee, r_com, r_metabolic;
-        r_ee = exp(-mRewardConfig.ee_weight * ee_diff.squaredNorm() / ee_diff.rows());
-        r_p = exp(-mRewardConfig.pos_weight * (mImitMask * pos_diff.array().square()).sum());
-        r_v = exp(-mRewardConfig.vel_weight * (mImitMask * vel_diff.array().square()).sum());
-        r_com = exp(-mRewardConfig.com_weight * com_diff.squaredNorm() / com_diff.rows());
+        // Skip reward term if weight is negative (set to 1.0 for neutral effect in multiplicative rewards)
+        r_ee = mRewardConfig.ee_weight < 0 ? 1.0 : exp(-mRewardConfig.ee_weight * ee_diff.squaredNorm() / ee_diff.rows());
+        r_p = mRewardConfig.pos_weight < 0 ? 1.0 : exp(-mRewardConfig.pos_weight * (mImitMask * pos_diff.array().square()).sum());
+        r_v = mRewardConfig.vel_weight < 0 ? 1.0 : exp(-mRewardConfig.vel_weight * (mImitMask * vel_diff.array().square()).sum());
+        r_com = mRewardConfig.com_weight < 0 ? 1.0 : exp(-mRewardConfig.com_weight * com_diff.squaredNorm() / com_diff.rows());
         r_metabolic = getEnergyReward();
 
         if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic;

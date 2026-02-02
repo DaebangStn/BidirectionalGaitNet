@@ -1986,8 +1986,14 @@ void C3DProcessorApp::drawJointAngleSection()
                     R = Eigen::AngleAxisd(angle, rot.normalized()).toRotationMatrix();
                 }
 
+                // DOF format
+                ImGui::Text("DOF (rad): X=%.4f Y=%.4f Z=%.4f", rot.x(), rot.y(), rot.z());
+                ImGui::Text("DOF (deg): X=%.2f Y=%.2f Z=%.2f",
+                    rot.x() * 180.0 / M_PI, rot.y() * 180.0 / M_PI, rot.z() * 180.0 / M_PI);
                 ImGui::Text("Translation: %.3f %.3f %.3f", trans.x(), trans.y(), trans.z());
-                ImGui::Text("Rotation:");
+
+                // Matrix format
+                ImGui::Text("Rotation Matrix:");
                 for (int row = 0; row < 3; ++row) {
                     ImGui::Text("  [%6.3f %6.3f %6.3f]", R(row,0), R(row,1), R(row,2));
                 }
@@ -2001,7 +2007,13 @@ void C3DProcessorApp::drawJointAngleSection()
                     R = Eigen::AngleAxisd(angle, rot.normalized()).toRotationMatrix();
                 }
 
-                ImGui::Text("Rotation:");
+                // DOF format
+                ImGui::Text("DOF (rad): X=%.4f Y=%.4f Z=%.4f", rot.x(), rot.y(), rot.z());
+                ImGui::Text("DOF (deg): X=%.2f Y=%.2f Z=%.2f",
+                    rot.x() * 180.0 / M_PI, rot.y() * 180.0 / M_PI, rot.z() * 180.0 / M_PI);
+
+                // Matrix format
+                ImGui::Text("Rotation Matrix:");
                 for (int row = 0; row < 3; ++row) {
                     ImGui::Text("  [%6.3f %6.3f %6.3f]", R(row,0), R(row,1), R(row,2));
                 }

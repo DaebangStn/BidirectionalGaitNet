@@ -326,6 +326,9 @@ public:
     void selectCameraPresetInteractive();  // Interactive preset selection via stdin
     void initializeCameraPresets();
 
+    // Utility
+    std::string characterConfig() const;  // Returns "pid:XXX skeleton | muscle" string
+
 private:
     // DART simulation
     dart::simulation::WorldPtr mWorld;
@@ -350,6 +353,7 @@ private:
     bool mShowStdCharacterInPlots;  // Toggle for plot overlay
     bool mPlotWhiteBackground;  // Toggle for white plot background
     bool mShowTrialNameInPlots;  // Toggle for showing trial name in plot titles
+    bool mShowCharacterInTitles;  // Toggle for showing character info in plot titles
     std::string mCurrentSweepName;  // Current sweep name (trial name or "GUI Sweep")
 
     // Camera state (mCamera inherited from ViewerAppBase)
@@ -435,7 +439,7 @@ private:
     // Multi-trial buffer management
     std::vector<TrialDataBuffer> mTrialBuffers;  // All buffered trial data
     int mSelectedBufferIndex = -1;               // Currently selected buffer for plotting
-    int mMaxTrialBuffers = 20;                   // Maximum buffered trials (memory management)
+    int mMaxTrialBuffers = 30;                   // Maximum buffered trials (memory management)
     bool mAutoSelectNewBuffer = true;            // Auto-select newly run trial for viewing
 
     // Normative ROM values (loaded from render.yaml)

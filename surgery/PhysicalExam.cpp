@@ -91,6 +91,7 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mShowStdCharacterInPlots(true)  // Default to showing std character in plots
     , mPlotWhiteBackground(false)  // Default to dark plot background
     , mShowTrialNameInPlots(true)  // Default to showing trial name
+    , mShowCharacterInTitles(true)  // Default to not showing character info in titles
     , mCurrentSweepName("GUI Sweep")  // Default sweep name
 {
     mForceBodyNode = "FemurR";  // Default body node
@@ -498,10 +499,6 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     // Store file paths for UI display
     mSkeletonPath = skel_path;
     mMusclePath = muscle_path;
-
-    // Store subject skeleton/muscle paths in base class for consistent metadata tracking
-    mSubjectSkeletonPath = skel_path;
-    mSubjectMusclePath = muscle_path;
 
     // Resolve URIs
     std::string resolved_skel = rm::resolve(skel_path);
@@ -3298,7 +3295,7 @@ void PhysicalExam::drawROMSummaryTable() {
     static const std::vector<std::pair<std::string, std::vector<std::string>>> expectedROMs = {
         {"hip", {"abduction_knee0", "abduction_knee90", "adduction",
                  "external_rotation", "internal_rotation", "staheli_extension"}},
-        {"knee", {"popliteal"}},
+        {"knee", {"popliteal", "popliteal_relax"}},
         {"ankle", {"dorsiflexion_knee0", "dorsiflexion_knee90", "plantarflexion"}}
     };
 
@@ -3417,6 +3414,14 @@ void PhysicalExam::drawROMSummaryTable() {
 
     // Render table (larger font for readability)
     ImGui::SetWindowFontScale(1.3f);
+
+    // Display character config as table title
+    {
+        std::string title = characterConfig();
+        if (!title.empty()) {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "%s", title.c_str());
+        }
+    }
 
     // 6 columns when clinical data available, 4 columns otherwise
     int numColumns = hasClinicalData ? 6 : 4;
@@ -4876,6 +4881,16 @@ void PhysicalExam::initializeCameraPresets() {
     }
 }
 
+std::string PhysicalExam::characterConfig() const {
+    namespace fs = std::filesystem;
+    std::string skel_stem = mSkeletonPath.empty() ? "" : fs::path(mSkeletonPath).stem().string();
+    std::string musc_stem = mMusclePath.empty() ? "" : fs::path(mMusclePath).stem().string();
+    std::string result = skel_stem;
+    if (!musc_stem.empty()) result += " | " + musc_stem;
+    if (!mBrowseCharacterPID.empty()) result = "pid:" + mBrowseCharacterPID + " " + result;
+    return result;
+}
+
 void PhysicalExam::selectCameraPresetInteractive() {
     // Collect available preset indices
     std::vector<int> availableIndices;
@@ -5057,7 +5072,9 @@ void PhysicalExam::renderMusclePlots() {
     static bool sShowSweepLegend = true;
 
     ImGui::Checkbox("Show Legend", &sShowSweepLegend);
-    
+    ImGui::SameLine();
+    ImGui::Checkbox("Title (character)", &mShowCharacterInTitles);
+
     // NEW: Checkbox to toggle standard character overlay
     if (mStdCharacter && !mStdAngleSweepData.empty()) {
         ImGui::SameLine();
@@ -5148,11 +5165,21 @@ void PhysicalExam::renderMusclePlots() {
 
     ImPlotFlags plot_flags = sShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
 
+    // Build character info prefix if enabled: [skeleton | muscle | sweep] or pid:(pid) [...]
+    std::string char_prefix;
+    if (mShowCharacterInTitles) {
+        char_prefix = characterConfig() + " | " + mCurrentSweepName;
+    }
+
     // Use trial name for plot titles if enabled, with ## suffixes for uniqueness
-    std::string passive_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##passive") : "Passive Forces vs Joint Angle";
-    std::string length_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##length") : "Normalized Muscle Length vs Joint Angle";
-    std::string torque_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##torque") : "Total Passive Torque vs Joint Angle";
-    std::string stiffness_plot_title = mShowTrialNameInPlots ? (mCurrentSweepName + "##stiffness") : "Passive Stiffness (dtau/dtheta) vs Joint Angle";
+    std::string passive_plot_title = mShowCharacterInTitles ? (char_prefix + "##passive") :
+                                     (mShowTrialNameInPlots ? (mCurrentSweepName + "##passive") : "Passive Forces vs Joint Angle");
+    std::string length_plot_title = mShowCharacterInTitles ? (char_prefix + "##length") :
+                                    (mShowTrialNameInPlots ? (mCurrentSweepName + "##length") : "Normalized Muscle Length vs Joint Angle");
+    std::string torque_plot_title = mShowCharacterInTitles ? (char_prefix + "##torque") :
+                                    (mShowTrialNameInPlots ? (mCurrentSweepName + "##torque") : "Total Passive Torque vs Joint Angle");
+    std::string stiffness_plot_title = mShowCharacterInTitles ? (char_prefix + "##stiffness") :
+                                       (mShowTrialNameInPlots ? (mCurrentSweepName + "##stiffness") : "Passive Stiffness (dtau/dtheta) vs Joint Angle");
 
     // ====================================================================
     // RANGE OF MOTION ANALYSIS

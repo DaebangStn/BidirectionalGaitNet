@@ -13,18 +13,18 @@ st.set_page_config(
 )
 
 # Import after path setup
-from core.data import list_pids, list_visits, list_all_surgeries
+from core.data import list_pids, list_visits, list_all_surgeries, list_motion_files
 from core.normative import get_dof_list
 from views import per_patient, distribution
 
 
 def render_patient_sidebar():
-    """Render sidebar controls for patient mode. Returns (patient, visit, compare_mode)."""
+    """Render sidebar controls for patient mode. Returns (patient, visit, compare_mode, motion_file)."""
     pids = list_pids()
 
     if not pids:
         st.warning("No patients found")
-        return None, None, False
+        return None, None, False, None
 
     # Patient selector
     options = [f"{p['pid']} ({p['name']}, {p['gmfcs']})" if p['name'] else f"{p['pid']} ({p['gmfcs']})" for p in pids]
@@ -35,13 +35,13 @@ def render_patient_sidebar():
 
     if not selected_patient:
         st.error("Patient not found")
-        return None, None, False
+        return None, None, False, None
 
     # Get available visits
     visits = list_visits(selected_pid)
     if not visits:
         st.warning(f"No ROM data found for {selected_pid}")
-        return None, None, False
+        return None, None, False, None
 
     # Compare mode checkbox
     compare_mode = st.checkbox(
@@ -51,15 +51,34 @@ def render_patient_sidebar():
     )
 
     if compare_mode:
-        # In compare mode, return all visits
-        return selected_patient, visits, True
+        # In compare mode, use first visit for motion files
+        selected_visit = visits[0]
+        visit_for_motion = visits[0]
     else:
         # Single visit selector
         visit_labels = {'pre': 'Pre-op', 'op1': 'Post-op 1', 'op2': 'Post-op 2'}
         visit_options = [visit_labels.get(v, v) for v in visits]
         selected_visit_label = st.selectbox("Visit", visit_options)
         selected_visit = visits[visit_options.index(selected_visit_label)]
-        return selected_patient, selected_visit, False
+        visit_for_motion = selected_visit
+
+    # Motion file selector
+    motion_files = list_motion_files(selected_pid, visit_for_motion)
+    selected_motion = None
+    if motion_files:
+        st.divider()
+        st.subheader("Kinematics")
+        selected_motion = st.selectbox(
+            "Motion file",
+            options=motion_files,
+            index=0,
+            help="Select motion data file for kinematics display"
+        )
+
+    if compare_mode:
+        return selected_patient, visits, True, selected_motion
+    else:
+        return selected_patient, selected_visit, False, selected_motion
 
 
 def render_distribution_sidebar():
@@ -147,7 +166,7 @@ with st.sidebar:
     st.divider()
 
     if mode == "Patient":
-        patient, visit_or_visits, compare_mode = render_patient_sidebar()
+        patient, visit_or_visits, compare_mode, motion_file = render_patient_sidebar()
     else:
         gmfcs, dofs, anonymous, surgery, side, color_by = render_distribution_sidebar()
 
@@ -155,9 +174,9 @@ with st.sidebar:
 if mode == "Patient":
     if patient and visit_or_visits:
         if compare_mode:
-            per_patient.render_compare(patient, visit_or_visits)
+            per_patient.render_compare(patient, visit_or_visits, motion_file)
         else:
-            per_patient.render(patient, visit_or_visits)
+            per_patient.render(patient, visit_or_visits, motion_file)
     else:
         st.info("Select a patient from the sidebar")
 else:
