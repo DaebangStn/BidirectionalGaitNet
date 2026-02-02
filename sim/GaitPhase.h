@@ -72,6 +72,12 @@ public:
      */
     void reset(double time);
 
+    /**
+     * Reset foot previous Z positions from current skeleton state
+     * Call after skeleton positions are updated (e.g., after zeroing ankle DOF)
+     */
+    void resetFootPos();
+
     // ========== State Accessors ==========
 
     /**

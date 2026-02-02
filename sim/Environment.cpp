@@ -1555,6 +1555,7 @@ void Environment::reset(double phase)
     mWorld->getConstraintSolver()->clearLastCollisionResult();
 
     mWorld->setTime(time);
+    mGaitPhase->reset(time);
 
     // Reset Skeletons
     mCharacter->getSkeleton()->setPositions(mCharacter->getSkeleton()->getPositions().setZero());
@@ -1587,6 +1588,7 @@ void Environment::reset(double phase)
         if (talusL) pos[talusL->getIndexInSkeleton(0)] = 0.0;
         skel->setPositions(pos);
     }
+    mGaitPhase->resetFootPos();
 
     mCharacter->getSkeleton()->setVelocities(mTargetVelocities);
 
@@ -1664,8 +1666,20 @@ bool Environment::isFall()
 double Environment::getEnergyReward()
 {
     double energy;
-    if (mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY) energy = mCharacter->getMetabolicEnergy();
-    else energy = mCharacter->getEnergy();
+    ActuatorType actType = mCharacter->getActuatorType();
+
+    // For torque-based actuators (pd, tor), use torque energy only
+    if (actType == pd || actType == tor) {
+        energy = mCharacter->getTorqueEnergy();
+    }
+    // For muscle-based actuators, check separate flag
+    else if (mRewardConfig.flags & REWARD_SEP_TORQUE_ENERGY) {
+        energy = mCharacter->getMetabolicEnergy();
+    }
+    else {
+        energy = mCharacter->getEnergy();
+    }
+
     double r_energy = exp(-mRewardConfig.metabolic_weight * energy);
     return r_energy;
 }

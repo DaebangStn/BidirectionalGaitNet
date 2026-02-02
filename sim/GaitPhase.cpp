@@ -88,11 +88,8 @@ void GaitPhase::reset(double time)
 
     // Get initial state from skeleton and motion
     auto skel = mCharacter->getSkeleton();
-    LOG_INFO("=== Right Foot Lowest Point ===");
     Eigen::Vector3d footRPos = getLowestPointFromBodyNodes({"TalusR", "FootPinkyR", "FootThumbR"});
-    LOG_INFO("=== Left Foot Lowest Point ===");
     Eigen::Vector3d footLPos = getLowestPointFromBodyNodes({"TalusL", "FootPinkyL", "FootThumbL"});
-
 
     // Initialize contact state (will be updated in first step())
     mCachedContact = Eigen::Vector2i::Zero();
@@ -138,10 +135,7 @@ void GaitPhase::reset(double time)
         mCurrentStanceFoot = footLPos;
     }
 
-    // Set foot previous Z positions
-    mFootPrevRz = footRPos[2];
-    mFootPrevLz = footLPos[2];
-
+    resetFootPos();
     // Initialize foot targets
     mCurrentTargetFoot = mCurrentStanceFoot;
     mNextTargetFoot = mCurrentStanceFoot;
@@ -153,6 +147,13 @@ void GaitPhase::reset(double time)
     // Initialize COM tracking
     mCurCycleCOM = skel->getBodyNode("Pelvis")->getCOM();
     mPrevCycleCOM = mCurCycleCOM;
+}
+
+void GaitPhase::resetFootPos()
+{
+    auto skel = mCharacter->getSkeleton();
+    mFootPrevRz = skel->getBodyNode("TalusR")->getCOM()[2];
+    mFootPrevLz = skel->getBodyNode("TalusL")->getCOM()[2];
 }
 
 void GaitPhase::step()
@@ -351,10 +352,8 @@ void GaitPhase::updateFromContact()
 
     double time = mWorld->getTime();
     auto skel = mCharacter->getSkeleton();
-    // LOG_INFO("=== Right Foot Lowest Point ===");
-    Eigen::Vector3d footRPos = getLowestPointFromBodyNodes({"TalusR", "FootPinkyR", "FootThumbR"});
-    // LOG_INFO("=== Left Foot Lowest Point ===");
-    Eigen::Vector3d footLPos = getLowestPointFromBodyNodes({"TalusL", "FootPinkyL", "FootThumbL"});
+    Eigen::Vector3d footRPos = skel->getBodyNode("TalusR")->getCOM();
+    Eigen::Vector3d footLPos = skel->getBodyNode("TalusL")->getCOM();
 
     // Calculate target stride and minimum step using stored parameters
     double targetStride = mStride * mRefStride * mCharacter->getGlobalRatio();

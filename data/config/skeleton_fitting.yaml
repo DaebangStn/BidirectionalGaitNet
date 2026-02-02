@@ -172,7 +172,7 @@ skeleton_fitting:
   plantar_correction:
     detect_phases: true          # Detect lock phases for timeline visualization
     correct_position: true       # Lock position during stance phase
-    correct_orientation: false   # Align foot with ground (plantar correction)
+    correct_orientation: true   # Align foot with ground (plantar correction)
     velocity_threshold: 0.003    # m/frame threshold for lock detection (5mm)
     min_lock_frames: 20          # minimum consecutive frames to count as lock phase
     blend_frames: 10             # frames for smooth transition at phase boundaries

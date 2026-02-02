@@ -39,12 +39,12 @@ environment:
     include_ref_velocity: false
     ignore_toe_imit: true
     clip:
-      step: 100
-      value: 0.05
+      step: 50
+      value: 0.1
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 40.0
-    pos_weight: 0.2
+    pos_weight: 0.7
     vel_weight: 0.005
     com_weight: 10.0
 
