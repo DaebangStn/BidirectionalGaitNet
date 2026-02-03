@@ -168,7 +168,7 @@ PolicyNetImpl::get_action_and_value(torch::Tensor x, torch::Tensor action) {
 // - Each call creates independent temporary tensors (no shared mutable state)
 // Note: Not marked const due to libtorch API (forward() is non-const), but is logically const
 std::tuple<Eigen::VectorXf, float, float>
-PolicyNetImpl::sample_action(const Eigen::VectorXf& obs) {
+PolicyNetImpl::sample_action(const Eigen::VectorXf& obs, bool stochastic) {
     torch::NoGradGuard no_grad;  // Inference mode (thread-local flag)
 
     // Convert Eigen → Torch
@@ -188,16 +188,23 @@ PolicyNetImpl::sample_action(const Eigen::VectorXf& obs) {
     auto action_logstd = actor_logstd.expand_as(action_mean);
     auto action_std = torch::exp(action_logstd);
 
-    // Sample from Normal(mean, std) - manual implementation
-    // NOTE: torch::randn_like() is thread-safe (uses thread-local RNG in libtorch ≥1.9)
-    // Multiple threads can safely call this concurrently
-    auto eps = torch::randn_like(action_mean);
-    auto action_tensor = action_mean + action_std * eps;
+    // Sample from Normal(mean, std) or use mean directly (deterministic)
+    torch::Tensor action_tensor;
+    torch::Tensor log_prob;
+    if (stochastic) {
+        // NOTE: torch::randn_like() is thread-safe (uses thread-local RNG in libtorch ≥1.9)
+        auto eps = torch::randn_like(action_mean);
+        action_tensor = action_mean + action_std * eps;
 
-    // Compute log probability
-    auto log_prob = -0.5 * torch::pow((action_tensor - action_mean) / action_std, 2)
-                    - action_logstd - 0.5 * std::log(2.0 * M_PI);
-    log_prob = log_prob.sum(-1);
+        // Compute log probability
+        log_prob = -0.5 * torch::pow((action_tensor - action_mean) / action_std, 2)
+                        - action_logstd - 0.5 * std::log(2.0 * M_PI);
+        log_prob = log_prob.sum(-1);
+    } else {
+        // Deterministic: use mean directly
+        action_tensor = action_mean;
+        log_prob = torch::zeros({1}, torch::kFloat32).to(device_);
+    }
 
     // Get value estimate
     auto value_tensor = get_value(obs_tensor);

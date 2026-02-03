@@ -129,6 +129,7 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
     mGraphData->register_key("r_p", 500);
     mGraphData->register_key("r_v", 500);
     mGraphData->register_key("r_com", 500);
+    mGraphData->register_key("r_ankle", 500);
     mGraphData->register_key("r_ee", 500);
     mGraphData->register_key("r_metabolic", 500);
     mGraphData->register_key("r_torque", 500);
@@ -502,10 +503,8 @@ void RenderCkpt::update(bool _isSave)
         auto& net = mViewerNetworks[0];
         if (net.useCpp && net.policy) {
             // C++ inference (TorchScript format)
-            // Note: sample_action returns stochastic samples; for deterministic mode,
-            // the Python wrapper handles this, but C++ always samples for now
             auto [act, value, logprob] = net.policy->sample_action(
-                mRenderEnv->getState().cast<float>());
+                mRenderEnv->getState().cast<float>(), mStochasticPolicy);
             action = act;
         } else if (!net.joint.is_none()) {
             // Python fallback (pickle format)
@@ -2500,7 +2499,7 @@ void RenderCkpt::drawGaitTabContent()
             ImPlot::SetupAxes("Time (s)", "Reward");
 
             // Plot reward data using common plotting function
-            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ee", "r_energy", "r_knee_pain", "r_loco", "r_head_linear_acc", "r_head_rot_diff", "r_avg", "r_step", "r_drag_x", "r_phase"};
+            std::vector<std::string> rewardKeys = {"r", "r_p", "r_v", "r_com", "r_ankle", "r_ee", "r_energy", "r_knee_pain", "r_loco", "r_head_linear_acc", "r_head_rot_diff", "r_avg", "r_step", "r_drag_x", "r_phase"};
             if (mRenderEnv->getSeparateTorqueEnergy()) {
                 rewardKeys.push_back("r_torque");
                 rewardKeys.push_back("r_metabolic");
@@ -3990,6 +3989,14 @@ void RenderCkpt::drawSimControlPanelContent()
                 mRenderEnv->setCOMWeight(static_cast<double>(comWeight));
             }
 
+            // Ankle weight (TalusR/TalusL)
+            float ankleWeight = static_cast<float>(mRenderEnv->getAnkleWeight());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputFloat("Ankle Weight", &ankleWeight, 0.0f, 0.0f, "%.4f"))
+            {
+                mRenderEnv->setAnkleWeight(static_cast<double>(ankleWeight));
+            }
+
             ImGui::SameLine();
             ImGui::TextDisabled("(?)");
             if (ImGui::IsItemHovered())
@@ -4003,6 +4010,7 @@ void RenderCkpt::drawSimControlPanelContent()
                 ImGui::Text("Pos: Joint positions (default: 20)");
                 ImGui::Text("Vel: Joint velocities (default: 10)");
                 ImGui::Text("COM: Center of mass (default: 10)");
+                ImGui::Text("Ankle: TalusR/TalusL position (-1 = disabled)");
                 ImGui::EndTooltip();
             }
 

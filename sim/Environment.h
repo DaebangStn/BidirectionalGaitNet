@@ -97,6 +97,7 @@ struct RewardConfig
     double pos_weight = 20.0;  // Position coefficient
     double vel_weight = 10.0;  // Velocity coefficient
     double com_weight = 10.0;  // Center of mass coefficient
+    double ankle_weight = -1.0; // Ankle (TalusR/TalusL) position coefficient (-1 = disabled)
 
     // Multi-reference state configuration
     int num_ref_in_state = 1;         // Number of future reference poses in state
@@ -401,6 +402,8 @@ public:
     void setVelWeight(double w) { mRewardConfig.vel_weight = (w < 0.0 ? 0.0 : w); }
     double getCOMWeight() const { return mRewardConfig.com_weight; }
     void setCOMWeight(double w) { mRewardConfig.com_weight = (w < 0.0 ? 0.0 : w); }
+    double getAnkleWeight() const { return mRewardConfig.ankle_weight; }
+    void setAnkleWeight(double w) { mRewardConfig.ankle_weight = w; }  // Allow -1 to disable
     double getScaleMetabolic() { return mRewardConfig.metabolic_scale; }
     void setScaleMetabolic(double scale) { mRewardConfig.metabolic_scale = scale; }
     double getAvgVelWindowMult() const { return mRewardConfig.avg_vel_window_mult; }

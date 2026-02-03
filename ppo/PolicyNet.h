@@ -42,12 +42,13 @@ public:
      * (Not marked const due to libtorch API limitations - forward() is non-const)
      *
      * @param obs Observation vector (float)
+     * @param stochastic If true, sample from Normal(mean, std); if false, return mean (deterministic)
      * @return tuple<action, value, logprob>
-     *   - action: Sampled action vector
+     *   - action: Sampled action vector (or mean if deterministic)
      *   - value: State value estimate
-     *   - logprob: Log probability of sampled action
+     *   - logprob: Log probability of action (0 if deterministic)
      */
-    std::tuple<Eigen::VectorXf, float, float> sample_action(const Eigen::VectorXf& obs);
+    std::tuple<Eigen::VectorXf, float, float> sample_action(const Eigen::VectorXf& obs, bool stochastic = true);
 
     /**
      * Get value estimate (critic forward pass).

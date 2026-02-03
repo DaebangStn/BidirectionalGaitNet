@@ -353,6 +353,8 @@ Environment::Environment(const std::string& filepath)
             mRewardConfig.vel_weight = reward["vel_weight"].as<double>(10.0);
         if (reward["com_weight"])
             mRewardConfig.com_weight = reward["com_weight"].as<double>(10.0);
+        if (reward["ankle_weight"])
+            mRewardConfig.ankle_weight = reward["ankle_weight"].as<double>(-1.0);
         if (reward["num_ref_in_state"])
             mRewardConfig.num_ref_in_state = reward["num_ref_in_state"].as<int>(1);
         if (reward["include_ref_velocity"])
@@ -962,7 +964,7 @@ double Environment::calcReward()
         com_diff += skel->getCOM();
         skel->setPositions(pos);
 
-        double r_p, r_v, r_ee, r_com, r_metabolic;
+        double r_p, r_v, r_ee, r_com, r_metabolic, r_ankle;
         // Skip reward term if weight is negative (set to 1.0 for neutral effect in multiplicative rewards)
         r_ee = mRewardConfig.ee_weight < 0 ? 1.0 : exp(-mRewardConfig.ee_weight * ee_diff.squaredNorm() / ee_diff.rows());
         r_p = mRewardConfig.pos_weight < 0 ? 1.0 : exp(-mRewardConfig.pos_weight * (mImitMask * pos_diff.array().square()).sum());
@@ -970,8 +972,27 @@ double Environment::calcReward()
         r_com = mRewardConfig.com_weight < 0 ? 1.0 : exp(-mRewardConfig.com_weight * com_diff.squaredNorm() / com_diff.rows());
         r_metabolic = getEnergyReward();
 
-        if (mRewardType == deepmimic) r = w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic;
-        else if (mRewardType == scadiver) r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee) * (0.1 + 0.9 * r_metabolic);
+        // Ankle-specific position reward (TalusR and TalusL only)
+        r_ankle = 1.0;
+        if (mRewardConfig.ankle_weight >= 0) {
+            double ankle_sq_sum = 0.0;
+            auto talusR = skel->getJoint("TalusR");
+            auto talusL = skel->getJoint("TalusL");
+            if (talusR) {
+                int idx = talusR->getIndexInSkeleton(0);
+                for (size_t i = 0; i < talusR->getNumDofs(); i++)
+                    ankle_sq_sum += pos_diff[idx + i] * pos_diff[idx + i];
+            }
+            if (talusL) {
+                int idx = talusL->getIndexInSkeleton(0);
+                for (size_t i = 0; i < talusL->getNumDofs(); i++)
+                    ankle_sq_sum += pos_diff[idx + i] * pos_diff[idx + i];
+            }
+            r_ankle = exp(-mRewardConfig.ankle_weight * ankle_sq_sum);
+        }
+
+        if (mRewardType == deepmimic) r = (w_p * r_p + w_v * r_v + w_com * r_com + w_ee * r_ee + w_metabolic * r_metabolic) * r_ankle;
+        else if (mRewardType == scadiver) r = (0.1 + 0.9 * r_p) * (0.1 + 0.9 * r_v) * (0.1 + 0.9 * r_com) * (0.1 + 0.9 * r_ee) * (0.1 + 0.9 * r_metabolic) * (0.1 + 0.9 * r_ankle);
 
         // Log individual rewards to mInfoMap (for TensorBoard)
         mInfoMap["r_ee"] = r_ee;
@@ -979,6 +1000,7 @@ double Environment::calcReward()
         mInfoMap["r_v"] = r_v;
         mInfoMap["r_com"] = r_com;
         mInfoMap["r_metabolic"] = r_metabolic;
+        mInfoMap["r_ankle"] = r_ankle;
     }
     else if (mRewardType == gaitnet)
     {

@@ -1,0 +1,68 @@
+args:
+  checkpoint_interval: 2000
+  total_timesteps: 500000000
+
+environment:
+  pid: "29792292/pre"
+  # Skeleton and Character
+  skeleton:
+    file: "@pid:/skeleton/dynamic.yaml"
+    actuator: "pd"  # pd, torque, muscle, mass, mass_lower
+
+  # Motion Reference
+  motion:
+    file: "@pid:/motion/walk_single.h5"
+
+  # Muscle System
+  # muscle:
+  #   file: "@pid:/muscle/clinic_0125_1925.yaml"
+  #   mesh_lbs_weight: false
+  #   use_velocity_force: false
+  #   use_joint_state: true
+  #   clip_lm_norm: 1.25 # to disable, remove or set to -1
+
+  # Simulation Timing
+  simulation:
+    sim_hz: 180
+    control_hz: 30
+
+  # Action and Control
+  action:
+    scale: 0.04
+    time_warping: -1
+    gait_phase_mode: "contact"  # "contact" or "phase"
+    contact_debounce_alpha: 0.4
+    step_min_ratio: 0.25
+
+  # Reward System
+  reward:
+    type: "scadiver"  # deepmimic, gaitnet, scadiver
+    num_ref_in_state: 2
+    include_ref_velocity: false
+    clip:
+      step: 50
+      value: 0.1
+
+    # Imitation reward coefficients (deepmimic/scadiver)
+    ee_weight: 100.0
+    pos_weight: 0.5
+    vel_weight: 0.005
+    com_weight: 10.0
+    ankle_weight: 1.0
+
+    # Metabolic configuration
+    metabolic:
+      type: "A"  # A, A2, MA, MA2
+      weight: 0.02
+      scale: 1.0
+      multiplicative: true  # if true, multiplies with main reward term
+      torque:
+        coeff: 0.1
+        separate: true
+
+train: 
+  curriculum:
+    imit_mask:
+      - op: mask
+        joints: ["FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL"]
+        from_iteration: 0
