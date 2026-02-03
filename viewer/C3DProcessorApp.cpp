@@ -106,6 +106,15 @@ C3DProcessorApp::C3DProcessorApp(const std::string& configPath)
         mPIDNavigator->setPIDChangeCallback(
             [this](const std::string& pid) {
                 checkForPersonalizedCalibration();
+                loadAnkleROMFromConfig();
+            }
+        );
+
+        // Register visit change callback for ROM reloading
+        mPIDNavigator->setVisitChangeCallback(
+            [this](const std::string& pid, const std::string& visit) {
+                checkForPersonalizedCalibration();
+                loadAnkleROMFromConfig();
             }
         );
 
@@ -841,144 +850,231 @@ void C3DProcessorApp::drawTimelineTrackBar()
 
 void C3DProcessorApp::drawMarkerFittingSection()
 {
-    if (collapsingHeaderWithControls("Marker Fitting")) {
-        // Static Calibration UI (enabled only when medial markers detected)
-        ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Static Calibration");
-        if (mHasMedialMarkers) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "[Medial Markers Detected]");
-        }
+    // Static Calibration UI (enabled only when medial markers detected)
+    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Static Calibration");
+    if (mHasMedialMarkers) {
         ImGui::SameLine();
-        ImGui::BeginDisabled(!mHasMedialMarkers);
-        if (ImGui::Button("Calibrate##Static")) {
-            if (mC3DReader && mMotion) {
-                C3D* c3dData = dynamic_cast<C3D*>(mMotion);
-                if (c3dData) {
-                    mStaticCalibResult = mC3DReader->calibrateStatic(c3dData, mStaticConfigPath);
-                    if (mStaticCalibResult.success) {
-                        LOG_INFO("[C3DProcessor] Static calibration completed successfully");
-                        if (mFreeCharacter) {
-                            auto& markers = mFreeCharacter->getMarkersForEdit();
-                            for (auto& marker : markers) {
-                                auto it = mStaticCalibResult.personalizedOffsets.find(marker.name);
-                                if (it != mStaticCalibResult.personalizedOffsets.end()) {
-                                    marker.offset = it->second;
-                                }
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "[Medial Markers Detected]");
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!mHasMedialMarkers);
+    if (ImGui::Button("Calibrate##Static")) {
+        if (mC3DReader && mMotion) {
+            C3D* c3dData = dynamic_cast<C3D*>(mMotion);
+            if (c3dData) {
+                mStaticCalibResult = mC3DReader->calibrateStatic(c3dData, mStaticConfigPath);
+                if (mStaticCalibResult.success) {
+                    LOG_INFO("[C3DProcessor] Static calibration completed successfully");
+                    if (mFreeCharacter) {
+                        auto& markers = mFreeCharacter->getMarkersForEdit();
+                        for (auto& marker : markers) {
+                            auto it = mStaticCalibResult.personalizedOffsets.find(marker.name);
+                            if (it != mStaticCalibResult.personalizedOffsets.end()) {
+                                marker.offset = it->second;
                             }
-                            LOG_INFO("[C3DProcessor] Applied " << mStaticCalibResult.personalizedOffsets.size()
-                                     << " personalized marker offsets");
                         }
-                    } else {
-                        LOG_ERROR("[C3DProcessor] Static calibration failed: " << mStaticCalibResult.errorMessage);
+                        LOG_INFO("[C3DProcessor] Applied " << mStaticCalibResult.personalizedOffsets.size()
+                                 << " personalized marker offsets");
                     }
                 } else {
-                    LOG_ERROR("[C3DProcessor] No C3D data available. Load a C3D file first.");
+                    LOG_ERROR("[C3DProcessor] Static calibration failed: " << mStaticCalibResult.errorMessage);
                 }
+            } else {
+                LOG_ERROR("[C3DProcessor] No C3D data available. Load a C3D file first.");
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Export##Static")) {
-            if (mStaticCalibResult.success && mResourceManager && mPIDNavigator) {
-                const auto& pidState = mPIDNavigator->getState();
-                if (pidState.selectedPID >= 0 && pidState.selectedPID < static_cast<int>(pidState.pidList.size())) {
-                    std::string pid = pidState.pidList[pidState.selectedPID];
-                    std::string visit = pidState.getVisitDir();
-                    std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
-                    std::string skelDir = mResourceManager->resolveDirCreate(pattern);
-                    if (!skelDir.empty()) {
-                        std::string calibDir = skelDir + "/calibration";
-                        if (!std::filesystem::exists(calibDir)) {
-                            std::filesystem::create_directories(calibDir);
-                        }
-                        mC3DReader->exportPersonalizedCalibration(mStaticCalibResult, calibDir);
-                        LOG_INFO("[C3DProcessor] Exported personalized calibration for PID " << pid);
-                        mHasPersonalizedCalibration = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Export##Static")) {
+        if (mStaticCalibResult.success && mResourceManager && mPIDNavigator) {
+            const auto& pidState = mPIDNavigator->getState();
+            if (pidState.selectedPID >= 0 && pidState.selectedPID < static_cast<int>(pidState.pidList.size())) {
+                std::string pid = pidState.pidList[pidState.selectedPID];
+                std::string visit = pidState.getVisitDir();
+                std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
+                std::string skelDir = mResourceManager->resolveDirCreate(pattern);
+                if (!skelDir.empty()) {
+                    std::string calibDir = skelDir + "/calibration";
+                    if (!std::filesystem::exists(calibDir)) {
+                        std::filesystem::create_directories(calibDir);
                     }
+                    mC3DReader->exportPersonalizedCalibration(mStaticCalibResult, calibDir);
+                    LOG_INFO("[C3DProcessor] Exported personalized calibration for PID " << pid);
+                    mHasPersonalizedCalibration = true;
                 }
             }
         }
-        ImGui::EndDisabled();
+    }
+    ImGui::EndDisabled();
 
-        // Show static calibration results
-        if (mStaticCalibResult.success) {
-            if (ImGui::TreeNode("Static Results")) {
-                if (ImGui::TreeNode("Bone Scales")) {
-                    for (const auto& [name, scale] : mStaticCalibResult.boneScales) {
-                        ImGui::Text("%s: (%.3f, %.3f, %.3f)", name.c_str(), scale.x(), scale.y(), scale.z());
-                    }
-                    ImGui::TreePop();
-                }
-                if (ImGui::TreeNode("Personalized Offsets")) {
-                    for (const auto& [name, offset] : mStaticCalibResult.personalizedOffsets) {
-                        ImGui::Text("%s: (%.4f, %.4f, %.4f)", name.c_str(), offset.x(), offset.y(), offset.z());
-                    }
-                    ImGui::TreePop();
+    // Show static calibration results
+    if (mStaticCalibResult.success) {
+        if (ImGui::TreeNode("Static Results")) {
+            if (ImGui::TreeNode("Bone Scales")) {
+                for (const auto& [name, scale] : mStaticCalibResult.boneScales) {
+                    ImGui::Text("%s: (%.3f, %.3f, %.3f)", name.c_str(), scale.x(), scale.y(), scale.z());
                 }
                 ImGui::TreePop();
             }
-        }
-
-        ImGui::Separator();
-
-        // Dynamic Calibration UI (enabled only when medial markers NOT detected)
-        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.7f, 1.0f), "Dynamic Calibration");
-        ImGui::SameLine();
-        ImGui::BeginDisabled(mHasMedialMarkers);
-        if (ImGui::Button("Calibrate and Track##Dynamic")) {
-            if (mC3DReader && mMotion) {
-                C3D* c3dData = dynamic_cast<C3D*>(mMotion);
-                if (c3dData) {
-                    mDynamicCalibResult = mC3DReader->calibrateDynamic(c3dData);
-                    if (mDynamicCalibResult.success) {
-                        LOG_INFO("[C3DProcessor] Dynamic calibration completed: "
-                                 << mDynamicCalibResult.freePoses.size() << " frames");
-                    } else {
-                        LOG_ERROR("[C3DProcessor] Dynamic calibration failed: " << mDynamicCalibResult.errorMessage);
-                    }
-                } else {
-                    LOG_ERROR("[C3DProcessor] No C3D data available. Load a C3D file first.");
+            if (ImGui::TreeNode("Personalized Offsets")) {
+                for (const auto& [name, offset] : mStaticCalibResult.personalizedOffsets) {
+                    ImGui::Text("%s: (%.4f, %.4f, %.4f)", name.c_str(), offset.x(), offset.y(), offset.z());
                 }
+                ImGui::TreePop();
+            }
+            ImGui::TreePop();
+        }
+    }
+
+    // Dynamic Calibration UI (enabled only when medial markers NOT detected)
+    ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.7f, 1.0f), "Dynamic Calibration");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(mHasMedialMarkers);
+    if (ImGui::Button("Calibrate and Track##Dynamic")) {
+        if (mC3DReader && mMotion) {
+            C3D* c3dData = dynamic_cast<C3D*>(mMotion);
+            if (c3dData) {
+                mDynamicCalibResult = mC3DReader->calibrateDynamic(c3dData);
+                if (mDynamicCalibResult.success) {
+                    LOG_INFO("[C3DProcessor] Dynamic calibration completed: "
+                             << mDynamicCalibResult.freePoses.size() << " frames");
+                    computeAnkleKinematicsMax();
+                } else {
+                    LOG_ERROR("[C3DProcessor] Dynamic calibration failed: " << mDynamicCalibResult.errorMessage);
+                }
+            } else {
+                LOG_ERROR("[C3DProcessor] No C3D data available. Load a C3D file first.");
             }
         }
-        ImGui::EndDisabled();
+    }
+    ImGui::EndDisabled();
 
-        // Export HDF - same line as calibrate button
+    // === Skeleton Range Configuration ===
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Skeleton Ankle range");
+    ImGui::SameLine();
+    ImGui::Checkbox("Apply limit", &mApplyAnkleLimit);
 
-        bool canExportHDF = mDynamicCalibResult.success
-                         && !mDynamicCalibResult.motionPoses.empty()
-                         && mResourceManager != nullptr
-                         && mPIDNavigator && mPIDNavigator->getState().selectedPID >= 0;
+    // Display table with ROM, Kin Max, Limit for ankle plantarflexion
+    if (ImGui::BeginTable("AnkleLimitTable", 4, ImGuiTableFlags_Borders)) {
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableSetupColumn("ROM", ImGuiTableColumnFlags_WidthFixed, 50);
+        ImGui::TableSetupColumn("Kin", ImGuiTableColumnFlags_WidthFixed, 50);
+        ImGui::TableSetupColumn("Limit", ImGuiTableColumnFlags_WidthFixed, 50);
+        ImGui::TableHeadersRow();
 
-        if (!canExportHDF) ImGui::BeginDisabled();
-        if (ImGui::Button("Export HDF")) {
-            exportMotionToHDF5();
-        }
-        if (!canExportHDF) ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
-        ImGui::InputTextWithHint("##hdfname", "filename", mExportHDFName, sizeof(mExportHDFName));
+        // Left row
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0); ImGui::Text("L");
+        ImGui::TableSetColumnIndex(1); ImGui::Text("%.1f", mAnkleRomLeft);
+        ImGui::TableSetColumnIndex(2); ImGui::Text("%.1f", mAnkleKinMaxLeft);
+        ImGui::TableSetColumnIndex(3); ImGui::Text("%.1f", mAnkleLimitLeft);
 
-        // Check if destination file exists and show warning
-        if (canExportHDF) {
+        // Right row
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0); ImGui::Text("R");
+        ImGui::TableSetColumnIndex(1); ImGui::Text("%.1f", mAnkleRomRight);
+        ImGui::TableSetColumnIndex(2); ImGui::Text("%.1f", mAnkleKinMaxRight);
+        ImGui::TableSetColumnIndex(3); ImGui::Text("%.1f", mAnkleLimitRight);
+
+        ImGui::EndTable();
+    }
+
+    // === Export Section ===
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Export");
+
+    // Export Skeleton
+    bool canExportSkeleton = mResourceManager != nullptr
+                           && mPIDNavigator && mPIDNavigator->getState().selectedPID >= 0;
+
+    if (!canExportSkeleton) ImGui::BeginDisabled();
+    if (ImGui::Button("Export Skeleton")) {
+        if (mMotionCharacter && canExportSkeleton) {
+            // Apply ankle plantarflexion limits before export (if enabled)
+            if (mApplyAnkleLimit) {
+                auto skel = mMotionCharacter->getSkeleton();
+                if (auto talusL = skel->getJoint("TalusL")) {
+                    talusL->setPositionUpperLimit(0, mAnkleLimitLeft * M_PI / 180.0);
+                }
+                if (auto talusR = skel->getJoint("TalusR")) {
+                    talusR->setPositionUpperLimit(0, mAnkleLimitRight * M_PI / 180.0);
+                }
+            }
+
             const auto& pidState = mPIDNavigator->getState();
             std::string pid = pidState.pidList[pidState.selectedPID];
-            std::string visit = pidState.preOp ? "pre" : "op1";
-            std::string pattern = "@pid:" + pid + "/" + visit + "/motion";
-            std::string outputDir = mResourceManager->resolveDir(pattern);
-            if (!outputDir.empty()) {
-                std::string filename = (std::strlen(mExportHDFName) > 0)
-                    ? mExportHDFName
-                    : fs::path(mMotionPath).stem().string();
-                std::string outputPath = outputDir + "/" + filename + ".h5";
-                if (fs::exists(outputPath)) {
-                    ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "File exists!");
-                }
+            std::string visit = pidState.getVisitDir();
+            std::string skeletonPattern = "@pid:" + pid + "/" + visit + "/skeleton";
+            std::string skelDir = mResourceManager->resolveDir(skeletonPattern);
+            if (!std::filesystem::exists(skelDir)) {
+                std::filesystem::create_directories(skelDir);
+            }
+            std::string skelPath = skelDir + "/" + mExportCalibrationName + ".yaml";
+            // Construct motion URI in @pid format
+            std::string c3dFilename = fs::path(mMotionPath).filename().string();
+            std::string motionURI = "@pid:" + pid + "/" + visit + "/gait/" + c3dFilename;
+            mMotionCharacter->exportSkeletonYAML(skelPath, motionURI);
+            LOG_INFO("[C3DProcessor] Exported skeleton to: " << skelPath);
+        }
+    }
+    if (!canExportSkeleton) ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150);
+    ImGui::InputText("##exportCalibName", mExportCalibrationName, sizeof(mExportCalibrationName));
+
+    // Check if export file exists - skeleton directory
+    if (canExportSkeleton) {
+        const auto& pidState = mPIDNavigator->getState();
+        std::string pid = pidState.pidList[pidState.selectedPID];
+        std::string visit = pidState.getVisitDir();
+        std::string skeletonPattern = "@pid:" + pid + "/" + visit + "/skeleton";
+        std::string skelDir = mResourceManager->resolveDir(skeletonPattern);
+        if (!std::filesystem::exists(skelDir)) {
+            std::filesystem::create_directories(skelDir);
+        }
+        std::string skelPath = skelDir + "/" + mExportCalibrationName + ".yaml";
+        bool skelFileExists = std::filesystem::exists(skelPath);
+
+        if (skelFileExists) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Overwrite");
+        }
+    }
+
+    // Export HDF
+
+    bool canExportHDF = mDynamicCalibResult.success
+                     && !mDynamicCalibResult.motionPoses.empty()
+                     && mResourceManager != nullptr
+                     && mPIDNavigator && mPIDNavigator->getState().selectedPID >= 0;
+
+    if (!canExportHDF) ImGui::BeginDisabled();
+    if (ImGui::Button("Export HDF")) {
+        exportMotionToHDF5();
+    }
+    if (!canExportHDF) ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputTextWithHint("##hdfname", "filename", mExportHDFName, sizeof(mExportHDFName));
+
+    // Check if destination file exists and show warning
+    if (canExportHDF) {
+        const auto& pidState = mPIDNavigator->getState();
+        std::string pid = pidState.pidList[pidState.selectedPID];
+        std::string visit = pidState.preOp ? "pre" : "op1";
+        std::string pattern = "@pid:" + pid + "/" + visit + "/motion";
+        std::string outputDir = mResourceManager->resolveDir(pattern);
+        if (!outputDir.empty()) {
+            std::string filename = (std::strlen(mExportHDFName) > 0)
+                ? mExportHDFName
+                : fs::path(mMotionPath).stem().string();
+            std::string outputPath = outputDir + "/" + filename + ".h5";
+            if (fs::exists(outputPath)) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "File exists!");
             }
         }
-
-        ImGui::Separator();
-        if (ImGui::Button("Clear Motion & Zero Pose")) clearMotionAndZeroPose();
     }
 }
 
@@ -1207,8 +1303,10 @@ void C3DProcessorApp::drawSkeletonExportSection()
                     : "skeleton";
                 std::string outputPath = outputDir + "/" + filename + ".yaml";
 
-                mMotionCharacter->exportSkeletonYAML(outputPath, mMotionPath);
-                LOG_INFO("[C3DProcessor] Exported calibrated skeleton to: " << outputPath);
+                // Construct motion URI in @pid format
+                std::string c3dFilename = fs::path(mMotionPath).filename().string();
+                std::string motionURI = "@pid:" + pid + "/" + visit + "/gait/" + c3dFilename;
+                mMotionCharacter->exportSkeletonYAML(outputPath, motionURI);
                 std::string skelURI = "@pid:" + pid + "/" + visit + "/skeleton/" + filename + ".yaml";
                 LOG_INFO("[C3DProcessor] URI: " << skelURI);
             }
@@ -2726,6 +2824,7 @@ void C3DProcessorApp::drawClinicalDataSection()
     }
 
     mPIDNavigator->renderInlineSelector(150, 150);
+    if (ImGui::Button("Clear Motion & Zero Pose")) clearMotionAndZeroPose();
 
     // Calibration Status Section (render below navigator)
     const auto& pidState = mPIDNavigator->getState();
@@ -2777,35 +2876,10 @@ void C3DProcessorApp::drawClinicalDataSection()
             }
         }
 
-        // Export skeleton section
-        if (!mResourceManager) return;
-
-        ImGui::SetNextItemWidth(150);
-        ImGui::InputText("##exportCalibName", mExportCalibrationName, sizeof(mExportCalibrationName));
-        ImGui::SameLine();
-
-        // Check if export file exists - skeleton directory
-        std::string skelDir = mResourceManager->resolveDir(skeletonPattern);
-        if (!std::filesystem::exists(skelDir)) {
-            std::filesystem::create_directories(skelDir);
-        }
-        std::string skelPath = skelDir + "/" + mExportCalibrationName + ".yaml";
-        bool fileExists = std::filesystem::exists(skelPath);
-
-        if (fileExists) {
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Overwrite");
-            ImGui::SameLine();
-        }
-        if (ImGui::Button("Export Skeleton")) {
-            if (mMotionCharacter) {
-                mMotionCharacter->exportSkeletonYAML(skelPath);
-                LOG_INFO("[C3DProcessor] Exported skeleton to: " << skelPath);
-            }
-        }
-
         // Reset calibration button
         if (mPersonalizedCalibrationLoaded) {
-            if (ImGui::Button("Reset Calibration")) {
+            ImGui::SameLine();
+            if (ImGui::Button("Reset Calibration & Skeleton")) {
                 // Reload initial markers and reset skeleton
                 if (mFreeCharacter) {
                     mFreeCharacter->loadMarkers(mInitialMarkerPath);
@@ -2981,4 +3055,134 @@ void C3DProcessorApp::reloadCurrentMotion(bool withCalibration)
     } else {
         LOG_ERROR("[C3DProcessor] Failed to reload: " << path);
     }
+}
+
+void C3DProcessorApp::loadAnkleROMFromConfig()
+{
+    // Default normative values
+    float normativeLeft = 47.8f;
+    float normativeRight = 47.8f;
+
+    // Load normative values from config files
+    std::string romDir = mResourceManager ?
+        mResourceManager->resolveDir("@data/config/rom") : "data/config/rom";
+
+    std::string pathL = romDir + "/plantar_L.yaml";
+    if (std::filesystem::exists(pathL)) {
+        try {
+            YAML::Node config = YAML::LoadFile(pathL);
+            if (config["exam"] && config["exam"]["normative"]) {
+                normativeLeft = config["exam"]["normative"].as<float>();
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("[C3DProcessor] Failed to load plantar_L.yaml: " << e.what());
+        }
+    }
+
+    std::string pathR = romDir + "/plantar_R.yaml";
+    if (std::filesystem::exists(pathR)) {
+        try {
+            YAML::Node config = YAML::LoadFile(pathR);
+            if (config["exam"] && config["exam"]["normative"]) {
+                normativeRight = config["exam"]["normative"].as<float>();
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("[C3DProcessor] Failed to load plantar_R.yaml: " << e.what());
+        }
+    }
+
+    // Start with normative values
+    mAnkleRomLeft = normativeLeft;
+    mAnkleRomRight = normativeRight;
+    bool patientDataLoaded = false;
+
+    // Try to load patient-specific ROM from @pid:{pid}/{visit}/rom.yaml
+    if (mResourceManager && mPIDNavigator) {
+        const auto& pidState = mPIDNavigator->getState();
+        if (pidState.selectedPID >= 0 && pidState.selectedPID < static_cast<int>(pidState.pidList.size())) {
+            std::string pid = pidState.pidList[pidState.selectedPID];
+            std::string visit = pidState.getVisitDir();
+
+            std::string romPath = "@pid:" + pid + "/" + visit + "/rom.yaml";
+            std::string resolvedPath = mResourceManager->resolve(romPath);
+
+            if (!resolvedPath.empty() && std::filesystem::exists(resolvedPath)) {
+                try {
+                    YAML::Node romData = YAML::LoadFile(resolvedPath);
+                    if (romData["rom"]) {
+                        auto romSection = romData["rom"];
+
+                        // Load left ankle plantarflexion
+                        if (romSection["left"] && romSection["left"]["ankle"] &&
+                            romSection["left"]["ankle"]["plantarflexion"]) {
+                            auto val = romSection["left"]["ankle"]["plantarflexion"];
+                            if (val.IsScalar() && !val.IsNull()) {
+                                mAnkleRomLeft = val.as<float>();
+                                patientDataLoaded = true;
+                            }
+                        }
+
+                        // Load right ankle plantarflexion
+                        if (romSection["right"] && romSection["right"]["ankle"] &&
+                            romSection["right"]["ankle"]["plantarflexion"]) {
+                            auto val = romSection["right"]["ankle"]["plantarflexion"];
+                            if (val.IsScalar() && !val.IsNull()) {
+                                mAnkleRomRight = val.as<float>();
+                                patientDataLoaded = true;
+                            }
+                        }
+                    }
+
+                    if (patientDataLoaded) {
+                        LOG_INFO("[C3DProcessor] Loaded patient ROM for " << pid << "/" << visit
+                                 << ": L=" << mAnkleRomLeft << ", R=" << mAnkleRomRight);
+                    }
+                } catch (const std::exception& e) {
+                    LOG_WARN("[C3DProcessor] Failed to load patient ROM: " << e.what());
+                }
+            }
+        }
+    }
+
+    if (!patientDataLoaded) {
+        LOG_INFO("[C3DProcessor] Using normative ankle ROM: L=" << mAnkleRomLeft << ", R=" << mAnkleRomRight);
+    }
+
+    // Update limits
+    mAnkleLimitLeft = std::max(mAnkleRomLeft, mAnkleKinMaxLeft);
+    mAnkleLimitRight = std::max(mAnkleRomRight, mAnkleKinMaxRight);
+}
+
+void C3DProcessorApp::computeAnkleKinematicsMax()
+{
+    if (!mDynamicCalibResult.success || !mMotionCharacter) return;
+
+    auto skel = mMotionCharacter->getSkeleton();
+    auto talusL = skel->getJoint("TalusL");
+    auto talusR = skel->getJoint("TalusR");
+    if (!talusL || !talusR) {
+        LOG_WARN("[C3DProcessor] TalusL or TalusR joint not found");
+        return;
+    }
+
+    int dofIdxL = talusL->getIndexInSkeleton(0);
+    int dofIdxR = talusR->getIndexInSkeleton(0);
+
+    double maxL = 0.0, maxR = 0.0;
+    for (const auto& pose : mDynamicCalibResult.motionPoses) {
+        if (dofIdxL < pose.size()) maxL = std::max(maxL, pose[dofIdxL]);
+        if (dofIdxR < pose.size()) maxR = std::max(maxR, pose[dofIdxR]);
+    }
+
+    // Convert radians to degrees
+    mAnkleKinMaxLeft = static_cast<float>(maxL * 180.0 / M_PI);
+    mAnkleKinMaxRight = static_cast<float>(maxR * 180.0 / M_PI);
+
+    // Update limits
+    mAnkleLimitLeft = std::max(mAnkleRomLeft, mAnkleKinMaxLeft);
+    mAnkleLimitRight = std::max(mAnkleRomRight, mAnkleKinMaxRight);
+
+    LOG_INFO("[C3DProcessor] Computed ankle kinematics max: L=" << mAnkleKinMaxLeft
+             << ", R=" << mAnkleKinMaxRight << " -> limits: L=" << mAnkleLimitLeft
+             << ", R=" << mAnkleLimitRight);
 }

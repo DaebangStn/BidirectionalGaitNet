@@ -58,6 +58,7 @@ using FileSelectionCallback = std::function<void(
  * Parameter: pid (the selected PID string)
  */
 using PIDChangeCallback = std::function<void(const std::string& pid)>;
+using VisitChangeCallback = std::function<void(const std::string& pid, const std::string& visit)>;
 
 /**
  * PID Navigator component for browsing clinical data.
@@ -131,6 +132,11 @@ public:
      * Sets callback to invoke when PID selection changes.
      */
     void setPIDChangeCallback(PIDChangeCallback callback);
+
+    /**
+     * Sets callback to invoke when visit selection changes.
+     */
+    void setVisitChangeCallback(VisitChangeCallback callback);
 
     /**
      * Programmatically navigate to a specific PID and visit.

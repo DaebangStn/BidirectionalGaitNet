@@ -420,6 +420,15 @@ private:
     KinematicsSource mKinematicsSource = KinematicsSource::FromMotion;
     int mKinematicsSourceInt = 0;  ///< For ImGui radio button
 
+    // Kinematics side selection (Right or Left)
+    enum class KinematicsSide { Right = 0, Left = 1 };
+    KinematicsSide mKinematicsSide = KinematicsSide::Right;
+    int mKinematicsSideInt = 0;  ///< For ImGui radio button
+
+    // Helper to get joint keys for the selected side
+    std::vector<std::string> getMajorJointKeys() const;
+    std::vector<std::string> getMinorJointKeys() const;
+
     // Normative reference data (population-level from Gait120)
     KinematicsExportData mNormativeKinematics;
     bool mHasNormativeKinematics = false;

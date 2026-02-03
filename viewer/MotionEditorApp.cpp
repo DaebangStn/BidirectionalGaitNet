@@ -1404,11 +1404,19 @@ void MotionEditorApp::computeKinematicsSummary()
         bool negate;
     };
     std::vector<JointDef> jointDefs = {
+        // Right side
         {"angle_HipR",      "FemurR", 0, true},
         {"angle_HipIRR",    "FemurR", 1, false},
         {"angle_HipAbR",    "FemurR", 2, false},
         {"angle_KneeR",     "TibiaR", 0, false},
         {"angle_AnkleR",    "TalusR", 0, true},
+        // Left side
+        {"angle_HipL",      "FemurL", 0, true},
+        {"angle_HipIRL",    "FemurL", 1, false},
+        {"angle_HipAbL",    "FemurL", 2, false},
+        {"angle_KneeL",     "TibiaL", 0, false},
+        {"angle_AnkleL",    "TalusL", 0, true},
+        // Pelvis (bilateral)
         {"angle_Rotation",  "Pelvis", 1, false},
         {"angle_Obliquity", "Pelvis", 2, false},
         {"angle_Tilt",      "Pelvis", 0, false},

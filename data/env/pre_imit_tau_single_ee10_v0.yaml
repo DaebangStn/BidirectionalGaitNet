@@ -44,9 +44,9 @@ environment:
       value: 0.1
 
     # Imitation reward coefficients (deepmimic/scadiver)
-    ee_weight: 100.0
+    ee_weight: 10.0
     pos_weight: 0.5
-    vel_weight: 0.005
+    vel_weight: -1.0
     com_weight: 10.0
 
     # Metabolic configuration

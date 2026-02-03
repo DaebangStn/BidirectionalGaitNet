@@ -140,44 +140,60 @@ void RenderEnvironment::RecordGraphData() {
         mGraphData->push("sway_Torso_X", torsoX);
     }
     
+    // Right side kinematics
     if (mGraphData->key_exists("angle_HipR")) {
-        const double angleHipR = skel->getJoint("FemurR")->getPosition(0) * 180.0 / M_PI;
-        mGraphData->push("angle_HipR", -angleHipR);
+        const double angle = skel->getJoint("FemurR")->getPosition(0) * 180.0 / M_PI;
+        mGraphData->push("angle_HipR", -angle);
     }
-    
     if (mGraphData->key_exists("angle_HipIRR")) {
-        const double angleHipIRR = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
-        mGraphData->push("angle_HipIRR", angleHipIRR);
+        const double angle = skel->getJoint("FemurR")->getPosition(1) * 180.0 / M_PI;
+        mGraphData->push("angle_HipIRR", angle);
     }
-    
     if (mGraphData->key_exists("angle_HipAbR")) {
-        const double angleHipAbR = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
-        mGraphData->push("angle_HipAbR", angleHipAbR);
+        const double angle = skel->getJoint("FemurR")->getPosition(2) * 180.0 / M_PI;
+        mGraphData->push("angle_HipAbR", angle);
     }
-    
     if (mGraphData->key_exists("angle_KneeR")) {
-        const double angleKneeR = skel->getJoint("TibiaR")->getPosition(0) * 180.0 / M_PI;
-        mGraphData->push("angle_KneeR", angleKneeR);
+        const double angle = skel->getJoint("TibiaR")->getPosition(0) * 180.0 / M_PI;
+        mGraphData->push("angle_KneeR", angle);
     }
-    
     if (mGraphData->key_exists("angle_AnkleR")) {
-        const double angleAnkleR = skel->getJoint("TalusR")->getPosition(0) * 180.0 / M_PI;
-        mGraphData->push("angle_AnkleR", -angleAnkleR);
+        const double angle = skel->getJoint("TalusR")->getPosition(0) * 180.0 / M_PI;
+        mGraphData->push("angle_AnkleR", -angle);
     }
-    
+    // Left side kinematics
+    if (mGraphData->key_exists("angle_HipL")) {
+        const double angle = skel->getJoint("FemurL")->getPosition(0) * 180.0 / M_PI;
+        mGraphData->push("angle_HipL", -angle);
+    }
+    if (mGraphData->key_exists("angle_HipIRL")) {
+        const double angle = skel->getJoint("FemurL")->getPosition(1) * 180.0 / M_PI;
+        mGraphData->push("angle_HipIRL", angle);
+    }
+    if (mGraphData->key_exists("angle_HipAbL")) {
+        const double angle = skel->getJoint("FemurL")->getPosition(2) * 180.0 / M_PI;
+        mGraphData->push("angle_HipAbL", angle);
+    }
+    if (mGraphData->key_exists("angle_KneeL")) {
+        const double angle = skel->getJoint("TibiaL")->getPosition(0) * 180.0 / M_PI;
+        mGraphData->push("angle_KneeL", angle);
+    }
+    if (mGraphData->key_exists("angle_AnkleL")) {
+        const double angle = skel->getJoint("TalusL")->getPosition(0) * 180.0 / M_PI;
+        mGraphData->push("angle_AnkleL", -angle);
+    }
+    // Pelvis (bilateral)
     if (mGraphData->key_exists("angle_Rotation")) {
-        const double angleRotation = skel->getJoint("Pelvis")->getPosition(1) * 180.0 / M_PI;
-        mGraphData->push("angle_Rotation", angleRotation);
+        const double angle = skel->getJoint("Pelvis")->getPosition(1) * 180.0 / M_PI;
+        mGraphData->push("angle_Rotation", angle);
     }
-    
     if (mGraphData->key_exists("angle_Obliquity")) {
-        const double angleObliquity = skel->getJoint("Pelvis")->getPosition(2) * 180.0 / M_PI;
-        mGraphData->push("angle_Obliquity", angleObliquity);
+        const double angle = skel->getJoint("Pelvis")->getPosition(2) * 180.0 / M_PI;
+        mGraphData->push("angle_Obliquity", angle);
     }
-    
     if (mGraphData->key_exists("angle_Tilt")) {
-        const double angleTilt = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
-        mGraphData->push("angle_Tilt", angleTilt);
+        const double angle = skel->getJoint("Pelvis")->getPosition(0) * 180.0 / M_PI;
+        mGraphData->push("angle_Tilt", angle);
     }
 
     const auto character = getCharacter();

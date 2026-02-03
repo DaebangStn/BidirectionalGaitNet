@@ -42,10 +42,12 @@ const char* CAMERA_PRESET_DEFINITIONS[] = {
         "PRESET|Frontal view|0,0,3.0|0,1,0|0,0,0|1|1,0,0,0",
 };
 
-// Key joint keys for rollout analysis
+// Combined list for data collection (simulation may record both sides)
 static const std::vector<std::string> kRolloutKinKeys = {
     "angle_HipR", "angle_KneeR", "angle_AnkleR",
     "angle_HipIRR", "angle_HipAbR",
+    "angle_HipL", "angle_KneeL", "angle_AnkleL",
+    "angle_HipIRL", "angle_HipAbL",
     "angle_Tilt", "angle_Obliquity", "angle_Rotation"
 };
 
@@ -158,14 +160,10 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
     mGraphData->register_key("sway_FPAl", 1000);
     mGraphData->register_key("sway_AnteversionR", 1000);
     // mGraphData->register_key("sway_AnteversionL", 1000);
-    mGraphData->register_key("angle_HipR", 1000);
-    mGraphData->register_key("angle_HipIRR", 1000);
-    mGraphData->register_key("angle_HipAbR", 1000);
-    mGraphData->register_key("angle_KneeR", 1000);
-    mGraphData->register_key("angle_AnkleR", 1000);
-    mGraphData->register_key("angle_Rotation", 1000);
-    mGraphData->register_key("angle_Obliquity", 1000);
-    mGraphData->register_key("angle_Tilt", 1000);
+    // Register kinematics keys (R, L, and pelvis)
+    for (const auto& key : kRolloutKinKeys) {
+        mGraphData->register_key(key, 1000);
+    }
     
     mGraphData->register_key("energy_metabolic_step", 1000);
     mGraphData->register_key("energy_metabolic", 1000);
@@ -757,13 +755,14 @@ void RenderCkpt::drawRolloutKinematicsPlot(int angleSelection)
     std::string plotTitle;
     double yMin, yMax;
 
+    std::string sideLabel = (mKinematicsSide == KinematicsSide::Left) ? " (L)" : " (R)";
     if (angleSelection == 0) {  // Major
-        keys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
-        plotTitle = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
+        keys = getMajorJointKeys();
+        plotTitle = mPlotTitle ? mCheckpointName : "Major Joint Angles" + sideLabel + " (deg)";
         yMin = -50; yMax = 70;
     } else if (angleSelection == 1) {  // Minor
-        keys = {"angle_HipIRR", "angle_HipAbR"};
-        plotTitle = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
+        keys = getMinorJointKeys();
+        plotTitle = mPlotTitle ? mCheckpointName : "Minor Joint Angles" + sideLabel + " (deg)";
         yMin = -20; yMax = 20;
     } else {  // Pelvis
         keys = {"angle_Tilt", "angle_Obliquity", "angle_Rotation"};
@@ -904,15 +903,16 @@ void RenderCkpt::drawRolloutTabContent()
             };
 
             if (rolloutAngleSelection == 0) {  // Major joints
-                double mseHip = getVal(mRolloutStatus.mse, "angle_HipR");
-                double mseKnee = getVal(mRolloutStatus.mse, "angle_KneeR");
-                double mseAnkle = getVal(mRolloutStatus.mse, "angle_AnkleR");
-                double klHip = getVal(mRolloutStatus.kl, "angle_HipR");
-                double klKnee = getVal(mRolloutStatus.kl, "angle_KneeR");
-                double klAnkle = getVal(mRolloutStatus.kl, "angle_AnkleR");
-                double zHip = getVal(mRolloutStatus.zscore, "angle_HipR");
-                double zKnee = getVal(mRolloutStatus.zscore, "angle_KneeR");
-                double zAnkle = getVal(mRolloutStatus.zscore, "angle_AnkleR");
+                std::vector<std::string> keys = getMajorJointKeys();
+                double mseHip = getVal(mRolloutStatus.mse, keys[0]);
+                double mseKnee = getVal(mRolloutStatus.mse, keys[1]);
+                double mseAnkle = getVal(mRolloutStatus.mse, keys[2]);
+                double klHip = getVal(mRolloutStatus.kl, keys[0]);
+                double klKnee = getVal(mRolloutStatus.kl, keys[1]);
+                double klAnkle = getVal(mRolloutStatus.kl, keys[2]);
+                double zHip = getVal(mRolloutStatus.zscore, keys[0]);
+                double zKnee = getVal(mRolloutStatus.zscore, keys[1]);
+                double zAnkle = getVal(mRolloutStatus.zscore, keys[2]);
 
                 ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
                 ImGui::SetWindowFontScale(2.0f);
@@ -972,12 +972,13 @@ void RenderCkpt::drawRolloutTabContent()
                 }
             }
             else if (rolloutAngleSelection == 1) {  // Minor joints
-                double mseHipIR = getVal(mRolloutStatus.mse, "angle_HipIRR");
-                double mseHipAb = getVal(mRolloutStatus.mse, "angle_HipAbR");
-                double klHipIR = getVal(mRolloutStatus.kl, "angle_HipIRR");
-                double klHipAb = getVal(mRolloutStatus.kl, "angle_HipAbR");
-                double zHipIR = getVal(mRolloutStatus.zscore, "angle_HipIRR");
-                double zHipAb = getVal(mRolloutStatus.zscore, "angle_HipAbR");
+                std::vector<std::string> keys = getMinorJointKeys();
+                double mseHipIR = getVal(mRolloutStatus.mse, keys[0]);
+                double mseHipAb = getVal(mRolloutStatus.mse, keys[1]);
+                double klHipIR = getVal(mRolloutStatus.kl, keys[0]);
+                double klHipAb = getVal(mRolloutStatus.kl, keys[1]);
+                double zHipIR = getVal(mRolloutStatus.zscore, keys[0]);
+                double zHipAb = getVal(mRolloutStatus.zscore, keys[1]);
 
                 ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
                 ImGui::SetWindowFontScale(2.0f);
@@ -1583,6 +1584,22 @@ std::string RenderCkpt::getActiveKinematicsLabel() const
         return fs::path(fullPath).filename().string();
     }
     return "";
+}
+
+std::vector<std::string> RenderCkpt::getMajorJointKeys() const
+{
+    if (mKinematicsSide == KinematicsSide::Left) {
+        return {"angle_HipL", "angle_KneeL", "angle_AnkleL"};
+    }
+    return {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
+}
+
+std::vector<std::string> RenderCkpt::getMinorJointKeys() const
+{
+    if (mKinematicsSide == KinematicsSide::Left) {
+        return {"angle_HipIRL", "angle_HipAbL"};
+    }
+    return {"angle_HipIRR", "angle_HipAbR"};
 }
 
 float RenderCkpt::getHeelStrikeTime()
@@ -2245,7 +2262,6 @@ void RenderCkpt::drawRightPanel()
     ImGui::SameLine();
     ImGui::SetNextItemWidth(30);
     ImGui::InputDouble("X(min)", &mXmin);
-    ImGui::SameLine();
 
     // Reference kinematics source selector and overlay toggle
     bool hasAnyKinematics = mHasReferenceKinematics || mHasNormativeKinematics;
@@ -2272,9 +2288,19 @@ void RenderCkpt::drawRightPanel()
             }
             ImGui::EndCombo();
         }
+        // Side selector (Right/Left) - radio buttons
+        ImGui::SameLine();
+        if (ImGui::RadioButton("R", mKinematicsSideInt == 0)) {
+            mKinematicsSide = KinematicsSide::Right;
+            mKinematicsSideInt = 0;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("L", mKinematicsSideInt == 1)) {
+            mKinematicsSide = KinematicsSide::Left;
+            mKinematicsSideInt = 1;
+        }
     }
 
-    ImGui::SameLine();
     // Plot title control
     ImGui::Checkbox("Title##PlotTitleCheckbox", &mPlotTitle);
     ImGui::SameLine();
@@ -2768,14 +2794,15 @@ void RenderCkpt::drawKinematicsTabContent()
             ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -45, 60);
 
-            std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles (deg)";
+            std::string sideLabel = (mKinematicsSide == KinematicsSide::Left) ? " (L)" : " (R)";
+            std::string title_major_joints = mPlotTitle ? mCheckpointName : "Major Joint Angles" + sideLabel + " (deg)";
             float plotHeight = getPlotHeight("Kinematics");
             double plotXMin = 0.0, plotXMax = 0.0;
             if (ImPlot::BeginPlot((title_major_joints + "##MajorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
-                std::vector<std::string> jointKeys = {"angle_HipR", "angle_KneeR", "angle_AnkleR"};
+                std::vector<std::string> jointKeys = getMajorJointKeys();
                 plotGraphData(jointKeys, ImAxis_Y1, "", stats);
                 plotReferenceKinematics(jointKeys);
 
@@ -2789,9 +2816,10 @@ void RenderCkpt::drawKinematicsTabContent()
             }
             // MSE for major joints (using stored plot limits)
             if (getActiveKinematics()) {
-                double mseHip = computeMSE("angle_HipR", plotXMin, plotXMax);
-                double mseKnee = computeMSE("angle_KneeR", plotXMin, plotXMax);
-                double mseAnkle = computeMSE("angle_AnkleR", plotXMin, plotXMax);
+                std::vector<std::string> mseKeys = getMajorJointKeys();
+                double mseHip = computeMSE(mseKeys[0], plotXMin, plotXMax);
+                double mseKnee = computeMSE(mseKeys[1], plotXMin, plotXMax);
+                double mseAnkle = computeMSE(mseKeys[2], plotXMin, plotXMax);
 
                 double mseSum = mseHip + mseKnee + mseAnkle;
                 ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
@@ -2822,14 +2850,15 @@ void RenderCkpt::drawKinematicsTabContent()
             ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
             ImPlot::SetNextAxisLimits(3, -10, 15);
 
-            std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles (deg)";
+            std::string sideLabel = (mKinematicsSide == KinematicsSide::Left) ? " (L)" : " (R)";
+            std::string title_minor_joints = mPlotTitle ? mCheckpointName : "Minor Joint Angles" + sideLabel + " (deg)";
             double plotXMin = 0.0, plotXMax = 0.0;
             if (ImPlot::BeginPlot((title_minor_joints + "##MinorJoints").c_str(), ImVec2(-1, getPlotHeight("Kinematics"))))
             {
 
                 ImPlot::SetupAxes("Time (s)", "Angle (deg)");
 
-                std::vector<std::string> jointKeys = {"angle_HipIRR", "angle_HipAbR"};
+                std::vector<std::string> jointKeys = getMinorJointKeys();
                 plotGraphData(jointKeys, ImAxis_Y1, "", stats);
                 plotReferenceKinematics(jointKeys);
 
@@ -2843,8 +2872,9 @@ void RenderCkpt::drawKinematicsTabContent()
             }
             // MSE for minor joints (using stored plot limits)
             if (getActiveKinematics()) {
-                double mseHipIR = computeMSE("angle_HipIRR", plotXMin, plotXMax);
-                double mseHipAb = computeMSE("angle_HipAbR", plotXMin, plotXMax);
+                std::vector<std::string> mseKeys = getMinorJointKeys();
+                double mseHipIR = computeMSE(mseKeys[0], plotXMin, plotXMax);
+                double mseHipAb = computeMSE(mseKeys[1], plotXMin, plotXMax);
                 ImGui::TextDisabled("ref: %s", getActiveKinematicsLabel().c_str());
                 ImGui::SetWindowFontScale(2.0f);
                 ImGui::Text("MSE: HipIR:%.1f HipAb:%.1f", mseHipIR, mseHipAb);

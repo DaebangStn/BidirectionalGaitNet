@@ -11,7 +11,7 @@ environment:
 
   # Motion Reference
   motion:
-    file: "@pid:/motion/walk_single.h5"
+    file: "@pid:/motion/walk01_single.h5"
 
   # Muscle System
   # muscle:
@@ -60,8 +60,3 @@ environment:
         separate: true
 
 train: 
-  curriculum:
-    imit_mask:
-      - op: mask
-        joints: ["FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL"]
-        from_iteration: 0

@@ -15,17 +15,25 @@ JOINT_ORDER = [
     'FemurR[0]', 'FemurR[1]', 'FemurR[2]',
     'TibiaR[0]',
     'TalusR[0]',
+    'FemurL[0]', 'FemurL[1]', 'FemurL[2]',
+    'TibiaL[0]',
+    'TalusL[0]',
 ]
 
 JOINT_DISPLAY_NAMES = {
     'Pelvis[0]': 'Pelvis Tilt',
     'Pelvis[1]': 'Pelvis Rotation',
     'Pelvis[2]': 'Pelvis Obliquity',
-    'FemurR[0]': 'Hip Flex/Ext',
-    'FemurR[1]': 'Hip Abduction',
-    'FemurR[2]': 'Hip Int Rotation',
-    'TibiaR[0]': 'Knee Flexion',
-    'TalusR[0]': 'Ankle Dorsiflex',
+    'FemurR[0]': 'Hip Flex/Ext (R)',
+    'FemurR[1]': 'Hip Abduction (R)',
+    'FemurR[2]': 'Hip Int Rotation (R)',
+    'TibiaR[0]': 'Knee Flexion (R)',
+    'TalusR[0]': 'Ankle Dorsiflex (R)',
+    'FemurL[0]': 'Hip Flex/Ext (L)',
+    'FemurL[1]': 'Hip Abduction (L)',
+    'FemurL[2]': 'Hip Int Rotation (L)',
+    'TibiaL[0]': 'Knee Flexion (L)',
+    'TalusL[0]': 'Ankle Dorsiflex (L)',
 }
 
 

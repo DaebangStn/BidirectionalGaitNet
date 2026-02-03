@@ -59,6 +59,7 @@ struct PIDNavigator::Impl {
     // Callbacks
     FileSelectionCallback fileSelectionCallback;
     PIDChangeCallback pidChangeCallback;
+    VisitChangeCallback visitChangeCallback;
 
     Impl(rm::ResourceManager* rm, std::unique_ptr<FileFilter> filter)
         : resourceManager(rm), fileFilter(std::move(filter)) {
@@ -242,6 +243,10 @@ void PIDNavigator::setPIDChangeCallback(PIDChangeCallback callback) {
     pImpl->pidChangeCallback = std::move(callback);
 }
 
+void PIDNavigator::setVisitChangeCallback(VisitChangeCallback callback) {
+    pImpl->visitChangeCallback = std::move(callback);
+}
+
 void PIDNavigator::renderUI(const char* title,
                             float pidListHeight,
                             float fileListHeight,
@@ -352,11 +357,21 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
                 if (pImpl->state.selectedVisit != v) {
                     pImpl->state.selectedVisit = v;
                     pImpl->state.preOp = (visits[v] == "pre");  // Legacy compatibility
+                    std::string pid = pImpl->state.pidList[pImpl->state.selectedPID];
                     try {
-                        scanFiles(pImpl->state.pidList[pImpl->state.selectedPID], visits[v]);
+                        scanFiles(pid, visits[v]);
                     } catch (const std::exception& e) {
                         LOG_WARN("[PIDNavigator] Failed to scan visit: " << e.what());
                         pImpl->files.clear();
+                    }
+
+                    // Invoke visit change callback if set
+                    if (pImpl->visitChangeCallback) {
+                        try {
+                            pImpl->visitChangeCallback(pid, visits[v]);
+                        } catch (const std::exception& e) {
+                            LOG_WARN("[PIDNavigator] Visit change callback error: " << e.what());
+                        }
                     }
                 }
             }

@@ -182,6 +182,15 @@ private:
     // Personalized calibration scale path (populated when loaded)
     std::string mPersonalizedScalePath;
 
+    // Ankle plantarflexion limit configuration
+    float mAnkleRomLeft = 47.8f;      // From plantar_L.yaml normative
+    float mAnkleRomRight = 47.8f;     // From plantar_R.yaml normative
+    float mAnkleKinMaxLeft = 0.0f;    // From motion analysis (degrees)
+    float mAnkleKinMaxRight = 0.0f;
+    float mAnkleLimitLeft = 47.8f;    // max(ROM, kinematics)
+    float mAnkleLimitRight = 47.8f;
+    bool mApplyAnkleLimit = true;     // Whether to apply ankle limit on export
+
     // Playback state
     C3DViewerState mMotionState;
     Eigen::Vector3d mC3DCOM;
@@ -255,6 +264,10 @@ private:
     void onPIDFileSelected(const std::string& path, const std::string& filename);
     void checkForPersonalizedCalibration();
     bool loadPersonalizedCalibration(const std::string& inputDir);
+
+    // === Ankle ROM/Kinematics ===
+    void loadAnkleROMFromConfig();
+    void computeAnkleKinematicsMax();
 
     // === Motion source helper ===
     std::string getCurrentMotionPath() const;
