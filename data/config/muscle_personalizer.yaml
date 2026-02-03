@@ -16,7 +16,7 @@ paths:
   reference_skeleton: "@data/skeleton/base.yaml"
   reference_muscle: "@data/muscle/base.yaml"
   # muscle_groups: "@data/config/muscle_groups.yaml"
-  muscle_groups: "@data/config/muscle_groups_detailed2.yaml"
+  muscle_groups: "@data/config/muscle_groups_detailed.yaml"
 
 # Weight scaling defaults
 weight_scaling:
@@ -142,10 +142,10 @@ contracture_estimation:
     - "abd_k0_R"
     # - "abd_k90_L"
     # - "abd_k90_R"
-    - "intRot_L"
-    - "intRot_R"
-    - "extRot_L"
-    - "extRot_R"
+    # - "intRot_L"
+    # - "intRot_R"
+    # - "extRot_L"
+    # - "extRot_R"
 
 # Muscle visualization
 visualization:

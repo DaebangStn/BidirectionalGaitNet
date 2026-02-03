@@ -550,6 +550,8 @@ private:
 
     // Helper function to load clinical ROM data
     void loadClinicalROM(const std::string& pid, const std::string& visit);
+    void onBrowsePIDChanged(const std::string& pid);  // Callback for PID selection changes
+    void onBrowseVisitChanged(const std::string& pid, const std::string& visit);  // Callback for visit changes
 };
 
 } // namespace PMuscle

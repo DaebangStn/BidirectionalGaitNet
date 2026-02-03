@@ -218,6 +218,50 @@ void PhysicalExam::loadClinicalROM(const std::string& pid, const std::string& vi
     }
 }
 
+void PhysicalExam::onBrowsePIDChanged(const std::string& pid)
+{
+    mBrowseCharacterPID = pid;
+
+    if (pid.empty()) {
+        mClinicalWeightAvailable = false;
+        mClinicalROM.clear();
+        mClinicalROMPID.clear();
+        mClinicalROMVisit.clear();
+        return;
+    }
+
+    // Get visit from navigator state
+    const auto& pidState = mPIDNavigator->getState();
+    std::string visit = pidState.getVisitDir();
+
+    // Rescan files when PID changes
+    if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
+        scanSkeletonFilesForBrowse();
+    }
+    if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
+        scanMuscleFilesForBrowse();
+    }
+
+    // Load clinical ROM data for the new PID
+    loadClinicalROM(pid, visit);
+}
+
+void PhysicalExam::onBrowseVisitChanged(const std::string& pid, const std::string& visit)
+{
+    if (pid.empty() || visit.empty()) return;
+
+    // Rescan files when visit changes (if using patient data)
+    if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
+        scanSkeletonFilesForBrowse();
+    }
+    if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
+        scanMuscleFilesForBrowse();
+    }
+
+    // Reload clinical ROM data for the new visit
+    loadClinicalROM(pid, visit);
+}
+
 void PhysicalExam::loadRenderConfigImpl() {
     // Common config (geometry, default_open_panels) already loaded by ViewerAppBase
     // Uses inherited mControlPanelWidth and mPlotPanelWidth from geometry.control/plot
@@ -344,6 +388,12 @@ void PhysicalExam::onInitialize() {
             resourceManager,
             nullptr  // No file filter - just for PID selection
         );
+        mPIDNavigator->setPIDChangeCallback([this](const std::string& pid) {
+            onBrowsePIDChanged(pid);
+        });
+        mPIDNavigator->setVisitChangeCallback([this](const std::string& pid, const std::string& visit) {
+            onBrowseVisitChanged(pid, visit);
+        });
         mPIDNavigator->scanPIDs();
     }
 
@@ -5866,30 +5916,15 @@ void PhysicalExam::drawClinicalDataSection() {
             return;
         }
 
-        // PID Navigator inline selector
-        mPIDNavigator->renderInlineSelector(120, 0);  // PID list only, no file list
+        // PID Navigator selector (PID list only, no file sections)
+        // PID changes are handled by onBrowsePIDChanged callback
+        mPIDNavigator->renderUI(nullptr, 120, 0);
 
-        // Show selected PID info
+        // Handle deselection (e.g., after PID list refresh)
         const auto& pidState = mPIDNavigator->getState();
-        if (pidState.selectedPID >= 0) {
-            const std::string& pid = pidState.pidList[pidState.selectedPID];
-            if (pid != mBrowseCharacterPID) {
-                mBrowseCharacterPID = pid;
-                // Rescan files when PID changes
-                if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
-                    scanSkeletonFilesForBrowse();
-                }
-                if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
-                    scanMuscleFilesForBrowse();
-                }
-                // Load clinical ROM data for the new PID
-                loadClinicalROM(pid, pidState.getVisitDir());
-            }
-        } else if (!mBrowseCharacterPID.empty()) {
-            // PID was deselected
+        if (pidState.selectedPID < 0 && !mBrowseCharacterPID.empty()) {
             mBrowseCharacterPID.clear();
             mClinicalWeightAvailable = false;
-            // Clear clinical ROM data
             mClinicalROM.clear();
             mClinicalROMPID.clear();
             mClinicalROMVisit.clear();
@@ -6897,6 +6932,7 @@ void PhysicalExam::drawTrialManagementSection() {
 
             std::string btnLabel = "Run " + std::to_string(selectedCount) + " Trial(s)";
             if (ImGui::Button(btnLabel.c_str(), ImVec2(120, 0))) {
+                clearTrialBuffers();
                 runSelectedTrials();
             }
 

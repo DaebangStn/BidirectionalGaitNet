@@ -461,8 +461,8 @@ void MotionEditorApp::drawPIDBrowserTab()
         return;
     }
 
-    // Use the shared PIDNavigator component
-    mPIDNavigator->renderInlineSelector(120, 120);
+    // Use the shared PIDNavigator component (no collapsing header)
+    mPIDNavigator->renderUI(nullptr, 120, 120);
 }
 
 void MotionEditorApp::drawDirectPathTab()

@@ -1,25 +1,25 @@
 args:
-  checkpoint_interval: 1000
+  checkpoint_interval: 2000
   total_timesteps: 500000000
 
 environment:
-  pid: "29792292/pre"
+  pid: "29792292/op1"
   # Skeleton and Character
   skeleton:
-    file: "@pid:/skeleton/dynamic_kp3.yaml"
-    actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
+    file: "@pid:/skeleton/dynamic.yaml"
+    actuator: "pd"  # pd, torque, muscle, mass, mass_lower
 
   # Motion Reference
   motion:
     file: "@pid:/motion/walk_single_cyc.h5"
 
   # Muscle System
-  muscle:
-    file: "@pid:/muscle/clinic_0125_1925.yaml"
-    mesh_lbs_weight: false
-    use_velocity_force: false
-    use_joint_state: true
-    clip_lm_norm: 1.28 # to disable, remove or set to -1
+  # muscle:
+  #   file: "@pid:/muscle/clinic_0202_2047.yaml"
+  #   mesh_lbs_weight: false
+  #   use_velocity_force: false
+  #   use_joint_state: true
+  #   clip_lm_norm: 1.25 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:
@@ -46,8 +46,8 @@ environment:
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 100.0
-    pos_weight: 0.2
-    vel_weight: 0.003
+    pos_weight: 0.5
+    vel_weight: 0.005
     com_weight: 10.0
 
     # Metabolic configuration
@@ -61,11 +61,5 @@ environment:
         separate: true
 
 train: 
-  curriculum:
-    imit_mask:
-      - op: mask
-        joints: ["FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL", "TalusR", "TalusL"]
-        from_iteration: 0
-      - op: demask
-        joints: ["TalusR", "TalusL"]
-        from_iteration: 2000
+  # pd_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
+  # ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"

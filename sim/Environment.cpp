@@ -869,32 +869,29 @@ Eigen::VectorXd Environment::getFutureRefPose(int future_step)
 void Environment::updateTargetPosAndVel(bool currentStep)
 {
     double dTime = 1.0 / mControlHz;
-    Eigen::VectorXd nextPose;
-    if (mRewardType == gaitnet) {
-        double dPhase = dTime / (mMotion->getMaxTime() / mCadence);
-        double adaptPhase = (currentStep ? 0.0 : dPhase) + mGaitPhase->getAdaptivePhase();
-        
-        mRefPose = mMotion->getTargetPose(adaptPhase);
-        nextPose = mMotion->getTargetPose(adaptPhase + dPhase);
-    } else if (mRewardType == deepmimic || mRewardType == scadiver) {
-        double dPhase = dTime / mMotion->getMaxTime();
-        double adaptPhase = (currentStep ? 0.0 : dPhase) + mGaitPhase->getAdaptivePhase();
-        double nextAdaptPhase = adaptPhase + dPhase;
-        double adaptiveTime = (currentStep ? 0.0 : dTime) + mGaitPhase->getAdaptiveTime();
 
-        int adaptCycleCount = mGaitPhase->getAdaptiveCycleCount(adaptiveTime);
-        int nextAdaptCycleCount = mGaitPhase->getAdaptiveCycleCount(adaptiveTime + dTime);
+    // gaitnet uses mCadence to scale cycle time
+    double cycleTime = (mRewardType == gaitnet)
+        ? mMotion->getMaxTime() / mCadence
+        : mMotion->getMaxTime();
+    double dPhase = dTime / cycleTime;
 
-        mRefPose = mMotion->getTargetPose(adaptPhase);
-        nextPose = mMotion->getTargetPose(nextAdaptPhase);
+    double adaptPhase = (currentStep ? 0.0 : dPhase) + mGaitPhase->getAdaptivePhase();
+    double adaptiveTime = (currentStep ? 0.0 : dTime) + mGaitPhase->getAdaptiveTime();
 
-        if (nextAdaptCycleCount > 0) {
-            mRefPose[3] += mMotion->getCycleDistance()[0] * adaptCycleCount;
-            mRefPose[5] += mMotion->getCycleDistance()[2] * adaptCycleCount;
-            nextPose[3] += mMotion->getCycleDistance()[0] * nextAdaptCycleCount;
-            nextPose[5] += mMotion->getCycleDistance()[2] * nextAdaptCycleCount;
-        }
+    int adaptCycleCount = mGaitPhase->getAdaptiveCycleCount(adaptiveTime);
+    int nextAdaptCycleCount = mGaitPhase->getAdaptiveCycleCount(adaptiveTime + dTime);
+
+    mRefPose = mMotion->getTargetPose(adaptPhase);
+    Eigen::VectorXd nextPose = mMotion->getTargetPose(adaptPhase + dPhase);
+
+    if (nextAdaptCycleCount > 0) {
+        mRefPose[3] += mMotion->getCycleDistance()[0] * adaptCycleCount;
+        mRefPose[5] += mMotion->getCycleDistance()[2] * adaptCycleCount;
+        nextPose[3] += mMotion->getCycleDistance()[0] * nextAdaptCycleCount;
+        nextPose[5] += mMotion->getCycleDistance()[2] * nextAdaptCycleCount;
     }
+
     mTargetVelocities = mCharacter->getSkeleton()->getPositionDifferences(nextPose, mRefPose) / dTime;
 }
 

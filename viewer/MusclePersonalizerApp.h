@@ -418,6 +418,8 @@ private:
     void applyDefaultROMValues();
     void loadPatientROM(const std::string& pid, const std::string& visit);
     void loadClinicalWeight(const std::string& pid, const std::string& visit);
+    void onPIDChanged(const std::string& pid);  // Callback for PID selection changes
+    void onVisitChanged(const std::string& pid, const std::string& visit);  // Callback for visit changes
     void updateROMTrialCDValues();
     std::optional<float> getEffectiveROMValue(const ROMTrialInfo& trial) const;  // Returns normative or cd_value based on mROMSource
     void refreshMuscleList();

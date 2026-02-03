@@ -95,6 +95,12 @@ void MusclePersonalizerApp::onInitialize()
             mResourceManager,
             nullptr  // No file filter - just for PID selection
         );
+        mPIDNavigator->setPIDChangeCallback([this](const std::string& pid) {
+            onPIDChanged(pid);
+        });
+        mPIDNavigator->setVisitChangeCallback([this](const std::string& pid, const std::string& visit) {
+            onVisitChanged(pid, visit);
+        });
         mPIDNavigator->scanPIDs();
     }
 }
@@ -558,54 +564,17 @@ void MusclePersonalizerApp::drawClinicalDataSection()
             return;
         }
 
-        // PID Navigator inline selector
-        mPIDNavigator->renderInlineSelector(120, 0);  // PID list only, no file list
+        // PID Navigator selector (PID list only, no file sections)
+        // PID changes are handled by onPIDChanged callback
+        mPIDNavigator->renderUI(nullptr, 120, 0);
 
-        // Show selected PID info
+        // Handle deselection (e.g., after PID list refresh)
         const auto& pidState = mPIDNavigator->getState();
-
-        // Check if PID changed - reset ROM source to Normative and load character files
-        if (pidState.selectedPID >= 0) {
-            const std::string& pid = pidState.pidList[pidState.selectedPID];
-            if (pid != mCurrentROMPID) {
-                // Reset ROM source to Normative when PID changes
-                mROMSource = ROMSource::Normative;
-                mPatientROMValues.clear();
-                mCurrentROMPID = pid;
-                // Note: getEffectiveROMValue() will use trial.normative when mROMSource is Normative
-
-                // Load clinical weight using visit directory
-                loadClinicalWeight(pid, pidState.getVisitDir());
-
-                // Auto-select patient skeleton (first available file)
-                mCharacterPID = pid;
-                mSkeletonDataSource = CharacterDataSource::PatientData;
-                scanSkeletonFiles();
-
-                // Auto-select patient muscle (first available file)
-                mMuscleDataSource = CharacterDataSource::PatientData;
-                scanMuscleFiles();
-
-                // Select first skeleton/muscle files if available and auto-rebuild
-                std::string visit = pidState.getVisitDir();
-                if (!mSkeletonCandidates.empty()) {
-                    mSkeletonPath = "@pid:" + pid + "/" + visit + "/skeleton/" + mSkeletonCandidates[0];
-                }
-                if (!mMuscleCandidates.empty()) {
-                    mMusclePath = "@pid:" + pid + "/" + visit + "/muscle/" + mMuscleCandidates[0];
-                }
-
-                if (!mSkeletonCandidates.empty() || !mMuscleCandidates.empty()) {
-                    loadCharacter();
-                }
-            }
-        } else if (!mCurrentROMPID.empty()) {
-            // PID was deselected - reset to Normative
+        if (pidState.selectedPID < 0 && !mCurrentROMPID.empty()) {
             mROMSource = ROMSource::Normative;
             mPatientROMValues.clear();
             mCurrentROMPID.clear();
             mClinicalWeightAvailable = false;
-            // Note: getEffectiveROMValue() will use trial.normative when mROMSource is Normative
         }
     }
 }
@@ -648,7 +617,7 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             }
         }
 
-        // Patient skeleton controls - uses visit from PID navigator
+        // Patient skeleton info
         if (mSkeletonDataSource == CharacterDataSource::PatientData) {
             if (!mCharacterPID.empty()) {
                 ImGui::SameLine();
@@ -657,6 +626,22 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             } else {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
+            }
+        }
+
+        // Del button for selected skeleton file (both Default and Patient)
+        if (!mSkeletonPath.empty()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Del##skel")) {
+                try {
+                    std::string resolved = mResourceManager->resolve(mSkeletonPath);
+                    if (!resolved.empty() && std::filesystem::exists(resolved)) {
+                        std::filesystem::remove(resolved);
+                        LOG_INFO("[MusclePersonalizer] Deleted skeleton: " << resolved);
+                    }
+                } catch (...) {}
+                mSkeletonPath.clear();
+                scanSkeletonFiles();
             }
         }
 
@@ -703,7 +688,7 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             }
         }
 
-        // Patient muscle controls - uses visit from PID navigator
+        // Patient muscle info
         if (mMuscleDataSource == CharacterDataSource::PatientData) {
             if (!mCharacterPID.empty()) {
                 ImGui::SameLine();
@@ -712,6 +697,22 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             } else {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
+            }
+        }
+
+        // Del button for selected muscle file (both Default and Patient)
+        if (!mMusclePath.empty()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Del##muscle")) {
+                try {
+                    std::string resolved = mResourceManager->resolve(mMusclePath);
+                    if (!resolved.empty() && std::filesystem::exists(resolved)) {
+                        std::filesystem::remove(resolved);
+                        LOG_INFO("[MusclePersonalizer] Deleted muscle: " << resolved);
+                    }
+                } catch (...) {}
+                mMusclePath.clear();
+                scanMuscleFiles();
             }
         }
 
@@ -1335,12 +1336,27 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 }
             }
 
-            // Format label: "TC name - value" or "TC name - N/A"
+            // Format label: "TC name - value"
             auto effectiveValue = getEffectiveROMValue(trial);
+            bool needsManualInput = false;
+
+            // If CD not available, use normative as default (editable)
+            if (!effectiveValue.has_value() && trial.normative.has_value()) {
+                // Initialize manual_rom with normative if not yet set
+                if (std::abs(trial.manual_rom) < 0.001f) {
+                    mROMTrials[i].manual_rom = trial.normative.value();
+                }
+                needsManualInput = true;
+            }
+
+            // Build label with current value
             std::string label;
+            char buf[128];
             if (effectiveValue.has_value()) {
-                char buf[128];
                 snprintf(buf, sizeof(buf), "%s - %.1f°", trial.name.c_str(), effectiveValue.value());
+                label = buf;
+            } else if (needsManualInput) {
+                snprintf(buf, sizeof(buf), "%s - %.1f°", trial.name.c_str(), mROMTrials[i].manual_rom);
                 label = buf;
             } else {
                 label = trial.name + " - N/A";
@@ -1350,8 +1366,8 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 // Selection changed
             }
 
-            // If no effective ROM value available, show manual ROM input
-            if (!effectiveValue.has_value()) {
+            // Show editable input when CD not available (using normative as default)
+            if (needsManualInput) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(60);
                 char input_id[64];
@@ -1360,7 +1376,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                     // Manual ROM value updated
                 }
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Manual ROM angle (degrees)");
+                    ImGui::SetTooltip("Edit ROM angle (default: normative %.1f°)", trial.normative.value());
                 }
             }
 
@@ -2919,6 +2935,71 @@ void MusclePersonalizerApp::loadClinicalWeight(const std::string& pid, const std
     }
     catch (const std::exception& e) {
         LOG_ERROR("[MusclePersonalizer] Error loading clinical weight: " << e.what() );
+    }
+}
+
+void MusclePersonalizerApp::onPIDChanged(const std::string& pid)
+{
+    // Reset ROM source to Normative when PID changes
+    mROMSource = ROMSource::Normative;
+    mPatientROMValues.clear();
+    mCurrentROMPID = pid;
+
+    if (pid.empty()) {
+        mClinicalWeightAvailable = false;
+        return;
+    }
+
+    // Get visit from navigator state
+    const auto& pidState = mPIDNavigator->getState();
+    std::string visit = pidState.getVisitDir();
+
+    // Load clinical weight
+    loadClinicalWeight(pid, visit);
+
+    // Auto-select patient skeleton (first available file)
+    mCharacterPID = pid;
+    mSkeletonDataSource = CharacterDataSource::PatientData;
+    scanSkeletonFiles();
+
+    // Auto-select patient muscle (first available file)
+    mMuscleDataSource = CharacterDataSource::PatientData;
+    scanMuscleFiles();
+
+    // Select first skeleton/muscle files if available and auto-rebuild
+    if (!mSkeletonCandidates.empty()) {
+        mSkeletonPath = "@pid:" + pid + "/" + visit + "/skeleton/" + mSkeletonCandidates[0];
+    }
+    if (!mMuscleCandidates.empty()) {
+        mMusclePath = "@pid:" + pid + "/" + visit + "/muscle/" + mMuscleCandidates[0];
+    }
+
+    if (!mSkeletonCandidates.empty() || !mMuscleCandidates.empty()) {
+        loadCharacter();
+    }
+}
+
+void MusclePersonalizerApp::onVisitChanged(const std::string& pid, const std::string& visit)
+{
+    if (pid.empty() || visit.empty()) return;
+
+    // Load clinical weight for the new visit
+    loadClinicalWeight(pid, visit);
+
+    // Rescan files when visit changes (if using patient data)
+    if (mSkeletonDataSource == CharacterDataSource::PatientData) {
+        scanSkeletonFiles();
+        // Update skeleton path if a file was previously selected
+        if (!mSkeletonPath.empty() && !mSkeletonCandidates.empty()) {
+            mSkeletonPath = "@pid:" + pid + "/" + visit + "/skeleton/" + mSkeletonCandidates[0];
+        }
+    }
+    if (mMuscleDataSource == CharacterDataSource::PatientData) {
+        scanMuscleFiles();
+        // Update muscle path if a file was previously selected
+        if (!mMusclePath.empty() && !mMuscleCandidates.empty()) {
+            mMusclePath = "@pid:" + pid + "/" + visit + "/muscle/" + mMuscleCandidates[0];
+        }
     }
 }
 

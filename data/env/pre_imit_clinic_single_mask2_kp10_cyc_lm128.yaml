@@ -1,12 +1,10 @@
-args:
-  checkpoint_interval: 1000
-  total_timesteps: 500000000
+# args:
 
 environment:
   pid: "29792292/pre"
   # Skeleton and Character
   skeleton:
-    file: "@pid:/skeleton/dynamic_kp3.yaml"
+    file: "@pid:/skeleton/dynamic_kp10.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
 
   # Motion Reference

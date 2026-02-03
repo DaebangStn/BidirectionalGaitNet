@@ -3026,13 +3026,22 @@ void RenderCkpt::drawKineticsTabContent()
 
     ImGui::Separator();
 
+    // 2x checkbox for Torque Plots
+    auto& doublePlotSizeMap = getDoublePlotSizeMap();
+    ImGui::Checkbox("2x##TorquePlots", &doublePlotSizeMap["Torque Plots"]);
+
+    std::string title_torques = mPlotTitle ? mCheckpointName : "Joint Torques";
     // Plot torques using mGraphData
     if (!torqueKeysToPlot.empty()) {
         ImGuiCommon::SetupPlotXAxis(mXmin, -1.5);
 
-        if (ImPlot::BeginPlot("Joint Torques##TorquePlots", ImVec2(-1, getPlotHeight("Torque Plots")))) {
+        if (ImPlot::BeginPlot((title_torques + "##TorquePlots").c_str(), ImVec2(-1, getPlotHeight("Torque Plots")))) {
             ImPlot::SetupAxes("Time (s)", "Torque (Nm)", 0, ImPlotAxisFlags_AutoFit);
             plotGraphData(torqueKeysToPlot, ImAxis_Y1);
+
+            ImPlotRect limits = ImPlot::GetPlotLimits();
+            plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
+
             ImPlot::EndPlot();
         }
     } else {

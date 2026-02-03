@@ -37,6 +37,24 @@ std::string PIDSelectionState::getPrePostDir() const {
 }
 
 // ============================================================================
+// FileTypeSection - Internal structure for multi-file-type support
+// ============================================================================
+
+struct FileTypeSection {
+    std::string label;
+    std::unique_ptr<FileFilter> filter;
+    FileSelectionCallback onSelect;
+    FileDeleteCallback onDelete;
+    std::vector<std::string> files;
+    int selectedFile = -1;
+    char filterBuf[64] = "";
+
+    FileTypeSection() = default;
+    FileTypeSection(FileTypeSection&&) = default;
+    FileTypeSection& operator=(FileTypeSection&&) = default;
+};
+
+// ============================================================================
 // PIDNavigator::Impl - PIMPL Implementation
 // ============================================================================
 
@@ -44,48 +62,71 @@ struct PIDNavigator::Impl {
     // Dependencies (non-owning)
     rm::ResourceManager* resourceManager;
 
-    // Owned strategy
-    std::unique_ptr<FileFilter> fileFilter;
-
     // State
     PIDSelectionState state;
-    std::vector<std::string> files;
-    int selectedFile = -1;
+
+    // Multi-file-type sections
+    std::vector<FileTypeSection> fileTypeSections;
 
     // Filter buffers for ImGui
     char pidFilterBuf[64] = "";
-    char fileFilterBuf[64] = "";
 
     // Callbacks
-    FileSelectionCallback fileSelectionCallback;
     PIDChangeCallback pidChangeCallback;
     VisitChangeCallback visitChangeCallback;
 
-    Impl(rm::ResourceManager* rm, std::unique_ptr<FileFilter> filter)
-        : resourceManager(rm), fileFilter(std::move(filter)) {
-        // Initialize default file filter from strategy
-        if (fileFilter) {
-            auto defaultFilter = fileFilter->getDefaultFilter();
-            if (!defaultFilter.empty() && defaultFilter.size() < sizeof(fileFilterBuf)) {
-                std::strcpy(fileFilterBuf, defaultFilter.c_str());
-            }
-        }
+    // Empty vector for getFiles() when no sections exist
+    static const std::vector<std::string> emptyFileList;
+
+    explicit Impl(rm::ResourceManager* rm)
+        : resourceManager(rm) {
     }
 };
+
+const std::vector<std::string> PIDNavigator::Impl::emptyFileList;
 
 // ============================================================================
 // PIDNavigator Public Interface
 // ============================================================================
 
+PIDNavigator::PIDNavigator(rm::ResourceManager* rm)
+    : pImpl(std::make_unique<Impl>(rm)) {
+}
+
 PIDNavigator::PIDNavigator(rm::ResourceManager* rm,
                            std::unique_ptr<FileFilter> filter)
-    : pImpl(std::make_unique<Impl>(rm, std::move(filter))) {
+    : pImpl(std::make_unique<Impl>(rm)) {
+    // Legacy constructor: register as the primary file type with default label
+    if (filter) {
+        FileTypeConfig config;
+        config.label = "Files";
+        config.filter = std::move(filter);
+        registerFileType(std::move(config));
+    }
 }
 
 PIDNavigator::~PIDNavigator() = default;
 
 PIDNavigator::PIDNavigator(PIDNavigator&&) noexcept = default;
 PIDNavigator& PIDNavigator::operator=(PIDNavigator&&) noexcept = default;
+
+void PIDNavigator::registerFileType(FileTypeConfig config) {
+    FileTypeSection section;
+    section.label = std::move(config.label);
+    section.filter = std::move(config.filter);
+    section.onSelect = std::move(config.onSelect);
+    section.onDelete = std::move(config.onDelete);
+
+    // Initialize default file filter from strategy
+    if (section.filter) {
+        auto defaultFilter = section.filter->getDefaultFilter();
+        if (!defaultFilter.empty() && defaultFilter.size() < sizeof(section.filterBuf)) {
+            std::strcpy(section.filterBuf, defaultFilter.c_str());
+        }
+    }
+
+    pImpl->fileTypeSections.push_back(std::move(section));
+}
 
 void PIDNavigator::scanPIDs() {
     pImpl->state.pidList.clear();
@@ -94,8 +135,12 @@ void PIDNavigator::scanPIDs() {
     pImpl->state.pidVisits.clear();
     pImpl->state.selectedPID = -1;
     pImpl->state.selectedVisit = 0;
-    pImpl->files.clear();
-    pImpl->selectedFile = -1;
+
+    // Clear all file sections
+    for (auto& section : pImpl->fileTypeSections) {
+        section.files.clear();
+        section.selectedFile = -1;
+    }
 
     if (!pImpl->resourceManager) return;
 
@@ -134,7 +179,6 @@ void PIDNavigator::scanPIDs() {
             }
 
             // Initialize with empty visits - will be scanned when PID is selected
-            // This avoids scanning all PIDs at startup
         }
     } catch (const rm::RMError&) {
         // Silently handle errors - list will remain empty
@@ -142,31 +186,36 @@ void PIDNavigator::scanPIDs() {
 }
 
 void PIDNavigator::scanFiles(const std::string& pid, const std::string& visit) {
-    pImpl->files.clear();
-    pImpl->selectedFile = -1;
+    if (!pImpl->resourceManager || pid.empty()) return;
 
-    if (!pImpl->resourceManager || !pImpl->fileFilter || pid.empty()) return;
+    // Scan files for all registered file type sections
+    for (auto& section : pImpl->fileTypeSections) {
+        section.files.clear();
+        section.selectedFile = -1;
 
-    std::string subdirectory = pImpl->fileFilter->getSubdirectory();
+        if (!section.filter) continue;
 
-    // Build pattern using visit-based path: @pid:{pid}/{visit}/{subdirectory}
-    std::string pattern = "@pid:" + pid + "/" + visit;
-    if (!subdirectory.empty()) {
-        pattern += "/" + subdirectory;
-    }
+        std::string subdirectory = section.filter->getSubdirectory();
 
-    try {
-        auto files = pImpl->resourceManager->list(pattern);
-        for (const auto& file : files) {
-            if (pImpl->fileFilter->matches(file)) {
-                // Extract just the filename (list() returns filenames, not paths)
-                std::filesystem::path p(file);
-                pImpl->files.push_back(p.filename().string());
-            }
+        // Build pattern using visit-based path: @pid:{pid}/{visit}/{subdirectory}
+        std::string pattern = "@pid:" + pid + "/" + visit;
+        if (!subdirectory.empty()) {
+            pattern += "/" + subdirectory;
         }
-        std::sort(pImpl->files.begin(), pImpl->files.end());
-    } catch (const rm::RMError&) {
-        // Silently handle errors - list will remain empty
+
+        try {
+            auto files = pImpl->resourceManager->list(pattern);
+            for (const auto& file : files) {
+                if (section.filter->matches(file)) {
+                    // Extract just the filename (list() returns filenames, not paths)
+                    std::filesystem::path p(file);
+                    section.files.push_back(p.filename().string());
+                }
+            }
+            std::sort(section.files.begin(), section.files.end());
+        } catch (const rm::RMError&) {
+            // Silently handle errors - list will remain empty
+        }
     }
 }
 
@@ -232,11 +281,27 @@ const PIDSelectionState& PIDNavigator::getState() const {
 }
 
 const std::vector<std::string>& PIDNavigator::getFiles() const {
-    return pImpl->files;
+    // Return files from the first registered file type (legacy compatibility)
+    if (!pImpl->fileTypeSections.empty()) {
+        return pImpl->fileTypeSections[0].files;
+    }
+    return Impl::emptyFileList;
+}
+
+const std::vector<std::string>& PIDNavigator::getFiles(const std::string& label) const {
+    for (const auto& section : pImpl->fileTypeSections) {
+        if (section.label == label) {
+            return section.files;
+        }
+    }
+    return Impl::emptyFileList;
 }
 
 void PIDNavigator::setFileSelectionCallback(FileSelectionCallback callback) {
-    pImpl->fileSelectionCallback = std::move(callback);
+    // Set callback on the first registered file type (legacy compatibility)
+    if (!pImpl->fileTypeSections.empty()) {
+        pImpl->fileTypeSections[0].onSelect = std::move(callback);
+    }
 }
 
 void PIDNavigator::setPIDChangeCallback(PIDChangeCallback callback) {
@@ -249,21 +314,19 @@ void PIDNavigator::setVisitChangeCallback(VisitChangeCallback callback) {
 
 void PIDNavigator::renderUI(const char* title,
                             float pidListHeight,
-                            float fileListHeight,
+                            float fileSectionHeight,
                             bool defaultOpen) {
     if (!pImpl->resourceManager) return;
 
-    ImGuiTreeNodeFlags flags = defaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : 0;
-    if (ImGui::CollapsingHeader(title, flags)) {
-        renderInlineSelector(pidListHeight, fileListHeight);
+    // If title provided, wrap in collapsing header
+    if (title) {
+        ImGuiTreeNodeFlags flags = defaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+        if (!ImGui::CollapsingHeader(title, flags)) {
+            return;
+        }
     }
-}
 
-void PIDNavigator::renderInlineSelector(float pidListHeight,
-                                        float fileListHeight) {
-    if (!pImpl->resourceManager) return;
-
-    // PID Filter + Refresh
+    // ========== PID Filter + Refresh ==========
     ImGui::SetNextItemWidth(150);
     ImGui::InputText("##PIDFilter", pImpl->pidFilterBuf, sizeof(pImpl->pidFilterBuf));
     ImGui::SameLine();
@@ -273,7 +336,7 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
     ImGui::SameLine();
     ImGui::Text("%zu PIDs", pImpl->state.pidList.size());
 
-    // PID ListBox
+    // ========== PID ListBox ==========
     if (ImGui::BeginListBox("##PIDList", ImVec2(-1, pidListHeight))) {
         for (int i = 0; i < static_cast<int>(pImpl->state.pidList.size()); ++i) {
             const auto& pid = pImpl->state.pidList[i];
@@ -331,7 +394,9 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
                         scanFiles(pid, pImpl->state.getVisitDir());
                     } catch (const std::exception& e) {
                         LOG_WARN("[PIDNavigator] Failed to scan PID files: " << e.what());
-                        pImpl->files.clear();
+                        for (auto& section : pImpl->fileTypeSections) {
+                            section.files.clear();
+                        }
                     }
 
                     // Invoke PID change callback if set
@@ -348,7 +413,7 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
         ImGui::EndListBox();
     }
 
-    // Visit selection (pre/op1/op2)
+    // ========== Visit selection (pre/op1/op2) ==========
     if (pImpl->state.selectedPID >= 0) {
         const auto& visits = pImpl->state.pidVisits[pImpl->state.selectedPID];
         for (int v = 0; v < static_cast<int>(visits.size()); ++v) {
@@ -362,7 +427,9 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
                         scanFiles(pid, visits[v]);
                     } catch (const std::exception& e) {
                         LOG_WARN("[PIDNavigator] Failed to scan visit: " << e.what());
-                        pImpl->files.clear();
+                        for (auto& section : pImpl->fileTypeSections) {
+                            section.files.clear();
+                        }
                     }
 
                     // Invoke visit change callback if set
@@ -378,59 +445,120 @@ void PIDNavigator::renderInlineSelector(float pidListHeight,
         }
     }
 
-    // Files section (only if fileListHeight > 0)
-    if (fileListHeight > 0 && pImpl->state.selectedPID >= 0) {
-        ImGui::Separator();
-        ImGui::Text("Files: %zu", pImpl->files.size());
+    // ========== File sections (only if fileSectionHeight > 0 and PID selected) ==========
+    if (fileSectionHeight > 0 && pImpl->state.selectedPID >= 0) {
+        for (size_t sectionIdx = 0; sectionIdx < pImpl->fileTypeSections.size(); ++sectionIdx) {
+            auto& section = pImpl->fileTypeSections[sectionIdx];
 
-        ImGui::SetNextItemWidth(100);
-        ImGui::InputText("##FileFilter", pImpl->fileFilterBuf, sizeof(pImpl->fileFilterBuf));
-        ImGui::SameLine();
-        if (ImGui::Button("X##FileClear")) {
-            pImpl->fileFilterBuf[0] = '\0';
-        }
+            ImGui::Separator();
 
-        if (ImGui::BeginListBox("##FileList", ImVec2(-1, fileListHeight))) {
-            for (int i = 0; i < static_cast<int>(pImpl->files.size()); ++i) {
-                const auto& f = pImpl->files[i];
-                if (pImpl->fileFilterBuf[0]) {
-                    // Case-insensitive filtering
-                    std::string fLower = f;
-                    std::string filterLower = pImpl->fileFilterBuf;
-                    std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
-                    std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
-                    if (fLower.find(filterLower) == std::string::npos) {
-                        continue;
-                    }
+            // Section header with file count
+            std::string headerLabel = section.label + " (" + std::to_string(section.files.size()) + ")";
+            if (ImGui::TreeNodeEx(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Filter input
+                std::string filterId = "##Filter_" + std::to_string(sectionIdx);
+                ImGui::SetNextItemWidth(100);
+                ImGui::InputText(filterId.c_str(), section.filterBuf, sizeof(section.filterBuf));
+                ImGui::SameLine();
+                std::string clearId = "X##Clear_" + std::to_string(sectionIdx);
+                if (ImGui::Button(clearId.c_str())) {
+                    section.filterBuf[0] = '\0';
                 }
 
-                if (ImGui::Selectable(f.c_str(), i == pImpl->selectedFile)) {
-                    pImpl->selectedFile = i;
+                // File list
+                std::string listId = "##FileList_" + std::to_string(sectionIdx);
+                if (ImGui::BeginListBox(listId.c_str(), ImVec2(-1, fileSectionHeight))) {
+                    for (int i = 0; i < static_cast<int>(section.files.size()); ++i) {
+                        const auto& f = section.files[i];
 
-                    // Invoke file selection callback if set
-                    if (pImpl->fileSelectionCallback) {
-                        const std::string& pid = pImpl->state.pidList[pImpl->state.selectedPID];
-                        std::string visit = pImpl->state.getVisitDir();
-                        std::string subdirectory = pImpl->fileFilter->getSubdirectory();
-
-                        // Build URI using visit-based path: @pid:{pid}/{visit}/{subdirectory}/{file}
-                        std::string uri = "@pid:" + pid + "/" + visit;
-                        if (!subdirectory.empty()) {
-                            uri += "/" + subdirectory;
+                        // Apply filter
+                        if (section.filterBuf[0]) {
+                            std::string fLower = f;
+                            std::string filterLower = section.filterBuf;
+                            std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
+                            std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
+                            if (fLower.find(filterLower) == std::string::npos) {
+                                continue;
+                            }
                         }
-                        uri += "/" + f;
 
-                        try {
-                            auto handle = pImpl->resourceManager->fetch(uri);
-                            std::filesystem::path localPath = handle.local_path();
-                            pImpl->fileSelectionCallback(localPath.string(), f);
-                        } catch (const std::exception& e) {
-                            LOG_WARN("[PIDNavigator] Failed to fetch file: " << e.what());
+                        bool isSelected = (i == section.selectedFile);
+
+                        // Create a unique selectable ID
+                        std::string selectableId = f + "##" + std::to_string(sectionIdx) + "_" + std::to_string(i);
+
+                        // Display file with Del button for selected item
+                        if (isSelected && section.onDelete) {
+                            // Calculate widths for layout
+                            float contentWidth = ImGui::GetContentRegionAvail().x;
+                            float buttonWidth = ImGui::CalcTextSize("Del").x + ImGui::GetStyle().FramePadding.x * 2;
+                            float textWidth = contentWidth - buttonWidth - ImGui::GetStyle().ItemSpacing.x;
+
+                            // File name (truncated if needed)
+                            ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+                            if (ImGui::Selectable(selectableId.c_str(), true, 0, ImVec2(textWidth, 0))) {
+                                // Already selected, clicking again
+                            }
+                            ImGui::PopStyleColor();
+
+                            // Del button on same line
+                            ImGui::SameLine();
+                            std::string delId = "Del##" + std::to_string(sectionIdx) + "_" + std::to_string(i);
+                            if (ImGui::SmallButton(delId.c_str())) {
+                                std::string deletedFile = f;
+
+                                // Remove from list
+                                section.files.erase(section.files.begin() + i);
+                                section.selectedFile = -1;
+
+                                // Call delete callback
+                                if (section.onDelete) {
+                                    try {
+                                        section.onDelete(deletedFile);
+                                    } catch (const std::exception& e) {
+                                        LOG_WARN("[PIDNavigator] Delete callback error: " << e.what());
+                                    }
+                                }
+
+                                // Break out of loop since we modified the vector
+                                ImGui::EndListBox();
+                                ImGui::TreePop();
+                                goto next_section;  // Continue to next section
+                            }
+                        } else {
+                            if (ImGui::Selectable(selectableId.c_str(), isSelected)) {
+                                section.selectedFile = i;
+
+                                // Invoke file selection callback if set
+                                if (section.onSelect) {
+                                    const std::string& pid = pImpl->state.pidList[pImpl->state.selectedPID];
+                                    std::string visit = pImpl->state.getVisitDir();
+                                    std::string subdirectory = section.filter ? section.filter->getSubdirectory() : "";
+
+                                    // Build URI using visit-based path
+                                    std::string uri = "@pid:" + pid + "/" + visit;
+                                    if (!subdirectory.empty()) {
+                                        uri += "/" + subdirectory;
+                                    }
+                                    uri += "/" + f;
+
+                                    try {
+                                        auto handle = pImpl->resourceManager->fetch(uri);
+                                        std::filesystem::path localPath = handle.local_path();
+                                        section.onSelect(localPath.string(), f);
+                                    } catch (const std::exception& e) {
+                                        LOG_WARN("[PIDNavigator] Failed to fetch file: " << e.what());
+                                    }
+                                }
+                            }
                         }
                     }
+                    ImGui::EndListBox();
                 }
+
+                ImGui::TreePop();
             }
-            ImGui::EndListBox();
+            next_section:;
         }
     }
 }

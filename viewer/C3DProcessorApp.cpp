@@ -2823,7 +2823,7 @@ void C3DProcessorApp::drawClinicalDataSection()
         return;
     }
 
-    mPIDNavigator->renderInlineSelector(150, 150);
+    mPIDNavigator->renderUI(nullptr, 150, 150);
     if (ImGui::Button("Clear Motion & Zero Pose")) clearMotionAndZeroPose();
 
     // Calibration Status Section (render below navigator)

@@ -94,4 +94,22 @@ public:
     }
 };
 
+/**
+ * Filter for muscle definition files (.yaml, .xml)
+ */
+class MuscleFileFilter : public FileFilter {
+public:
+    std::string getSubdirectory() const override {
+        return "muscle";
+    }
+
+    bool matches(const std::string& filename) const override {
+        auto hasExtension = [](const std::string& str, const std::string& ext) {
+            if (str.size() < ext.size()) return false;
+            return str.compare(str.size() - ext.size(), ext.size(), ext) == 0;
+        };
+        return hasExtension(filename, ".yaml") || hasExtension(filename, ".xml");
+    }
+};
+
 } // namespace PIDNav

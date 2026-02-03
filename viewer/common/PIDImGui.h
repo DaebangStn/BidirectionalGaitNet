@@ -54,11 +54,27 @@ using FileSelectionCallback = std::function<void(
 )>;
 
 /**
+ * Callback invoked when a file is deleted from the list.
+ * Parameter: filename (the deleted file name)
+ */
+using FileDeleteCallback = std::function<void(const std::string& filename)>;
+
+/**
  * Callback invoked when PID selection changes.
  * Parameter: pid (the selected PID string)
  */
 using PIDChangeCallback = std::function<void(const std::string& pid)>;
 using VisitChangeCallback = std::function<void(const std::string& pid, const std::string& visit)>;
+
+/**
+ * Configuration for registering a file type section.
+ */
+struct FileTypeConfig {
+    std::string label;                    // Display label (e.g., "Skeleton", "Muscle")
+    std::unique_ptr<FileFilter> filter;   // File filter strategy
+    FileSelectionCallback onSelect;       // Called on file selection
+    FileDeleteCallback onDelete;          // Called when Del is clicked (optional)
+};
 
 /**
  * PID Navigator component for browsing clinical data.
@@ -84,9 +100,18 @@ class PIDNavigator {
 public:
     /**
      * Constructs PID navigator with dependency injection.
+     * Use registerFileType() to add file type sections.
+     *
+     * @param rm Non-owning pointer to ResourceManager singleton
+     */
+    explicit PIDNavigator(rm::ResourceManager* rm);
+
+    /**
+     * Legacy constructor for single file type (backward compatibility).
      *
      * @param rm Non-owning pointer to ResourceManager singleton
      * @param filter File filter strategy (ownership transferred)
+     * @deprecated Use the single-argument constructor with registerFileType() instead.
      */
     PIDNavigator(rm::ResourceManager* rm,
                  std::unique_ptr<FileFilter> filter);
@@ -100,13 +125,21 @@ public:
     PIDNavigator& operator=(PIDNavigator&&) noexcept;
 
     /**
+     * Registers a file type section to be displayed in the navigator.
+     * Multiple file types can be registered (e.g., Skeleton, Muscle, Motion).
+     *
+     * @param config Configuration including label, filter, and callbacks
+     */
+    void registerFileType(FileTypeConfig config);
+
+    /**
      * Scans the resource manager for available PIDs and their metadata.
      * Populates the PID list, names, and GMFCS levels.
      */
     void scanPIDs();
 
     /**
-     * Scans for files of the configured type in the specified PID/visit directory.
+     * Scans for files of all registered types in the specified PID/visit directory.
      *
      * @param pid The PID to scan (e.g., "12964246")
      * @param visit The visit directory (e.g., "pre", "op1", "op2")
@@ -119,12 +152,22 @@ public:
     const PIDSelectionState& getState() const;
 
     /**
-     * Returns the current file list (read-only).
+     * Returns the current file list for the primary (first registered) file type (read-only).
+     * @deprecated Use getFiles(label) for multi-file-type support.
      */
     const std::vector<std::string>& getFiles() const;
 
     /**
-     * Sets callback to invoke when user selects a file.
+     * Returns the file list for a specific file type section.
+     *
+     * @param label The label of the file type section (e.g., "Skeleton", "Muscle")
+     * @return The file list, or empty vector if label not found
+     */
+    const std::vector<std::string>& getFiles(const std::string& label) const;
+
+    /**
+     * Sets callback to invoke when user selects a file (legacy, for primary file type).
+     * @deprecated Use registerFileType() with onSelect callback instead.
      */
     void setFileSelectionCallback(FileSelectionCallback callback);
 
@@ -149,27 +192,17 @@ public:
     bool navigateTo(const std::string& pid, const std::string& visit = "pre");
 
     /**
-     * Renders full UI section with collapsing header.
+     * Renders PID navigator UI.
      *
-     * @param title Section title for collapsing header
+     * @param title Section title for collapsing header. Pass nullptr to render without header.
      * @param pidListHeight Height of PID list box in pixels
-     * @param fileListHeight Height of file list box in pixels
-     * @param defaultOpen Whether the section is open by default
+     * @param fileSectionHeight Height per file section in pixels (0 to hide file sections)
+     * @param defaultOpen Whether the section is open by default (ignored if title is nullptr)
      */
     void renderUI(const char* title = "Clinical Data",
                   float pidListHeight = 150.0f,
-                  float fileListHeight = 150.0f,
+                  float fileSectionHeight = 100.0f,
                   bool defaultOpen = false);
-
-    /**
-     * Renders inline selector content without collapsing header.
-     * Suitable for tab-based UIs.
-     *
-     * @param pidListHeight Height of PID list box in pixels
-     * @param fileListHeight Height of file list box in pixels
-     */
-    void renderInlineSelector(float pidListHeight = 120.0f,
-                              float fileListHeight = 120.0f);
 
 private:
     struct Impl;
