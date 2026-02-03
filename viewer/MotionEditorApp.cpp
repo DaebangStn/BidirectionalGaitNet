@@ -162,22 +162,29 @@ void MotionEditorApp::keyPress(int key, int scancode, int action, int mods)
                 return;
             case GLFW_KEY_LEFT:
                 // Step frame(s) backward: Ctrl = 5 frames, normal = 1 frame
+                // Loops to end when at beginning
                 if (mMotion) {
                     mIsPlaying = false;
                     int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
-                    mMotionState.manualFrameIndex = std::max(
-                        mMotionState.manualFrameIndex - step, 0);
+                    int newIndex = mMotionState.manualFrameIndex - step;
+                    if (newIndex < 0) {
+                        newIndex = mMotion->getNumFrames() - 1;
+                    }
+                    mMotionState.manualFrameIndex = newIndex;
                     mMotionState.navigationMode = ME_MANUAL_FRAME;
                 }
                 return;
             case GLFW_KEY_RIGHT:
                 // Step frame(s) forward: Ctrl = 5 frames, normal = 1 frame
+                // Loops to beginning when at end
                 if (mMotion) {
                     mIsPlaying = false;
                     int step = (mods & GLFW_MOD_CONTROL) ? 5 : 1;
-                    mMotionState.manualFrameIndex = std::min(
-                        mMotionState.manualFrameIndex + step,
-                        mMotion->getNumFrames() - 1);
+                    int newIndex = mMotionState.manualFrameIndex + step;
+                    if (newIndex >= mMotion->getNumFrames()) {
+                        newIndex = 0;
+                    }
+                    mMotionState.manualFrameIndex = newIndex;
                     mMotionState.navigationMode = ME_MANUAL_FRAME;
                 }
                 return;
@@ -437,6 +444,8 @@ void MotionEditorApp::drawRightPanel()
     drawTrimSection();
     ImGui::Separator();
     drawDirectionCleanupSection();
+    ImGui::Separator();
+    drawMakeCyclicSection();
     ImGui::Separator();
     drawStrideEstimationSection();
     ImGui::Separator();
@@ -2490,5 +2499,365 @@ void MotionEditorApp::drawTimelineTrackBar()
         mMotionState.navigationMode = ME_MANUAL_FRAME;
         mMotionState.manualFrameIndex = result.targetFrame;
         mIsPlaying = false;
+    }
+}
+
+// =============================================================================
+// Make Cyclic
+// =============================================================================
+
+void MotionEditorApp::drawMakeCyclicSection()
+{
+    if (!collapsingHeaderWithControls("Make Cyclic")) return;
+
+    if (!mMotion) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Load a motion first");
+        return;
+    }
+    if (!mCharacter) {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Load a skeleton first");
+        return;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    auto talusL = skel->getBodyNode("TalusL");
+    auto talusR = skel->getBodyNode("TalusR");
+    if (!talusL || !talusR) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "TalusL/R not found");
+        return;
+    }
+
+    // Compute foot spacing at first and last frames
+    Eigen::VectorXd savedPos = skel->getPositions();
+
+    // First frame
+    Eigen::VectorXd firstPose = mMotion->getPose(0);
+    skel->setPositions(firstPose);
+    Eigen::Vector3d firstLeftPos = talusL->getTransform().translation();
+    Eigen::Vector3d firstRightPos = talusR->getTransform().translation();
+    double firstSpacing = (firstRightPos - firstLeftPos).norm();
+
+    // Last frame
+    Eigen::VectorXd lastPose = mMotion->getPose(mMotion->getNumFrames() - 1);
+    skel->setPositions(lastPose);
+    Eigen::Vector3d lastLeftPos = talusL->getTransform().translation();
+    Eigen::Vector3d lastRightPos = talusR->getTransform().translation();
+    double lastSpacing = (lastRightPos - lastLeftPos).norm();
+
+    skel->setPositions(savedPos);
+
+    // Display info
+    ImGui::Text("First frame foot spacing: %.3f m", firstSpacing);
+    ImGui::Text("Last frame foot spacing:  %.3f m", lastSpacing);
+
+    ImGui::Separator();
+
+    // Interp1 frames input (frames to edit for left stance fix)
+    ImGui::Text("Num Frames: interp1 ");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputInt("##CyclicInterp1Frames", &mCyclicInterp1Frames, 0, 0);
+    mCyclicInterp1Frames = std::max(1, mCyclicInterp1Frames);
+    ImGui::SameLine();
+
+    // Interp2 frames input (frames to edit for first/last consistency)
+    ImGui::Text("interp2 ");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    ImGui::InputInt("##CyclicInterp2Frames", &mCyclicInterp2Frames, 0, 0);
+    mCyclicInterp2Frames = std::max(0, mCyclicInterp2Frames);
+
+    // Apply button
+    if (ImGui::Button("Apply##MakeCyclic", ImVec2(-1, 0))) applyCyclicInterpolation();
+}
+
+void MotionEditorApp::applyCyclicInterpolation()
+{
+    if (!mMotion || !mCharacter) return;
+
+    HDF* hdf = dynamic_cast<HDF*>(mMotion);
+    if (!hdf) {
+        LOG_WARN("[MakeCyclic] Motion is not HDF format");
+        return;
+    }
+
+    auto skel = mCharacter->getSkeleton();
+    auto talusL = skel->getBodyNode("TalusL");
+    auto talusR = skel->getBodyNode("TalusR");
+    if (!talusL || !talusR) return;
+
+    int numFrames = hdf->getNumFrames();
+    LOG_INFO("[MakeCyclic] Starting cyclic editing (in-place): " << numFrames << " frames, "
+             << mCyclicInterp1Frames << " interp1 (left stance), "
+             << mCyclicInterp2Frames << " interp2 (consistency)");
+
+    // === Step 1: Capture foot positions at first and last frame ===
+    Eigen::VectorXd savedPos = skel->getPositions();
+
+    Eigen::VectorXd firstPose = hdf->getPose(0);
+    skel->setPositions(firstPose);
+    Eigen::Vector3d firstLeftPos = talusL->getTransform().translation();
+    Eigen::Vector3d firstRightPos = talusR->getTransform().translation();
+
+    Eigen::VectorXd lastPose = hdf->getPose(numFrames - 1);
+    skel->setPositions(lastPose);
+    Eigen::Vector3d lastLeftPos = talusL->getTransform().translation();
+    Eigen::Vector3d lastRightPos = talusR->getTransform().translation();
+
+    // === Step 2: Compute target left foot position (XZ only, Y will be set after detecting heel strike) ===
+    // Average foot spacing between first and last frame
+    // diff = rightPos - leftPos, so leftPos = rightPos - diff
+    Eigen::Vector3d firstFootDiff = firstRightPos - firstLeftPos;
+    Eigen::Vector3d lastFootDiff = lastRightPos - lastLeftPos;
+    Eigen::Vector3d avgFootDiff = (firstFootDiff + lastFootDiff) * 0.5;
+    Eigen::Vector3d targetLeftStrikePos = lastRightPos - avgFootDiff;
+
+    // === Step 3: Detect foot contacts to find left stance phase ===
+    detectFootContacts();
+
+    // Find last left stance phase (heel strike to toe off near end of motion)
+    int leftHeelStrikeFrame = -1;
+    int leftToeOffFrame = -1;
+    for (int i = static_cast<int>(mDetectedPhases.size()) - 1; i >= 0; --i) {
+        const auto& phase = mDetectedPhases[i];
+        if (phase.isLeft) {
+            leftHeelStrikeFrame = phase.startFrame;
+            leftToeOffFrame = phase.endFrame;
+            LOG_INFO("[MakeCyclic] Found left stance phase: heel strike frame " << leftHeelStrikeFrame
+                     << ", toe off frame " << leftToeOffFrame);
+            break;
+        }
+    }
+
+    // === Step 4: interp1 - Fix entire left stance phase and interpolate transitions ===
+    if (leftHeelStrikeFrame > 0 && leftToeOffFrame > leftHeelStrikeFrame && mCyclicInterp1Frames > 0) {
+        // Get Y position from actual heel strike frame (keep foot at original height)
+        Eigen::VectorXd heelStrikePoseOrig = hdf->getPose(leftHeelStrikeFrame);
+        skel->setPositions(heelStrikePoseOrig);
+        targetLeftStrikePos.y() = talusL->getTransform().translation().y();
+
+        LOG_INFO("[MakeCyclic] Target left strike pos: " << targetLeftStrikePos.transpose());
+
+        // Step 4a: Apply IK to ALL stance frames (heel strike to toe off)
+        LOG_INFO("[MakeCyclic] interp1: applying IK to stance frames " << leftHeelStrikeFrame
+                 << "-" << leftToeOffFrame << " for left foot at target position");
+        applyCyclicLegIK(leftHeelStrikeFrame, leftToeOffFrame, targetLeftStrikePos, Eigen::Vector3d::Zero());
+
+        // Step 4b: Pre-heel-strike interpolation (original → IK-corrected heel strike)
+        int preInterpStart = std::max(0, leftHeelStrikeFrame - mCyclicInterp1Frames);
+        if (preInterpStart < leftHeelStrikeFrame) {
+            Eigen::VectorXd anchorPoseBeforeHS = hdf->getPose(preInterpStart);  // Original pose (anchor)
+            Eigen::VectorXd heelStrikePose = hdf->getPose(leftHeelStrikeFrame);  // IK-corrected pose
+
+            LOG_INFO("[MakeCyclic] interp1: pre-HS interpolation frames " << preInterpStart
+                     << "-" << (leftHeelStrikeFrame - 1));
+
+            for (int f = preInterpStart + 1; f < leftHeelStrikeFrame; ++f) {
+                double t = static_cast<double>(f - preInterpStart) / (leftHeelStrikeFrame - preInterpStart);
+
+                Eigen::VectorXd originalPose = hdf->getPose(f);
+                Eigen::VectorXd pose = originalPose;
+
+                // Interpolate non-root DOFs from anchor to heel strike pose
+                for (int d = 6; d < pose.size(); ++d) {
+                    pose(d) = anchorPoseBeforeHS(d) * (1.0 - t) + heelStrikePose(d) * t;
+                }
+
+                hdf->getMotionDataRow(f) = pose.transpose();
+            }
+        }
+
+        // Step 4c: Post-toe-off interpolation (IK-corrected toe off → original)
+        int postInterpEnd = std::min(numFrames - 1, leftToeOffFrame + mCyclicInterp1Frames);
+        if (postInterpEnd > leftToeOffFrame) {
+            Eigen::VectorXd toeOffPose = hdf->getPose(leftToeOffFrame);  // IK-corrected pose
+            Eigen::VectorXd anchorPoseAfterTO = hdf->getPose(postInterpEnd);  // Original pose (anchor)
+
+            LOG_INFO("[MakeCyclic] interp1: post-TO interpolation frames " << (leftToeOffFrame + 1)
+                     << "-" << (postInterpEnd - 1));
+
+            for (int f = leftToeOffFrame + 1; f < postInterpEnd; ++f) {
+                double t = static_cast<double>(f - leftToeOffFrame) / (postInterpEnd - leftToeOffFrame);
+
+                Eigen::VectorXd originalPose = hdf->getPose(f);
+                Eigen::VectorXd pose = originalPose;
+
+                // Interpolate non-root DOFs from toe off to anchor
+                for (int d = 6; d < pose.size(); ++d) {
+                    pose(d) = toeOffPose(d) * (1.0 - t) + anchorPoseAfterTO(d) * t;
+                }
+
+                hdf->getMotionDataRow(f) = pose.transpose();
+            }
+        }
+    } else if (leftHeelStrikeFrame < 0) {
+        LOG_WARN("[MakeCyclic] No left heel strike detected, skipping interp1");
+    } else if (leftToeOffFrame <= leftHeelStrikeFrame) {
+        LOG_WARN("[MakeCyclic] Invalid stance phase (toe off <= heel strike), skipping interp1");
+    }
+
+    // === Step 5: interp2 - Edit last N frames for first/last consistency ===
+    // Interpolate between anchor frame (last_idx - interp2_num) and first frame
+    if (mCyclicInterp2Frames > 0) {
+        int startBlend = numFrames - mCyclicInterp2Frames;
+        startBlend = std::max(1, startBlend);  // Need at least 1 so we have an anchor at startBlend-1
+
+        int anchorFrame = startBlend - 1;
+        Eigen::VectorXd anchorPose = hdf->getPose(anchorFrame);
+        Eigen::VectorXd targetFirstPose = hdf->getPose(0);
+
+        LOG_INFO("[MakeCyclic] interp2: blending frames " << startBlend << "-" << (numFrames - 1)
+                 << " between anchor frame " << anchorFrame << " and frame 0");
+
+        for (int f = startBlend; f < numFrames; ++f) {
+            // Interpolation parameter: frame 0 is the endpoint (conceptually frame numFrames)
+            // We have (mCyclicInterp2Frames + 1) intervals: anchor → startBlend → ... → numFrames-1 → frame0
+            // At startBlend: t = 1/(N+1)
+            // At numFrames-1: t = N/(N+1)
+            // At frame 0 (loop): t = 1 (naturally first frame, completes the cycle)
+            double t = static_cast<double>(f - anchorFrame) / (mCyclicInterp2Frames + 1);
+
+            // Get original pose to preserve root translation (indices 3-5)
+            Eigen::VectorXd originalPose = hdf->getPose(f);
+            Eigen::VectorXd pose = originalPose;
+
+            // Blend root orientation (indices 0-2) between anchor and first frame
+            for (int d = 0; d < 3; ++d) {
+                pose(d) = anchorPose(d) * (1.0 - t) + targetFirstPose(d) * t;
+            }
+            // Blend all joint DOFs (indices 6+), skip root translation (indices 3-5)
+            for (int d = 6; d < pose.size(); ++d) {
+                pose(d) = anchorPose(d) * (1.0 - t) + targetFirstPose(d) * t;
+            }
+
+            // Write back to HDF (edit in place)
+            hdf->getMotionDataRow(f) = pose.transpose();
+        }
+    }
+
+    // Restore skeleton and refresh
+    skel->setPositions(savedPos);
+    refreshMotion();
+
+    LOG_INFO("[MakeCyclic] Complete: " << hdf->getNumFrames() << " frames (unchanged count)");
+}
+
+void MotionEditorApp::applyCyclicLegIK(int startFrame, int endFrame,
+                                        const Eigen::Vector3d& targetLeftPos,
+                                        const Eigen::Vector3d& targetRightPos)
+{
+    if (!mMotion || !mCharacter) return;
+
+    HDF* hdf = dynamic_cast<HDF*>(mMotion);
+    if (!hdf) return;
+
+    auto skel = mCharacter->getSkeleton();
+
+    // IK parameters (similar to C3D_Reader::refineLegIK)
+    const int maxIterations = 10;
+    const double lambda = 0.1;
+    const double tolerance = 1e-4;
+    const double legMaxHip = 0.1;
+    const double legMaxKnee = 0.1;
+
+    // Process each target foot
+    struct LegTarget {
+        std::string femurName, tibiaName, talusName;
+        Eigen::Vector3d targetPos;
+        bool active;
+    };
+
+    std::vector<LegTarget> targets = {
+        {"FemurL", "TibiaL", "TalusL", targetLeftPos, targetLeftPos.norm() > 0.01},
+        {"FemurR", "TibiaR", "TalusR", targetRightPos, targetRightPos.norm() > 0.01}
+    };
+
+    for (const auto& target : targets) {
+        if (!target.active) continue;
+
+        auto* femurJoint = skel->getJoint(target.femurName);
+        auto* tibiaJoint = skel->getJoint(target.tibiaName);
+        auto* talusBn = skel->getBodyNode(target.talusName);
+        if (!femurJoint || !tibiaJoint || !talusBn) continue;
+
+        auto* femurBn = femurJoint->getChildBodyNode();
+        auto* pelvisBn = femurJoint->getParentBodyNode();
+        if (!femurBn || !pelvisBn) continue;
+
+        int femurJointIdx = femurJoint->getIndexInSkeleton(0);
+        int tibiaJointIdx = tibiaJoint->getIndexInSkeleton(0);
+
+        // Knee axis (default X)
+        Eigen::Vector3d kneeAxisLocal = Eigen::Vector3d::UnitX();
+
+        for (int frame = startFrame; frame <= endFrame; ++frame) {
+            Eigen::VectorXd pose = hdf->getPose(frame);
+            skel->setPositions(pose);
+
+            double currentNorm = (target.targetPos - talusBn->getTransform().translation()).norm();
+
+            for (int iter = 0; iter < maxIterations; ++iter) {
+                if (currentNorm < tolerance) break;
+
+                Eigen::Isometry3d T_pelvis = pelvisBn->getWorldTransform();
+                Eigen::Vector3d p_hip = T_pelvis * femurJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Isometry3d T_femur = femurBn->getWorldTransform();
+                Eigen::Vector3d p_knee = T_femur * tibiaJoint->getTransformFromParentBodyNode().translation();
+                Eigen::Vector3d p_talus = talusBn->getTransform().translation();
+
+                Eigen::Vector3d error = target.targetPos - p_talus;
+
+                // Jacobian (3x4): 3 hip DOF + 1 knee DOF
+                Eigen::Matrix<double, 3, 4> J;
+                Eigen::Matrix3d R_pelvis = T_pelvis.linear();
+                Eigen::Vector3d r_hip_talus = p_talus - p_hip;
+                for (int axis = 0; axis < 3; ++axis) {
+                    Eigen::Vector3d axisWorld = R_pelvis.col(axis);
+                    J.col(axis) = axisWorld.cross(r_hip_talus);
+                }
+
+                Eigen::Vector3d kneeAxisWorld = T_femur.linear() * kneeAxisLocal;
+                J.col(3) = kneeAxisWorld.cross(p_talus - p_knee);
+
+                // DLS solve: dq = J^T (J J^T + λ²I)^{-1} e
+                Eigen::Matrix3d JJt = J * J.transpose();
+                JJt(0, 0) += lambda * lambda;
+                JJt(1, 1) += lambda * lambda;
+                JJt(2, 2) += lambda * lambda;
+                Eigen::Vector3d y = JJt.ldlt().solve(error);
+                Eigen::Vector4d dq = J.transpose() * y;
+
+                // Step clamping
+                double hipNorm = dq.head<3>().norm();
+                if (hipNorm > legMaxHip) {
+                    dq.head<3>() *= legMaxHip / hipNorm;
+                }
+                if (std::abs(dq(3)) > legMaxKnee) {
+                    dq(3) = (dq(3) > 0 ? 1.0 : -1.0) * legMaxKnee;
+                }
+
+                // Apply femur rotation delta (pre-multiply for parent frame)
+                Eigen::Matrix3d R_femur_current = dart::dynamics::BallJoint::convertToRotation(
+                    pose.segment<3>(femurJointIdx));
+
+                Eigen::Vector3d omega = dq.head<3>();
+                double angle = omega.norm();
+                Eigen::Matrix3d R_delta = Eigen::Matrix3d::Identity();
+                if (angle > 1e-8) {
+                    R_delta = Eigen::AngleAxisd(angle, omega / angle).toRotationMatrix();
+                }
+                Eigen::Matrix3d R_femur_new = R_delta * R_femur_current;
+
+                pose.segment<3>(femurJointIdx) = dart::dynamics::BallJoint::convertToPositions(R_femur_new);
+                pose(tibiaJointIdx) += dq(3);
+
+                // Apply and check
+                skel->setPositions(pose);
+                currentNorm = (target.targetPos - talusBn->getTransform().translation()).norm();
+            }
+
+            // Store modified pose back to HDF
+            hdf->getMotionDataRow(frame) = pose.transpose();
+        }
     }
 }

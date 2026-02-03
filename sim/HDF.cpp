@@ -915,3 +915,52 @@ void HDF::exportToFile(
 double HDF::getStrideAttribute(double defaultValue) const {
     return (mStrideAttribute >= 0.0) ? mStrideAttribute : defaultValue;
 }
+
+void HDF::appendCyclicFrames(const std::vector<Eigen::VectorXd>& frames)
+{
+    if (frames.empty()) return;
+
+    int newTotalFrames = mNumFrames + static_cast<int>(frames.size());
+
+    // Expand motion data matrix
+    Eigen::MatrixXd newMotionData(newTotalFrames, mDofPerFrame);
+
+    // Copy existing frames
+    newMotionData.topRows(mNumFrames) = mMotionData;
+
+    // Append new frames
+    for (size_t i = 0; i < frames.size(); ++i) {
+        if (frames[i].size() == mDofPerFrame) {
+            newMotionData.row(mNumFrames + i) = frames[i].transpose();
+        } else {
+            LOG_WARN("[HDF] appendCyclicFrames: frame " << i << " has wrong DOF count, skipping");
+        }
+    }
+
+    mMotionData = newMotionData;
+    mNumFrames = newTotalFrames;
+
+    // Regenerate phase data (normalized 0-1)
+    mPhaseData.resize(mNumFrames);
+    for (int i = 0; i < mNumFrames; ++i) {
+        mPhaseData[i] = static_cast<double>(i) / std::max(1, mNumFrames - 1);
+    }
+
+    // Regenerate time data
+    mTimeData.resize(mNumFrames);
+    for (int i = 0; i < mNumFrames; ++i) {
+        mTimeData[i] = i * mFrameTime;
+    }
+
+    // Recompute cycle distance
+    if (mNumFrames > 1) {
+        Eigen::VectorXd firstFrame = mMotionData.row(0);
+        Eigen::VectorXd lastFrame = mMotionData.row(mNumFrames - 1);
+        double correction = static_cast<double>(mNumFrames) / (mNumFrames - 1);
+        mCycleDistance[0] = (lastFrame[3] - firstFrame[3]) * correction;
+        mCycleDistance[1] = 0.0;
+        mCycleDistance[2] = (lastFrame[5] - firstFrame[5]) * correction;
+    }
+
+    LOG_INFO("[HDF] Appended " << frames.size() << " cyclic frames, total now " << mNumFrames);
+}

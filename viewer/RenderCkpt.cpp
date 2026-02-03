@@ -81,7 +81,7 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
     mRealDeltaTimeAvg = 0.0;
     mIsPlaybackTooFast = false;
     mShowResizablePlotPane = false;
-    mShowTitlePanel = false;
+    mShowTitlePanel = true;
     mResetPhase = -1.0;  // Default to randomized reset
     mResizablePlots.resize(1);
     strcpy(mResizePlotKeys, "");

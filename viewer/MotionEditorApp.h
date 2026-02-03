@@ -202,6 +202,10 @@ private:
     int mRotationEndFrame = 0;
     int mInterpolationFrames = 10;  // Number of frames to interpolate between intervals
 
+    // === Make Cyclic ===
+    int mCyclicInterp1Frames = 10;   // interp1: frames to edit for left stance fix
+    int mCyclicInterp2Frames = 10;    // interp2: frames to edit for first/last consistency
+
     // Kinematics summary
     bool mSummarizeKinematics = true;
     GaitCycleSummary mKinematicsSummary;
@@ -229,11 +233,16 @@ private:
     void drawStrideEstimationSection();
     void drawROMViolationSection();
     void drawDirectionCleanupSection();
+    void drawMakeCyclicSection();
 
     // === Processing ===
     void detectROMViolations();
     void detectDirectionIntervals();
     void straightenBackwardIntervals();
+    void applyCyclicInterpolation();
+    void applyCyclicLegIK(int startFrame, int endFrame,
+                          const Eigen::Vector3d& targetLeftPos,
+                          const Eigen::Vector3d& targetRightPos);
 
     // === Helper for collapsing header ===
     bool collapsingHeaderWithControls(const std::string& title);

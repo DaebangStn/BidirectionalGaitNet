@@ -164,6 +164,21 @@ public:
     double getStrideAttribute(double defaultValue = -1.0) const;
 
     /**
+     * @brief Append cyclic interpolation frames to make motion loopable
+     * @param frames Vector of interpolated poses to append
+     */
+    void appendCyclicFrames(const std::vector<Eigen::VectorXd>& frames);
+
+    /**
+     * @brief Get direct access to motion data for modification
+     * @param frameIdx Frame index
+     * @return Reference to motion data row
+     */
+    Eigen::Block<Eigen::MatrixXd, 1, -1> getMotionDataRow(int frameIdx) {
+        return mMotionData.row(frameIdx);
+    }
+
+    /**
      * @brief Check if reference kinematics data is available
      * @return true if /kinematics group was loaded from file
      */
