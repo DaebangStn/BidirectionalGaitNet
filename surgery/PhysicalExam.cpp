@@ -545,7 +545,7 @@ void PhysicalExam::createGround() {
     mWorld->addSkeleton(mGround);
 }
 
-void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string& muscle_path, ActuatorType _actType) {
+void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string& muscle_path) {
     // Store file paths for UI display
     mSkeletonPath = skel_path;
     mMusclePath = muscle_path;
@@ -568,9 +568,6 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     } else {
         LOG_INFO("Skipping muscle loading (no muscle path provided)");
     }
-
-    // Set actuator type
-    mCharacter->setActuatorType(_actType);
 
     // Add to world
     mWorld->addSkeleton(mCharacter->getSkeleton());
@@ -924,22 +921,20 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     
     std::string skeleton_path = config["character"]["skeleton"].as<std::string>();
     std::string muscle_path = config["character"]["muscle"] ? config["character"]["muscle"].as<std::string>() : "";
-    std::string _actTypeString = config["character"]["actuator"].as<std::string>();
-    ActuatorType _actType = getActuatorType(_actTypeString);
 
     // Set standard character paths from config before loading main character
     if (config["std_character"]) {
         mStdSkeletonPath = config["std_character"]["skeleton"].as<std::string>();
-        mStdMusclePath = config["std_character"]["muscle"] 
-            ? config["std_character"]["muscle"].as<std::string>() 
+        mStdMusclePath = config["std_character"]["muscle"]
+            ? config["std_character"]["muscle"].as<std::string>()
             : "";
     } else {
         mStdSkeletonPath = "";
         mStdMusclePath = "";
         mStdCharacter = nullptr;
     }
-    
-    loadCharacter(skeleton_path, muscle_path, _actType);
+
+    loadCharacter(skeleton_path, muscle_path);
     
     // Initialize rendering flags
     mRenderMainCharacter = true;
@@ -1441,11 +1436,9 @@ void PhysicalExam::runExamination(const std::string& config_path) {
 
     std::string skeleton_path = config["character"]["skeleton"].as<std::string>();
     std::string muscle_path = config["character"]["muscle"].as<std::string>();
-    std::string _actTypeString = config["character"]["actuator"].as<std::string>();
-    ActuatorType _actType = getActuatorType(_actTypeString);
 
     // Load character
-    loadCharacter(skeleton_path, muscle_path, _actType);
+    loadCharacter(skeleton_path, muscle_path);
 
     // Parse pose preset
     std::map<std::string, Eigen::VectorXd> pose;
@@ -4263,9 +4256,6 @@ void PhysicalExam::resetSkeleton() {
         return;
     }
 
-    // Store the actuator type before deletion
-    ActuatorType actType = mCharacter->getActuatorType();
-
     // Get the skeleton before deletion
     auto skel = mCharacter->getSkeleton();
 
@@ -4290,7 +4280,7 @@ void PhysicalExam::resetSkeleton() {
         return;
     }
 
-    loadCharacter(mSkeletonPath, mMusclePath, actType);
+    loadCharacter(mSkeletonPath, mMusclePath);
 }
 
 void PhysicalExam::setPoseStanding() {
@@ -6123,7 +6113,7 @@ void PhysicalExam::reloadCharacterFromBrowse() {
     LOG_INFO("  Muscle: " << mBrowseMusclePath);
 
     // Call the existing loadCharacter method
-    loadCharacter(mBrowseSkeletonPath, mBrowseMusclePath, ActuatorType::tor);
+    loadCharacter(mBrowseSkeletonPath, mBrowseMusclePath);
 
     // Reinitialize sweep muscles for the new character
     setupSweepMuscles();

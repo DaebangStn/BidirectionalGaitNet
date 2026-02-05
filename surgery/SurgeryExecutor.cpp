@@ -30,8 +30,7 @@ void SurgeryExecutor::setModificationRecord(const MuscleModificationRecord& reco
     mModificationRecord = record;
 }
 
-void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::string& muscle_path,
-                                   ActuatorType actuator_type) {
+void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::string& muscle_path) {
     // Store subject skeleton/muscle paths
     mSubjectSkeletonPath = skel_path;
     mSubjectMusclePath = muscle_path;
@@ -45,7 +44,6 @@ void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::str
 
     // Load muscles
     mCharacter->setMuscles(resolved_muscle);
-    mCharacter->setActuatorType(actuator_type);
 
     // Zero muscle activations
     if (mCharacter->getMuscles().size() > 0) {

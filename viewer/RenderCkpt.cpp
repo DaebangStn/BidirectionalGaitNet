@@ -6326,7 +6326,7 @@ void RenderCkpt::loadNetworkFromPath(const std::string& path)
 
         int num_states = mRenderEnv->getState().rows();
         int num_actions = mRenderEnv->getAction().rows();
-        bool use_muscle = (character->getActuatorType() == mass || character->getActuatorType() == mass_lower);
+        bool use_muscle = mRenderEnv->isTwoLevelController();
 
         // Try C++ TorchScript loading first
         std::string agent_path = path + "/agent.pt";
@@ -6345,10 +6345,10 @@ void RenderCkpt::loadNetworkFromPath(const std::string& path)
                 auto muscle_weights = loadStateDict(muscle_path);
                 if (!muscle_weights.empty()) {
                     // Load weights into Environment's MuscleNN (created during initialize())
-                    auto* muscle_nn = mRenderEnv->getMuscleNN();
-                    if (muscle_nn && *muscle_nn) {
-                        (*muscle_nn)->load_state_dict(muscle_weights);
-                        new_elem.muscle = *muscle_nn;  // Store reference
+                    MuscleNN& muscle_nn = mRenderEnv->getMuscleNN();
+                    if (muscle_nn) {
+                        muscle_nn->load_state_dict(muscle_weights);
+                        new_elem.muscle = muscle_nn;  // Store reference
                         LOG_INFO("Loaded TorchScript muscle network");
                     }
                 }

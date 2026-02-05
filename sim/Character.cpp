@@ -42,16 +42,7 @@ static std::map<std::string, int> skeletonAxis = {
     {"HandL", 0},
 };
 
-// Thread-safe ActuatorType lookup using simple switch statement
-// Avoids static map initialization order issues in multi-threaded environments
-ActuatorType getActuatorType(std::string type) {
-    if (type == "torque") return tor;
-    if (type == "pd") return pd;
-    if (type == "muscle") return mus;
-    if (type == "mass") return mass;
-    if (type == "mass_lower") return mass_lower;
-    throw std::runtime_error("Invalid actuator type: " + type);
-}
+// Note: getActuatorType() has been moved to Controller.cpp
 
 static std::tuple<Eigen::Vector3d, double, double> UnfoldModifyInfo(const ModifyInfo &info)
 {
@@ -308,8 +299,6 @@ static void modifyShapeNode(BodyNode *rtgBody, BodyNode *stdBody, const ModifyIn
 
 Character::Character(std::string path, int skelFlags)
 {
-    mActuatorType = tor;
-
     // If path is empty, use default
     if (path.empty()) {
         LOG_VERBOSE("[Character] Using default skeleton path");
@@ -329,7 +318,6 @@ Character::Character(std::string path, int skelFlags)
         mSkeleton->setAdjacentBodyCheck(false);  // Disable adjacent body filtering for true self-collision
     }
 
-    mTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
     mPDTarget = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
 
     mKp = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
@@ -641,36 +629,44 @@ Eigen::VectorXd Character::getMirrorPosition(Eigen::VectorXd pos)
     return pos;
 }
 
-Eigen::VectorXd Character::getSPDForces(const Eigen::VectorXd &p_desired, const Eigen::VectorXd &ext, int inference_per_sim)
+// Actuator-agnostic force application methods
+
+void Character::applyTorque(const Eigen::VectorXd& torque)
 {
-    Eigen::VectorXd q = mSkeleton->getPositions();
-    Eigen::VectorXd dq = mSkeleton->getVelocities();
-    double dt = mSkeleton->getTimeStep() * inference_per_sim;
+    mSkeleton->setForces(torque);
+    mTorqueStepEnergy = torque.cwiseAbs().sum();
+    mTorqueEnergyAccum += mTorqueStepEnergy;
+}
 
-    Eigen::VectorXd qdqdt = q + dq * dt;
+void Character::addTorque(const Eigen::VectorXd& torque)
+{
+    mSkeleton->setForces(mSkeleton->getForces() + torque);
 
-    Eigen::VectorXd p_diff = -mKp.cwiseProduct(mSkeleton->getPositionDifferences(qdqdt, p_desired));
-    Eigen::VectorXd v_diff = -mKv.cwiseProduct(dq);
+    // Cache upper body torque for visualization
+    mUpperBodyTorque = torque;
 
-    Eigen::MatrixXd M_inv = (mSkeleton->getMassMatrix() + Eigen::MatrixXd(dt * mKv.asDiagonal())).inverse();
-    Eigen::VectorXd ddq = M_inv * (-mSkeleton->getCoriolisAndGravityForces() + p_diff + v_diff + mSkeleton->getConstraintForces() + ext);
-    Eigen::VectorXd tau = p_diff + v_diff - dt * mKv.cwiseProduct(ddq);
+    mTorqueStepEnergy = torque.cwiseAbs().sum();
+    mTorqueEnergyAccum += mTorqueStepEnergy;
+}
 
-    // Apply per-DOF torque clipping
-    if (mMaxTorque.size() > 0) {
-        for (int i = 6; i < tau.size(); i++) {
-            tau[i] = std::clamp(tau[i], -mMaxTorque[i], mMaxTorque[i]);
-        }
+void Character::applyMuscleForces()
+{
+    Eigen::VectorXd muscleTorque = mSkeleton->getExternalForces();
+    for (size_t i = 0; i < mMuscles.size(); i++)
+    {
+        mMuscles[i]->UpdateGeometry();
+        mMuscles[i]->ApplyForceToBody();
     }
 
-    tau.head<6>().setZero();
-
-    return tau;
+    muscleTorque = mSkeleton->getExternalForces() - muscleTorque;
+    mMuscleTorqueLogs.push_back(muscleTorque);
+    invalidateMuscleTuple();  // Skeleton state changes after force application
 }
 
 void Character::step()
 {
-    if (mActuatorType == mus || mActuatorType == mass || mActuatorType == mass_lower)
+    // Metabolic energy tracking (only if muscles are present)
+    if (mMuscles.size() > 0)
     {
         switch (mMetabolicType)
         {
@@ -691,73 +687,6 @@ void Character::step()
             break;
         }
         mMetabolicEnergyAccum += mMetabolicStepEnergy;
-    }
-
-    switch (mActuatorType)
-    {
-    case tor:
-        mSkeleton->setForces(mTorque);
-        mTorqueStepEnergy = mTorque.cwiseAbs().sum();
-        mTorqueEnergyAccum += mTorqueStepEnergy;
-        break;
-    case pd:
-        mTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
-        mSkeleton->setForces(mTorque);
-        mTorqueStepEnergy = mTorque.cwiseAbs().sum();
-        mTorqueEnergyAccum += mTorqueStepEnergy;
-        break;
-    case mus:
-    case mass:
-    case mass_lower:
-    {
-        Eigen::VectorXd muscleTorque = mSkeleton->getExternalForces();
-        for (int i = 0; i < mMuscles.size(); i++)
-        {
-            mMuscles[i]->UpdateGeometry();
-            mMuscles[i]->ApplyForceToBody();
-        }
-    	// logMuscleAnchorsGlobal(mMuscles, "XML", mSortMuscleLogs);
-
-        muscleTorque = mSkeleton->getExternalForces() - muscleTorque;
-        mMuscleTorqueLogs.push_back(muscleTorque);
-
-        // For mass_lower: Add PD control for upper body
-        if (mActuatorType == mass_lower)
-        {
-            mTorque = getSPDForces(mPDTarget, Eigen::VectorXd::Zero(mSkeleton->getNumDofs()));
-
-            // Apply PD torque only to upper body DOFs
-            int rootDof = mSkeleton->getRootJoint()->getNumDofs();
-            int lowerBodyDof = 18;  // First 18 DOFs after root are lower body
-            int upperBodyStart = rootDof + lowerBodyDof;
-
-            // Cache upper body dimension on first call
-            if (mUpperBodyDim == 0) {
-                mUpperBodyDim = mSkeleton->getNumDofs() - upperBodyStart;
-            }
-
-            mUpperBodyTorque = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
-
-            // Zero out root and lower body DOFs, keep upper body
-            mUpperBodyTorque.head(upperBodyStart).setZero();
-            mUpperBodyTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart) =
-                mTorque.segment(upperBodyStart, mSkeleton->getNumDofs() - upperBodyStart);
-
-            // Scale upper body torque by mass ratio to prevent instability with light bodies
-            if (mScaleTauOnWeight) {
-                mUpperBodyTorque *= mTorqueMassRatio;
-            }
-
-            // Apply upper body PD torque
-            mSkeleton->setForces(mSkeleton->getForces() + mUpperBodyTorque);
-
-            mTorqueStepEnergy = mUpperBodyTorque.cwiseAbs().sum();
-            mTorqueEnergyAccum += mTorqueStepEnergy;
-        }
-        break;
-    }
-    default:
-        break;
     }
 
     // Handle step completion transition and max knee loading tracking
@@ -797,6 +726,7 @@ void Character::setActivations(Eigen::VectorXd _activation)
 {
     mActivations = _activation.cwiseMax(0.0).cwiseMin(1.0);
     for (int i = 0; i < mMuscles.size(); i++) mMuscles[i]->activation = mActivations[i];
+    invalidateMuscleTuple();  // Activations affect muscle force calculations
 }
 
 void Character::setZeroForces()
@@ -1242,6 +1172,9 @@ void Character::resetStep()
 
     // Reset step completion flag
     mStepComplete = true;
+
+    // Invalidate muscle tuple cache
+    invalidateMuscleTuple();
 }
 
 void Character::setMuscleParam(const std::string& muscleName, const std::string& paramType, double value)
@@ -1276,16 +1209,31 @@ Eigen::VectorXd Character::getMirrorActivation(Eigen::VectorXd _activation)
     return mirrored_activations;
 }
 
-MuscleTuple Character::getMuscleTuple(bool isMirror)
+const MuscleTuple& Character::getMuscleTuple(bool isMirror)
 {
     if (mMuscles.size() == 0)
     {
         LOG_ERROR("[Character] getMuscleTuple() called with no muscles");
         exit(-1);
     }
-    MuscleTuple mt;
 
-    mt.JtA_reduced = Eigen::VectorXd::Zero(mNumMuscleRelatedDof);
+    if (isMirror) {
+        if (!mMuscleTupleMirroredValid) {
+            computeMuscleTupleMirrored();  // This also ensures raw is valid
+        }
+        return mCachedMuscleTupleMirrored;
+    } else {
+        if (!mMuscleTupleRawValid) {
+            computeMuscleTupleRaw();
+        }
+        return mCachedMuscleTuple;
+    }
+}
+
+
+void Character::computeMuscleTupleRaw()
+{
+    if (mMuscles.empty()) return;
 
     int n = mSkeleton->getNumDofs();
     int m = mMuscles.size();
@@ -1293,98 +1241,86 @@ MuscleTuple Character::getMuscleTuple(bool isMirror)
 
     Eigen::VectorXd JtP = Eigen::VectorXd::Zero(n);
     Eigen::MatrixXd JtA = Eigen::MatrixXd::Zero(n, m);
+    mCachedMuscleTuple.JtA_reduced = Eigen::VectorXd::Zero(mNumMuscleRelatedDof);
 
-    int i = 0;
     int idx = 0;
-    for (auto m : mMuscles)
-    {
-        m->UpdateGeometry();
-        m->related_vec.setZero();
-        Eigen::MatrixXd Jt_reduced = m->GetReducedJacobianTranspose();
-        auto Ap = m->GetForceJacobianAndPassive();
-        Eigen::VectorXd JtA_reduced = Jt_reduced * Ap.first;
+    for (int i = 0; i < m; i++) {
+        auto muscle = mMuscles[i];
+        muscle->UpdateGeometry();
+        muscle->related_vec.setZero();
+
+        Eigen::MatrixXd Jt_reduced = muscle->GetReducedJacobianTranspose();
+        auto Ap = muscle->GetForceJacobianAndPassive();
+        Eigen::VectorXd JtA_reduced_i = Jt_reduced * Ap.first;
         Eigen::VectorXd JtP_reduced = Jt_reduced * Ap.second;
 
-        for (int j = 0; j < m->GetNumRelatedDofs(); j++)
-        {
-            JtP[m->related_dof_indices[j]] += JtP_reduced[j];
-            JtA(m->related_dof_indices[j], i) = JtA_reduced[j];
-            m->related_vec[m->related_dof_indices[j]] = JtA_reduced[j];
+        for (int j = 0; j < muscle->GetNumRelatedDofs(); j++) {
+            JtP[muscle->related_dof_indices[j]] += JtP_reduced[j];
+            JtA(muscle->related_dof_indices[j], i) = JtA_reduced_i[j];
+            muscle->related_vec[muscle->related_dof_indices[j]] = JtA_reduced_i[j];
         }
 
-        mt.JtA_reduced.segment(idx, JtA_reduced.rows()) = JtA_reduced;
-        idx += JtA_reduced.rows();
-        i++;
+        mCachedMuscleTuple.JtA_reduced.segment(idx, JtA_reduced_i.rows()) = JtA_reduced_i;
+        idx += JtA_reduced_i.rows();
     }
 
-    if (isMirror)
-    {
-        // dt = getMirrorPosition(dt);
-        for (int i = 0; i < mMuscles.size(); i += 2)
-        {
-            Eigen::VectorXd tmp = JtA.col(i);
-            JtA.col(i) = getMirrorPosition(JtA.col(i + 1));
-            JtA.col(i + 1) = getMirrorPosition(tmp);
+    mCachedMuscleTuple.JtP = JtP.tail(n - root_dof);
+    mCachedMuscleTuple.JtA = JtA.block(root_dof, 0, n - root_dof, m);
+
+    mMuscleTupleRawValid = true;
+}
+
+void Character::computeMuscleTupleMirrored()
+{
+    // Ensure raw is computed first
+    if (!mMuscleTupleRawValid) {
+        computeMuscleTupleRaw();
+    }
+
+    int n = mSkeleton->getNumDofs();
+    int m = mMuscles.size();
+    int root_dof = mSkeleton->getRootJoint()->getNumDofs();
+
+    // Start from raw, then apply mirroring
+    mCachedMuscleTupleMirrored.JtA_reduced = Eigen::VectorXd::Zero(mNumMuscleRelatedDof);
+
+    // Need full JtA to mirror columns - reconstruct from raw cache
+    Eigen::MatrixXd JtA = Eigen::MatrixXd::Zero(n, m);
+    JtA.block(root_dof, 0, n - root_dof, m) = mCachedMuscleTuple.JtA;
+
+    // Mirror JtA columns (swap muscle pairs)
+    for (int i = 0; i < m; i += 2) {
+        Eigen::VectorXd tmp = JtA.col(i);
+        JtA.col(i) = getMirrorPosition(JtA.col(i + 1));
+        JtA.col(i + 1) = getMirrorPosition(tmp);
+    }
+
+    // Rebuild JtA_reduced for mirrored
+    int idx = 0;
+    for (int i = 0; i < m; i++) {
+        auto muscle = mMuscles[i];
+        Eigen::VectorXd JtA_reduced_i = Eigen::VectorXd::Zero(muscle->GetNumRelatedDofs());
+        for (int j = 0; j < muscle->GetNumRelatedDofs(); j++) {
+            JtA_reduced_i[j] = JtA(muscle->related_dof_indices[j], i);
         }
-        int i = 0;
-        int idx = 0;
-        for (auto m : mMuscles)
-        {
-            Eigen::VectorXd JtA_reduced = Eigen::VectorXd::Ones(m->GetNumRelatedDofs());
-            for (int j = 0; j < m->GetNumRelatedDofs(); j++)
-                JtA_reduced[j] = JtA(m->related_dof_indices[j], i);
-
-            mt.JtA_reduced.segment(idx, JtA_reduced.rows()) = JtA_reduced;
-            idx += JtA_reduced.rows();
-            i++;
-        }
-        JtP = getMirrorPosition(JtP);
+        mCachedMuscleTupleMirrored.JtA_reduced.segment(idx, JtA_reduced_i.rows()) = JtA_reduced_i;
+        idx += JtA_reduced_i.rows();
     }
 
-    // mt.dt = dt.tail(dt.rows() - mSkeleton->getRootJoint()->getNumDofs());
-    mt.JtP = JtP.tail(mSkeleton->getNumDofs() - mSkeleton->getRootJoint()->getNumDofs());
-    mt.JtA = JtA.block(mSkeleton->getRootJoint()->getNumDofs(), 0, JtA.rows() - mSkeleton->getRootJoint()->getNumDofs(), JtA.cols());
+    // Mirror JtP
+    Eigen::VectorXd JtP_full = Eigen::VectorXd::Zero(n);
+    JtP_full.tail(n - root_dof) = mCachedMuscleTuple.JtP;
+    JtP_full = getMirrorPosition(JtP_full);
+    mCachedMuscleTupleMirrored.JtP = JtP_full.tail(n - root_dof);
+    mCachedMuscleTupleMirrored.JtA = JtA.block(root_dof, 0, n - root_dof, m);
 
-    if (mTorqueClipping)
-    {
-        LOG_ERROR("[Character] Torque Clipping is deprecated");
-        exit(-1);
-        // Eigen::VectorXd min_tau = Eigen::VectorXd::Zero(mSkeleton->getNumDofs() - mSkeleton->getRootJoint()->getNumDofs());
-        // Eigen::VectorXd max_tau = Eigen::VectorXd::Zero(mSkeleton->getNumDofs() - mSkeleton->getRootJoint()->getNumDofs());
-        // for (int i = 0; i < mt.JtA.rows(); i++)
-        // {
-        //     for (int j = 0; j < mt.JtA.cols(); j++)
-        //     {
-        //         if (mt.JtA(i, j) < 0)
-        //             min_tau[i] += mt.JtA(i, j);
-        //         else
-        //             max_tau[i] += mt.JtA(i, j);
-        //     }
-        //     mt.dt[i] = dart::math::clip(mt.dt[i], min_tau[i] + mt.JtP[i], max_tau[i] + mt.JtP[i]);
-        // }
-    }
+    mMuscleTupleMirroredValid = true;
+}
 
-    // Test For Reduced Jacobian
-    // for (auto m : mMuscles)
-    // {
-    //     Eigen::VectorXd related_vec_backup = m->related_vec;
-    //     m->Update();
-    //     Eigen::MatrixXd Jt = m->GetJacobianTranspose();
-    //     auto Ap = m->GetForceJacobianAndPassive();
-    //     Eigen::VectorXd JtA = Jt * Ap.first;
-
-    //     m->related_vec.setZero();
-
-    //     for (int i = 0; i < JtA.rows(); i++)
-    //         if (JtA[i] > 1E-6)
-    //             m->related_vec[i] = 1;
-    //         else if (JtA[i] < -1E-6)
-    //             m->related_vec[i] = -1;
-
-    //     if ((related_vec_backup - m->related_vec).norm() < 1E-6)
-    //         std::cout << "DIFFERENT MUSCLE " << m->name << std::endl;
-    // }
-    return mt;
+void Character::invalidateMuscleTuple()
+{
+    mMuscleTupleRawValid = false;
+    mMuscleTupleMirroredValid = false;
 }
 
 Eigen::VectorXd

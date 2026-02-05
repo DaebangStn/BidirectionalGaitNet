@@ -3,6 +3,7 @@
 #include "dart/dart.hpp"
 #include "BVH_Parser.h"
 #include "Character.h"
+#include "Controller.h"
 #include "GaitPhase.h"
 #include "NoiseInjector.h"
 #include "MuscleNN.h"
@@ -11,6 +12,7 @@
 #include "export.h"
 #include <map>
 #include <string>
+#include <memory>
 
 // Forward declaration
 template <typename T> class CBufferData;
@@ -200,16 +202,16 @@ public:
     }
     void setMuscleNetworkWeight(py::object w)
     {
-        if (!mLoadedMuscleNN)
+        if (!mController->hasLoadedMuscleNN())
         {
             std::vector<int> child_elem;
 
-            for (int i = 0; i < mPrevNetworks.size(); i++)
+            for (size_t i = 0; i < mPrevNetworks.size(); i++)
             {
                 mEdges.push_back(Eigen::Vector2i(i, mPrevNetworks.size()));
                 child_elem.push_back(i);
             }
-            mChildNetworks.push_back(child_elem);
+            mController->getChildNetworks().push_back(child_elem);
         }
 
         // Convert Python state_dict to C++ format
@@ -233,29 +235,29 @@ public:
             state_dict[key] = tensor;
         }
 
-        mMuscleNN->load_state_dict(state_dict);
-        mLoadedMuscleNN = true;
+        mController->getMuscleNN()->load_state_dict(state_dict);
     }
 
     int getNumAction() { return mAction.rows(); }
     int getNumActuatorAction() { return mNumActuatorAction; }
 
     MuscleTuple getRandomMuscleTuple() { return mRandomMuscleTuple; }
-    Eigen::VectorXd getRandomDesiredTorque() { return mRandomDesiredTorque; }
-    const Eigen::VectorXd& getLastDesiredTorque() const { return mLastDesiredTorque; }
+    Eigen::VectorXd getRandomDesiredTorque() { return mController->getRandomDesiredTorque(); }
+    const Eigen::VectorXd& getCachedSPDTorque() const { return mController->getCachedSPDTorque(); }
 
-    Eigen::VectorXd getRandomPrevOut() { return mRandomPrevOut; }
+    Eigen::VectorXd getRandomPrevOut() { return mController->getRandomPrevOut(); }
     Eigen::VectorXf getRandomWeight()
     {
         Eigen::VectorXf res = Eigen::VectorXf(1);
-        res[0] = (float)mRandomWeight;
+        res[0] = (float)mController->getRandomWeight();
         return res;
     }
 
     bool getUseCascading() { return mUseCascading; }
     bool getUseMuscle() { return mUseMuscle; }
-    bool isTwoLevelController() { return mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower; }
-    MuscleNN* getMuscleNN() { return &mMuscleNN; }
+    bool isTwoLevelController() { return mController && (mController->getActuatorType() == mass || mController->getActuatorType() == mass_lower); }
+    MuscleNN& getMuscleNN() { return mController->getMuscleNN(); }
+    Controller* getController() { return mController.get(); }
 
     // Discriminator accessors
     bool getUseDiscriminator() const { return mDiscConfig.enabled; }
@@ -485,7 +487,6 @@ public:
     void demaskImitJoint(const std::string& jointName);
 private:
     // Step method components
-    void calcActivation();
     void postMuscleStep();
 
     // Termination/truncation check methods (called in postStep)
@@ -506,6 +507,7 @@ private:
 
     // Simulation
     Eigen::VectorXd mAction;
+    Eigen::VectorXd mPendingTorque;  // Torque for tor mode (stored in setAction, applied in muscleStep)
 
     dart::simulation::WorldPtr mWorld;
     Character *mCharacter;
@@ -528,16 +530,12 @@ private:
     bool mLocalState;
     bool mZeroAnkle0OnReset;
 
+    // Controller (owns SPD computation and MuscleNN)
+    std::unique_ptr<Controller> mController;
+
     // Muscle Learning Tuple
     bool mTupleFilled;
-    Eigen::VectorXd mRandomDesiredTorque;
-    Eigen::VectorXd mLastDesiredTorque;  // Last computed SPD torque for visualization
     MuscleTuple mRandomMuscleTuple;
-    Eigen::VectorXd mRandomPrevOut;
-    double mRandomWeight;
-
-    // Network (C++ libtorch for thread-safe inference)
-    MuscleNN mMuscleNN;
 
     // Discriminator for energy-efficient muscle activation (ADD-style)
     DiscriminatorConfig mDiscConfig;
@@ -563,7 +561,7 @@ private:
 
     double mLimitY; // For EOE
 
-    bool mLoadedMuscleNN, mUseJointState;
+    bool mUseJointState;
 
     // Parameter
     std::vector<param_group> mParamGroups;

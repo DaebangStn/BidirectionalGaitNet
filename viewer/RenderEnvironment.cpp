@@ -342,7 +342,7 @@ void RenderEnvironment::RecordGraphData() {
     }
 
     // Log torque per DOF (excluding root joint)
-    const Eigen::VectorXd& torques = getLastDesiredTorque();
+    const Eigen::VectorXd& torques = getCachedSPDTorque();
     const int expectedTorqueSize = skel->getNumDofs();
     std::vector<std::string> axisSuffixes = {"_x", "_y", "_z"};
     for (size_t i = 1; i < skel->getNumJoints(); ++i) {  // Skip root (i=0)

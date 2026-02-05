@@ -45,8 +45,7 @@ public:
     virtual ~SurgeryExecutor();
     
     // Character loading
-    void loadCharacter(const std::string& skel_path, const std::string& muscle_path, 
-                       ActuatorType actuator_type = mus);
+    void loadCharacter(const std::string& skel_path, const std::string& muscle_path);
     
     // Character accessor
     Character* getCharacter() { return mCharacter; }

@@ -225,7 +225,7 @@ void BatchRolloutEnv::update_muscle_weights(py::dict state_dict) {
         for (int i = 0; i < num_envs_; ++i) {
             pool_->enqueue([this, i, &cpp_state_dict]() {
                 // No GIL needed - pure libtorch operations
-                (*envs_[i]->getMuscleNN())->load_state_dict(cpp_state_dict);
+                envs_[i]->getMuscleNN()->load_state_dict(cpp_state_dict);
             });
         }
 

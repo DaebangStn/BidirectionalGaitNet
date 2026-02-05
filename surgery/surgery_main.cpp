@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
 
         // Load character
         LOG_INFO("Loading character...");
-        executor.loadCharacter(skeleton_path, muscle_path, mus);
+        executor.loadCharacter(skeleton_path, muscle_path);
         LOG_INFO("");
 
         // Load surgery script

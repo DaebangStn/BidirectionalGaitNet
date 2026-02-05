@@ -34,7 +34,7 @@ Environment::Environment(const std::string& filepath)
       mUseMirror(true), mLocalState(false), mZeroAnkle0OnReset(false), mLimitY(0.6), mIsResidual(true),
       mSimulationCount(0), mActionScale(0.04), mIncludeMetabolicReward(true),
       mRewardType(deepmimic), mRefStride(1.34), mStride(1.0), mCadence(1.0),
-      mPhaseDisplacementScale(-1.0), mNumActuatorAction(0), mLoadedMuscleNN(false),
+      mPhaseDisplacementScale(-1.0), mNumActuatorAction(0),
       mUseJointState(false), mNumParamState(0), mSimulationStep(0),
       mKneeLoadingMaxCycle(0.0), mDragStartX(0.0), mUseCascading(false),
       mUseNormalizedParamState(true),
@@ -66,6 +66,8 @@ Environment::Environment(const std::string& filepath)
     if (config["cascading"]) mUseCascading = true;
 
     // === Skeleton ===
+    ActuatorType actuatorType = mass;  // Default
+    bool scaleTauOnWeight = false;
     if (env["skeleton"]) {
         auto skel = env["skeleton"];
         std::string skelPath = skel["file"].as<std::string>();
@@ -76,12 +78,12 @@ Environment::Environment(const std::string& filepath)
         mCharacter = new Character(resolved, skelFlags);
 
         std::string actType = skel["actuator"].as<std::string>();
-        mCharacter->setActuatorType(getActuatorType(actType));
+        actuatorType = getActuatorType(actType);
 
         // Enable upper body torque scaling based on body mass (stabilizes light bodies)
         if (skel["scale_tau_on_weight"]) {
-            bool scaleTau = skel["scale_tau_on_weight"].as<bool>();
-            mCharacter->setScaleTauOnWeight(scaleTau);
+            scaleTauOnWeight = skel["scale_tau_on_weight"].as<bool>();
+            mCharacter->setScaleTauOnWeight(scaleTauOnWeight);
         }
 
         // Set max acceleration for SPD torque clipping (tau <= mass * max_acc)
@@ -107,6 +109,26 @@ Environment::Environment(const std::string& filepath)
 
         // Initialize imitation mask (1.0 = active, 0.0 = masked via curriculum)
         mImitMask = Eigen::ArrayXd::Ones(mCharacter->getSkeleton()->getNumDofs());
+
+        // Create Controller with configuration
+        int rootDof = mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
+        int lowerBodyDof = 18;  // First 18 DOFs after root are lower body
+
+        ControllerConfig ctrlConfig;
+        ctrlConfig.skeleton = mCharacter->getSkeleton();
+        ctrlConfig.kp = mCharacter->getKpVector();
+        ctrlConfig.kv = mCharacter->getKvVector();
+        ctrlConfig.actuatorType = actuatorType;
+        ctrlConfig.maxTorque = mCharacter->getMaxTorque();
+        ctrlConfig.inferencePerSim = mInferencePerSim;
+        ctrlConfig.upperBodyStart = rootDof + lowerBodyDof;
+        ctrlConfig.scaleTauOnWeight = scaleTauOnWeight;
+        ctrlConfig.torqueMassRatio = scaleTauOnWeight ? mCharacter->getTorqueMassRatio() : 1.0;
+
+        mController = std::make_unique<Controller>(ctrlConfig);
+
+        // Set Character pointer for Controller to handle mirroring internally
+        mController->setMirrorCharacter(mCharacter);
     }
 
     // === Muscle ===
@@ -207,15 +229,9 @@ Environment::Environment(const std::string& filepath)
     }
 
     // === mAction sizing ===
-    ActuatorType _actType = mCharacter->getActuatorType();
-    if (_actType == tor || _actType == pd || _actType == mass || _actType == mass_lower) {
-        mAction = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
-        mNumActuatorAction = mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
-    }
-    else if (_actType == mus) {
-        mAction = Eigen::VectorXd::Zero(mCharacter->getMuscles().size() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
-        mNumActuatorAction = mCharacter->getMuscles().size();
-    }
+    // All actuator types (tor, pd, mass, mass_lower) use joint-space actions
+    mAction = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs() + (mPhaseDisplacementScale > 0 ? 1 : 0) + (mUseCascading ? 1 : 0));
+    mNumActuatorAction = mCharacter->getSkeleton()->getNumDofs() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
 
     // === Ground === (hardcoded)
     mGround = BuildFromFile(rm::resolve("@data/ground.xml"), SKEL_DEFAULT);
@@ -317,8 +333,8 @@ Environment::Environment(const std::string& filepath)
     // === Two-level controller ===
     if (isTwoLevelController()) {
         Character *character = mCharacter;
-        mMuscleNN = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading, true);
-        mLoadedMuscleNN = true;
+        MuscleNN nn = make_muscle_nn(character->getNumMuscleRelatedDof(), getNumActuatorAction(), character->getNumMuscles(), mUseCascading, true);
+        mController->setMuscleNN(nn);
     }
 
     // === Horizon ===
@@ -783,7 +799,7 @@ void Environment::setAction(Eigen::VectorXd _action)
             phaseAction += mWeights[i] * mPhaseDisplacementScale * prev_action[mNumActuatorAction];
         }
         // Current Networks
-        if (mLoadedMuscleNN)
+        if (mController->hasLoadedMuscleNN())
         {
             double beta = 0.2 + 0.1 * _action[_action.rows() - 1];
             mBetas[mBetas.size() - 1] = beta;
@@ -808,9 +824,8 @@ void Environment::setAction(Eigen::VectorXd _action)
 
     updateTargetPosAndVel();
 
-    if (mCharacter->getActuatorType() == pd || 
-        mCharacter->getActuatorType() == mass || 
-        mCharacter->getActuatorType() == mass_lower)
+    ActuatorType actType = mController->getActuatorType();
+    if (actType == pd || actType == mass || actType == mass_lower)
     {
         Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
         action.tail(actuatorAction.rows()) = actuatorAction;
@@ -818,18 +833,12 @@ void Environment::setAction(Eigen::VectorXd _action)
         action = mCharacter->addPositions(mRefPose, action);
         mCharacter->setPDTarget(action);
     }
-    else if (mCharacter->getActuatorType() == tor)
+    else if (actType == tor)
     {
         Eigen::VectorXd torque = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
         torque.tail(actuatorAction.rows()) = actuatorAction;
         if (isMirror()) torque = mCharacter->getMirrorPosition(torque);
-        mCharacter->setTorque(torque);
-    }
-    else if (mCharacter->getActuatorType() == mus)
-    {
-        Eigen::VectorXd activation = (!isMirror() ? actuatorAction : mCharacter->getMirrorActivation(actuatorAction));
-        // Clipping Function
-        mCharacter->setActivations(activation);
+        mPendingTorque = torque;  // Store for muscleStep()
     }
 
     mSimulationStep++;
@@ -1072,7 +1081,6 @@ double Environment::calcReward()
         mInfoMap.insert(std::make_pair("r_drag_x", r_drag_x));
         mInfoMap.insert(std::make_pair("r_phase", r_phase));
     }
-    if (mCharacter->getActuatorType() == mus) r = 1.0;
 
     if (mRewardConfig.clip_step > 0 && mSimulationStep < mRewardConfig.clip_step) {
         r = std::min(r, mRewardConfig.clip_value);
@@ -1380,81 +1388,7 @@ Eigen::VectorXf Environment::getDiscObs() const
     return disc_obs;
 }
 
-void Environment::calcActivation()
-{
-    MuscleTuple mt = mCharacter->getMuscleTuple(isMirror());
-
-    Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
-    if (mCharacter->getIncludeJtPinSPD()) fullJtp.tail(fullJtp.rows() - mCharacter->getSkeleton()->getRootJoint()->getNumDofs()) = mt.JtP;
-    if (isMirror()) fullJtp = mCharacter->getMirrorPosition(fullJtp);
-
-    mLastDesiredTorque = mCharacter->getSPDForces(mCharacter->getPDTarget(), fullJtp);
-    if (isMirror()) mLastDesiredTorque = mCharacter->getMirrorPosition(mLastDesiredTorque);
-    Eigen::VectorXd dt = mLastDesiredTorque.tail(mt.JtP.rows());
-    if (!mCharacter->getIncludeJtPinSPD()) dt -= mt.JtP;
-
-    std::vector<Eigen::VectorXf> prev_activations;
-
-    for (int j = 0; j < mPrevNetworks.size() + 1; j++) // Include Current Network
-        prev_activations.push_back(Eigen::VectorXf::Zero(mCharacter->getMuscles().size()));
-
-    // For base network
-    if (mPrevNetworks.size() > 0) {
-        prev_activations[0] = mPrevNetworks[0].muscle->unnormalized_no_grad_forward(mt.JtA_reduced, dt, nullptr, 1.0);
-    }
-
-    for (int j = 1; j < mPrevNetworks.size(); j++)
-    {
-        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
-        for (int k : mChildNetworks[j]) prev_activation += prev_activations[k];
-        prev_activations[j] = (mUseWeights[j * 2 + 1] ? 1 : 0) * mWeights[j] * mPrevNetworks[j].muscle->unnormalized_no_grad_forward(mt.JtA_reduced, dt, &prev_activation, mWeights[j]);
-    }
-    // Current Network
-    if (mLoadedMuscleNN)
-    {
-        Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
-
-        if (!mChildNetworks.empty()) {
-            for (int k : mChildNetworks.back()) prev_activation += prev_activations[k];
-        }
-
-        if (mPrevNetworks.size() > 0) {
-            prev_activations[prev_activations.size() - 1] = (mUseWeights.back() ? 1 : 0) * mWeights.back() * mMuscleNN->unnormalized_no_grad_forward(mt.JtA_reduced, dt, &prev_activation, mWeights.back());
-        } else {
-            prev_activations[prev_activations.size() - 1] = mMuscleNN->unnormalized_no_grad_forward(mt.JtA_reduced, dt, nullptr, 1.0);
-        }
-    }
-
-    Eigen::VectorXf activations = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
-    for (Eigen::VectorXf a : prev_activations) activations += a;
-
-    activations = mMuscleNN->forward_filter(activations);
-
-    if (isMirror()) activations = mCharacter->getMirrorActivation(activations.cast<double>()).cast<float>();
-
-    mCharacter->setActivations(activations.cast<double>());
-
-    if (thread_safe_uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mTupleFilled)
-    {
-        mRandomMuscleTuple = mt;
-        mRandomDesiredTorque = dt;
-        if (mUseCascading)
-        {
-            Eigen::VectorXf prev_activation = Eigen::VectorXf::Zero(mCharacter->getMuscles().size());
-            for (int k : mChildNetworks.back())
-                prev_activation += prev_activations[k];
-            mRandomPrevOut = prev_activation.cast<double>();
-            mRandomWeight = mWeights.back();
-        }
-        mTupleFilled = true;
-    }
-
-    // Accumulate mean activation every substep (always, for tensorboard logging)
-    mMeanActivation += activations.cwiseAbs().mean();
-
-    // Note: Discriminator reward computation moved to postMuscleStep()
-    // where full disc_obs (including upper body torque) is available
-}
+// Note: calcActivation() has been removed - logic moved to Controller::step()
 
 void Environment::postMuscleStep()
 {
@@ -1482,21 +1416,52 @@ void Environment::postMuscleStep()
 
 void Environment::muscleStep()
 {
-    if (mCharacter->getActuatorType() == mass || mCharacter->getActuatorType() == mass_lower) {
-        calcActivation();
-    } else if (mCharacter->getActuatorType() == tor) {
-        // For torque mode, store the applied torque for visualization (set before step)
-        mLastDesiredTorque = mCharacter->getTorque();
+    ActuatorType actType = mController->getActuatorType();
+
+    // Build input for Controller
+    ControllerInput input;
+    input.pdTarget = mCharacter->getPDTarget();
+    input.isMirror = isMirror();
+    input.includeJtPinSPD = mCharacter->getIncludeJtPinSPD();
+
+    if (actType == mass || actType == mass_lower) {
+        // Copy muscle tuple to local (cache invalidated by setActivations/applyMuscleForces)
+        MuscleTuple mt = mCharacter->getMuscleTuple(isMirror());
+        input.muscleTuple = &mt;
+
+        // Controller handles all mirroring internally and returns ready-to-apply outputs
+        ControllerOutput output = mController->step(input);
+
+        // Apply to Character
+        mCharacter->setActivations(output.activations.cast<double>());
+        mCharacter->applyMuscleForces();
+
+        // For mass_lower, also apply upper body torque
+        if (actType == mass_lower) {
+            mCharacter->addTorque(output.torque);
+        }
+
+        // Training data sampling
+        if (thread_safe_uniform(0.0, 1.0) < 1.0 / static_cast<double>(mNumSubSteps) || !mTupleFilled) {
+            mRandomMuscleTuple = mt;
+            mTupleFilled = true;
+        }
+
+        // Accumulate mean activation for tensorboard logging
+        mMeanActivation += output.activations.cwiseAbs().mean();
+
+    } else if (actType == tor) {
+        input.torque = mPendingTorque;
+        ControllerOutput output = mController->step(input);
+        mCharacter->applyTorque(output.torque);
+
+    } else if (actType == pd) {
+        ControllerOutput output = mController->step(input);
+        mCharacter->applyTorque(output.torque);
     }
 
     if (mNoiseInjector) mNoiseInjector->step(mCharacter);
-    mCharacter->step();
-
-    // For PD mode, get torque after step (computed inside step by SPD controller)
-    if (mCharacter->getActuatorType() == pd) {
-        mLastDesiredTorque = mCharacter->getTorque();
-    }
-
+    mCharacter->step();  // Metabolic tracking only
     mWorld->step();
     postMuscleStep();
 }
@@ -1641,7 +1606,8 @@ void Environment::reset(double phase)
     // Use clamped pose as PD target to avoid mismatch
     mCharacter->setPDTarget(mRefPose);
 
-    mCharacter->setTorque(mCharacter->getTorque().setZero());
+    mCharacter->setZeroForces();
+    mPendingTorque = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
     if (mUseMuscle) {
         mCharacter->setActivations(mCharacter->getActivations().setZero());
         mCharacter->resetStep();
@@ -1686,7 +1652,7 @@ bool Environment::isFall()
 double Environment::getEnergyReward()
 {
     double energy;
-    ActuatorType actType = mCharacter->getActuatorType();
+    ActuatorType actType = mController->getActuatorType();
 
     // For torque-based actuators (pd, tor), use torque energy only
     if (actType == pd || actType == tor) {

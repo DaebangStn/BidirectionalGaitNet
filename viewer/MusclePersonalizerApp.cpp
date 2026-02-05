@@ -267,7 +267,7 @@ void MusclePersonalizerApp::loadCharacter()
         LOG_INFO("[MusclePersonalizer] Loading muscles: " << mMusclePath);
 
         // Load character through SurgeryExecutor
-        mExecutor->loadCharacter(mSkeletonPath, mMusclePath, ActuatorType::mus);
+        mExecutor->loadCharacter(mSkeletonPath, mMusclePath);
 
         // Get reference mass from character
         mReferenceMass = mExecutor->getCharacter()->getSkeleton()->getMass();
@@ -304,7 +304,6 @@ void MusclePersonalizerApp::loadReferenceCharacter()
         // Create reference character
         mReferenceCharacter = new Character(skelResolved, true);
         mReferenceCharacter->setMuscles(muscleResolved);
-        mReferenceCharacter->setActuatorType(ActuatorType::mus);
 
         // Zero muscle activations
         if (mReferenceCharacter->getMuscles().size() > 0) {

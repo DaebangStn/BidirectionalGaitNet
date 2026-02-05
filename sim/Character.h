@@ -28,14 +28,7 @@ struct ModifyInfo
 };
 using BoneInfo = std::tuple<std::string, ModifyInfo>;
 
-enum ActuatorType
-{
-    tor,
-    pd,
-    mus,
-    mass,
-    mass_lower
-};
+// Note: ActuatorType enum has been moved to Controller.h
 
 enum MetabolicType
 {
@@ -46,7 +39,6 @@ enum MetabolicType
     MA2      // mass * activation^2
 };
 
-ActuatorType getActuatorType(std::string type);
 struct MuscleTuple
 {
     // Eigen::VectorXd dt;
@@ -72,22 +64,22 @@ public:
     std::vector<std::pair<Joint *, Joint *>> getPairs() { return mPairs; }
     Eigen::VectorXd getMirrorPosition(Eigen::VectorXd pos);
 
-    Eigen::VectorXd getSPDForces(const Eigen::VectorXd &p_desired, const Eigen::VectorXd &ext, int inference_per_sim = 1);
-
     void setPDTarget(Eigen::VectorXd _pdtarget) { mPDTarget = _pdtarget; }
     Eigen::VectorXd getPDTarget() { return mPDTarget; }
 
-    void setTorque(Eigen::VectorXd _torque) { mTorque = _torque; }
-    Eigen::VectorXd getTorque() { return mTorque; }
     Eigen::VectorXd getUpperBodyTorque() const { return mUpperBodyTorque; }
     int getUpperBodyDim() const { return mUpperBodyDim; }
     void setZeroForces();
     void setActivations(Eigen::VectorXd _activation);
     Eigen::VectorXd getActivations() { return mActivations; }
-    void step();
 
-    void setActuatorType(ActuatorType _act) { mActuatorType = _act; }
-    ActuatorType getActuatorType() { return mActuatorType; }
+    // Force application methods (actuator-agnostic)
+    void applyTorque(const Eigen::VectorXd& torque);
+    void addTorque(const Eigen::VectorXd& torque);
+    void applyMuscleForces();
+
+    // Simulation step (metabolic tracking only)
+    void step();
 
     std::vector<dart::dynamics::BodyNode *> getEndEffectors() { return mEndEffectors; }
     const Eigen::VectorXd& getKpVector() const { return mKp; }
@@ -139,7 +131,10 @@ public:
     void setMuscleParam(const std::string& muscleName, const std::string& paramType, double value);
 
     // MuscleTuple getMuscleTuple(Eigen::VectorXd dt, bool isMirror = false);
-    MuscleTuple getMuscleTuple(bool isMirror = false);
+    const MuscleTuple& getMuscleTuple(bool isMirror = false);
+
+    // Cache invalidation - call when state changes that affects muscle Jacobians
+    void invalidateMuscleTuple();
 
     int getNumMuscles() { return mMuscles.size(); }
     int getNumMuscleRelatedDof() { return mNumMuscleRelatedDof; }
@@ -173,6 +168,10 @@ public:
     void setScaleTauOnWeight(bool enable) { mScaleTauOnWeight = enable; }
     bool getScaleTauOnWeight() const { return mScaleTauOnWeight; }
     void updateTorqueMassRatio();
+    double getTorqueMassRatio() const { return mTorqueMassRatio; }
+
+    // Max torque for SPD clipping (used by Controller)
+    const Eigen::VectorXd& getMaxTorque() const { return mMaxTorque; }
 
     // Muscle force scaling based on body mass (f0 scales with mass^(2/3))
     void setScaleF0OnWeight(bool enable) { mScaleF0OnWeight = enable; }
@@ -221,15 +220,21 @@ private:
     std::vector<std::pair<Joint *, Joint *>> mPairs;
     std::vector<Eigen::Matrix3d> mBodyNodeTransform;
 
-    ActuatorType mActuatorType;
-    Eigen::VectorXd mTorque;
-    Eigen::VectorXd mUpperBodyTorque;  // Upper body PD torque (for mass_lower mode)
+    Eigen::VectorXd mUpperBodyTorque;  // Cached upper body torque (for visualization)
     int mUpperBodyDim = 0;             // Cached upper body DOF dimension
     Eigen::VectorXd mPDTarget;
 
     // Muscle
     std::vector<Muscle *> mMuscles;
     std::map<std::string, Muscle*> mMuscleNameCache;  // Fast lookup by name
+
+    // MuscleTuple caching (lazy computation)
+    MuscleTuple mCachedMuscleTuple;           // Raw (non-mirrored)
+    MuscleTuple mCachedMuscleTupleMirrored;   // Mirrored version
+    bool mMuscleTupleRawValid = false;        // Raw cache validity
+    bool mMuscleTupleMirroredValid = false;   // Mirrored cache validity
+    void computeMuscleTupleRaw();             // Compute raw tuple
+    void computeMuscleTupleMirrored();        // Compute mirrored from raw
 
     int mNumMuscleRelatedDof;
     Eigen::VectorXd mActivations;

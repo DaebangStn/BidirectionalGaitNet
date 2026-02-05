@@ -176,7 +176,7 @@ public:
 
     // Initialization
     void loadRenderConfigImpl() override;
-    void loadCharacter(const std::string& skel_path, const std::string& muscle_path, ActuatorType _actType);
+    void loadCharacter(const std::string& skel_path, const std::string& muscle_path);
     void createGround();
 
     // Pose and force control
