@@ -67,12 +67,11 @@ struct ControllerConfig
     Eigen::VectorXd kp;
     Eigen::VectorXd kv;
     ActuatorType actuatorType = mass;
-    Eigen::VectorXd maxTorque;
     int inferencePerSim = 1;
-    int upperBodyStart = 24;        // rootDof(6) + lowerBodyDof(18)
     bool scaleTauOnWeight = false;
     double torqueMassRatio = 1.0;
     int numSubSteps = 1;
+    int numMuscleDof = 0;           // Number of muscle-related DOFs
 };
 
 /**
@@ -200,17 +199,43 @@ public:
     /** Get torque mass ratio */
     double getTorqueMassRatio() const { return mTorqueMassRatio; }
 
-    /** Set upper body start DOF index */
-    void setUpperBodyStart(int start) { mUpperBodyStart = start; }
-
-    /** Get upper body start DOF index */
-    int getUpperBodyStart() const { return mUpperBodyStart; }
-
-    /** Set max torque for SPD clipping */
-    void setMaxTorque(const Eigen::VectorXd& maxTorque) { mMaxTorque = maxTorque; }
-
     /** Set inference per sim ratio (for time step scaling) */
     void setInferencePerSim(int inferencePerSim) { mInferencePerSim = inferencePerSim; }
+
+    // === Virtual root force SPD control (position only, DOF 3-5) ===
+
+    /** Set virtual root force Kp gain (also sets Kv for critical damping) */
+    void setVirtualRootForceKp(double kp);
+
+    /** Set reference pose for virtual root force (position + orientation) */
+    void setVirtualRootRefPosition(const Eigen::Vector3d& ref_pos);
+    void setVirtualRootRefOrientation(const Eigen::Matrix3d& ref_rot);
+
+    /** Set override for reference position (bypasses Environment's ref pose) */
+    void setVirtualRootRefOverride(bool enabled, const Eigen::Vector3d& ref_pos = Eigen::Vector3d::Zero());
+
+    /** Check if reference position override is enabled */
+    bool isVirtualRootRefOverrideEnabled() const { return mVfRefOverrideEnabled; }
+
+    /** Get the virtual root force computed in world frame SPD */
+    Eigen::Vector3d getVirtualRootForce() const { return mCachedVirtualRootForce; }
+
+    /** Compute virtual root force using world-frame SPD (position only, no orientation) */
+    Eigen::Vector3d computeRootVirtualSPD();
+
+    /** Get reference position for virtual root force (returns override if enabled) */
+    Eigen::Vector3d getVirtualRootRefPosition() const {
+        return mVfRefOverrideEnabled ? mVfRefOverridePos : mVfRefPosition;
+    }
+
+    /** Get reference orientation */
+    Eigen::Matrix3d getVirtualRootRefOrientation() const { return mVfRefOrientation; }
+
+    /** Get virtual root force Kp gain */
+    double getVirtualRootKp() const { return mVfKp; }
+
+    /** Get virtual root force Kv gain (from mKv DOF 3-5) */
+    double getVirtualRootKv() const { return mKv.size() > 3 ? mKv[3] : 0.0; }
 
     // === Training data sampling ===
 
@@ -242,6 +267,11 @@ private:
     // === Skeleton reference (for efficient state access) ===
     dart::dynamics::SkeletonPtr mSkeleton;
 
+    // === Cached dimensions (computed once at construction) ===
+    int mNumDofs = 0;
+    int mRootDof = 0;
+    int mNumMuscleDof = 0;
+
     // === Control configuration ===
     ActuatorType mActuatorType = mass;
 
@@ -249,14 +279,19 @@ private:
     Eigen::VectorXd mKp;
     Eigen::VectorXd mKv;
 
-    // SPD torque clipping
-    Eigen::VectorXd mMaxTorque;
-
     // Inference ratio
     int mInferencePerSim = 1;
 
     // === Cached SPD result ===
     Eigen::VectorXd mCachedSPDTorque;
+
+    // === Virtual root force parameters ===
+    double mVfKp = 0.0;
+    Eigen::Vector3d mVfRefPosition = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d mVfRefOrientation = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d mCachedVirtualRootForce = Eigen::Vector3d::Zero();
+    bool mVfRefOverrideEnabled = false;
+    Eigen::Vector3d mVfRefOverridePos = Eigen::Vector3d::Zero();
 
     // === MuscleNN ===
     MuscleNN mMuscleNN;
@@ -270,7 +305,6 @@ private:
     bool mUseCascading = false;
 
     // === Upper body config (for mass_lower) ===
-    int mUpperBodyStart = 24;  // rootDof(6) + lowerBodyDof(18)
     bool mScaleTauOnWeight = false;
     double mTorqueMassRatio = 1.0;
 

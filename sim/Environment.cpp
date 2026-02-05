@@ -86,18 +86,6 @@ Environment::Environment(const std::string& filepath)
             mCharacter->setScaleTauOnWeight(scaleTauOnWeight);
         }
 
-        // Set max acceleration for SPD torque clipping (tau <= mass * max_acc)
-        if (skel["max_acc"]) {
-            double maxAcc = skel["max_acc"].as<double>();
-            mCharacter->setMaxAcc(maxAcc);
-        }
-
-        // Set absolute max torque limit for SPD clipping
-        if (skel["max_torque"]) {
-            double maxTorque = skel["max_torque"].as<double>();
-            mCharacter->setMaxTorqueLimit(maxTorque);
-        }
-
         // Enable critical damping: Kv = 2 * sqrt(Kp * M_diag)
         if (skel["use_critical_damping"]) {
             bool useCriticalDamping = skel["use_critical_damping"].as<bool>();
@@ -111,17 +99,20 @@ Environment::Environment(const std::string& filepath)
         mImitMask = Eigen::ArrayXd::Ones(mCharacter->getSkeleton()->getNumDofs());
 
         // Create Controller with configuration
+        int numDofs = mCharacter->getSkeleton()->getNumDofs();
         int rootDof = mCharacter->getSkeleton()->getRootJoint()->getNumDofs();
         int lowerBodyDof = 18;  // First 18 DOFs after root are lower body
+
+        // Muscle DOF count depends on actuator type
+        int numMuscleDof = (actuatorType == mass) ? (numDofs - rootDof) : lowerBodyDof;
 
         ControllerConfig ctrlConfig;
         ctrlConfig.skeleton = mCharacter->getSkeleton();
         ctrlConfig.kp = mCharacter->getKpVector();
         ctrlConfig.kv = mCharacter->getKvVector();
         ctrlConfig.actuatorType = actuatorType;
-        ctrlConfig.maxTorque = mCharacter->getMaxTorque();
         ctrlConfig.inferencePerSim = mInferencePerSim;
-        ctrlConfig.upperBodyStart = rootDof + lowerBodyDof;
+        ctrlConfig.numMuscleDof = numMuscleDof;
         ctrlConfig.scaleTauOnWeight = scaleTauOnWeight;
         ctrlConfig.torqueMassRatio = scaleTauOnWeight ? mCharacter->getTorqueMassRatio() : 1.0;
 
@@ -824,6 +815,25 @@ void Environment::setAction(Eigen::VectorXd _action)
 
     updateTargetPosAndVel();
 
+    // Virtual root force: compute current kp and update ref position
+    if (mVfKpStart > 0.0) {
+        // Linear decay: kp_start @ t=0 → kp_end @ t=Horizon
+        double t_norm = std::clamp(static_cast<double>(mSimulationStep) / static_cast<double>(mHorizon), 0.0, 1.0);
+        double kp_end = mVfKpStart * mVfDiscountRate * mVfDiscountRate;
+        double current_kp = mVfKpStart * (1.0 - t_norm) + kp_end * t_norm;
+        mController->setVirtualRootForceKp(current_kp);
+
+        // Extract root pose from mRefPose in WORLD frame
+        // FreeJoint DOFs are body-local, need to convert to world frame
+        Eigen::Isometry3d ref_transform = FreeJoint::convertToTransform(mRefPose.head<6>());
+        Eigen::Vector3d ref_root_pos = ref_transform.translation();
+        Eigen::Matrix3d ref_root_rot = ref_transform.linear();
+        mController->setVirtualRootRefPosition(ref_root_pos);
+        mController->setVirtualRootRefOrientation(ref_root_rot);
+    } else {
+        mController->setVirtualRootForceKp(0.0);
+    }
+
     ActuatorType actType = mController->getActuatorType();
     if (actType == pd || actType == mass || actType == mass_lower)
     {
@@ -831,7 +841,7 @@ void Environment::setAction(Eigen::VectorXd _action)
         action.tail(actuatorAction.rows()) = actuatorAction;
         if (isMirror()) action = mCharacter->getMirrorPosition(action);
         action = mCharacter->addPositions(mRefPose, action);
-        mCharacter->setPDTarget(action);
+        mPDTarget = action;  // Store for muscleStep()
     }
     else if (actType == tor)
     {
@@ -1420,7 +1430,8 @@ void Environment::muscleStep()
 
     // Build input for Controller
     ControllerInput input;
-    input.pdTarget = mCharacter->getPDTarget();
+    ControllerOutput output;
+    input.pdTarget = mPDTarget;
     input.isMirror = isMirror();
     input.includeJtPinSPD = mCharacter->getIncludeJtPinSPD();
 
@@ -1429,14 +1440,13 @@ void Environment::muscleStep()
         MuscleTuple mt = mCharacter->getMuscleTuple(isMirror());
         input.muscleTuple = &mt;
 
-        // Controller handles all mirroring internally and returns ready-to-apply outputs
-        ControllerOutput output = mController->step(input);
+        output = mController->step(input);
 
-        // Apply to Character
+        // Apply muscle forces
         mCharacter->setActivations(output.activations.cast<double>());
         mCharacter->applyMuscleForces();
-
-        // For mass_lower, also apply upper body torque
+        
+        // Apply remaining torque (upper body for mass_lower, none for mass)
         if (actType == mass_lower) {
             mCharacter->addTorque(output.torque);
         }
@@ -1452,12 +1462,21 @@ void Environment::muscleStep()
 
     } else if (actType == tor) {
         input.torque = mPendingTorque;
-        ControllerOutput output = mController->step(input);
+        output = mController->step(input);
         mCharacter->applyTorque(output.torque);
 
     } else if (actType == pd) {
-        ControllerOutput output = mController->step(input);
+        output = mController->step(input);
         mCharacter->applyTorque(output.torque);
+    }
+
+    // Apply virtual root force computed in world frame SPD (position only, no orientation)
+    if (mVfKpStart > 0.0) {
+        Eigen::Vector3d force = output.torque.segment<3>(3);
+        if (force.squaredNorm() > 1e-12) {
+            auto rootBody = mCharacter->getSkeleton()->getRootBodyNode();
+            rootBody->addExtForce(force, Eigen::Vector3d::Zero(), false, true);  // world frame
+        }
     }
 
     if (mNoiseInjector) mNoiseInjector->step(mCharacter);
@@ -1518,6 +1537,10 @@ void Environment::reset(double phase)
     mSimulationStep = 0;
     mSimulationCount = 0;
     mKneeLoadingMaxCycle = 0.0;
+
+    // Reset virtual force state
+    mController->setVirtualRootForceKp(0.0);
+    mController->setVirtualRootRefPosition(Eigen::Vector3d::Zero());
 
     // Reset Initial Time
     double time = 0.0;
@@ -1602,9 +1625,6 @@ void Environment::reset(double phase)
     Eigen::VectorXd rom_max = mCharacter->getSkeleton()->getPositionUpperLimits();
     cur_pos = cur_pos.cwiseMax(rom_min).cwiseMin(rom_max);
     mCharacter->getSkeleton()->setPositions(cur_pos);
-
-    // Use clamped pose as PD target to avoid mismatch
-    mCharacter->setPDTarget(mRefPose);
 
     mCharacter->setZeroForces();
     mPendingTorque = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());

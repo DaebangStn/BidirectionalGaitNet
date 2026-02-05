@@ -2130,7 +2130,7 @@ void RenderCkpt::drawKinematicsControlPanelContent()
     //     // mPredictedMotion.name = "Unpredicted";
     // }
 
-    if (ImGui::CollapsingHeader("Motions", ImGuiTreeNodeFlags_DefaultOpen))
+    if (collapsingHeaderWithControls("Motions"))
     {
         static int mMotionPhaseOffset = 0;
 
@@ -2348,64 +2348,61 @@ void RenderCkpt::drawRightPanel()
 // ============================================================
 void RenderCkpt::drawGaitTabContent()
 {
-    // Status
-    if (ImGui::CollapsingHeader("Status", ImGuiTreeNodeFlags_DefaultOpen))
+    // Status (always shown)
+    ImGui::Text("Status");
+    ImGui::Separator();
+    ImGui::Text("Target / Average Vel      : %.3f / %.3f m/s", mRenderEnv->getTargetCOMVelocity(), mRenderEnv->getAvgVelocity()[2]);
+
+    // Character position
+    Eigen::Vector3d char_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
+    ImGui::Text("Character Pos   : (%.3f, %.3f, %.3f)", char_pos[0], char_pos[1], char_pos[2]);
+
+    ImGui::Separator();
+
+    // Gait Phase State
+    auto gaitPhase = mRenderEnv->getGaitPhase();
+
+    // Display current state with color coding
+    const char* stateNames[] = {"RIGHT_STANCE", "LEFT_TAKEOFF", "LEFT_STANCE", "RIGHT_TAKEOFF"};
+    ImVec4 stateColors[] = {
+        ImVec4(0.0f, 1.0f, 0.0f, 1.0f),  // RIGHT_STANCE - green
+        ImVec4(1.0f, 1.0f, 0.0f, 1.0f),  // LEFT_TAKEOFF - yellow
+        ImVec4(0.0f, 0.5f, 1.0f, 1.0f),  // LEFT_STANCE - blue
+        ImVec4(1.0f, 0.5f, 0.0f, 1.0f)   // RIGHT_TAKEOFF - orange
+    };
+
+    int currentState = static_cast<int>(gaitPhase->getCurrentState());
+    ImGui::Text("Gait State      : ");
+    ImGui::SameLine();
+    ImGui::TextColored(stateColors[currentState], "%s", stateNames[currentState]);
+
+    // Display stance ratios
+    double stanceRatioR = gaitPhase->getStanceRatioR();
+    double stanceRatioL = gaitPhase->getStanceRatioL();
+
+    ImGui::Text("Stance Ratio R  : %.3f", stanceRatioR);
+    ImGui::SameLine();
+    ImGui::ProgressBar(stanceRatioR, ImVec2(100, 0));
+
+    ImGui::Text("Stance Ratio L  : %.3f", stanceRatioL);
+    ImGui::SameLine();
+    ImGui::ProgressBar(stanceRatioL, ImVec2(100, 0));
+
+    ImGui::Separator();
+
+    if (collapsingHeaderWithControls("Metadata"))
     {
-        ImGui::Text("Target / Average Vel      : %.3f / %.3f m/s", mRenderEnv->getTargetCOMVelocity(), mRenderEnv->getAvgVelocity()[2]);
-
-        // Character position
-        Eigen::Vector3d char_pos = mRenderEnv->getCharacter()->getSkeleton()->getRootBodyNode()->getCOM();
-        ImGui::Text("Character Pos   : (%.3f, %.3f, %.3f)", char_pos[0], char_pos[1], char_pos[2]);
-
-        ImGui::Separator();
-
-        // Gait Phase State
-        auto gaitPhase = mRenderEnv->getGaitPhase();
-
-        // Display current state with color coding
-        const char* stateNames[] = {"RIGHT_STANCE", "LEFT_TAKEOFF", "LEFT_STANCE", "RIGHT_TAKEOFF"};
-        ImVec4 stateColors[] = {
-            ImVec4(0.0f, 1.0f, 0.0f, 1.0f),  // RIGHT_STANCE - green
-            ImVec4(1.0f, 1.0f, 0.0f, 1.0f),  // LEFT_TAKEOFF - yellow
-            ImVec4(0.0f, 0.5f, 1.0f, 1.0f),  // LEFT_STANCE - blue
-            ImVec4(1.0f, 0.5f, 0.0f, 1.0f)   // RIGHT_TAKEOFF - orange
-        };
-
-        int currentState = static_cast<int>(gaitPhase->getCurrentState());
-        ImGui::Text("Gait State      : ");
-        ImGui::SameLine();
-        ImGui::TextColored(stateColors[currentState], "%s", stateNames[currentState]);
-
-        // Display stance ratios
-        double stanceRatioR = gaitPhase->getStanceRatioR();
-        double stanceRatioL = gaitPhase->getStanceRatioL();
-
-        ImGui::Text("Stance Ratio R  : %.3f", stanceRatioR);
-        ImGui::SameLine();
-        ImGui::ProgressBar(stanceRatioR, ImVec2(100, 0));
-
-        ImGui::Text("Stance Ratio L  : %.3f", stanceRatioL);
-        ImGui::SameLine();
-        ImGui::ProgressBar(stanceRatioL, ImVec2(100, 0));
-
-        ImGui::Separator();
-        
-        ImGui::Indent();
-        if (ImGui::CollapsingHeader("Metadata"))
-        {
-            if (ImGui::Button("Print")) std::cout << mRenderEnv->getMetadata() << std::endl;
-            ImGui::TextUnformatted(mRenderEnv->getMetadata().c_str());
-        }
-        ImGui::Unindent();
-
-        // Rollout status display
-        if (mRolloutStatus.cycle == -1)
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Rollout: Infinite Mode");
-        else if (mRolloutStatus.cycle == 0)
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Rollout: Completed");
-        else
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Rollout: %d cycles remaining", mRolloutStatus.cycle);
+        if (ImGui::Button("Print")) std::cout << mRenderEnv->getMetadata() << std::endl;
+        ImGui::TextUnformatted(mRenderEnv->getMetadata().c_str());
     }
+
+    // Rollout status display
+    if (mRolloutStatus.cycle == -1)
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Rollout: Infinite Mode");
+    else if (mRolloutStatus.cycle == 0)
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Rollout: Completed");
+    else
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Rollout: %d cycles remaining", mRolloutStatus.cycle);
 
     // Gait Phase Metrics
     if (collapsingHeaderWithControls("Gait Metrics"))
@@ -3506,7 +3503,7 @@ void RenderCkpt::onPostRender() {
 }
 
 void RenderCkpt::drawCameraStatusSection() {
-    if (ImGui::CollapsingHeader("Camera Status")) {
+    if (collapsingHeaderWithControls("Camera Status")) {
         // Current preset description
         if (mCurrentCameraPreset >= 0 && mCurrentCameraPreset < 3 &&
             mCameraPresets[mCurrentCameraPreset].isSet) {
@@ -3561,7 +3558,7 @@ void RenderCkpt::drawCameraStatusSection() {
 }
 
 void RenderCkpt::drawJointControlSection() {
-    if (ImGui::CollapsingHeader("Joint##control")) {
+    if (collapsingHeaderWithControls("Joint##control")) {
         if (!mRenderEnv || !mRenderEnv->getCharacter()) {
             ImGui::TextDisabled("Load environment first");
         } else {
@@ -3870,7 +3867,7 @@ void RenderCkpt::drawSimControlPanelContent()
     if (ImGui::Button("Set Mass")) mRenderEnv->getCharacter()->setBodyMass(static_cast<double>(targetMass));
 
     // Reward Control with TreeNode categories
-    if (ImGui::CollapsingHeader("Reward##control", ImGuiTreeNodeFlags_DefaultOpen))
+    if (collapsingHeaderWithControls("Reward##control"))
     {
         // Metabolic Energy Category
         if (ImGui::TreeNodeEx("Metabolic Energy##metabolic", ImGuiTreeNodeFlags_DefaultOpen))
@@ -4195,7 +4192,7 @@ void RenderCkpt::drawSimControlPanelContent()
     }
 
     // Muscle Control
-    if (ImGui::CollapsingHeader("Muscle"))
+    if (collapsingHeaderWithControls("Muscle"))
     {
         Eigen::VectorXf activation = mRenderEnv->getCharacter()->getActivations().cast<float>(); // * mRenderEnv->getActionScale();
         int idx = 0;
@@ -4211,7 +4208,7 @@ void RenderCkpt::drawSimControlPanelContent()
     drawJointControlSection();
 
     // Body Parameters
-    if (ImGui::CollapsingHeader("Sim Parameters"))
+    if (collapsingHeaderWithControls("Sim Parameters"))
     {
         Eigen::VectorXf group_v = Eigen::VectorXf::Ones(mRenderEnv->getGroupParam().size());
         int idx = 0;
@@ -4231,7 +4228,7 @@ void RenderCkpt::drawSimControlPanelContent()
     }
 
     // Gait Phase Control
-    if (mRenderEnv && ImGui::CollapsingHeader("Gait Phase##control", ImGuiTreeNodeFlags_DefaultOpen))
+    if (mRenderEnv && collapsingHeaderWithControls("Gait Phase##control"))
     {
         auto gaitPhase = mRenderEnv->getGaitPhase();
 
@@ -4590,14 +4587,15 @@ void RenderCkpt::drawRenderingContent()
         ImGuiFileDialog::Instance()->Close();
     }
 
-    ImGui::Checkbox("Draw PD Target Motion", &mDrawFlags.pdTarget);
-    ImGui::Checkbox("Draw Playable Motion", &mDrawFlags.playableMotion);
-    ImGui::Checkbox("Draw Ref Motion", &mDrawFlags.refMotion);
-    ImGui::Checkbox("Draw Joint Sphere", &mDrawFlags.jointSphere);
+    ImGui::Checkbox("Virtual Force Arrow", &mDrawFlags.virtualForceArrow);
+    ImGui::Checkbox("PD Target Motion", &mDrawFlags.pdTarget);
+    ImGui::Checkbox("Playable Motion", &mDrawFlags.playableMotion);
+    ImGui::Checkbox("Ref Motion", &mDrawFlags.refMotion);
+    ImGui::Checkbox("Joint Sphere", &mDrawFlags.jointSphere);
     ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
-    ImGui::Checkbox("Draw Foot Step", &mDrawFlags.footStep);
-    ImGui::Checkbox("Draw EOE", &mDrawFlags.eoe);
-    ImGui::Checkbox("Draw Collision", &mDrawFlags.collision);
+    ImGui::Checkbox("Foot Step", &mDrawFlags.footStep);
+    ImGui::Checkbox("EOE", &mDrawFlags.eoe);
+    ImGui::Checkbox("Collision", &mDrawFlags.collision);
 
     // Skeleton Render Mode (matches RenderMode enum: Primitive, Mesh, Wireframe)
     const char* renderModes[] = {"Solid", "Mesh", "Wireframe"};
@@ -4610,7 +4608,7 @@ void RenderCkpt::drawRenderingContent()
 
     ImGui::Separator();
     // Muscle Filtering and Selection
-    if (ImGui::CollapsingHeader("Muscle##Rendering", ImGuiTreeNodeFlags_DefaultOpen))
+    if (collapsingHeaderWithControls("Muscle##Rendering"))
     {
         auto allMuscles = mRenderEnv->getCharacter()->getMuscles();
         ImGuiCommon::MuscleSelector("MuscleList", allMuscles, mMuscleSelectionStates,
@@ -4763,73 +4761,8 @@ void RenderCkpt::drawLeftPanel()
     if (ImGui::BeginTabBar("LeftPanelTabs")) {
         if (ImGui::BeginTabItem("Sim")) {
             drawSimControlPanelContent();
-
-            // Bone Scale Control - uses RenderCharacter's cached scale info
-            if (mMotionCharacter && ImGui::CollapsingHeader("Bone Scale"))
-            {
-                auto skel = mMotionCharacter->getSkeleton();
-                auto& skelInfos = mMotionCharacter->getSkelInfos();
-
-                if (skel && !skelInfos.empty())
-                {
-                    bool anyChanged = false;
-                    for (size_t i = 0; i < skelInfos.size(); ++i)
-                    {
-                        auto& [boneName, modInfo] = skelInfos[i];
-
-                        auto* bn = skel->getBodyNode(boneName);
-                        if (!bn) continue;
-
-                        // Get current shape size for display
-                        Eigen::Vector3d currentSize = Eigen::Vector3d::Zero();
-                        auto* shapeNode = bn->getShapeNodeWith<dart::dynamics::VisualAspect>(0);
-                        if (shapeNode) {
-                            const auto* boxShape = dynamic_cast<const dart::dynamics::BoxShape*>(shapeNode->getShape().get());
-                            if (boxShape) {
-                                currentSize = boxShape->getSize();
-                            }
-                        }
-
-                        // Create sliders for scale ratios (lx, ly, lz)
-                        ImGui::PushID(static_cast<int>(i));
-                        if (ImGui::TreeNode(boneName.c_str()))
-                        {
-                            // Display current size
-                            ImGui::Text("Size: [%.3f, %.3f, %.3f]", currentSize[0], currentSize[1], currentSize[2]);
-
-                            float scaleX = static_cast<float>(modInfo.value[0]);
-                            float scaleY = static_cast<float>(modInfo.value[1]);
-                            float scaleZ = static_cast<float>(modInfo.value[2]);
-                            float scale = static_cast<float>(modInfo.value[3]);
-
-                            bool changed = false;
-                            changed |= ImGui::SliderFloat("Scale X", &scaleX, 0.5f, 2.0f);
-                            changed |= ImGui::SliderFloat("Scale Y", &scaleY, 0.5f, 2.0f);
-                            changed |= ImGui::SliderFloat("Scale Z", &scaleZ, 0.5f, 2.0f);
-                            changed |= ImGui::SliderFloat("Uniform", &scale, 0.5f, 2.0f);
-
-                            if (changed)
-                            {
-                                modInfo.value[0] = scaleX;
-                                modInfo.value[1] = scaleY;
-                                modInfo.value[2] = scaleZ;
-                                modInfo.value[3] = scale;
-                                anyChanged = true;
-                            }
-
-                            ImGui::TreePop();
-                        }
-                        ImGui::PopID();
-                    }
-
-                    // Apply all bone scales when any changed
-                    if (anyChanged)
-                    {
-                        mMotionCharacter->applySkeletonBodyNode(skelInfos, skel);
-                    }
-                }
-            }
-
+            drawVirtualForceControl();
+            drawBoneScaleControl();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Kinematics")) {
@@ -5174,6 +5107,9 @@ void RenderCkpt::drawContent()
         // Draw noise visualizations
         drawNoiseVisualizations();
 
+        // Draw virtual force arrow
+        drawVirtualForceVisualization();
+
         if ((mRenderEnv->getRewardType() == gaitnet) && mDrawFlags.footStep) drawFootStep();
         if (mDrawFlags.jointSphere)
         {
@@ -5189,7 +5125,7 @@ void RenderCkpt::drawContent()
         if (!mRenderConditions && mDrawFlags.pdTarget)
         {
             const auto& character = mRenderEnv->getCharacter();
-            Eigen::VectorXd pos = character->getPDTarget();
+            Eigen::VectorXd pos = mRenderEnv->getPDTarget();
             pos.head(6) = character->getSkeleton()->getPositions().head(6);
             pos[5] += 1.0;
             drawSkeleton(pos, Eigen::Vector4d(1.0, 0.35, 0.35, 1.0));
@@ -5983,7 +5919,7 @@ void RenderCkpt::drawNoiseControlPanel()
 {
     if (!mRenderEnv) return;
 
-    if (ImGui::CollapsingHeader("Noise Injection", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (collapsingHeaderWithControls("Noise Injection")) {
         auto* ni = mRenderEnv->getNoiseInjector();
 
         // Noise type selection with radio buttons
@@ -6301,6 +6237,258 @@ void RenderCkpt::drawNoiseVisualizations()
     glPopMatrix();
 }
 
+void RenderCkpt::drawVirtualForceVisualization()
+{
+    if (!mDrawFlags.virtualForceArrow || !mRenderEnv) return;
+
+    auto* character = mRenderEnv->getCharacter();
+    auto* controller = mRenderEnv->getController();
+    if (!character || !controller) return;
+
+    // Get force: override from UI, or computed from Controller
+    Eigen::Vector3d force;
+    if (mVfOverrideEnabled) {
+        force = Eigen::Vector3d(mVfOverrideForce[0], mVfOverrideForce[1], mVfOverrideForce[2]);
+    } else {
+        // Read from Controller's cached SPD torque (always up-to-date)
+        force = controller->getVirtualRootForce();
+    }
+
+    // Get root position from skeleton
+    auto skeleton = character->getSkeleton();
+    Eigen::Vector3d rootPos = skeleton->getRootBodyNode()->getCOM();
+
+    glPushMatrix();
+    glDisable(GL_LIGHTING);  // Ensure arrow is visible without lighting
+
+    if (force.norm() > 1e-6) {
+        // Arrow shows the actual force direction applied to the root
+        Eigen::Vector3d direction = force.normalized();
+        double length = std::max(0.3, force.norm() / 400.0);  // More visible scaling
+
+        // Green for normal, Orange for override
+        Eigen::Vector4d color = mVfOverrideEnabled ?
+            Eigen::Vector4d(1.0, 0.6, 0.2, 0.9) :  // Orange for override
+            Eigen::Vector4d(0.2, 0.9, 0.2, 0.9);   // Green for computed
+        GUI::DrawArrow3D(rootPos, direction, length, 0.015, color);
+    } else {
+        // Draw small sphere when no force (indicator that flag is on)
+        glColor4d(0.9, 0.9, 0.2, 0.8);  // Yellow
+        glTranslated(rootPos[0], rootPos[1], rootPos[2]);
+        GUI::DrawSphere(0.05);
+    }
+
+    glEnable(GL_LIGHTING);
+    glPopMatrix();
+}
+
+void RenderCkpt::drawBoneScaleControl()
+{
+    if (!mMotionCharacter) return;
+
+    if (collapsingHeaderWithControls("Bone Scale"))
+    {
+        auto skel = mMotionCharacter->getSkeleton();
+        auto& skelInfos = mMotionCharacter->getSkelInfos();
+
+        if (skel && !skelInfos.empty())
+        {
+            bool anyChanged = false;
+            for (size_t i = 0; i < skelInfos.size(); ++i)
+            {
+                auto& [boneName, modInfo] = skelInfos[i];
+
+                auto* bn = skel->getBodyNode(boneName);
+                if (!bn) continue;
+
+                // Get current shape size for display
+                Eigen::Vector3d currentSize = Eigen::Vector3d::Zero();
+                auto* shapeNode = bn->getShapeNodeWith<dart::dynamics::VisualAspect>(0);
+                if (shapeNode) {
+                    const auto* boxShape = dynamic_cast<const dart::dynamics::BoxShape*>(shapeNode->getShape().get());
+                    if (boxShape) {
+                        currentSize = boxShape->getSize();
+                    }
+                }
+
+                // Create sliders for scale ratios (lx, ly, lz)
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::TreeNode(boneName.c_str()))
+                {
+                    // Display current size
+                    ImGui::Text("Size: [%.3f, %.3f, %.3f]", currentSize[0], currentSize[1], currentSize[2]);
+
+                    float scaleX = static_cast<float>(modInfo.value[0]);
+                    float scaleY = static_cast<float>(modInfo.value[1]);
+                    float scaleZ = static_cast<float>(modInfo.value[2]);
+                    float scale = static_cast<float>(modInfo.value[3]);
+
+                    bool changed = false;
+                    changed |= ImGui::SliderFloat("Scale X", &scaleX, 0.5f, 2.0f);
+                    changed |= ImGui::SliderFloat("Scale Y", &scaleY, 0.5f, 2.0f);
+                    changed |= ImGui::SliderFloat("Scale Z", &scaleZ, 0.5f, 2.0f);
+                    changed |= ImGui::SliderFloat("Uniform", &scale, 0.5f, 2.0f);
+
+                    if (changed)
+                    {
+                        modInfo.value[0] = scaleX;
+                        modInfo.value[1] = scaleY;
+                        modInfo.value[2] = scaleZ;
+                        modInfo.value[3] = scale;
+                        anyChanged = true;
+                    }
+
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+
+            // Apply all bone scales when any changed
+            if (anyChanged)
+            {
+                mMotionCharacter->applySkeletonBodyNode(skelInfos, skel);
+            }
+        }
+    }
+}
+
+void RenderCkpt::drawVirtualForceControl()
+{
+    if (!mRenderEnv) return;
+
+    if (collapsingHeaderWithControls("Virtual Root Force"))
+    {
+        ImGui::Text("SPD force at root position (DOF 3-5)");
+        ImGui::Separator();
+
+        // Kp Start slider with input
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::SliderFloat("Kp Start", &mVfKpStart, 0.0f, 500.0f, "%.1f")) {
+            mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        if (ImGui::InputFloat("##VfKpInput", &mVfKpStart, 0.0f, 0.0f, "%.1f")) {
+            mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
+        }
+
+        // Discount Rate slider with input
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::SliderFloat("Discount Rate", &mVfDiscountRate, 0.0f, 1.0f, "%.2f")) {
+            mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        if (ImGui::InputFloat("##VfDiscountInput", &mVfDiscountRate, 0.0f, 0.0f, "%.2f")) {
+            mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
+        }
+
+        // Display computed Kp end
+        float kpEnd = mVfKpStart * mVfDiscountRate * mVfDiscountRate;
+        ImGui::Text("Kp End (at horizon): %.1f", kpEnd);
+
+        // Quick presets
+        ImGui::Separator();
+        ImGui::Text("Presets:");
+        ImGui::SameLine();
+        if (ImGui::Button("Off")) {
+            mVfKpStart = 0.0f;
+            mVfDiscountRate = 1.0f;
+            mRenderEnv->setVirtualForceKp(0.0, 0.0);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Weak")) {
+            mVfKpStart = 100.0f;
+            mVfDiscountRate = 1.0f;
+            mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Medium")) {
+            mVfKpStart = 250.0f;
+            mVfDiscountRate = 1.0f;
+            mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Strong")) {
+            mVfKpStart = 500.0f;
+            mVfDiscountRate = 1.0f;
+            mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
+        }
+
+        // Force Override section
+        ImGui::Separator();
+        ImGui::Text("Force Override (bypasses SPD computation):");
+        if (ImGui::Checkbox("Enable Override", &mVfOverrideEnabled)) {
+            mRenderEnv->getCharacter()->setVirtualRootForceOverride(
+                mVfOverrideEnabled, Eigen::Vector3d(mVfOverrideForce[0], mVfOverrideForce[1], mVfOverrideForce[2]));
+        }
+
+        if (mVfOverrideEnabled) {
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::InputFloat3("Force (x,y,z)", mVfOverrideForce, "%.1f")) {
+                mRenderEnv->getCharacter()->setVirtualRootForceOverride(
+                    true, Eigen::Vector3d(mVfOverrideForce[0], mVfOverrideForce[1], mVfOverrideForce[2]));
+            }
+
+            // Quick force presets
+            ImGui::Text("Presets:");
+            ImGui::SameLine();
+            if (ImGui::Button("Up 1000")) {
+                mVfOverrideForce[0] = 0; mVfOverrideForce[1] = 1000; mVfOverrideForce[2] = 0;
+                mRenderEnv->getCharacter()->setVirtualRootForceOverride(true, Eigen::Vector3d(0, 1000, 0));
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Fwd 500")) {
+                mVfOverrideForce[0] = 0; mVfOverrideForce[1] = 0; mVfOverrideForce[2] = 500;
+                mRenderEnv->getCharacter()->setVirtualRootForceOverride(true, Eigen::Vector3d(0, 0, 500));
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Zero")) {
+                mVfOverrideForce[0] = 0; mVfOverrideForce[1] = 0; mVfOverrideForce[2] = 0;
+                mRenderEnv->getCharacter()->setVirtualRootForceOverride(true, Eigen::Vector3d::Zero());
+            }
+        }
+
+        // Reference Position Override section
+        ImGui::Separator();
+        ImGui::Text("Reference Position Override:");
+        if (ImGui::Checkbox("Enable Ref Override", &mVfRefOverrideEnabled)) {
+            mRenderEnv->getController()->setVirtualRootRefOverride(
+                mVfRefOverrideEnabled, Eigen::Vector3d(mVfOverrideRefPos[0], mVfOverrideRefPos[1], mVfOverrideRefPos[2]));
+        }
+
+        if (mVfRefOverrideEnabled) {
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::InputFloat3("Ref Pos (x,y,z)", mVfOverrideRefPos, "%.3f")) {
+                mRenderEnv->getController()->setVirtualRootRefOverride(
+                    true, Eigen::Vector3d(mVfOverrideRefPos[0], mVfOverrideRefPos[1], mVfOverrideRefPos[2]));
+            }
+
+            // Quick position presets
+            ImGui::Text("Presets:");
+            ImGui::SameLine();
+            if (ImGui::Button("Stand")) {
+                mVfOverrideRefPos[0] = 0; mVfOverrideRefPos[1] = 0.9f; mVfOverrideRefPos[2] = 0;
+                mRenderEnv->getController()->setVirtualRootRefOverride(true, Eigen::Vector3d(0, 0.9, 0));
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Current")) {
+                Eigen::Vector3d cur = mRenderEnv->getCharacter()->getSkeleton()->getPositions().segment<3>(3);
+                mVfOverrideRefPos[0] = cur[0]; mVfOverrideRefPos[1] = cur[1]; mVfOverrideRefPos[2] = cur[2];
+                mRenderEnv->getController()->setVirtualRootRefOverride(true, cur);
+            }
+        }
+
+        // Display current reference position (from motion or override)
+        ImGui::Separator();
+        Eigen::Vector3d currentRef = mRenderEnv->getController()->getVirtualRootRefPosition();
+        Eigen::Vector3d currentPos = mRenderEnv->getCharacter()->getSkeleton()->getPositions().segment<3>(3);
+        ImGui::Text("Current Ref: (%.3f, %.3f, %.3f)", currentRef[0], currentRef[1], currentRef[2]);
+        ImGui::Text("Current Pos: (%.3f, %.3f, %.3f)", currentPos[0], currentPos[1], currentPos[2]);
+        ImGui::Text("Error: (%.3f, %.3f, %.3f)", currentRef[0]-currentPos[0], currentRef[1]-currentPos[1], currentRef[2]-currentPos[2]);
+    }
+}
+
 void RenderCkpt::drawShadow()
 {
     Eigen::VectorXd pos = mRenderEnv->getCharacter()->getSkeleton()->getPositions();
@@ -6561,7 +6749,7 @@ void RenderCkpt::loadMotionFile(const std::string& path)
 // =============================================================================
 // Clinical Data (PID-based HDF access) Methods
 // =============================================================================
-
+ 
 void RenderCkpt::drawClinicalDataSection()
 {
     // Render PID Navigator UI with collapsing header
@@ -6569,13 +6757,13 @@ void RenderCkpt::drawClinicalDataSection()
         try {
             mPIDNavigator->renderUI("Clinical Data", 150.0f, 150.0f, false);
         } catch (const std::exception& e) {
-            if (ImGui::CollapsingHeader("Clinical Data", 0)) {
+            if (collapsingHeaderWithControls("Clinical Data")) {
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f),
                                  "Error: %s", e.what());
             }
         }
     } else {
-        if (ImGui::CollapsingHeader("Clinical Data", 0)) {
+        if (collapsingHeaderWithControls("Clinical Data")) {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
                              "PID Navigator not initialized");
         }

@@ -161,8 +161,9 @@ enum PlaybackNavigationMode
 struct DrawFlags
 {
     bool character = true;
+    bool virtualForceArrow = true;
     bool pdTarget = false;
-    bool refMotion = false;
+    bool refMotion = true;
     bool jointSphere = false;
     bool footStep = false;
     bool eoe = false;
@@ -294,6 +295,9 @@ private:
 
     void drawNoiseControlPanel();
     void drawNoiseVisualizations();
+    void drawBoneScaleControl();
+    void drawVirtualForceControl();
+    void drawVirtualForceVisualization();
 
     void drawShadow();
 
@@ -343,6 +347,14 @@ private:
 
     // Noise Injector UI state
     int mNoiseMode;  // 0=None, 1=Position, 2=Force, 3=Activation, 4=All
+
+    // Virtual Root Force UI state
+    float mVfKpStart = 0.0f;
+    float mVfDiscountRate = 1.0f;
+    bool mVfOverrideEnabled = false;
+    float mVfOverrideForce[3] = {0.0f, 0.0f, 0.0f};
+    bool mVfRefOverrideEnabled = false;
+    float mVfOverrideRefPos[3] = {0.0f, 0.9f, 0.0f};  // Default Y=0.9 (standing height)
 
     // Muscle Selection UI
     char mMuscleFilterText[32];

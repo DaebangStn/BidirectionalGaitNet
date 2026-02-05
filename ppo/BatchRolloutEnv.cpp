@@ -416,6 +416,12 @@ void BatchRolloutEnv::demask_imit_joint(const std::string& jointName) {
     }
 }
 
+void BatchRolloutEnv::set_virtual_force_kp(double kp_start, double discount_rate) {
+    for (int i = 0; i < num_envs_; ++i) {
+        envs_[i]->setVirtualForceKp(kp_start, discount_rate);
+    }
+}
+
 // ===== PYBIND11 MODULE =====
 
 PYBIND11_MODULE(batchrolloutenv, m) {
@@ -500,6 +506,7 @@ PYBIND11_MODULE(batchrolloutenv, m) {
         .def("num_steps", &BatchRolloutEnv::numSteps, "Get rollout length")
         .def("obs_size", &BatchRolloutEnv::obsSize, "Get observation dimension")
         .def("action_size", &BatchRolloutEnv::actionSize, "Get action dimension")
+        .def("get_horizon", &BatchRolloutEnv::getHorizon, "Get episode horizon from environment")
 
         // Hierarchical control query methods
         .def("is_hierarchical", &BatchRolloutEnv::is_hierarchical,
@@ -527,5 +534,10 @@ PYBIND11_MODULE(batchrolloutenv, m) {
              "Mask a joint from imitation reward (curriculum learning)")
         .def("demask_imit_joint", &BatchRolloutEnv::demask_imit_joint,
              py::arg("joint_name"),
-             "Demask a joint to restore imitation reward (curriculum learning)");
+             "Demask a joint to restore imitation reward (curriculum learning)")
+
+        // Virtual root force curriculum
+        .def("set_virtual_force_kp", &BatchRolloutEnv::set_virtual_force_kp,
+             py::arg("kp_start"), py::arg("discount_rate"),
+             "Set virtual root force Kp (epoch-based curriculum)");
 }

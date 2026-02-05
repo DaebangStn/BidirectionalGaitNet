@@ -344,12 +344,21 @@ if __name__ == "__main__":
             print(f"Cleared cache: {rm_cache_path}")
 
     # Override args from YAML config if 'args' section exists
+    # But skip fields explicitly set by presets (preset values take precedence)
     with open(args.env_file, 'r') as f:
         env_config = yaml.safe_load(f)
     if 'args' in env_config:
+        # Get default values to detect which fields were explicitly set by preset
+        default_args = Args()
         for key, value in env_config['args'].items():
             if hasattr(args, key):
-                setattr(args, key, value)
+                current_value = getattr(args, key)
+                default_value = getattr(default_args, key)
+                # Only override if current value is still the default (not set by preset)
+                if current_value == default_value:
+                    setattr(args, key, value)
+                else:
+                    print(f"Skipping YAML override for '{key}': preset value {current_value} takes precedence over YAML {value}")
             else:
                 print(f"Warning: Unknown arg '{key}' in YAML config, ignoring")
 
@@ -395,6 +404,26 @@ if __name__ == "__main__":
                 print(f"  - iteration {stage['from_iteration']}: {op} {stage['joints']}")
 
     imit_curriculum_applied_stages = set()
+
+    # Virtual force curriculum
+    vf_config = None
+    vf_kp_current = 0.0
+    vf_prev_avg_ep_len = 0.0  # Track previous iteration's avg episode length
+    vf_ep_discount_triggered = False  # Prevent rapid successive discounts in ep-length mode
+    if train_cfg and 'curriculum' in train_cfg and 'virtual_force' in train_cfg['curriculum']:
+        vf_config = train_cfg['curriculum']['virtual_force']
+        vf_kp_current = vf_config.get('kp_init', 0.0)
+        discount_ep_ratio = vf_config.get('discount_ep_ratio', None)
+        if discount_ep_ratio is not None:
+            print(f"Virtual force curriculum: kp_init={vf_kp_current}, "
+                  f"discount_rate={vf_config.get('discount_rate', 0.5)}, "
+                  f"discount_ep_ratio={discount_ep_ratio}, "
+                  f"kp_ignore_cutoff={vf_config.get('kp_ignore_cutoff', 1.0)}")
+        else:
+            print(f"Virtual force curriculum: kp_init={vf_kp_current}, "
+                  f"discount_rate={vf_config.get('discount_rate', 0.5)}, "
+                  f"discount_interval={vf_config.get('discount_interval', 1000)}, "
+                  f"kp_ignore_cutoff={vf_config.get('kp_ignore_cutoff', 1.0)}")
 
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
@@ -449,7 +478,9 @@ if __name__ == "__main__":
     # Get environment configuration
     is_hierarchical = envs.is_hierarchical()
     use_cascading = envs.use_cascading() if is_hierarchical else False
+    env_horizon = envs.get_horizon()
 
+    print(f"Environment horizon: {env_horizon}")
     print(f"Hierarchical control: {is_hierarchical}")
     if is_hierarchical:
         print(f"Cascading mode: {use_cascading}")
@@ -604,6 +635,11 @@ if __name__ == "__main__":
     if muscle_learner:
         envs.update_muscle_weights(muscle_learner.get_state_dict())
 
+    # Apply initial virtual force kp if configured (must be before reset)
+    if vf_config and vf_kp_current > vf_config.get('kp_ignore_cutoff', 1.0):
+        envs.set_virtual_force_kp(vf_kp_current, vf_config.get('discount_rate', 0.5))
+        print(f"Virtual force: initial kp={vf_kp_current:.1f} applied")
+
     # Reset all environments to initial state before first rollout
     envs.reset()
 
@@ -645,6 +681,41 @@ if __name__ == "__main__":
                 print(f"[Iteration {iteration}] Curriculum: {op} {stage['joints']}")
                 imit_curriculum_applied_stages.add(idx)
 
+        # Virtual force curriculum
+        if vf_config:
+            cutoff = vf_config.get('kp_ignore_cutoff', 1.0)
+            discount_ep_ratio = vf_config.get('discount_ep_ratio', None)
+
+            should_discount = False
+            mode_str = ""
+            if discount_ep_ratio is not None:
+                # Episode-length mode: discount when avg_ep_len / horizon >= threshold
+                if iteration > 0 and vf_prev_avg_ep_len > 0:
+                    ep_ratio = vf_prev_avg_ep_len / env_horizon
+                    if ep_ratio >= discount_ep_ratio and not vf_ep_discount_triggered:
+                        should_discount = True
+                        vf_ep_discount_triggered = True
+                        mode_str = f"ep_ratio={ep_ratio:.2f}>={discount_ep_ratio}"
+                    elif ep_ratio < discount_ep_ratio * 0.9:
+                        # Reset trigger when drops significantly below threshold
+                        vf_ep_discount_triggered = False
+            else:
+                # Iteration-interval mode (default)
+                interval = vf_config.get('discount_interval', 1000)
+                if iteration > 0 and iteration % interval == 0:
+                    should_discount = True
+                    mode_str = f"interval={interval}"
+
+            if should_discount:
+                vf_kp_current *= vf_config.get('discount_rate', 0.5)
+                if vf_kp_current > cutoff:
+                    envs.set_virtual_force_kp(vf_kp_current, vf_config.get('discount_rate', 0.5))
+                    print(f"[Iteration {iteration}] Virtual force: kp={vf_kp_current:.2f} ({mode_str})")
+                else:
+                    envs.set_virtual_force_kp(0.0, 0.0)
+                    print(f"[Iteration {iteration}] Virtual force: DISABLED ({mode_str})")
+                    vf_config = None
+
         # Log progress periodically when tqdm is disabled (SLURM batch jobs)
         if not use_tqdm and iteration % args.log_interval == 0:
             elapsed = time.time() - start_time
@@ -681,6 +752,10 @@ if __name__ == "__main__":
         rollout_time = (time.perf_counter() - epoch_start) * 1000
 
         global_step += args.batch_size
+
+        # Update avg episode length for VF curriculum (used in next iteration)
+        if 'avg_episode_length' in trajectory:
+            vf_prev_avg_ep_len = trajectory['avg_episode_length']
 
         # Convert trajectory to torch tensors (direct GPU allocation)
         # Trajectory shape: (steps*envs, dim)
@@ -909,7 +984,7 @@ if __name__ == "__main__":
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-            writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+            writer.add_scalar("info/learning_rate", optimizer.param_groups[0]["lr"], global_step)
             writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
             writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
             writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
@@ -928,6 +1003,10 @@ if __name__ == "__main__":
             if 'info' in trajectory:
                 for key, avg_value in trajectory['info'].items():
                     writer.add_scalar(f"info/{key}", avg_value, global_step)
+
+            # Log virtual force curriculum
+            writer.add_scalar("info/vf_kp", vf_kp_current, global_step)
+            writer.add_scalar("charts/epoch", iteration, global_step)
 
             # Log episode statistics from C++ accumulation
             if 'avg_episode_return' in trajectory:

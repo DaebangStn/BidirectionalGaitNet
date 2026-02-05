@@ -64,9 +64,6 @@ public:
     std::vector<std::pair<Joint *, Joint *>> getPairs() { return mPairs; }
     Eigen::VectorXd getMirrorPosition(Eigen::VectorXd pos);
 
-    void setPDTarget(Eigen::VectorXd _pdtarget) { mPDTarget = _pdtarget; }
-    Eigen::VectorXd getPDTarget() { return mPDTarget; }
-
     Eigen::VectorXd getUpperBodyTorque() const { return mUpperBodyTorque; }
     int getUpperBodyDim() const { return mUpperBodyDim; }
     void setZeroForces();
@@ -77,6 +74,12 @@ public:
     void applyTorque(const Eigen::VectorXd& torque);
     void addTorque(const Eigen::VectorXd& torque);
     void applyMuscleForces();
+
+    // Virtual root force (applied via setExtForce on root body)
+    void setVirtualRootForce(const Eigen::Vector3d& force);
+    void setVirtualRootForceOverride(bool enabled, const Eigen::Vector3d& force = Eigen::Vector3d::Zero());
+    Eigen::Vector3d getVirtualRootForce() const { return mVirtualRootForce; }
+    void applyVirtualRootForce();  // Call after setForces to apply via setExtForce
 
     // Simulation step (metabolic tracking only)
     void step();
@@ -170,9 +173,6 @@ public:
     void updateTorqueMassRatio();
     double getTorqueMassRatio() const { return mTorqueMassRatio; }
 
-    // Max torque for SPD clipping (used by Controller)
-    const Eigen::VectorXd& getMaxTorque() const { return mMaxTorque; }
-
     // Muscle force scaling based on body mass (f0 scales with mass^(2/3))
     void setScaleF0OnWeight(bool enable) { mScaleF0OnWeight = enable; }
     bool getScaleF0OnWeight() const { return mScaleF0OnWeight; }
@@ -180,13 +180,6 @@ public:
 
     // Clip lm_norm for passive force calculation
     void setClipLmNorm(double clip);
-
-    // SPD torque clipping: tau <= min(M_diag * max_acc, max_torque)
-    void setMaxAcc(double maxAcc) { mMaxAcc = maxAcc; updateMaxTorque(); }
-    double getMaxAcc() const { return mMaxAcc; }
-    void setMaxTorqueLimit(double maxTorque) { mMaxTorqueLimit = maxTorque; updateMaxTorque(); }
-    double getMaxTorqueLimit() const { return mMaxTorqueLimit; }
-    void updateMaxTorque();
 
     // Critical damping: Kv = 2 * sqrt(Kp * M_diag) for numerical stability
     void setUseCriticalDamping(bool enable) { mUseCriticalDamping = enable; }
@@ -222,7 +215,11 @@ private:
 
     Eigen::VectorXd mUpperBodyTorque;  // Cached upper body torque (for visualization)
     int mUpperBodyDim = 0;             // Cached upper body DOF dimension
-    Eigen::VectorXd mPDTarget;
+
+    // Virtual root force (applied via setExtForce)
+    Eigen::Vector3d mVirtualRootForce = Eigen::Vector3d::Zero();
+    bool mVfOverrideEnabled = false;
+    Eigen::Vector3d mVfOverrideForce = Eigen::Vector3d::Zero();
 
     // Muscle
     std::vector<Muscle *> mMuscles;
@@ -283,11 +280,6 @@ private:
 
     // Target mass for preservation across skeleton parameter changes
     double mTargetMass = -1.0;  // -1 means no target mass set
-
-    // SPD torque clipping parameters
-    double mMaxAcc = -1.0;  // -1 means no clipping (mass-dependent)
-    double mMaxTorqueLimit = -1.0;  // -1 means no clipping (absolute limit)
-    Eigen::VectorXd mMaxTorque;  // Cached per-DOF: min(M_diag * mMaxAcc, mMaxTorqueLimit)
 
     // Critical damping: Kv = 2 * sqrt(Kp * M_diag)
     bool mUseCriticalDamping = false;

@@ -25,28 +25,78 @@ ActuatorType getActuatorType(std::string type) {
 
 Controller::Controller(const ControllerConfig& config)
     : mSkeleton(config.skeleton),
+      mNumDofs(config.skeleton->getNumDofs()),
+      mRootDof(config.skeleton->getRootJoint()->getNumDofs()),
+      mNumMuscleDof(config.numMuscleDof),
       mKp(config.kp),
       mKv(config.kv),
       mActuatorType(config.actuatorType),
-      mMaxTorque(config.maxTorque),
       mInferencePerSim(config.inferencePerSim),
-      mUpperBodyStart(config.upperBodyStart),
       mScaleTauOnWeight(config.scaleTauOnWeight),
       mTorqueMassRatio(config.torqueMassRatio),
       mNumSubSteps(config.numSubSteps)
 {
-    int numDofs = mSkeleton->getNumDofs();
-    mCachedSPDTorque = Eigen::VectorXd::Zero(numDofs);
+    mCachedSPDTorque = Eigen::VectorXd::Zero(mNumDofs);
 }
 
 Controller::~Controller() {}
 
+void Controller::setVirtualRootForceKp(double kp) {
+    mVfKp = kp;
+    double vf_kv = 2.0 * std::sqrt(kp);  // Critical damping
+    // Directly set root translation gains (DOF 3-5)
+    mKp.segment<3>(3).setConstant(kp);
+    mKv.segment<3>(3).setConstant(vf_kv);
+}
+
+void Controller::setVirtualRootRefPosition(const Eigen::Vector3d& ref_pos) {
+    mVfRefPosition = ref_pos;
+}
+
+void Controller::setVirtualRootRefOrientation(const Eigen::Matrix3d& ref_rot) {
+    mVfRefOrientation = ref_rot;
+}
+
+void Controller::setVirtualRootRefOverride(bool enabled, const Eigen::Vector3d& ref_pos) {
+    mVfRefOverrideEnabled = enabled;
+    mVfRefOverridePos = ref_pos;
+}
+
+Eigen::Vector3d Controller::computeRootVirtualSPD() {
+    if (mVfKp <= 0.0) {
+        mCachedVirtualRootForce.setZero();
+        return mCachedVirtualRootForce;
+    }
+
+    double dt = mSkeleton->getTimeStep() * mInferencePerSim;
+    double kp = mVfKp;
+    double kv = 2.0 * std::sqrt(kp);  // Critical damping
+    double mass = mSkeleton->getMass();
+    Eigen::Vector3d gravity(0.0, -9.81 * mass, 0.0);  // World frame gravity force
+
+    // === Translation SPD (world frame) ===
+    Eigen::Vector3d p = mSkeleton->getPositions().segment<3>(3);
+    Eigen::Vector3d v = mSkeleton->getRootBodyNode()->getLinearVelocity();
+    Eigen::Vector3d ref_pos = getVirtualRootRefPosition();
+
+    Eigen::Vector3d p_next = p + v * dt;
+    Eigen::Vector3d p_err = ref_pos - p_next;
+
+    // Solve for linear acceleration
+    Eigen::Vector3d rhs_lin = kp * p_err - kv * v - gravity;
+    double m_eff = mass + dt * kv;
+    Eigen::Vector3d a_lin = rhs_lin / m_eff;
+
+    // SPD force (position only)
+    mCachedVirtualRootForce = kp * p_err - kv * v - dt * kv * a_lin;
+
+    return mCachedVirtualRootForce;
+}
+
 ControllerOutput Controller::step(const ControllerInput& input)
 {
     ControllerOutput output;
-    int numDofs = mSkeleton->getNumDofs();
-    int rootDof = mSkeleton->getRootJoint()->getNumDofs();
-    output.torque = Eigen::VectorXd::Zero(numDofs);
+    output.torque = Eigen::VectorXd::Zero(mNumDofs);
     output.activations = Eigen::VectorXf::Zero(0);
 
     switch (mActuatorType)
@@ -64,6 +114,7 @@ ControllerOutput Controller::step(const ControllerInput& input)
         break;
 
     case mass:
+    case mass_lower:
     {
         if (!input.muscleTuple) {
             LOG_ERROR("[Controller] mass mode requires muscleTuple");
@@ -72,9 +123,9 @@ ControllerOutput Controller::step(const ControllerInput& input)
 
         // Build external force from JtP
         // When isMirror: MuscleTuple.JtP is mirrored, but SPD needs actual frame
-        Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(numDofs);
+        Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(mNumDofs);
         if (input.includeJtPinSPD) {
-            fullJtp.tail(numDofs - rootDof) = input.muscleTuple->JtP;
+            fullJtp.tail(mNumDofs - mRootDof) = input.muscleTuple->JtP;
             // Un-mirror JtP for SPD physics (skeleton state is in actual frame)
             if (input.isMirror && mMirrorCharacter) {
                 fullJtp = mMirrorCharacter->getMirrorPosition(fullJtp);
@@ -85,10 +136,13 @@ ControllerOutput Controller::step(const ControllerInput& input)
         mCachedSPDTorque = computeSPDForces(input.pdTarget, fullJtp);
 
         // Mirror tau for muscle NN (NN uses mirrored MuscleTuple when isMirror)
-        Eigen::VectorXd tauForNN = mCachedSPDTorque;
+        Eigen::VectorXd tauForNN = Eigen::VectorXd::Zero(mNumDofs);
+        tauForNN.segment(mRootDof, mNumMuscleDof) = mCachedSPDTorque.segment(mRootDof, mNumMuscleDof);
         if (input.isMirror && mMirrorCharacter) {
             tauForNN = mMirrorCharacter->getMirrorPosition(tauForNN);
         }
+        output.torque = mCachedSPDTorque;
+        output.torque.segment(mRootDof, mNumMuscleDof).setZero();
 
         // Compute activations
         output.activations = computeActivationsFromTorque(
@@ -98,52 +152,6 @@ ControllerOutput Controller::step(const ControllerInput& input)
         if (input.isMirror && mMirrorCharacter) {
             output.activations = mMirrorCharacter->getMirrorActivation(
                 output.activations.cast<double>()).cast<float>();
-        }
-        break;
-    }
-
-    case mass_lower:
-    {
-        if (!input.muscleTuple) {
-            LOG_ERROR("[Controller] mass_lower mode requires muscleTuple");
-            break;
-        }
-
-        // Build external force from JtP
-        Eigen::VectorXd fullJtp = Eigen::VectorXd::Zero(numDofs);
-        if (input.includeJtPinSPD) {
-            fullJtp.tail(numDofs - rootDof) = input.muscleTuple->JtP;
-            if (input.isMirror && mMirrorCharacter) {
-                fullJtp = mMirrorCharacter->getMirrorPosition(fullJtp);
-            }
-        }
-
-        // SPD computes in actual frame
-        mCachedSPDTorque = computeSPDForces(input.pdTarget, fullJtp);
-
-        // Mirror tau for muscle NN
-        Eigen::VectorXd tauForNN = mCachedSPDTorque;
-        if (input.isMirror && mMirrorCharacter) {
-            tauForNN = mMirrorCharacter->getMirrorPosition(tauForNN);
-        }
-
-        // Compute activations
-        output.activations = computeActivationsFromTorque(
-            *input.muscleTuple, tauForNN, input.includeJtPinSPD);
-
-        // Un-mirror activations
-        if (input.isMirror && mMirrorCharacter) {
-            output.activations = mMirrorCharacter->getMirrorActivation(
-                output.activations.cast<double>()).cast<float>();
-        }
-
-        // Upper body torque (already in actual frame from SPD)
-        output.torque = Eigen::VectorXd::Zero(numDofs);
-        output.torque.segment(mUpperBodyStart, numDofs - mUpperBodyStart) =
-            mCachedSPDTorque.segment(mUpperBodyStart, numDofs - mUpperBodyStart);
-
-        if (mScaleTauOnWeight) {
-            output.torque *= mTorqueMassRatio;
         }
         break;
     }
@@ -161,27 +169,23 @@ Eigen::VectorXd Controller::computeSPDForces(const Eigen::VectorXd& pdTarget,
 
     Eigen::VectorXd qdqdt = q + dq * dt;
 
-    Eigen::VectorXd p_diff = -mKp.cwiseProduct(mSkeleton->getPositionDifferences(qdqdt, pdTarget));
+    // Note: Virtual root force is now computed separately in computeWorldFrameSPD()
+    Eigen::VectorXd p_target = pdTarget;
+
+    Eigen::VectorXd p_diff = -mKp.cwiseProduct(mSkeleton->getPositionDifferences(qdqdt, p_target));
     Eigen::VectorXd v_diff = -mKv.cwiseProduct(dq);
 
     int numDofs = mSkeleton->getNumDofs();
     Eigen::VectorXd extForces = ext.size() > 0 ? ext : Eigen::VectorXd::Zero(numDofs);
 
+    Eigen::VectorXd cg = mSkeleton->getCoriolisAndGravityForces();
+    Eigen::VectorXd constraint = mSkeleton->getConstraintForces();
     Eigen::MatrixXd M_inv = (mSkeleton->getMassMatrix() + Eigen::MatrixXd(dt * mKv.asDiagonal())).inverse();
-    Eigen::VectorXd ddq = M_inv * (-mSkeleton->getCoriolisAndGravityForces() + p_diff + v_diff +
-                                    mSkeleton->getConstraintForces() + extForces);
+    Eigen::VectorXd ddq = M_inv * (-cg + p_diff + v_diff + constraint + extForces);
     Eigen::VectorXd tau = p_diff + v_diff - dt * mKv.cwiseProduct(ddq);
 
-    // Apply per-DOF torque clipping
-    if (mMaxTorque.size() > 0) {
-        for (int i = 6; i < tau.size(); i++) {
-            tau[i] = std::clamp(tau[i], -mMaxTorque[i], mMaxTorque[i]);
-        }
-    }
-
-    // Root DOFs naturally zero due to Kp/Kv being zero for root
-    tau.head<6>().setZero();
-
+    tau.head<3>().setZero();
+    tau.segment<3>(3) = computeRootVirtualSPD();
     return tau;
 }
 

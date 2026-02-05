@@ -120,6 +120,7 @@ public:
     int numSteps() const { return num_steps_; }
     int obsSize() const { return obs_dim_; }
     int actionSize() const { return action_dim_; }
+    int getHorizon() const { return envs_[0]->getHorizon(); }
 
     // Hierarchical control query methods
     bool is_hierarchical() const;
@@ -136,6 +137,9 @@ public:
     // Curriculum learning: mask/demask joints from imitation reward
     void mask_imit_joint(const std::string& jointName);
     void demask_imit_joint(const std::string& jointName);
+
+    // Virtual root force curriculum
+    void set_virtual_force_kp(double kp_start, double discount_rate);
 
 private:
     // Environment instances

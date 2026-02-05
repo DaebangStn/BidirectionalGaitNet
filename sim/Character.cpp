@@ -318,8 +318,6 @@ Character::Character(std::string path, int skelFlags)
         mSkeleton->setAdjacentBodyCheck(false);  // Disable adjacent body filtering for true self-collision
     }
 
-    mPDTarget = Eigen::VectorXd::Zero(mSkeleton->getNumDofs());
-
     mKp = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
     mKv = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
     mTorqueWeight = Eigen::VectorXd::Ones(mSkeleton->getNumDofs());
@@ -633,20 +631,45 @@ Eigen::VectorXd Character::getMirrorPosition(Eigen::VectorXd pos)
 
 void Character::applyTorque(const Eigen::VectorXd& torque)
 {
-    mSkeleton->setForces(torque);
+    Eigen::VectorXd _torque = torque;
+    _torque.head<6>().setZero();
+    mSkeleton->setForces(_torque);
     mTorqueStepEnergy = torque.cwiseAbs().sum();
     mTorqueEnergyAccum += mTorqueStepEnergy;
 }
 
 void Character::addTorque(const Eigen::VectorXd& torque)
 {
-    mSkeleton->setForces(mSkeleton->getForces() + torque);
+    Eigen::VectorXd _torque = mSkeleton->getForces() + torque;
+    _torque.head<6>().setZero();
+    mSkeleton->setForces(_torque);
 
     // Cache upper body torque for visualization
     mUpperBodyTorque = torque;
 
     mTorqueStepEnergy = torque.cwiseAbs().sum();
     mTorqueEnergyAccum += mTorqueStepEnergy;
+}
+
+void Character::setVirtualRootForce(const Eigen::Vector3d& force)
+{
+    mVirtualRootForce = force;
+}
+
+void Character::setVirtualRootForceOverride(bool enabled, const Eigen::Vector3d& force)
+{
+    mVfOverrideEnabled = enabled;
+    mVfOverrideForce = force;
+}
+
+void Character::applyVirtualRootForce()
+{
+    Eigen::Vector3d force = mVfOverrideEnabled ? mVfOverrideForce : mVirtualRootForce;
+    if (force.squaredNorm() > 1e-12) {
+        // Apply as external force on root body (world frame)
+        mSkeleton->getRootBodyNode()->setExtForce(
+            force, Eigen::Vector3d::Zero(), false, true);
+    }
 }
 
 void Character::applyMuscleForces()
@@ -1549,7 +1572,6 @@ void Character::setBodyMass(double targetMass)
     // Update cached torque mass ratio and critical damping
     updateTorqueMassRatio();
     updateCriticalDamping();  // Kv depends on mass matrix
-    updateMaxTorque();
 }
 
 void Character::updateTorqueMassRatio()
@@ -1558,28 +1580,6 @@ void Character::updateTorqueMassRatio()
     mTorqueMassRatio = std::min(1.0, currentMass / kRefMass);
     LOG_VERBOSE("[Character] Updated torque mass ratio: " << mTorqueMassRatio
                << " (mass=" << currentMass << "kg, ref=" << kRefMass << "kg)");
-}
-
-void Character::updateMaxTorque()
-{
-    // Compute per-DOF max torque: min(M_diag * max_acc, max_torque_limit)
-    if (mMaxAcc > 0 || mMaxTorqueLimit > 0) {
-        int n = mSkeleton->getNumDofs();
-        mMaxTorque = Eigen::VectorXd::Constant(n, std::numeric_limits<double>::max());
-
-        if (mMaxAcc > 0) {
-            Eigen::VectorXd M_diag = mSkeleton->getMassMatrix().diagonal();
-            mMaxTorque = M_diag * mMaxAcc;
-        }
-
-        if (mMaxTorqueLimit > 0) {
-            mMaxTorque = mMaxTorque.cwiseMax(mMaxTorqueLimit);
-        }
-
-        LOG_VERBOSE("[Character] Updated max torque (per-DOF): min=" << mMaxTorque.tail(n-6).minCoeff()
-                   << " max=" << mMaxTorque.tail(n-6).maxCoeff()
-                   << " (maxAcc=" << mMaxAcc << ", maxTorqueLimit=" << mMaxTorqueLimit << ")");
-    }
 }
 
 void Character::updateCriticalDamping()
@@ -1598,8 +1598,6 @@ void Character::updateCriticalDamping()
         double criticalKv = 2.0 * std::sqrt(mKp[i] * m);
         mKv[i] = std::max(criticalKv, minKv);
     }
-
-    updateMaxTorque();
 }
 
 void Character::updateMuscleForceRatio()

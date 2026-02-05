@@ -163,6 +163,7 @@ public:
     Eigen::VectorXd getFutureRefPose(int future_step);
 
     Eigen::VectorXd getRefPose() { return mRefPose; }
+    Eigen::VectorXd getPDTarget() { return mPDTarget; }
     Eigen::VectorXd getTargetVelocities() { return mTargetVelocities; }
 
 
@@ -179,6 +180,7 @@ public:
     int getSimulationHz() { return mSimulationHz; }
     int getControlHz() { return mControlHz; }
     int getSimulationStep() const { return mSimulationStep; }
+    int getHorizon() const { return mHorizon; }
     std::string getMetadata() { return mMetadata; }
     const std::string& getGlobalPid() const { return mGlobalPid; }
 
@@ -485,6 +487,13 @@ public:
     // Curriculum learning: mask/demask joints from imitation reward
     void maskImitJoint(const std::string& jointName);
     void demaskImitJoint(const std::string& jointName);
+
+    // Virtual root force curriculum
+    void setVirtualForceKp(double kp_start, double discount_rate) {
+        mVfKpStart = kp_start;
+        mVfDiscountRate = discount_rate;
+    }
+
 private:
     // Step method components
     void postMuscleStep();
@@ -508,6 +517,7 @@ private:
     // Simulation
     Eigen::VectorXd mAction;
     Eigen::VectorXd mPendingTorque;  // Torque for tor mode (stored in setAction, applied in muscleStep)
+    Eigen::VectorXd mPDTarget;       // PD target for pd/mass/mass_lower modes (stored in setAction)
 
     dart::simulation::WorldPtr mWorld;
     Character *mCharacter;
@@ -596,5 +606,9 @@ private:
 
     bool mUseNormalizedParamState;
     int mNumKnownParam;
+
+    // Virtual root force curriculum parameters
+    double mVfKpStart = 0.0;
+    double mVfDiscountRate = 0.0;
 };
 #endif

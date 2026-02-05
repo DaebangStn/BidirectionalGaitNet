@@ -1,0 +1,90 @@
+args:
+  checkpoint_interval: 1000
+  total_timesteps: 500000000
+
+environment:
+  pid: "29792292/pre"
+  # Skeleton and Character
+  skeleton:
+    file: "@pid:/skeleton/dynamic.yaml"
+    actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
+
+  # Motion Reference
+  motion:
+    get_stride_from_motion: true
+    file: "@pid:/motion/walk_single.h5"
+
+  # Muscle System
+  muscle:
+    file: "@pid:/muscle/clinic_0125_1925.yaml"
+    mesh_lbs_weight: false
+    use_velocity_force: false
+    use_joint_state: true
+    clip_lm_norm: 1.25 # to disable, remove or set to -1
+
+  # Simulation Timing
+  simulation:
+    sim_hz: 180
+    control_hz: 30
+
+  # Action and Control
+  action:
+    scale: 0.04
+    time_warping: -1
+    gait_phase_mode: "contact"  # "contact" or "phase"
+    contact_debounce_alpha: 0.4
+    step_min_ratio: 0.25
+
+  # Reward System
+  reward:
+    type: "gaitnet"  # deepmimic, gaitnet, scadiver
+    clip:
+      step: 50
+      value: 0.2
+
+    # Locomotion rewards (for gaitnet)
+    locomotion:
+      head_linear_acc_weight: 4.0
+      head_rot_weight: 4.0
+      step:
+        weight: 2.0
+        clip: 0.05  # Z-axis clipping value (forward progression tolerance)
+      avg_vel:
+        weight: 4.0
+        window_mult: 1.0
+        clip: 0.2  # clip velocity difference magnitude
+        consider_x: false
+      dragX:
+        use: true
+        weight: 1.0
+        threshold: 0.2
+      phase:
+        use: false
+        weight: 1.0
+
+    # Penalty/auxiliary rewards
+    knee_pain:
+      use: false
+      weight: 1.0
+      scale: 1.0
+      termination: false
+      use_max: false
+      max_weight: 0.1
+
+    # Metabolic configuration
+    metabolic:
+      type: "A"  # A, A2, MA, MA2
+      weight: 0.02
+      scale: 1.0
+      multiplicative: true  # if true, multiplies with main reward term
+      torque:
+        coeff: 0.1
+        separate: true
+
+train: 
+  curriculum:
+    virtual_force:
+      kp_init: 1000.0
+      kp_ignore_cutoff: 1.0
+      discount_rate: 0.8 # on the rollout, x_start @ t=0, x_end (=x_start * discount_rate^2) @ t=Horizon
+      discount_ep_ratio: 0.7
