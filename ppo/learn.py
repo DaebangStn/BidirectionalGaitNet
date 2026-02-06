@@ -409,7 +409,7 @@ if __name__ == "__main__":
     vf_config = None
     vf_kp_current = 0.0
     vf_prev_avg_ep_len = 0.0  # Track previous iteration's avg episode length
-    vf_ep_discount_triggered = False  # Prevent rapid successive discounts in ep-length mode
+    vf_last_discount_iter = -10  # Last iteration when discount was applied (allow first discount)
     if train_cfg and 'curriculum' in train_cfg and 'virtual_force' in train_cfg['curriculum']:
         vf_config = train_cfg['curriculum']['virtual_force']
         vf_kp_current = vf_config.get('kp_init', 0.0)
@@ -689,16 +689,13 @@ if __name__ == "__main__":
             should_discount = False
             mode_str = ""
             if discount_ep_ratio is not None:
-                # Episode-length mode: discount when avg_ep_len / horizon >= threshold
-                if iteration > 0 and vf_prev_avg_ep_len > 0:
-                    ep_ratio = vf_prev_avg_ep_len / env_horizon
-                    if ep_ratio >= discount_ep_ratio and not vf_ep_discount_triggered:
-                        should_discount = True
-                        vf_ep_discount_triggered = True
-                        mode_str = f"ep_ratio={ep_ratio:.2f}>={discount_ep_ratio}"
-                    elif ep_ratio < discount_ep_ratio * 0.9:
-                        # Reset trigger when drops significantly below threshold
-                        vf_ep_discount_triggered = False
+                # Episode-length mode: discount when avg_ep_len > horizon * ratio
+                # with minimum 10 iteration gap between discounts
+                threshold = env_horizon * discount_ep_ratio
+                if vf_prev_avg_ep_len > threshold and (iteration - vf_last_discount_iter) >= 10:
+                    should_discount = True
+                    vf_last_discount_iter = iteration
+                    mode_str = f"ep_len={vf_prev_avg_ep_len:.0f}>{threshold:.0f}"
             else:
                 # Iteration-interval mode (default)
                 interval = vf_config.get('discount_interval', 1000)

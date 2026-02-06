@@ -61,6 +61,7 @@ environment:
         separate: true
 
 train: 
+  curriculum:
     virtual_force:
       kp_init: 1000.0
       kp_ignore_cutoff: 1.0

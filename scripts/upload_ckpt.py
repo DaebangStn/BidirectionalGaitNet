@@ -6,9 +6,12 @@ Usage:
     python scripts/upload_ckpt.py [runs_path]
 
 Navigation:
-    Arrow keys  - Navigate
-    Enter       - Enter directory / Select
-    u           - Upload ALL (batch mode)
+    Up/Down     - Navigate list
+    Enter       - Enter directory
+    Space/s     - Select/deselect directory
+    a           - Select all
+    c           - Clear selections
+    u           - Upload selected
     Backspace   - Go back
     q           - Quit
 """
@@ -20,6 +23,8 @@ import re
 from pathlib import Path
 from ftplib import FTP
 from typing import Optional
+import time
+import shutil
 import yaml
 
 
@@ -150,6 +155,7 @@ class CheckpointBrowser:
         self.scroll_offset = 0
         self.items: list[Path] = []
         self.mode = 'browse'  # browse, confirm, input, upload
+        self.selected_paths: set[Path] = set()  # Selected directories for upload
 
         # Colors
         curses.start_color()
@@ -228,6 +234,8 @@ class CheckpointBrowser:
                 self.stdscr.addstr(y, 0, line[:w-1].ljust(w-1))
             else:
                 # Directory with stats
+                is_selected = item in self.selected_paths
+                sel_marker = "[x] " if is_selected else "[ ] "
                 name = item.name + "/"
                 dates, ckpts, size = get_directory_stats(item)
 
@@ -242,8 +250,8 @@ class CheckpointBrowser:
                     stats += f" ({format_size(size)})"
 
                 # Format line
-                name_col = 30
-                line = f"{marker}{name:<{name_col}}{stats}"
+                name_col = 26
+                line = f"{marker}{sel_marker}{name:<{name_col}}{stats}"
                 self.stdscr.addstr(y, 0, line[:w-1].ljust(w-1))
 
             if idx == self.selected_idx:
@@ -253,10 +261,9 @@ class CheckpointBrowser:
         self.stdscr.addstr(h-3, 0, "─" * w)
 
         # Determine context-appropriate help
-        if self.current_path == self.runs_path:
-            help_text = " [Enter] Enter dir  [u] Upload ALL  [q] Quit"
-        else:
-            help_text = " [Enter] Select  [u] Upload ALL dates  [Backspace] Back  [q] Quit"
+        sel_count = len(self.selected_paths)
+        sel_info = f" ({sel_count} sel)" if sel_count > 0 else ""
+        help_text = f" [Space] Sel  [a] All  [c] Clear  [u] Upload{sel_info}  [Enter] In  [BS] Back  [q] Quit"
 
         self.stdscr.attron(curses.color_pair(3))
         self.stdscr.addstr(h-2, 0, help_text[:w-1])
@@ -376,10 +383,92 @@ class CheckpointBrowser:
         else:
             win.refresh()
 
-    def run(self) -> Optional[tuple[Path, str, str]]:
+    def show_delete_selection(self, paths: list[Path]) -> list[Path]:
+        """Show selection dialog for directories to delete. All selected by default."""
+        h, w = self.stdscr.getmaxyx()
+
+        # All selected by default
+        selected = set(paths)
+        cursor_idx = 0
+        scroll_offset = 0
+
+        box_w = min(80, w - 4)
+        list_h = min(len(paths) + 2, h - 10)
+        box_h = list_h + 6
+        box_y = (h - box_h) // 2
+        box_x = (w - box_w) // 2
+
+        while True:
+            win = curses.newwin(box_h, box_w, box_y, box_x)
+            win.box()
+            win.addstr(0, 2, " Delete Uploaded Files ")
+
+            # Instructions
+            win.addstr(1, 2, "Select directories to delete (all selected by default):")
+
+            # Calculate visible range
+            visible_h = list_h
+            if cursor_idx < scroll_offset:
+                scroll_offset = cursor_idx
+            elif cursor_idx >= scroll_offset + visible_h:
+                scroll_offset = cursor_idx - visible_h + 1
+
+            # Draw list
+            for i in range(visible_h):
+                idx = scroll_offset + i
+                if idx >= len(paths):
+                    break
+
+                path = paths[idx]
+                is_selected = path in selected
+                is_cursor = idx == cursor_idx
+
+                sel_mark = "[x]" if is_selected else "[ ]"
+                name = path.name
+
+                line = f" {sel_mark} {name}"
+
+                y = 3 + i
+                if is_cursor:
+                    win.attron(curses.A_REVERSE)
+                win.addstr(y, 2, line[:box_w-4].ljust(box_w-4))
+                if is_cursor:
+                    win.attroff(curses.A_REVERSE)
+
+            # Status and help
+            sel_count = len(selected)
+            win.addstr(box_h-3, 2, f"Selected: {sel_count}/{len(paths)} directories")
+            win.attron(curses.color_pair(3))
+            win.addstr(box_h-2, 2, "[Space] Toggle  [a] All  [c] Clear  [Enter] Delete  [Esc] Cancel")
+            win.attroff(curses.color_pair(3))
+
+            win.refresh()
+
+            key = win.getch()
+
+            if key == 27:  # Escape - cancel
+                return []
+            elif key in (curses.KEY_ENTER, 10, 13):  # Enter - confirm
+                return list(selected)
+            elif key == curses.KEY_UP:
+                cursor_idx = max(0, cursor_idx - 1)
+            elif key == curses.KEY_DOWN:
+                cursor_idx = min(len(paths) - 1, cursor_idx + 1)
+            elif key == ord(' '):  # Space - toggle
+                path = paths[cursor_idx]
+                if path in selected:
+                    selected.discard(path)
+                else:
+                    selected.add(path)
+            elif key == ord('a'):  # Select all
+                selected = set(paths)
+            elif key == ord('c'):  # Clear all
+                selected.clear()
+
+    def run(self) -> Optional[tuple[Path | list[Path], str, str]]:
         """
-        Run the browser, return (selected_path, mode, pid_visit) or None.
-        mode: 'date' for single date dir, 'env' for batch upload
+        Run the browser, return (selected_path(s), mode, pid_visit) or None.
+        mode: 'date' for single date dir, 'env' for single env, 'dates'/'envs' for batch
         """
         curses.curs_set(0)
 
@@ -406,13 +495,16 @@ class CheckpointBrowser:
                                         self.selected_idx + self.get_display_height())
 
             elif key in (curses.KEY_BACKSPACE, 127, 8):
+                # Backspace = go back
                 if self.current_path != self.runs_path:
                     self.current_path = self.current_path.parent
                     self.selected_idx = 0
                     self.scroll_offset = 0
+                    self.selected_paths.clear()  # Clear selections when going back
                     self.refresh_items()
 
             elif key in (curses.KEY_ENTER, 10, 13):
+                # Enter = enter directory
                 if not self.items:
                     continue
 
@@ -423,34 +515,55 @@ class CheckpointBrowser:
                     self.current_path = self.current_path.parent
                     self.selected_idx = 0
                     self.scroll_offset = 0
+                    self.selected_paths.clear()
                     self.refresh_items()
-                else:
-                    # Check if this is a date directory (contains checkpoints)
-                    ckpts = get_checkpoints_in_date(item)
-                    if ckpts:
-                        # This is a date directory - select for upload
-                        return self._handle_upload(item, 'date')
-                    else:
-                        # Enter directory
-                        self.current_path = item
-                        self.selected_idx = 0
-                        self.scroll_offset = 0
-                        self.refresh_items()
+                elif item.is_dir():
+                    # Enter directory
+                    self.current_path = item
+                    self.selected_idx = 0
+                    self.scroll_offset = 0
+                    self.selected_paths.clear()
+                    self.refresh_items()
 
-            elif key == ord('u'):
-                # Upload ALL - batch mode
+            elif key == ord(' '):
+                # Space = toggle selection
                 if not self.items:
                     continue
+                item = self.items[self.selected_idx]
+                if item is not None:  # Can't select parent ".."
+                    if item in self.selected_paths:
+                        self.selected_paths.discard(item)
+                    else:
+                        self.selected_paths.add(item)
 
-                # Determine what we're uploading
-                if self.current_path == self.runs_path:
-                    # At runs/, need to select an env first
-                    item = self.items[self.selected_idx]
-                    if item is not None:
-                        return self._handle_upload(item, 'env')
-                else:
-                    # Inside an env directory - upload all dates
-                    return self._handle_upload(self.current_path, 'env')
+            elif key == ord('s'):
+                # Toggle selection of current item
+                if not self.items:
+                    continue
+                item = self.items[self.selected_idx]
+                if item is not None:  # Can't select parent ".."
+                    if item in self.selected_paths:
+                        self.selected_paths.discard(item)
+                    else:
+                        self.selected_paths.add(item)
+
+            elif key == ord('a'):
+                # Select all directories in current view
+                for item in self.items:
+                    if item is not None:  # Skip parent ".."
+                        self.selected_paths.add(item)
+
+            elif key == ord('c'):
+                # Clear all selections
+                self.selected_paths.clear()
+
+            elif key == ord('u'):
+                # Upload selected directories
+                if not self.selected_paths:
+                    self.show_message("Info", "No directories selected. Use [s] or [a] to select.")
+                    continue
+
+                return self._handle_batch_upload()
 
         return None
 
@@ -514,6 +627,80 @@ class CheckpointBrowser:
 
         return None
 
+    def _handle_batch_upload(self) -> Optional[tuple[list[Path], str, str]]:
+        """Handle batch upload of selected directories."""
+        # Determine mode based on selected paths
+        # Check if selected paths are date directories or env directories
+        all_dates = all(get_checkpoints_in_date(p) for p in self.selected_paths)
+
+        if all_dates:
+            mode = 'dates'  # Multiple date directories
+        else:
+            mode = 'envs'  # Multiple env directories
+
+        # Detect PID from first checkpoint in first selected path
+        detected_pid = None
+        for path in self.selected_paths:
+            if mode == 'dates':
+                ckpts = get_checkpoints_in_date(path)
+                if ckpts:
+                    detected_pid = detect_pid_from_metadata(ckpts[0])
+                    break
+            else:
+                dates = get_dates_in_env(path)
+                if dates:
+                    ckpts = get_checkpoints_in_date(dates[0])
+                    if ckpts:
+                        detected_pid = detect_pid_from_metadata(ckpts[0])
+                        break
+
+        # Calculate total stats
+        total_dates = 0
+        total_ckpts = 0
+        total_size = 0
+        for path in self.selected_paths:
+            dates, ckpts, size = get_directory_stats(path)
+            total_dates += dates
+            total_ckpts += ckpts
+            total_size += size
+
+        # Build prompt
+        if detected_pid:
+            prompt = f"Detected: {detected_pid} | Enter pid/visit:"
+            default = detected_pid
+        else:
+            prompt = "Enter destination (pid/visit):"
+            default = ""
+
+        # Get destination
+        pid_visit = self.get_input_string(prompt, default)
+        if not pid_visit:
+            return None
+
+        # Validate format
+        if '/' not in pid_visit:
+            self.show_message("Error", "Format must be: pid/visit (e.g. 29792292/pre)")
+            return None
+
+        # Preview
+        selected_names = ", ".join(p.name for p in sorted(self.selected_paths)[:3])
+        if len(self.selected_paths) > 3:
+            selected_names += f" (+{len(self.selected_paths) - 3} more)"
+
+        # Confirmation
+        lines = [
+            f"Destination: {pid_visit}",
+            f"Selected: {selected_names}",
+            "",
+            f"Mode: BATCH - {len(self.selected_paths)} dirs, {total_dates} date(s), {total_ckpts} checkpoint(s)",
+            f"Total size: {format_size(total_size)}",
+        ]
+
+        if self.show_confirmation(lines):
+            return (list(self.selected_paths), mode, pid_visit)
+
+        return None
+
 
 class FTPUploader:
     """FTP upload handler."""
@@ -563,25 +750,61 @@ class FTPUploader:
             except Exception:
                 pass  # Directory might already exist
 
-    def _draw_progress(self, status: str, current: int, total: int, filename: str = ""):
-        """Draw progress bar."""
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds to human readable time."""
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            m, s = divmod(int(seconds), 60)
+            return f"{m}m {s}s"
+        else:
+            h, rem = divmod(int(seconds), 3600)
+            m, s = divmod(rem, 60)
+            return f"{h}h {m}m"
+
+    def _draw_progress(self, status: str, file_current: int, file_total: int,
+                        total_current: int, total_files: int, start_time: float,
+                        filename: str = ""):
+        """Draw two progress bars - total files and current file with ETA."""
         h, w = self.stdscr.getmaxyx()
 
         # Clear progress area
-        self.stdscr.addstr(h-4, 0, " " * (w-1))
-        self.stdscr.addstr(h-3, 0, " " * (w-1))
-        self.stdscr.addstr(h-2, 0, " " * (w-1))
+        for i in range(6):
+            self.stdscr.addstr(h-6+i, 0, " " * (w-1))
 
         # Status
-        self.stdscr.addstr(h-4, 2, status[:w-4])
+        self.stdscr.addstr(h-6, 2, status[:w-4])
 
-        # Progress bar
-        bar_w = w - 20
-        if total > 0:
-            filled = int((current / total) * bar_w)
+        bar_w = min(w - 22, 60)  # Max bar width 60 chars (total line ~100)
+
+        # Calculate ETA
+        elapsed = time.time() - start_time
+        eta_str = ""
+        if total_current > 0 and total_files > 0:
+            rate = total_current / elapsed  # files per second
+            remaining = total_files - total_current
+            if rate > 0:
+                eta_seconds = remaining / rate
+                eta_str = f"ETA: {self._format_time(eta_seconds)}"
+
+        # Total files progress bar
+        if total_files > 0:
+            filled = int((total_current / total_files) * bar_w)
             bar = "█" * filled + "░" * (bar_w - filled)
-            pct = f"{100 * current // total:3d}%"
-            self.stdscr.addstr(h-3, 2, f"[{bar}] {pct}")
+            pct = f"{100 * total_current // total_files:3d}%"
+            self.stdscr.addstr(h-5, 2, f"Total: [{bar}] {pct} ({total_current}/{total_files})"[:w-2])
+
+        # Current checkpoint file progress bar
+        if file_total > 0:
+            filled = int((file_current / file_total) * bar_w)
+            bar = "█" * filled + "░" * (bar_w - filled)
+            pct = f"{100 * file_current // file_total:3d}%"
+            self.stdscr.addstr(h-4, 2, f"Ckpt:  [{bar}] {pct}"[:w-2])
+
+        # ETA and elapsed time
+        elapsed_str = f"Elapsed: {self._format_time(elapsed)}"
+        time_info = f"{elapsed_str}  {eta_str}".strip()
+        self.stdscr.addstr(h-3, 2, time_info[:w-4])
 
         # Current file
         if filename:
@@ -589,7 +812,7 @@ class FTPUploader:
 
         self.stdscr.refresh()
 
-    def upload(self, local_path: Path, pid_visit: str, mode: str) -> bool:
+    def upload(self, local_paths: Path | list[Path], pid_visit: str, mode: str) -> bool:
         """Upload checkpoints to FTP."""
         if not self.connect():
             return False
@@ -597,20 +820,41 @@ class FTPUploader:
         try:
             root = self.config['root']  # /mnt/blue8T/CP/RM
 
-            if mode == 'date':
-                # Single date directory
-                dates = [local_path]
-                env_name = local_path.parent.name
+            # Normalize to list of (date_path, env_name) tuples
+            date_env_pairs: list[tuple[Path, str]] = []
+
+            if isinstance(local_paths, Path):
+                # Single path (legacy mode)
+                if mode == 'date':
+                    date_env_pairs = [(local_paths, local_paths.parent.name)]
+                else:  # env mode
+                    dates = get_dates_in_env(local_paths)
+                    date_env_pairs = [(d, local_paths.name) for d in dates]
             else:
-                # All dates in env directory
-                dates = get_dates_in_env(local_path)
-                env_name = local_path.name
+                # List of paths (batch mode)
+                for path in local_paths:
+                    if mode == 'dates':
+                        # Each path is a date directory
+                        date_env_pairs.append((path, path.parent.name))
+                    else:  # envs mode
+                        # Each path is an env directory
+                        dates = get_dates_in_env(path)
+                        date_env_pairs.extend((d, path.name) for d in dates)
 
-            total_dates = len(dates)
-            total_ckpts = sum(len(get_checkpoints_in_date(d)) for d in dates)
+            total_dates = len(date_env_pairs)
+            total_ckpts = sum(len(get_checkpoints_in_date(d)) for d, _ in date_env_pairs)
+
+            # Count total files across all checkpoints
+            total_files = 0
+            for date_path, _ in date_env_pairs:
+                for ckpt_path in get_checkpoints_in_date(date_path):
+                    total_files += len([f for f in ckpt_path.iterdir() if f.is_file()])
+
             ckpt_num = 0
+            global_file_num = 0
+            start_time = time.time()
 
-            for date_idx, date_path in enumerate(dates):
+            for date_idx, (date_path, env_name) in enumerate(date_env_pairs):
                 date_name = date_path.name
                 ckpts = get_checkpoints_in_date(date_path)
 
@@ -618,7 +862,7 @@ class FTPUploader:
                     ckpt_num += 1
                     ckpt_name = ckpt_path.name
 
-                    status = f"Uploading {date_name} ({date_idx+1}/{total_dates}) - {ckpt_name} ({ckpt_num}/{total_ckpts})"
+                    status = f"Uploading {env_name}/{date_name} - {ckpt_name} ({ckpt_num}/{total_ckpts})"
 
                     # Remote path: /{root}/{pid}/{visit}/ckpt/{env_name}/{date}/{ckpt}/
                     remote_dir = f"{root}/{pid_visit}/ckpt/{env_name}/{date_name}/{ckpt_name}"
@@ -627,13 +871,17 @@ class FTPUploader:
                     # Upload all files in checkpoint
                     files = [f for f in ckpt_path.iterdir() if f.is_file()]
                     for file_idx, file_path in enumerate(files):
-                        self._draw_progress(status, file_idx, len(files), file_path.name)
+                        self._draw_progress(status, file_idx, len(files),
+                                          global_file_num, total_files, start_time, file_path.name)
 
                         remote_file = f"{remote_dir}/{file_path.name}"
                         with open(file_path, 'rb') as f:
                             self.ftp.storbinary(f'STOR {remote_file}', f)
 
-                    self._draw_progress(status, len(files), len(files), "Done")
+                        global_file_num += 1
+
+                    self._draw_progress(status, len(files), len(files),
+                                      global_file_num, total_files, start_time, "Done")
 
             return True
 
@@ -672,14 +920,39 @@ def main(stdscr):
     result = browser.run()
 
     if result:
-        path, mode, pid_visit = result
+        paths, mode, pid_visit = result
 
         # Upload
         uploader = FTPUploader(ftp_config, stdscr)
-        success = uploader.upload(path, pid_visit, mode)
+        success = uploader.upload(paths, pid_visit, mode)
 
         if success:
-            browser.show_message("Success", "Upload completed successfully!")
+            # Ask to delete uploaded files with selection UI
+            if isinstance(paths, list):
+                delete_targets = paths
+            else:
+                delete_targets = [paths]
+
+            browser.show_message("Success", "Upload completed!", wait=True)
+
+            # Show selection dialog (all selected by default)
+            to_delete = browser.show_delete_selection(delete_targets)
+
+            if to_delete:
+                # Delete selected directories
+                deleted = 0
+                for target in to_delete:
+                    try:
+                        if target.is_dir():
+                            shutil.rmtree(target)
+                            deleted += 1
+                    except Exception as e:
+                        browser.show_message("Error", f"Failed to delete {target.name}: {e}")
+
+                browser.show_message("Done", f"Deleted {deleted} directories")
+            else:
+                browser.show_message("Done", "Local files kept.")
+
             return 0
         else:
             return 1
