@@ -3,10 +3,10 @@ args:
   total_timesteps: 500000000
 
 environment:
-  pid: "29792292/pre"
+  pid: "29792292/op1"
   # Skeleton and Character
   skeleton:
-    file: "@pid:/skeleton/dynamic_kp3.yaml"
+    file: "@pid:/skeleton/dynamic.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
 
   # Motion Reference
@@ -15,16 +15,16 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@pid:/muscle/clinic_0125_1925.yaml"
+    file: "@pid:/muscle/clinic_0205_1042.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
-    clip_lm_norm: 1.25 # to disable, remove or set to -1
+    clip_lm_norm: 1.28 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:
-    sim_hz: 180
-    control_hz: 30
+    sim_hz: 800
+    control_hz: 50
 
   # Action and Control
   action:
@@ -46,8 +46,8 @@ environment:
 
     # Imitation reward coefficients (deepmimic/scadiver)
     ee_weight: 100.0
-    pos_weight: 0.2
-    vel_weight: 0.003
+    pos_weight: 0.5
+    vel_weight: 0.005
     com_weight: 10.0
 
     # Metabolic configuration
@@ -61,13 +61,3 @@ environment:
         separate: true
 
 train: 
-  curriculum:
-    imit_mask:
-      - op: mask
-        joints: ["FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL"]
-        from_iteration: 0
-    virtual_force:
-      kp_init: 500.0
-      kp_ignore_cutoff: 1.0
-      discount_rate: 0.8 # on the rollout, x_start @ t=0, x_end (=x_start * discount_rate^2) @ t=Horizon
-      discount_ep_ratio: 0.7

@@ -108,7 +108,6 @@ public:
         double lambdaLengthCurve;
         bool fixOriginInsertion;
         bool verbose;
-        bool analyticalGradient;  // true = analytical, false = numeric
         double weightPhase;       // weight for phase matching in length curve energy
         double weightDelta;       // weight for delta matching in length curve energy
         double weightSamples;     // weight for sample matching loss
@@ -129,7 +128,7 @@ public:
 
         Config() : maxIterations(10000), numSampling(10), lambdaShape(0.1),
                    lambdaLengthCurve(0.1), fixOriginInsertion(true), verbose(false),
-                   analyticalGradient(true), weightPhase(1.0), weightDelta(50.0),
+                   weightPhase(1.0), weightDelta(50.0),
                    weightSamples(1.0), numPhaseSamples(3), lossPower(2),
                    lengthType(LengthCurveType::MTU_LENGTH), numParallel(1),
                    maxDisplacement(0.2), maxDisplacementOriginInsertion(0.03),
@@ -199,10 +198,6 @@ public:
      */
     static int getMotionDOF(const std::string& hdf_filepath);
 
-private:
-    // Ceres cost functors defined in WaypointOptimizer.cpp
-    struct ShapeResidual;
-    struct LengthCurveResidual;
 };
 
 } // namespace PMuscle

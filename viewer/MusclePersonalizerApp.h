@@ -104,7 +104,6 @@ private:
     float mWaypointLambdaShape = 1.0f;
     float mWaypointLambdaLengthCurve = 1.0f;
     bool mWaypointFixOriginInsertion = true;
-    bool mWaypointAnalyticalGradient = true;
     bool mWaypointVerbose = false;
     float mWaypointWeightPhase = 1.0f;
     float mWaypointWeightDelta = 50.0f;
@@ -140,11 +139,12 @@ private:
     enum class WaypointSortColumn { Name, ShapeEnergy, LengthEnergy, TotalEnergy };
     WaypointSortColumn mWaypointSortColumn = WaypointSortColumn::TotalEnergy;
     bool mWaypointSortAscending = false;
-    bool mWaypointShowAfterEnergy = false;  // true=After, false=Before
+    int mWaypointEnergyDisplayMode = 0;  // 0=Before, 1=After, 2=Diff
     std::vector<int> mWaypointSortedIndices;  // Sorted index mapping
     bool mPlotLegendEast = true;  // true=East (right), false=West (left)
     bool mPlotHideLegend = true; // Hide legend items
     int mPlotBarsPerChart = 3;    // Max number of bars per chart (for x-label readability)
+    float mResultsTableHeight = 150.0f;  // Height of results table
 
     // ============================================================
     // Tool 3: Contracture Estimation

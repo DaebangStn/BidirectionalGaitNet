@@ -182,12 +182,6 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
             mWaypointWeightSamples = wp["weight_samples"].as<float>(1.0f);
             mWaypointNumPhaseSamples = wp["num_phase_samples"].as<int>(3);
             mWaypointLossPower = wp["loss_power"].as<int>(2);
-            // Support both correct and typo'd spelling
-            if (wp["analytical_gradient"]) {
-                mWaypointAnalyticalGradient = wp["analytical_gradient"].as<bool>(true);
-            } else if (wp["anayltical_gradient"]) {
-                mWaypointAnalyticalGradient = wp["anayltical_gradient"].as<bool>(true);
-            }
             mWaypointNumParallel = wp["parallelism"].as<int>(1);
             mWaypointMaxDisplacement = wp["max_displacement"].as<float>(0.2f);
             mWaypointMaxDispOriginInsertion = wp["max_displacement_origin_insertion"].as<float>(0.03f);
@@ -265,6 +259,18 @@ void MusclePersonalizerApp::loadCharacter()
     try {
         LOG_INFO("[MusclePersonalizer] Loading skeleton: " << mSkeletonPath);
         LOG_INFO("[MusclePersonalizer] Loading muscles: " << mMusclePath);
+
+        // Validate paths exist before loading
+        std::string skelResolved = rm::resolve(mSkeletonPath);
+        std::string muscleResolved = rm::resolve(mMusclePath);
+        if (skelResolved.empty()) {
+            LOG_ERROR("[MusclePersonalizer] Skeleton file not found: " << mSkeletonPath);
+            return;
+        }
+        if (muscleResolved.empty()) {
+            LOG_ERROR("[MusclePersonalizer] Muscle file not found: " << mMusclePath);
+            return;
+        }
 
         // Load character through SurgeryExecutor
         mExecutor->loadCharacter(mSkeletonPath, mMusclePath);
@@ -586,6 +592,14 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             ImGui::Text("Status: Loaded (%.1f kg, %zu muscles)", mReferenceMass, mAvailableMuscles.size());
         } else {
             ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Status: Not loaded");
+        }
+
+        // Display current skeleton and muscle paths
+        if (!mSkeletonPath.empty()) {
+            ImGui::Text("Skeleton: %s", mSkeletonPath.c_str());
+        }
+        if (!mMusclePath.empty()) {
+            ImGui::Text("Muscle: %s", mMusclePath.c_str());
         }
 
         // Update PID from navigator
@@ -1146,13 +1160,6 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                 ImGui::Checkbox("Fix Origin/Insertion", &mWaypointFixOriginInsertion);
 
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Analytical Gradient", &mWaypointAnalyticalGradient);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Faster but may have numerical issues.\nUncheck for numeric gradient.");
-                }
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
                 ImGui::Checkbox("Verbose", &mWaypointVerbose);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Print optimization progress to console.");
@@ -1164,7 +1171,6 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                     ImGui::SetTooltip("Use normalized muscle fiber length.\nMore accurate but slower.");
                 }
 
-                ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Checkbox("Adaptive Sample Weight", &mWaypointAdaptiveSampleWeight);
                 if (ImGui::IsItemHovered()) {
@@ -1638,10 +1644,13 @@ void MusclePersonalizerApp::drawRenderTab()
     ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Camera");
     ImGui::Separator();
+    ImGui::SetNextItemWidth(200);
     float zoom = static_cast<float>(mCamera.zoom);
     if (ImGui::SliderFloat("Zoom", &zoom, 0.1f, 5.0f)) {
         mCamera.zoom = zoom;
     }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200);
     float persp = static_cast<float>(mCamera.persp);
     if (ImGui::SliderFloat("FOV", &persp, 20.0f, 90.0f)) {
         mCamera.persp = persp;
@@ -1660,6 +1669,7 @@ void MusclePersonalizerApp::drawRenderTab()
         mCamera.trans = Eigen::Vector3d(0.0, -0.5, 0.0);
         mCamera.zoom = 1.0;
     }
+    ImGui::SameLine();
     if (ImGui::Button("Side View")) {
         mCamera.trackball = dart::gui::Trackball();
         mCamera.trackball.setCenter(Eigen::Vector2d(mWidth * 0.5, mHeight * 0.5));
@@ -1686,7 +1696,13 @@ void MusclePersonalizerApp::drawRenderTab()
     ImGui::Separator();
     ImGui::SetNextItemWidth(100);
     ImGui::InputFloat("Plot Height", &mPlotHeight, 10.0f, 50.0f, "%.0f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputInt("Bars per Chart", &mPlotBarsPerChart);
+    mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
+
     ImGui::Checkbox("Hide Legend", &mPlotHideLegend);
+    ImGui::SameLine();
 
     // Legend position
     ImGui::Text("Legend:");
@@ -1700,9 +1716,9 @@ void MusclePersonalizerApp::drawRenderTab()
         mPlotLegendEast = true;
     }
 
-    ImGui::SetNextItemWidth(100);
-    ImGui::InputInt("Bars per Chart", &mPlotBarsPerChart);
-    mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
+    // Table settings
+    ImGui::InputFloat("Results Table Height", &mResultsTableHeight, 50.0f, 200.0f, "%.0f");
+    mResultsTableHeight = std::max(60.0f, std::min(500.0f, mResultsTableHeight));
 }
 
 void MusclePersonalizerApp::drawExportSection()
@@ -1820,7 +1836,7 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
             mWaypointSortColumn = WaypointSortColumn::LengthEnergy;
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton("Total", &sortCol, 3)) {
+        if (ImGui::RadioButton("Cost", &sortCol, 3)) {
             mWaypointSortColumn = WaypointSortColumn::TotalEnergy;
         }
 
@@ -1838,14 +1854,11 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
         ImGui::SameLine();
         ImGui::Text(" | ");
         ImGui::SameLine();
-        int energyType = mWaypointShowAfterEnergy ? 1 : 0;
-        if (ImGui::RadioButton("Before", &energyType, 0)) {
-            mWaypointShowAfterEnergy = false;
-        }
+        if (ImGui::RadioButton("Before", &mWaypointEnergyDisplayMode, 0)) {}
         ImGui::SameLine();
-        if (ImGui::RadioButton("After", &energyType, 1)) {
-            mWaypointShowAfterEnergy = true;
-        }
+        if (ImGui::RadioButton("After", &mWaypointEnergyDisplayMode, 1)) {}
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Diff", &mWaypointEnergyDisplayMode, 2)) {}
 
         // Filter input
         ImGui::SetNextItemWidth(150);
@@ -1865,11 +1878,30 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                 const auto& ra = mWaypointOptResults[a];
                 const auto& rb = mWaypointOptResults[b];
 
-                // Select energy values based on before/after toggle
-                double shapeA = mWaypointShowAfterEnergy ? ra.final_shape_energy : ra.initial_shape_energy;
-                double shapeB = mWaypointShowAfterEnergy ? rb.final_shape_energy : rb.initial_shape_energy;
-                double lengthA = mWaypointShowAfterEnergy ? ra.final_length_energy : ra.initial_length_energy;
-                double lengthB = mWaypointShowAfterEnergy ? rb.final_length_energy : rb.initial_length_energy;
+                // Select energy values based on display mode (0=Before, 1=After, 2=Diff)
+                double shapeA, shapeB, lengthA, lengthB, totalA, totalB;
+                if (mWaypointEnergyDisplayMode == 0) {
+                    shapeA = ra.initial_shape_energy;
+                    shapeB = rb.initial_shape_energy;
+                    lengthA = ra.initial_length_energy;
+                    lengthB = rb.initial_length_energy;
+                    totalA = ra.initial_total_cost;
+                    totalB = rb.initial_total_cost;
+                } else if (mWaypointEnergyDisplayMode == 1) {
+                    shapeA = ra.final_shape_energy;
+                    shapeB = rb.final_shape_energy;
+                    lengthA = ra.final_length_energy;
+                    lengthB = rb.final_length_energy;
+                    totalA = ra.final_total_cost;
+                    totalB = rb.final_total_cost;
+                } else {
+                    shapeA = ra.final_shape_energy - ra.initial_shape_energy;
+                    shapeB = rb.final_shape_energy - rb.initial_shape_energy;
+                    lengthA = ra.final_length_energy - ra.initial_length_energy;
+                    lengthB = rb.final_length_energy - rb.initial_length_energy;
+                    totalA = ra.final_total_cost - ra.initial_total_cost;
+                    totalB = rb.final_total_cost - rb.initial_total_cost;
+                }
 
                 bool less = false;
                 switch (mWaypointSortColumn) {
@@ -1883,7 +1915,7 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                         less = lengthA < lengthB;
                         break;
                     case WaypointSortColumn::TotalEnergy:
-                        less = (shapeA + lengthA) < (shapeB + lengthB);
+                        less = totalA < totalB;
                         break;
                 }
                 return mWaypointSortAscending ? less : !less;
@@ -1892,12 +1924,12 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
         // Table with radio button, name, shape energy, length energy, total energy, iterations
         ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                      ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
-        if (ImGui::BeginTable("ResultsTable", 6, tableFlags, ImVec2(0, 120))) {
+        if (ImGui::BeginTable("ResultsTable", 6, tableFlags, ImVec2(0, mResultsTableHeight))) {
             ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 15.0f);
             ImGui::TableSetupColumn("Muscle", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Shape E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
             ImGui::TableSetupColumn("Length E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-            ImGui::TableSetupColumn("Total E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+            ImGui::TableSetupColumn("Cost", ImGuiTableColumnFlags_WidthFixed, 45.0f);
             ImGui::TableSetupColumn("Iters", ImGuiTableColumnFlags_WidthFixed, 30.0f);
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
@@ -1950,9 +1982,21 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                     ImGui::TextColored(color, "%s", r.muscle_name.c_str());
                 }
 
-                // Select energy values based on before/after toggle
-                double shapeE = mWaypointShowAfterEnergy ? r.final_shape_energy : r.initial_shape_energy;
-                double lengthE = mWaypointShowAfterEnergy ? r.final_length_energy : r.initial_length_energy;
+                // Select energy values based on display mode (0=Before, 1=After, 2=Diff)
+                double shapeE, lengthE, totalE;
+                if (mWaypointEnergyDisplayMode == 0) {
+                    shapeE = r.initial_shape_energy;
+                    lengthE = r.initial_length_energy;
+                    totalE = r.initial_total_cost;
+                } else if (mWaypointEnergyDisplayMode == 1) {
+                    shapeE = r.final_shape_energy;
+                    lengthE = r.final_length_energy;
+                    totalE = r.final_total_cost;
+                } else {
+                    shapeE = r.final_shape_energy - r.initial_shape_energy;
+                    lengthE = r.final_length_energy - r.initial_length_energy;
+                    totalE = r.final_total_cost - r.initial_total_cost;
+                }
 
                 // Column 3: Shape energy
                 ImGui::TableNextColumn();
@@ -1962,9 +2006,9 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                 ImGui::TableNextColumn();
                 ImGui::TextColored(color, "%.4f", lengthE);
 
-                // Column 5: Total energy
+                // Column 5: Total cost (weighted: lambdaShape * shape + lambdaLength * length)
                 ImGui::TableNextColumn();
-                ImGui::TextColored(color, "%.4f", shapeE + lengthE);
+                ImGui::TextColored(color, "%.4f", totalE);
 
                 // Column 6: Iterations
                 ImGui::TableNextColumn();
@@ -1982,14 +2026,13 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
             ImGui::Separator();
 
             // Line 1: Key optimization parameters (compact)
-            ImGui::Text("Params: iter=%d samp=%d lS=%.2f lL=%.2f wP=%.1f wD=%.1f wS=%.1f nPS=%d pow=%d disp=%.3f dispOI=%.3f %s%s%s",
+            ImGui::Text("Params: iter=%d samp=%d lS=%.2f lL=%.2f wP=%.1f wD=%.1f wS=%.1f nPS=%d pow=%d disp=%.3f dispOI=%.3f %s%s",
                 mWaypointMaxIterations, mWaypointNumSampling,
                 mWaypointLambdaShape, mWaypointLambdaLengthCurve,
                 mWaypointWeightPhase, mWaypointWeightDelta, mWaypointWeightSamples,
                 mWaypointNumPhaseSamples, mWaypointLossPower,
                 mWaypointMaxDisplacement, mWaypointMaxDispOriginInsertion,
                 mWaypointFixOriginInsertion ? "fixOI " : "",
-                mWaypointAnalyticalGradient ? "analGrad " : "",
                 mWaypointUseNormalizedLength ? "normLen" : "lmt");
 
             // Line 2: Character configs (small font)
@@ -2365,7 +2408,6 @@ void MusclePersonalizerApp::runWaypointOptimization()
     config.lambdaShape = static_cast<double>(mWaypointLambdaShape);
     config.lambdaLengthCurve = static_cast<double>(mWaypointLambdaLengthCurve);
     config.fixOriginInsertion = mWaypointFixOriginInsertion;
-    config.analyticalGradient = mWaypointAnalyticalGradient;
     config.verbose = mWaypointVerbose;
     config.weightPhase = static_cast<double>(mWaypointWeightPhase);
     config.weightDelta = static_cast<double>(mWaypointWeightDelta);
@@ -2462,7 +2504,6 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     config.lambdaShape = static_cast<double>(mWaypointLambdaShape);
     config.lambdaLengthCurve = static_cast<double>(mWaypointLambdaLengthCurve);
     config.fixOriginInsertion = mWaypointFixOriginInsertion;
-    config.analyticalGradient = mWaypointAnalyticalGradient;
     config.verbose = mWaypointVerbose;
     config.weightPhase = static_cast<double>(mWaypointWeightPhase);
     config.weightDelta = static_cast<double>(mWaypointWeightDelta);
@@ -2483,7 +2524,6 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     LOG_INFO("[MusclePersonalizer] Starting async waypoint optimization" );
     LOG_INFO("[MusclePersonalizer]   HDF: " << hdfPath );
     LOG_INFO("[MusclePersonalizer]   Muscles: " << selectedMuscles.size() );
-    LOG_INFO("[MusclePersonalizer]   Gradient: " << (config.analyticalGradient ? "analytical" : "numeric") );
     LOG_INFO("[MusclePersonalizer]   Weights: phase=" << config.weightPhase << ", delta=" << config.weightDelta
               << ", samples=" << config.weightSamples );
     LOG_INFO("[MusclePersonalizer]   Length type: " << (mWaypointUseNormalizedLength ? "normalized (lm_norm)" : "MTU (lmt)") );
@@ -2962,16 +3002,22 @@ void MusclePersonalizerApp::onPIDChanged(const std::string& pid)
     scanSkeletonFiles();
 
     // Auto-select patient muscle (first available file)
-    mMuscleDataSource = CharacterDataSource::PatientData;
-    scanMuscleFiles();
+    // mMuscleDataSource = CharacterDataSource::PatientData;
+    // scanMuscleFiles();
 
-    // Select first skeleton/muscle files if available and auto-rebuild
+    // Select skeleton file: prefer trimmed_unified.yaml, otherwise first available
     if (!mSkeletonCandidates.empty()) {
-        mSkeletonPath = "@pid:" + pid + "/" + visit + "/skeleton/" + mSkeletonCandidates[0];
+        std::string skelPrefix = "@pid:" + pid + "/" + visit + "/skeleton/";
+        auto it = std::find(mSkeletonCandidates.begin(), mSkeletonCandidates.end(), "trimmed_unified.yaml");
+        if (it != mSkeletonCandidates.end()) {
+            mSkeletonPath = skelPrefix + "trimmed_unified.yaml";
+        } else {
+            mSkeletonPath = skelPrefix + mSkeletonCandidates[0];
+        }
     }
-    if (!mMuscleCandidates.empty()) {
-        mMusclePath = "@pid:" + pid + "/" + visit + "/muscle/" + mMuscleCandidates[0];
-    }
+    // if (!mMuscleCandidates.empty()) {
+        // mMusclePath = "@pid:" + pid + "/" + visit + "/muscle/" + mMuscleCandidates[0];
+    // }
 
     if (!mSkeletonCandidates.empty() || !mMuscleCandidates.empty()) {
         loadCharacter();

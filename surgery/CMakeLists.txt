@@ -110,3 +110,24 @@ target_link_libraries(contracture_cli
     yaml-cpp
     Boost::program_options
 )
+
+# Waypoint Optimizer CLI (standalone, no GUI)
+add_executable(waypoint_cli
+    "waypoint_cli_main.cpp"
+    "SurgeryExecutor.h"
+    "SurgeryExecutor.cpp"
+)
+
+target_include_directories(waypoint_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../sim
+    ${CMAKE_CURRENT_SOURCE_DIR}/../viewer
+)
+
+target_link_libraries(waypoint_cli
+    sim
+    surgery_optimizer
+    tinyxml2::tinyxml2
+    dart
+    yaml-cpp
+    Boost::program_options
+)

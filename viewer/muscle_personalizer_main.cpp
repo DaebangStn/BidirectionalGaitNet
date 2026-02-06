@@ -120,7 +120,6 @@ int runWaypointOptimizationCLI(const std::string& configPath,
     optConfig.lambdaShape = config["waypoint_optimization"]["lambda_shape"].as<double>(1.0);
     optConfig.lambdaLengthCurve = config["waypoint_optimization"]["lambda_length_curve"].as<double>(1.0);
     optConfig.fixOriginInsertion = config["waypoint_optimization"]["fix_origin_insertion"].as<bool>(true);
-    optConfig.analyticalGradient = config["waypoint_optimization"]["analytical_gradient"].as<bool>(false);
     optConfig.weightPhase = config["waypoint_optimization"]["weight_phase"].as<double>(1.0);
     optConfig.weightDelta = config["waypoint_optimization"]["weight_delta"].as<double>(50.0);
     optConfig.numParallel = config["waypoint_optimization"]["parallelism"].as<int>(1);
@@ -133,8 +132,7 @@ int runWaypointOptimizationCLI(const std::string& configPath,
     std::cout << "[CLI]   Config: maxIter=" << optConfig.maxIterations << " numSampling=" << optConfig.numSampling
               << " lambdaShape=" << optConfig.lambdaShape << " lambdaLengthCurve=" << optConfig.lambdaLengthCurve
               << std::endl;
-    std::cout << "[CLI]   Gradient: " << (optConfig.analyticalGradient ? "analytical" : "numeric")
-              << " weightPhase=" << optConfig.weightPhase << " weightDelta=" << optConfig.weightDelta
+    std::cout << "[CLI]   weightPhase=" << optConfig.weightPhase << " weightDelta=" << optConfig.weightDelta
               << " numParallel=" << optConfig.numParallel << std::endl;
 
     // Use optimizeWaypointsWithResults with separate reference character
