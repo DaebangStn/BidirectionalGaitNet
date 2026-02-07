@@ -12,6 +12,55 @@ class ResourceManager;
 
 namespace PIDNav {
 
+// Forward declarations
+class PIDNavigator;
+
+/**
+ * Data source for character files (skeleton/muscle).
+ */
+enum class CharacterDataSource { DefaultData, PatientData };
+
+/**
+ * Non-owning reference to a single file source section's state.
+ * Created on the stack at each call site with references to the app's members.
+ */
+struct CharacterFileRef {
+    CharacterDataSource& dataSource;
+    std::string& path;
+    std::vector<std::string>& candidates;
+    std::function<void()> onScan;
+};
+
+/**
+ * Options for drawCharacterLoadContent().
+ */
+struct CharacterLoadOptions {
+    bool showPatientInfo = true;
+    bool showDeleteButtons = true;
+    bool requireBothForRebuild = false;
+};
+
+/**
+ * Draws the character file selection UI (skeleton + muscle sections + rebuild button).
+ * Shared between MusclePersonalizerApp and PhysicalExam.
+ *
+ * @param navigator PID navigator for visit/PID state
+ * @param rm ResourceManager for resolving paths (needed for delete; can be nullptr if delete disabled)
+ * @param pid Current PID string
+ * @param skeleton Skeleton file section state reference
+ * @param muscle Muscle file section state reference
+ * @param onRebuild Callback when Rebuild button is clicked
+ * @param options Display options
+ */
+void drawCharacterLoadContent(
+    PIDNavigator* navigator,
+    rm::ResourceManager* rm,
+    const std::string& pid,
+    CharacterFileRef skeleton,
+    CharacterFileRef muscle,
+    std::function<void()> onRebuild,
+    const CharacterLoadOptions& options = {});
+
 /**
  * POD structure holding PID selection state.
  * Maintains the list of PIDs with their metadata and current selection.

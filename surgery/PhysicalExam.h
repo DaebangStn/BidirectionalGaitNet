@@ -91,7 +91,7 @@ enum class XAxisMode { RAW_ANGLE, NORMALIZED };
 enum class ROMMetric { STIFFNESS, TORQUE, EITHER, BOTH };
 
 // Character data source for skeleton/muscle loading
-enum class CharacterDataSource { DefaultData, PatientData };
+using CharacterDataSource = PIDNav::CharacterDataSource;
 
 // Posture control target
 struct PostureTarget {
@@ -550,8 +550,8 @@ private:
 
     // Helper function to load clinical ROM data
     void loadClinicalROM(const std::string& pid, const std::string& visit);
-    void onBrowsePIDChanged(const std::string& pid);  // Callback for PID selection changes
-    void onBrowseVisitChanged(const std::string& pid, const std::string& visit);  // Callback for visit changes
+    void onPIDChanged(const std::string& pid);  // Callback for PID selection changes
+    void onVisitChanged(const std::string& pid, const std::string& visit);  // Callback for visit changes
 };
 
 } // namespace PMuscle

@@ -34,9 +34,12 @@ MusclePersonalizerApp::MusclePersonalizerApp(const std::string& configPath)
 
 MusclePersonalizerApp::~MusclePersonalizerApp()
 {
-    // Wait for optimization thread to finish
+    // Wait for optimization threads to finish
     if (mWaypointOptThread && mWaypointOptThread->joinable()) {
         mWaypointOptThread->join();
+    }
+    if (mContractureOptThread && mContractureOptThread->joinable()) {
+        mContractureOptThread->join();
     }
 }
 
@@ -125,7 +128,7 @@ void MusclePersonalizerApp::drawContent()
 void MusclePersonalizerApp::drawUI()
 {
     // During optimization, only show progress overlay for faster updates
-    if (mWaypointOptRunning) {
+    if (mWaypointOptRunning || mContractureOptRunning) {
         drawProgressOverlay();
         return;
     }
@@ -641,152 +644,19 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
 
         ImGui::Separator();
 
-        // ============ SKELETON SECTION ============
-        bool skelChanged = false;
-        ImGui::Text("Skeleton Source:");
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Default##skel", mSkeletonDataSource == CharacterDataSource::DefaultData)) {
-            if (mSkeletonDataSource != CharacterDataSource::DefaultData) {
-                mSkeletonDataSource = CharacterDataSource::DefaultData;
-                skelChanged = true;
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Patient##skel", mSkeletonDataSource == CharacterDataSource::PatientData)) {
-            if (mSkeletonDataSource != CharacterDataSource::PatientData) {
-                mSkeletonDataSource = CharacterDataSource::PatientData;
-                skelChanged = true;
-            }
-        }
+        PIDNav::CharacterFileRef skelRef{mSkeletonDataSource, mSkeletonPath, mSkeletonCandidates,
+            [this]() { scanSkeletonFiles(); }};
+        PIDNav::CharacterFileRef muscleRef{mMuscleDataSource, mMusclePath, mMuscleCandidates,
+            [this]() { scanMuscleFiles(); }};
+        PIDNav::CharacterLoadOptions opts;
+        opts.showPatientInfo = true;
+        opts.showDeleteButtons = true;
 
-        // Patient skeleton info
-        if (mSkeletonDataSource == CharacterDataSource::PatientData) {
-            if (!mCharacterPID.empty()) {
-                ImGui::SameLine();
-                const auto& pidState = mPIDNavigator->getState();
-                ImGui::Text("(%s/%s)", mCharacterPID.c_str(), pidState.getVisitDir().c_str());
-            } else {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
-            }
-        }
-
-        // Del button for selected skeleton file (both Default and Patient)
-        if (!mSkeletonPath.empty()) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Del##skel")) {
-                try {
-                    std::string resolved = mResourceManager->resolve(mSkeletonPath);
-                    if (!resolved.empty() && std::filesystem::exists(resolved)) {
-                        std::filesystem::remove(resolved);
-                        LOG_INFO("[MusclePersonalizer] Deleted skeleton: " << resolved);
-                    }
-                } catch (...) {}
-                mSkeletonPath.clear();
-                scanSkeletonFiles();
-            }
-        }
-
-        if (skelChanged) {
-            scanSkeletonFiles();
-            mSkeletonPath.clear();
-        }
-
-        // Skeleton file list
-        std::string skelPrefix = "@data/skeleton/";
-        if (mSkeletonDataSource == CharacterDataSource::PatientData && !mCharacterPID.empty() && mPIDNavigator) {
-            std::string visit = mPIDNavigator->getState().getVisitDir();
-            skelPrefix = "@pid:" + mCharacterPID + "/" + visit + "/skeleton/";
-        }
-
-        if (ImGui::BeginListBox("##SkeletonList", ImVec2(-1, 60))) {
-            for (size_t i = 0; i < mSkeletonCandidates.size(); ++i) {
-                const auto& filename = mSkeletonCandidates[i];
-                bool isSelected = (mSkeletonPath.find(filename) != std::string::npos);
-                if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                    mSkeletonPath = skelPrefix + filename;
-                }
-            }
-            ImGui::EndListBox();
-        }
-
-        ImGui::Spacing();
-
-        // ============ MUSCLE SECTION ============
-        bool muscleChanged = false;
-        ImGui::Text("Muscle Source:");
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Default##muscle", mMuscleDataSource == CharacterDataSource::DefaultData)) {
-            if (mMuscleDataSource != CharacterDataSource::DefaultData) {
-                mMuscleDataSource = CharacterDataSource::DefaultData;
-                muscleChanged = true;
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Patient##muscle", mMuscleDataSource == CharacterDataSource::PatientData)) {
-            if (mMuscleDataSource != CharacterDataSource::PatientData) {
-                mMuscleDataSource = CharacterDataSource::PatientData;
-                muscleChanged = true;
-            }
-        }
-
-        // Patient muscle info
-        if (mMuscleDataSource == CharacterDataSource::PatientData) {
-            if (!mCharacterPID.empty()) {
-                ImGui::SameLine();
-                const auto& pidState = mPIDNavigator->getState();
-                ImGui::Text("(%s/%s)", mCharacterPID.c_str(), pidState.getVisitDir().c_str());
-            } else {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
-            }
-        }
-
-        // Del button for selected muscle file (both Default and Patient)
-        if (!mMusclePath.empty()) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Del##muscle")) {
-                try {
-                    std::string resolved = mResourceManager->resolve(mMusclePath);
-                    if (!resolved.empty() && std::filesystem::exists(resolved)) {
-                        std::filesystem::remove(resolved);
-                        LOG_INFO("[MusclePersonalizer] Deleted muscle: " << resolved);
-                    }
-                } catch (...) {}
-                mMusclePath.clear();
-                scanMuscleFiles();
-            }
-        }
-
-        if (muscleChanged) {
-            scanMuscleFiles();
-            mMusclePath.clear();
-        }
-
-        // Muscle file list
-        std::string musclePrefix = "@data/muscle/";
-        if (mMuscleDataSource == CharacterDataSource::PatientData && !mCharacterPID.empty() && mPIDNavigator) {
-            std::string visit = mPIDNavigator->getState().getVisitDir();
-            musclePrefix = "@pid:" + mCharacterPID + "/" + visit + "/muscle/";
-        }
-
-        if (ImGui::BeginListBox("##MuscleList", ImVec2(-1, 60))) {
-            for (size_t i = 0; i < mMuscleCandidates.size(); ++i) {
-                const auto& filename = mMuscleCandidates[i];
-                bool isSelected = (mMusclePath.find(filename) != std::string::npos);
-                if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                    mMusclePath = musclePrefix + filename;
-                }
-            }
-            ImGui::EndListBox();
-        }
-
-        ImGui::Separator();
-
-        // Rebuild button
-        if (ImGui::Button("Rebuild", ImVec2(-1, 0))) {
-            loadCharacter();
-        }
+        PIDNav::drawCharacterLoadContent(
+            mPIDNavigator.get(), mResourceManager, mCharacterPID,
+            skelRef, muscleRef,
+            [this]() { loadCharacter(); },
+            opts);
     }
 }
 
@@ -1263,7 +1133,7 @@ void MusclePersonalizerApp::drawTitlePanel()
 
 void MusclePersonalizerApp::drawProgressOverlay()
 {
-    if (!mWaypointOptRunning) return;
+    if (!mWaypointOptRunning && !mContractureOptRunning) return;
 
     // Get display size for centering
     ImGuiIO& io = ImGui::GetIO();
@@ -1276,44 +1146,80 @@ void MusclePersonalizerApp::drawProgressOverlay()
 
     ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(windowSize);
-    ImGui::Begin("Optimizing...", nullptr,
-                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoCollapse);
 
-    // Progress bar (atomic reads are thread-safe)
-    int current = mWaypointOptCurrent.load();
-    int total = mWaypointOptTotal.load();
-    float progress = total > 0 ? static_cast<float>(current) / total : 0.0f;
+    if (mWaypointOptRunning) {
+        ImGui::Begin("Optimizing Waypoints...", nullptr,
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse);
 
-    char overlay[64];
-    snprintf(overlay, sizeof(overlay), "%d / %d muscles", current, total);
-    ImGui::ProgressBar(progress, ImVec2(-1, 0), overlay);
+        // Progress bar (atomic reads are thread-safe)
+        int current = mWaypointOptCurrent.load();
+        int total = mWaypointOptTotal.load();
+        float progress = total > 0 ? static_cast<float>(current) / total : 0.0f;
 
-    // Current muscle name (mutex-protected)
-    std::string muscleName;
-    {
-        std::lock_guard<std::mutex> lock(mWaypointOptMutex);
-        muscleName = mWaypointOptMuscleName;
+        char overlay[64];
+        snprintf(overlay, sizeof(overlay), "%d / %d muscles", current, total);
+        ImGui::ProgressBar(progress, ImVec2(-1, 0), overlay);
+
+        // Current muscle name (mutex-protected)
+        std::string muscleName;
+        {
+            std::lock_guard<std::mutex> lock(mWaypointOptMutex);
+            muscleName = mWaypointOptMuscleName;
+        }
+        ImGui::Text("Current: %s", muscleName.c_str());
+
+        // Elapsed time and ETA
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - mWaypointOptStartTime);
+        int elapsedSec = static_cast<int>(elapsed.count());
+
+        if (current > 0 && progress < 1.0f) {
+            float avgTime = static_cast<float>(elapsedSec) / current;
+            int remaining = static_cast<int>(avgTime * (total - current));
+            ImGui::Text("Elapsed: %d:%02d  |  ETA: %d:%02d",
+                elapsedSec / 60, elapsedSec % 60,
+                remaining / 60, remaining % 60);
+        } else {
+            ImGui::Text("Elapsed: %d:%02d  |  ETA: --:--",
+                elapsedSec / 60, elapsedSec % 60);
+        }
+
+        ImGui::End();
+    } else if (mContractureOptRunning) {
+        ImGui::Begin("Estimating Contracture...", nullptr,
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse);
+
+        int iteration = mContractureOptIteration.load();
+        int maxIter = mContractureOptMaxIterations.load();
+        float progress = maxIter > 0 ? static_cast<float>(iteration) / maxIter : 0.0f;
+
+        char overlay[64];
+        snprintf(overlay, sizeof(overlay), "Iteration %d / %d", iteration, maxIter);
+        ImGui::ProgressBar(progress, ImVec2(-1, 0), overlay);
+
+        double cost = mContractureOptCost.load();
+        ImGui::Text("Cost: %.6e", cost);
+
+        // Elapsed time and ETA
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - mContractureOptStartTime);
+        int elapsedSec = static_cast<int>(elapsed.count());
+
+        if (iteration > 0 && progress < 1.0f) {
+            float avgTime = static_cast<float>(elapsedSec) / iteration;
+            int remaining = static_cast<int>(avgTime * (maxIter - iteration));
+            ImGui::Text("Elapsed: %d:%02d  |  ETA: %d:%02d",
+                elapsedSec / 60, elapsedSec % 60,
+                remaining / 60, remaining % 60);
+        } else {
+            ImGui::Text("Elapsed: %d:%02d  |  ETA: --:--",
+                elapsedSec / 60, elapsedSec % 60);
+        }
+
+        ImGui::End();
     }
-    ImGui::Text("Current: %s", muscleName.c_str());
-
-    // Elapsed time and ETA
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - mWaypointOptStartTime);
-    int elapsedSec = static_cast<int>(elapsed.count());
-
-    if (current > 0 && progress < 1.0f) {
-        float avgTime = static_cast<float>(elapsedSec) / current;
-        int remaining = static_cast<int>(avgTime * (total - current));
-        ImGui::Text("Elapsed: %d:%02d  |  ETA: %d:%02d",
-            elapsedSec / 60, elapsedSec % 60,
-            remaining / 60, remaining % 60);
-    } else {
-        ImGui::Text("Elapsed: %d:%02d  |  ETA: --:--",
-            elapsedSec / 60, elapsedSec % 60);
-    }
-
-    ImGui::End();
 }
 
 void MusclePersonalizerApp::drawContractureEstimationSection()
@@ -1511,7 +1417,12 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         }
 
     ImGui::Separator();
-    if (ImGui::Button("Estimate Contracture Parameters", ImVec2(-1, 0))) runContractureEstimation();
+    bool isContractureRunning = mContractureOptRunning.load();
+    if (isContractureRunning) ImGui::BeginDisabled();
+    if (ImGui::Button(isContractureRunning ? "Estimating..." : "Estimate Contracture Parameters", ImVec2(-1, 0))) {
+        runContractureEstimationAsync();
+    }
+    if (isContractureRunning) ImGui::EndDisabled();
 
     // Display brief optimization result summary
     if (mContractureOptResult.has_value() && !mContractureOptResult->trial_results.empty()) {
@@ -2724,6 +2635,13 @@ void MusclePersonalizerApp::runContractureEstimation()
     optConfig.lambdaTorqueReg = mContractureLambdaTorqueReg;
     optConfig.outerIterations = mContractureOuterIterations;
 
+    // Progress callback for Ceres iterations (thread-safe via atomics)
+    optConfig.iterationCallback = [this](int iteration, double cost) {
+        mContractureOptIteration = iteration;
+        mContractureOptCost = cost;
+        glfwPostEmptyEvent();  // Wake up main thread to update display
+    };
+
     LOG_INFO("[MusclePersonalizer] Running optimization with results capture..." );
 
     // Use tiered optimization if available (dual-tier: search groups + optimization groups)
@@ -2797,6 +2715,32 @@ void MusclePersonalizerApp::runContractureEstimation()
                   << mContractureOptResult->muscle_results.size() << " muscles, "
                   << mContractureOptResult->trial_results.size() << " trials" );
     }
+}
+
+void MusclePersonalizerApp::runContractureEstimationAsync()
+{
+    if (mContractureOptRunning) {
+        LOG_WARN("[MusclePersonalizer] Contracture estimation already running");
+        return;
+    }
+
+    // Join any previous thread
+    if (mContractureOptThread && mContractureOptThread->joinable()) {
+        mContractureOptThread->join();
+    }
+
+    // Initialize progress state
+    mContractureOptRunning = true;
+    mContractureOptIteration = 0;
+    mContractureOptMaxIterations = mContractureMaxIterations;
+    mContractureOptCost = 0.0;
+    mContractureOptStartTime = std::chrono::steady_clock::now();
+
+    mContractureOptThread = std::make_unique<std::thread>([this]() {
+        runContractureEstimation();
+        mContractureOptRunning = false;
+        glfwPostEmptyEvent();
+    });
 }
 
 // ============================================================

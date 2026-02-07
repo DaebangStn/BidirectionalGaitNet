@@ -113,7 +113,7 @@ private:
     int mWaypointNumParallel = 1;  // Number of parallel threads (1 = sequential)
     bool mWaypointUseNormalizedLength = false;  // false = lmt (MTU), true = lm_norm (normalized)
     float mWaypointMaxDisplacement = 0.2f;  // Max displacement for normal waypoints (m)
-    float mWaypointMaxDispOriginInsertion = 0.03f;  // Max displacement for origin/insertion (m)
+    float mWaypointMaxDispOriginInsertion = 0.01f;  // Max displacement for origin/insertion (m)
     float mWaypointFunctionTolerance = 1e-4f;  // Convergence tolerance on cost function
     float mWaypointGradientTolerance = 1e-5f;  // Convergence tolerance on gradient
     float mWaypointParameterTolerance = 1e-5f;  // Convergence tolerance on parameters
@@ -129,6 +129,14 @@ private:
     std::mutex mCharacterMutex;  // Protects skeleton/muscle access during async optimization
     std::string mWaypointOptMuscleName;
     std::unique_ptr<std::thread> mWaypointOptThread;
+
+    // Contracture estimation progress (thread-safe)
+    std::atomic<bool> mContractureOptRunning{false};
+    std::atomic<int> mContractureOptIteration{0};
+    std::atomic<int> mContractureOptMaxIterations{0};
+    std::atomic<double> mContractureOptCost{0.0};
+    std::chrono::steady_clock::time_point mContractureOptStartTime;
+    std::unique_ptr<std::thread> mContractureOptThread;
 
     // Waypoint optimization results (for curve visualization)
     std::vector<PMuscle::WaypointOptResult> mWaypointOptResults;
@@ -346,7 +354,7 @@ private:
     // ============================================================
     // Character File Browser
     // ============================================================
-    enum class CharacterDataSource { DefaultData, PatientData };
+    using CharacterDataSource = PIDNav::CharacterDataSource;
 
     // Independent source selection for skeleton and muscle
     CharacterDataSource mSkeletonDataSource = CharacterDataSource::DefaultData;
@@ -412,6 +420,7 @@ private:
     void runWaypointOptimization();
     void runWaypointOptimizationAsync();  // Background thread wrapper
     void runContractureEstimation();
+    void runContractureEstimationAsync();  // Background thread wrapper
 
     // Progress overlay for async operations
     void drawProgressOverlay();

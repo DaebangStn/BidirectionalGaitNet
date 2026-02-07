@@ -563,4 +563,122 @@ void PIDNavigator::renderUI(const char* title,
     }
 }
 
+// ============================================================================
+// Character Load Content (shared between MusclePersonalizerApp & PhysicalExam)
+// ============================================================================
+
+static void drawFileSourceSection(
+    const char* label,
+    const char* dataDir,
+    CharacterFileRef& ref,
+    PIDNavigator* navigator,
+    rm::ResourceManager* rm,
+    const std::string& pid,
+    const CharacterLoadOptions& options)
+{
+    bool changed = false;
+
+    std::string defaultId = std::string("Default##") + label;
+    std::string patientId = std::string("Patient##") + label;
+    std::string listId = std::string("##") + label + "List";
+    std::string delId = std::string("Del##") + label;
+
+    ImGui::Text("%s Source:", label);
+    ImGui::SameLine();
+    if (ImGui::RadioButton(defaultId.c_str(), ref.dataSource == CharacterDataSource::DefaultData)) {
+        if (ref.dataSource != CharacterDataSource::DefaultData) {
+            ref.dataSource = CharacterDataSource::DefaultData;
+            changed = true;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(patientId.c_str(), ref.dataSource == CharacterDataSource::PatientData)) {
+        if (ref.dataSource != CharacterDataSource::PatientData) {
+            ref.dataSource = CharacterDataSource::PatientData;
+            changed = true;
+        }
+    }
+
+    // Patient info display
+    if (options.showPatientInfo && ref.dataSource == CharacterDataSource::PatientData) {
+        if (!pid.empty()) {
+            ImGui::SameLine();
+            const auto& pidState = navigator->getState();
+            ImGui::Text("(%s/%s)", pid.c_str(), pidState.getVisitDir().c_str());
+        } else {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(Select PID first)");
+        }
+    }
+
+    // Del button
+    if (options.showDeleteButtons && !ref.path.empty()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(delId.c_str())) {
+            if (rm) {
+                try {
+                    std::string resolved = rm->resolve(ref.path);
+                    if (!resolved.empty() && std::filesystem::exists(resolved)) {
+                        std::filesystem::remove(resolved);
+                    }
+                } catch (...) {}
+            }
+            ref.path.clear();
+            if (ref.onScan) ref.onScan();
+        }
+    }
+
+    if (changed) {
+        if (ref.onScan) ref.onScan();
+        ref.path.clear();
+    }
+
+    // File list
+    std::string prefix = std::string("@data/") + dataDir + "/";
+    if (ref.dataSource == CharacterDataSource::PatientData && !pid.empty() && navigator) {
+        std::string visit = navigator->getState().getVisitDir();
+        prefix = "@pid:" + pid + "/" + visit + "/" + dataDir + "/";
+    }
+
+    if (ImGui::BeginListBox(listId.c_str(), ImVec2(-1, 180))) {
+        for (size_t i = 0; i < ref.candidates.size(); ++i) {
+            const auto& filename = ref.candidates[i];
+            bool isSelected = (ref.path.find(filename) != std::string::npos);
+            if (ImGui::Selectable(filename.c_str(), isSelected)) {
+                ref.path = prefix + filename;
+            }
+        }
+        ImGui::EndListBox();
+    }
+}
+
+void drawCharacterLoadContent(
+    PIDNavigator* navigator,
+    rm::ResourceManager* rm,
+    const std::string& pid,
+    CharacterFileRef skeleton,
+    CharacterFileRef muscle,
+    std::function<void()> onRebuild,
+    const CharacterLoadOptions& options)
+{
+    drawFileSourceSection("Skeleton", "skeleton", skeleton, navigator, rm, pid, options);
+
+    ImGui::Spacing();
+
+    drawFileSourceSection("Muscle", "muscle", muscle, navigator, rm, pid, options);
+
+    ImGui::Separator();
+
+    // Rebuild button
+    bool canRebuild = true;
+    if (options.requireBothForRebuild) {
+        canRebuild = !skeleton.path.empty() && !muscle.path.empty();
+    }
+    if (!canRebuild) ImGui::BeginDisabled();
+    if (ImGui::Button("Rebuild", ImVec2(-1, 0))) {
+        if (onRebuild) onRebuild();
+    }
+    if (!canRebuild) ImGui::EndDisabled();
+}
+
 } // namespace PIDNav

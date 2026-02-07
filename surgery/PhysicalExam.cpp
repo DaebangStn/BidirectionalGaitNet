@@ -218,7 +218,7 @@ void PhysicalExam::loadClinicalROM(const std::string& pid, const std::string& vi
     }
 }
 
-void PhysicalExam::onBrowsePIDChanged(const std::string& pid)
+void PhysicalExam::onPIDChanged(const std::string& pid)
 {
     mBrowseCharacterPID = pid;
 
@@ -234,19 +234,34 @@ void PhysicalExam::onBrowsePIDChanged(const std::string& pid)
     const auto& pidState = mPIDNavigator->getState();
     std::string visit = pidState.getVisitDir();
 
-    // Rescan files when PID changes
-    if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
-        scanSkeletonFilesForBrowse();
-    }
+    // Auto-select patient skeleton
+    mBrowseSkeletonDataSource = CharacterDataSource::PatientData;
+    scanSkeletonFilesForBrowse();
+
     if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
         scanMuscleFilesForBrowse();
+    }
+
+    // Select skeleton file: prefer trimmed_unified.yaml, otherwise first available
+    if (!mBrowseSkeletonCandidates.empty()) {
+        std::string skelPrefix = "@pid:" + pid + "/" + visit + "/skeleton/";
+        auto it = std::find(mBrowseSkeletonCandidates.begin(), mBrowseSkeletonCandidates.end(), "trimmed_unified.yaml");
+        if (it != mBrowseSkeletonCandidates.end()) {
+            mBrowseSkeletonPath = skelPrefix + "trimmed_unified.yaml";
+        } else {
+            mBrowseSkeletonPath = skelPrefix + mBrowseSkeletonCandidates[0];
+        }
+    }
+
+    if (!mBrowseSkeletonCandidates.empty() || !mBrowseMuscleCandidates.empty()) {
+        reloadCharacterFromBrowse();
     }
 
     // Load clinical ROM data for the new PID
     loadClinicalROM(pid, visit);
 }
 
-void PhysicalExam::onBrowseVisitChanged(const std::string& pid, const std::string& visit)
+void PhysicalExam::onVisitChanged(const std::string& pid, const std::string& visit)
 {
     if (pid.empty() || visit.empty()) return;
 
@@ -389,10 +404,10 @@ void PhysicalExam::onInitialize() {
             nullptr  // No file filter - just for PID selection
         );
         mPIDNavigator->setPIDChangeCallback([this](const std::string& pid) {
-            onBrowsePIDChanged(pid);
+            onPIDChanged(pid);
         });
         mPIDNavigator->setVisitChangeCallback([this](const std::string& pid, const std::string& visit) {
-            onBrowseVisitChanged(pid, visit);
+            onVisitChanged(pid, visit);
         });
         mPIDNavigator->scanPIDs();
     }
@@ -869,15 +884,17 @@ double PhysicalExam::getPassiveTorqueJointDof(
 void PhysicalExam::setCharacterPose(const Eigen::VectorXd& positions) {
     if (mCharacter) {
         mCharacter->getSkeleton()->setPositions(positions);
+        mCharacter->invalidateMuscleTuple();
     } else {
         LOG_WARN("No main character loaded");
     }
-    
+
     if (mStdCharacter) {
         auto std_skel = mStdCharacter->getSkeleton();
         // Only set if the DOF counts match
         if (std_skel->getNumDofs() == positions.size()) {
             std_skel->setPositions(positions);
+            mStdCharacter->invalidateMuscleTuple();
         }
     } else {
         LOG_WARN("No standard character loaded");
@@ -889,15 +906,17 @@ void PhysicalExam::setCharacterPose(const std::string& joint_name, const Eigen::
         auto joint = mCharacter->getSkeleton()->getJoint(joint_name);
         if (joint) {
             joint->setPositions(positions);
+            mCharacter->invalidateMuscleTuple();
         }
     } else {
         LOG_WARN("No main character loaded: " << joint_name);
     }
-    
+
     if (mStdCharacter) {
         auto std_joint = mStdCharacter->getSkeleton()->getJoint(joint_name);
         if (std_joint && std_joint->getNumDofs() == positions.size()) {
             std_joint->setPositions(positions);
+            mStdCharacter->invalidateMuscleTuple();
         }
     } else {
         LOG_WARN("No standard character loaded: " << joint_name);
@@ -1989,6 +2008,7 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
 
             // Set positions for main character
             skel->setPositions(pos);
+            mCharacter->invalidateMuscleTuple();
 
             // Compute IK independently for std character if exists
             if (mStdCharacter) {
@@ -2009,6 +2029,7 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
                         std_pos.segment<3>(std_hip_start) = std_ik_result.hip_positions;
                         std_pos[std_knee_idx] = std_ik_result.knee_angle;
                         std_skel->setPositions(std_pos);
+                        mStdCharacter->invalidateMuscleTuple();
                     }
                 }
             }
@@ -5924,99 +5945,38 @@ void PhysicalExam::drawClinicalDataSection() {
 
 void PhysicalExam::drawCharacterLoadSection() {
     if (collapsingHeaderWithControls("Character Loading")) {
-        // ============ SKELETON SECTION ============
-        bool skelChanged = false;
-        ImGui::Text("Skeleton Source:");
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Default##skel", mBrowseSkeletonDataSource == CharacterDataSource::DefaultData)) {
-            if (mBrowseSkeletonDataSource != CharacterDataSource::DefaultData) {
-                mBrowseSkeletonDataSource = CharacterDataSource::DefaultData;
-                skelChanged = true;
+        // Display current skeleton and muscle paths
+        if (!mBrowseSkeletonPath.empty()) {
+            ImGui::Text("Skeleton: %s", mBrowseSkeletonPath.c_str());
+        }
+        if (!mBrowseMusclePath.empty()) {
+            ImGui::Text("Muscle: %s", mBrowseMusclePath.c_str());
+        }
+
+        // Update PID from navigator
+        if (mPIDNavigator) {
+            const auto& pidState = mPIDNavigator->getState();
+            if (pidState.selectedPID >= 0) {
+                mBrowseCharacterPID = pidState.pidList[pidState.selectedPID];
             }
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Patient##skel", mBrowseSkeletonDataSource == CharacterDataSource::PatientData)) {
-            if (mBrowseSkeletonDataSource != CharacterDataSource::PatientData) {
-                mBrowseSkeletonDataSource = CharacterDataSource::PatientData;
-                skelChanged = true;
-            }
-        }
-
-        if (skelChanged) {
-            scanSkeletonFilesForBrowse();
-            mBrowseSkeletonPath.clear();
-        }
-
-        // Skeleton file list
-        std::string skelPrefix = "@data/skeleton/";
-        if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            std::string visit = mPIDNavigator->getState().getVisitDir();
-            skelPrefix = "@pid:" + mBrowseCharacterPID + "/" + visit + "/skeleton/";
-        }
-
-        if (ImGui::BeginListBox("##SkeletonList", ImVec2(-1, 60))) {
-            for (size_t i = 0; i < mBrowseSkeletonCandidates.size(); ++i) {
-                const auto& filename = mBrowseSkeletonCandidates[i];
-                bool isSelected = (mBrowseSkeletonPath.find(filename) != std::string::npos);
-                if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                    mBrowseSkeletonPath = skelPrefix + filename;
-                }
-            }
-            ImGui::EndListBox();
-        }
-
-        ImGui::Spacing();
-
-        // ============ MUSCLE SECTION ============
-        bool muscleChanged = false;
-        ImGui::Text("Muscle Source:");
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Default##muscle", mBrowseMuscleDataSource == CharacterDataSource::DefaultData)) {
-            if (mBrowseMuscleDataSource != CharacterDataSource::DefaultData) {
-                mBrowseMuscleDataSource = CharacterDataSource::DefaultData;
-                muscleChanged = true;
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Patient##muscle", mBrowseMuscleDataSource == CharacterDataSource::PatientData)) {
-            if (mBrowseMuscleDataSource != CharacterDataSource::PatientData) {
-                mBrowseMuscleDataSource = CharacterDataSource::PatientData;
-                muscleChanged = true;
-            }
-        }
-
-        if (muscleChanged) {
-            scanMuscleFilesForBrowse();
-            mBrowseMusclePath.clear();
-        }
-
-        // Muscle file list
-        std::string musclePrefix = "@data/muscle/";
-        if (mBrowseMuscleDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
-            std::string visit = mPIDNavigator->getState().getVisitDir();
-            musclePrefix = "@pid:" + mBrowseCharacterPID + "/" + visit + "/muscle/";
-        }
-
-        if (ImGui::BeginListBox("##MuscleList", ImVec2(-1, 60))) {
-            for (size_t i = 0; i < mBrowseMuscleCandidates.size(); ++i) {
-                const auto& filename = mBrowseMuscleCandidates[i];
-                bool isSelected = (mBrowseMusclePath.find(filename) != std::string::npos);
-                if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                    mBrowseMusclePath = musclePrefix + filename;
-                }
-            }
-            ImGui::EndListBox();
         }
 
         ImGui::Separator();
 
-        // Rebuild button
-        bool canRebuild = !mBrowseSkeletonPath.empty() && !mBrowseMusclePath.empty();
-        if (!canRebuild) ImGui::BeginDisabled();
-        if (ImGui::Button("Rebuild", ImVec2(-1, 0))) {
-            reloadCharacterFromBrowse();
-        }
-        if (!canRebuild) ImGui::EndDisabled();
+        PIDNav::CharacterFileRef skelRef{mBrowseSkeletonDataSource, mBrowseSkeletonPath, mBrowseSkeletonCandidates,
+            [this]() { scanSkeletonFilesForBrowse(); }};
+        PIDNav::CharacterFileRef muscleRef{mBrowseMuscleDataSource, mBrowseMusclePath, mBrowseMuscleCandidates,
+            [this]() { scanMuscleFilesForBrowse(); }};
+        PIDNav::CharacterLoadOptions opts;
+        opts.showPatientInfo = true;
+        opts.showDeleteButtons = false;
+        opts.requireBothForRebuild = true;
+
+        PIDNav::drawCharacterLoadContent(
+            mPIDNavigator.get(), nullptr, mBrowseCharacterPID,
+            skelRef, muscleRef,
+            [this]() { reloadCharacterFromBrowse(); },
+            opts);
     }
 }
 
