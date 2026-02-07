@@ -15,6 +15,7 @@ set(RM_SOURCES
     src/backends/local.cpp
     src/backends/ftp.cpp
     src/backends/pid.cpp
+    ${CMAKE_SOURCE_DIR}/sim/Log.cpp
 )
 
 set(RM_HEADERS

@@ -52,9 +52,9 @@ C3D_Reader::C3D_Reader(std::string fitting_config_path, std::string marker_path,
     doc.LoadFile(resolvedPath.c_str());
     if (doc.Error())
     {
-        std::cout << "Error loading marker set file: " << marker_path << std::endl;
-        std::cout << doc.ErrorName() << std::endl;
-        std::cout << doc.ErrorStr() << std::endl;
+        LOG_ERROR("Error loading marker set file: " << marker_path);
+        LOG_ERROR(doc.ErrorName());
+        LOG_ERROR(doc.ErrorStr());
         return;
     }
 
@@ -560,7 +560,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     // ============ STAGE 1: Compute Hip Joint Centers ============
     // Uses Harrington anthropometric regression based on ASIS/SACR markers
     // This augments markers with computed hip joint positions at indices 25, 26
-    std::cout << "\n=== Stage 1: Computing Hip Joint Centers (Harrington) ===\n" << std::endl;
+    LOG_INFO("\n=== Stage 1: Computing Hip Joint Centers (Harrington) ===\n");
     computeHipJointCenters(mCurrentC3D->getAllMarkers());
 
     // ============ STAGE 2: Fit ALL Bones from Config ============
@@ -577,7 +577,7 @@ void C3D_Reader::calibrateSkeleton(const C3DConversionParams& params)
     }
 
     // ============ STAGE 2a: SVD-based bones (3+ markers) ============
-    std::cout << "\n=== Stage 2a: SVD-based bone fitting (3+ markers) ===\n" << std::endl;
+    LOG_INFO("\n=== Stage 2a: SVD-based bone fitting (3+ markers) ===\n");
     for (const auto& target : mFittingConfig.targetSvd) {
         auto it = boneToMarkers.find(target.name);
         if (it == boneToMarkers.end() || it->second.empty()) {
@@ -761,7 +761,7 @@ void C3D_Reader::calibrateBone(
 
     // Run optimization - optimizeBoneScale handles coordinate transforms
     if (mFittingConfig.plotConvergence) {
-        std::cout << "\n=== Fitting " << boneName << (optimizeScale ? "" : " (pose only)") << " ===" << std::endl;
+        LOG_INFO("\n=== Fitting " << boneName << (optimizeScale ? "" : " (pose only)") << " ===");
     }
 
     auto result = optimizeBoneScale(bn, markers, globalP, optimizeScale);
@@ -1024,7 +1024,7 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
 
         if (scaleChange < mFittingConfig.convergenceThreshold) {
             if (mFittingConfig.plotConvergence) {
-                std::cout << "Converged at iteration " << iter << std::endl;
+                LOG_INFO("Converged at iteration " << iter);
             }
             break;
         }
@@ -1054,10 +1054,10 @@ BoneFitResult C3D_Reader::optimizeBoneScale(
             {"Scale chg", scaleNorm}
         });
 
-        std::cout << chart.show_legend(true).height(6).Plot()
+        LOG_INFO(chart.show_legend(true).height(6).Plot()
                   << "Final RMS: " << rmsHistory.back() * 1000.0 << " mm"
                   << ", Scale: [" << S(0) << ", " << S(1) << ", " << S(2) << "]"
-                  << " (" << out.iterations << " iters)" << std::endl;
+                  << " (" << out.iterations << " iters)");
     }
 
     int idx = bn->getIndexInSkeleton();
@@ -1958,7 +1958,7 @@ void C3D_Reader::scaleArmsByMarkerDistance()
         {"ForeArmL", "L.Elbow",    "L.Wrist", "LELB_farm", "LWRI"},
     };
 
-    std::cout << "\n=== Stage 2b Fallback: Marker-distance scaling for arms ===\n" << std::endl;
+    LOG_INFO("\n=== Stage 2b Fallback: Marker-distance scaling for arms ===\n");
 
     for (const auto& arm : arms) {
         int proxIdx = getIdx(arm.proxLabel);
@@ -3504,6 +3504,9 @@ StaticCalibrationResult C3D_Reader::calibrateStatic(C3D* c3dData, const std::str
 
     LOG_INFO("[StaticCalib] Starting static calibration...");
 
+    // Correct backward walking before calibration (static trials can face backward)
+    C3D::detectAndCorrectBackwardWalking(c3dData->getAllMarkers());
+
     // Store current C3D for calibration access
     mCurrentC3D = c3dData;
 
@@ -4094,8 +4097,8 @@ double C3D_Reader::calibrateTalusWithSharedHeight(
                 {"RMS (mm)", costHistory},
                 {"y0 (scaled)", y0Scaled}
             });
-            std::cout << "[TalusAltOpt] " << boneName << " convergence:\n"
-                      << chart.show_legend(true).height(6).Plot() << std::endl;
+            LOG_INFO("[TalusAltOpt] " << boneName << " convergence:\n"
+                      << chart.show_legend(true).height(6).Plot());
         }
     }
 

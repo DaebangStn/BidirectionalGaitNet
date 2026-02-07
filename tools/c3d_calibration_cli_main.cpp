@@ -446,6 +446,91 @@ int runStaticCalibration(
  * Run dynamic calibration (motion tracking + export)
  * Returns 0 on success, non-zero on error
  */
+/**
+ * Compute ankle plantarflexion limits and apply to skeleton.
+ * limit = max(patient ROM or normative, kinematics max from motion poses)
+ */
+void applyAnkleLimits(
+    RenderCharacter* motionCharacter,
+    const DynamicCalibrationResult& result,
+    rm::ResourceManager& mgr,
+    const std::string& pid,
+    const std::string& visit)
+{
+    if (!motionCharacter || !result.success) return;
+
+    auto skel = motionCharacter->getSkeleton();
+    auto talusL = skel->getJoint("TalusL");
+    auto talusR = skel->getJoint("TalusR");
+    if (!talusL || !talusR) return;
+
+    // 1. Load normative ROM from config
+    float romLeft = 47.8f, romRight = 47.8f;
+
+    std::string romDir = mgr.resolveDir("@data/config/rom").string();
+    std::string pathL = romDir + "/plantar_L.yaml";
+    std::string pathR = romDir + "/plantar_R.yaml";
+
+    if (fs::exists(pathL)) {
+        try {
+            YAML::Node config = YAML::LoadFile(pathL);
+            if (config["exam"] && config["exam"]["normative"])
+                romLeft = config["exam"]["normative"].as<float>();
+        } catch (...) {}
+    }
+    if (fs::exists(pathR)) {
+        try {
+            YAML::Node config = YAML::LoadFile(pathR);
+            if (config["exam"] && config["exam"]["normative"])
+                romRight = config["exam"]["normative"].as<float>();
+        } catch (...) {}
+    }
+
+    // 2. Override with patient-specific ROM if available
+    std::string romPath = mgr.resolve("@pid:" + pid + "/" + visit + "/rom.yaml").string();
+    if (!romPath.empty() && fs::exists(romPath)) {
+        try {
+            YAML::Node romData = YAML::LoadFile(romPath);
+            if (romData["rom"]) {
+                auto rom = romData["rom"];
+                if (rom["left"] && rom["left"]["ankle"] && rom["left"]["ankle"]["plantarflexion"]) {
+                    auto val = rom["left"]["ankle"]["plantarflexion"];
+                    if (val.IsScalar() && !val.IsNull())
+                        romLeft = val.as<float>();
+                }
+                if (rom["right"] && rom["right"]["ankle"] && rom["right"]["ankle"]["plantarflexion"]) {
+                    auto val = rom["right"]["ankle"]["plantarflexion"];
+                    if (val.IsScalar() && !val.IsNull())
+                        romRight = val.as<float>();
+                }
+            }
+        } catch (...) {}
+    }
+
+    // 3. Compute kinematics max from motion poses
+    int dofIdxL = talusL->getIndexInSkeleton(0);
+    int dofIdxR = talusR->getIndexInSkeleton(0);
+    double kinMaxL = 0.0, kinMaxR = 0.0;
+    for (const auto& pose : result.motionPoses) {
+        if (dofIdxL < static_cast<int>(pose.size())) kinMaxL = std::max(kinMaxL, pose[dofIdxL]);
+        if (dofIdxR < static_cast<int>(pose.size())) kinMaxR = std::max(kinMaxR, pose[dofIdxR]);
+    }
+    float kinMaxLeftDeg = static_cast<float>(kinMaxL * 180.0 / M_PI);
+    float kinMaxRightDeg = static_cast<float>(kinMaxR * 180.0 / M_PI);
+
+    // 4. Final limit = max(ROM, kinematics max)
+    float limitLeft = std::max(romLeft, kinMaxLeftDeg);
+    float limitRight = std::max(romRight, kinMaxRightDeg);
+
+    // 5. Apply to skeleton
+    talusL->setPositionUpperLimit(0, limitLeft * M_PI / 180.0);
+    talusR->setPositionUpperLimit(0, limitRight * M_PI / 180.0);
+
+    LOG_INFO("[AnkleLimit] ROM: L=" << romLeft << " R=" << romRight
+             << ", Kin: L=" << kinMaxLeftDeg << " R=" << kinMaxRightDeg
+             << " -> Limit: L=" << limitLeft << " R=" << limitRight);
+}
+
 int runDynamicCalibration(
     C3D_Reader* reader,
     RenderCharacter* freeCharacter,
@@ -456,7 +541,9 @@ int runDynamicCalibration(
     const std::string& skeletonName,
     const std::string& pid,
     const std::string& visit,
-    bool verbose)
+    bool verbose,
+    bool applyLimit,
+    rm::ResourceManager& mgr)
 {
     if (verbose) {
         LOG_INFO("[Dynamic] Loading C3D: " << motionC3DPath);
@@ -505,6 +592,11 @@ int runDynamicCalibration(
         motionCharacter,
         reader->getFittingConfig()
     );
+
+    // Apply ankle plantarflexion limits before export
+    if (applyLimit) {
+        applyAnkleLimits(motionCharacter, result, mgr, pid, visit);
+    }
 
     // Export skeleton YAML
     std::string skelPath = skeletonOutputDir + "/" + skeletonName + ".yaml";
@@ -581,21 +673,22 @@ struct ProcessingJob {
 // ============================================================================
 int main(int argc, char** argv) {
     std::string mode;
-    std::string pid;
+    std::vector<std::string> pidList;
     std::string visit;
     std::string motion;
     std::string skeletonName;
     std::string configPath;
     bool verbose = false;
     bool dryRun = false;
+    bool noLimit = false;
 
     po::options_description desc("C3D Calibration CLI");
     desc.add_options()
         ("help,h", "Show help message")
         ("mode,m", po::value<std::string>(&mode)->default_value("full"),
          "Mode: static | dynamic | full (default: full)")
-        ("pid,p", po::value<std::string>(&pid),
-         "Patient ID (omit for all PIDs)")
+        ("pid,p", po::value<std::vector<std::string>>(&pidList)->multitoken(),
+         "Patient ID(s), space-separated (omit for all PIDs)")
         ("visit", po::value<std::string>(&visit),
          "Visit type: pre | op1 | op2 (omit for all visits)")
         ("motion,n", po::value<std::string>(&motion),
@@ -607,7 +700,9 @@ int main(int argc, char** argv) {
         ("verbose,v", po::bool_switch(&verbose),
          "Verbose output")
         ("dry-run", po::bool_switch(&dryRun),
-         "Show what would be processed without executing");
+         "Show what would be processed without executing")
+        ("no-limit", po::bool_switch(&noLimit),
+         "Skip ankle plantarflexion limit embedding");
 
     po::variables_map vm;
     try {
@@ -640,6 +735,9 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // Set log level: error-only by default, info with -v
+    setLogLevel(verbose ? LOG_LEVEL_INFO : LOG_LEVEL_ERROR);
+
     // Validate mode
     if (mode != "static" && mode != "dynamic" && mode != "full") {
         LOG_ERROR("Invalid mode: " << mode << " (must be static, dynamic, or full)");
@@ -649,7 +747,13 @@ int main(int argc, char** argv) {
     if (verbose) {
         LOG_INFO("C3D Calibration CLI");
         LOG_INFO("Mode: " << mode);
-        LOG_INFO("PID: " << (pid.empty() ? "(all)" : pid));
+        if (pidList.empty()) {
+            LOG_INFO("PID: (all)");
+        } else {
+            std::string pidStr;
+            for (const auto& p : pidList) { if (!pidStr.empty()) pidStr += ", "; pidStr += p; }
+            LOG_INFO("PID: " << pidStr);
+        }
         LOG_INFO("Visit: " << (visit.empty() ? "(all)" : visit));
         LOG_INFO("Motion: " << (motion.empty() ? "(all)" : motion));
     }
@@ -697,8 +801,8 @@ int main(int argc, char** argv) {
 
     // Discover PIDs
     std::vector<std::string> pids;
-    if (!pid.empty()) {
-        pids.push_back(pid);
+    if (!pidList.empty()) {
+        pids = pidList;
     } else {
         pids = discoverPIDs(mgr);
         if (verbose) {
@@ -841,15 +945,16 @@ int main(int argc, char** argv) {
     ProgressBar progress(static_cast<int>(jobs.size()), !verbose);
     int successCount = 0;
     int failCount = 0;
-    std::string lastPid, lastVisit;
 
     for (size_t i = 0; i < jobs.size(); ++i) {
         const auto& job = jobs[i];
         progress.update(static_cast<int>(i + 1), job.pid, job.visit, job.motionName);
 
-        // Reload calibration when PID/visit changes
-        if (job.needsDynamic && (job.pid != lastPid || job.visit != lastVisit)) {
-            // Reset to default and reload calibration
+        // Reset characters to static calibration state before each dynamic job.
+        // This prevents accumulated skeleton shape state from corrupting
+        // marker-distance arm scaling (getGlobalPos uses current shapes as reference,
+        // but applySkeletonBodyNode always scales from the original reference skeleton).
+        if (job.needsDynamic) {
             freeCharacter = std::make_unique<RenderCharacter>(
                 resolvedSkeletonPath, SKEL_COLLIDE_ALL | SKEL_FREE_JOINTS);
             motionCharacter = std::make_unique<RenderCharacter>(
@@ -863,12 +968,10 @@ int main(int argc, char** argv) {
                     continue;
                 }
             } else {
-                // Load default markers
                 freeCharacter->loadMarkers(resolvedMarkerPath);
                 motionCharacter->loadMarkers(resolvedMarkerPath);
             }
 
-            // Recreate reader with new characters
             std::string markerConfigForReader = resolvedMarkerPath;
             if (hasCalibrationFiles(mgr, job.pid, job.visit)) {
                 markerConfigForReader = mgr.resolve("@pid:" + job.pid + "/" + job.visit + "/skeleton/calibration/static_calibrated_marker.xml");
@@ -879,9 +982,6 @@ int main(int argc, char** argv) {
                 freeCharacter.get(),
                 motionCharacter.get()
             );
-
-            lastPid = job.pid;
-            lastVisit = job.visit;
         }
 
         int result = 0;
@@ -898,11 +998,6 @@ int main(int argc, char** argv) {
                 verbose
             );
 
-            // If static succeeded, update lastPid/lastVisit to trigger reload next time
-            if (result == 0) {
-                lastPid = "";
-                lastVisit = "";
-            }
         }
 
         if (job.needsDynamic && result == 0) {
@@ -922,7 +1017,9 @@ int main(int argc, char** argv) {
                 skelName,
                 job.pid,
                 job.visit,
-                verbose
+                verbose,
+                !noLimit,
+                mgr
             );
         }
 

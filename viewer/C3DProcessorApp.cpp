@@ -862,6 +862,15 @@ void C3DProcessorApp::drawMarkerFittingSection()
         if (mC3DReader && mMotion) {
             C3D* c3dData = dynamic_cast<C3D*>(mMotion);
             if (c3dData) {
+                // Reset skeleton and C3D_Reader to reference state before calibration
+                // (prevents already-scaled shapes and personalized marker offsets
+                // from corrupting SVD bone fitting)
+                if (mFreeCharacter) mFreeCharacter->resetSkeletonToDefault();
+                if (mMotionCharacter) mMotionCharacter->resetSkeletonToDefault();
+                // Recreate reader with original base markers (not personalized ones)
+                delete mC3DReader;
+                mC3DReader = new C3D_Reader(mFittingConfigPath, mInitialMarkerPath,
+                                            mFreeCharacter.get(), mMotionCharacter.get());
                 mStaticCalibResult = mC3DReader->calibrateStatic(c3dData, mStaticConfigPath);
                 if (mStaticCalibResult.success) {
                     LOG_INFO("[C3DProcessor] Static calibration completed successfully");

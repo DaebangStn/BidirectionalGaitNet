@@ -212,7 +212,7 @@ struct SkeletonFittingConfig {
         bool enabled = false;           // If false, use skeleton's existing offsets directly
         double lambdaParent = 0.1;      // Regularization weight for parent offset
         double lambdaChild = 0.1;       // Regularization weight for child offset
-        double deviationWarningThreshold = 0.2;  // Warn if deviation > 20% of prior
+        double deviationWarningThreshold = 0.5;  // Warn if deviation > 20% of prior
     };
     EstimateJointOffsetsConfig estimateJointOffsets;
 

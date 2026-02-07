@@ -1031,8 +1031,8 @@ if __name__ == "__main__":
             # Log curricula (only when active)
             if vf_config is not None:
                 writer.add_scalar("info/vf_kp", vf_kp_current, global_step)
-            if log_std_config is not None:
-                writer.add_scalar("info/log_std_curriculum", log_std_current, global_step)
+            if log_std_config is not None or args.learn_std:
+                writer.add_scalar("info/log_std_curriculum", agent.actor_logstd.mean().item(), global_step)
             writer.add_scalar("charts/epoch", iteration, global_step)
 
             # Log episode statistics from C++ accumulation
