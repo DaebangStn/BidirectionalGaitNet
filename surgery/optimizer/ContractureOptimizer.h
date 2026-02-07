@@ -542,6 +542,12 @@ private:
         int group_id,
         size_t trial_idx) const;
 
+    // Compute group passive torque assuming pose is already set and geometry updated
+    double computeGroupTorqueAtCurrentPose(
+        Character* character,
+        const PoseData& pose,
+        int group_id) const;
+
     // Log parameter table (initial or final) with optional torque matrices
     void logParameterTable(
         const std::string& title,

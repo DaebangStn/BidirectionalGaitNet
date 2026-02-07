@@ -35,90 +35,137 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
     bool Evaluate(double const* const* parameters,
                   double* residuals,
                   double** jacobians) const override {
-        // Extract ratios from parameters
         int num_groups = static_cast<int>(muscle_groups_.size());
 
-        // Apply ratios to muscles (temporarily)
         auto muscles = character_->getMuscles();
         std::vector<double> old_lm_contract(muscles.size());
 
         // Save ALL muscle lm_contract values before modification
-        // (critical: non-group muscles must be preserved during restore)
         for (size_t i = 0; i < muscles.size(); ++i) {
             old_lm_contract[i] = muscles[i]->lm_contract;
         }
 
+        // Apply base ratios to muscles
         for (const auto& [group_id, muscle_ids] : muscle_groups_) {
             double ratio = parameters[0][group_id];
             for (int m_idx : muscle_ids) {
-
                 auto it = base_lm_contract_.find(m_idx);
-                double base = (it != base_lm_contract_.end()) ? it->second : muscles[m_idx]->lm_contract;
-
+                double base = (it != base_lm_contract_.end()) ? it->second : old_lm_contract[m_idx];
                 muscles[m_idx]->lm_contract = base * ratio;
                 muscles[m_idx]->RefreshMuscleParams();
             }
         }
 
-        // Set pose
+        // Set pose and update geometry
         character_->getSkeleton()->setPositions(pose_.q);
-
-        // Update muscle geometry
         for (auto& muscle : muscles) {
             muscle->UpdateGeometry();
         }
 
         // Compute predicted passive torque
-        // For composite axis (abd_knee): use Y-axis projection with dof_offset=1
-        // For simple DOF: use specific DOF filtering with pose_.joint_dof
         int dof_offset = pose_.use_composite_axis ? 1 : pose_.joint_dof;
         bool use_global_y = pose_.use_composite_axis;
         double tau_pred = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset, use_global_y);
 
-        // Restore original lm_contract values
-        for (size_t i = 0; i < muscles.size(); ++i) {
-            muscles[i]->lm_contract = old_lm_contract[i];
-            muscles[i]->RefreshMuscleParams();
-        }
-
         // Compute residual
         residuals[0] = std::sqrt(pose_.weight) * (tau_pred - pose_.tau_obs);
 
-        // Compute Jacobian numerically if requested
+        // Compute Jacobian via delta-based approach (exact, not approximate).
+        // Instead of calling computePassiveTorque (all ~150 muscles) per group,
+        // compute only the group's torque contribution before/after perturbation.
+        // tau_perturbed = tau_base - group_base + group_perturbed, so
+        // jacobian[g] = sqrt(w) * (group_perturbed - group_base) / h
         if (jacobians != nullptr && jacobians[0] != nullptr) {
-            const double h = 1e-6;  // Finite difference step
-            for (int g = 0; g < num_groups; ++g) {
-                // Perturb parameter
-                std::vector<double> params_plus(parameters[0], parameters[0] + num_groups);
-                params_plus[g] += h;
-                const double* params_plus_ptr = params_plus.data();
+            const double h = 1e-6;
 
-                // Apply perturbed ratios
-                for (const auto& [group_id, muscle_ids] : muscle_groups_) {
-                    double ratio = params_plus_ptr[group_id];
-                    for (int m_idx : muscle_ids) {
-                        auto it = base_lm_contract_.find(m_idx);
-                        double base = (it != base_lm_contract_.end()) ? it->second : old_lm_contract[m_idx];
-                        muscles[m_idx]->lm_contract = base * ratio;
-                        muscles[m_idx]->RefreshMuscleParams();
+            // Pre-compute joint info for per-group torque
+            auto skel = character_->getSkeleton();
+            auto* joint = skel->getJoint(pose_.joint_idx);
+            int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+            int target_dof = first_dof + dof_offset;
+
+            // Mode 1 (use_global_y): pre-compute joint center & descendants once
+            Eigen::Vector3d joint_center;
+            std::set<dart::dynamics::BodyNode*> descendant_bodies;
+            if (use_global_y) {
+                auto* child_body = joint->getChildBodyNode();
+                joint_center = child_body->getTransform().translation();
+                std::function<void(dart::dynamics::BodyNode*)> collect =
+                    [&](dart::dynamics::BodyNode* bn) {
+                        descendant_bodies.insert(bn);
+                        for (size_t ci = 0; ci < bn->getNumChildBodyNodes(); ++ci)
+                            collect(bn->getChildBodyNode(ci));
+                    };
+                collect(child_body);
+            }
+
+            // Lambda: compute a group's torque contribution at current muscle state
+            auto groupTorque = [&](const std::vector<int>& mids) -> double {
+                double sum = 0.0;
+                if (use_global_y) {
+                    for (int m : mids)
+                        sum += muscles[m]->GetPassiveTorqueAboutPoint(
+                            joint_center, &descendant_bodies).y();
+                } else {
+                    for (int m : mids) {
+                        Eigen::VectorXd jtp = muscles[m]->GetRelatedJtp();
+                        const auto& ri = muscles[m]->related_dof_indices;
+                        for (size_t i = 0; i < ri.size(); ++i) {
+                            if (ri[i] == target_dof) { sum += jtp[i]; break; }
+                        }
                     }
                 }
+                return sum;
+            };
 
-                character_->getSkeleton()->setPositions(pose_.q);
-                for (auto& muscle : muscles) {
-                    muscle->UpdateGeometry();
+            for (int g = 0; g < num_groups; ++g) {
+                auto grp_it = muscle_groups_.find(g);
+                if (grp_it == muscle_groups_.end()) {
+                    jacobians[0][g] = 0.0;
+                    continue;
                 }
-                double tau_plus = computePassiveTorque(character_, pose_.joint_idx, false, dof_offset, use_global_y);
+                const auto& muscle_ids = grp_it->second;
 
-                // Restore
-                for (size_t i = 0; i < muscles.size(); ++i) {
-                    muscles[i]->lm_contract = old_lm_contract[i];
-                    muscles[i]->RefreshMuscleParams();
+                // Base group contribution at current (base) state
+                double base_group_tau = groupTorque(muscle_ids);
+
+                // Save base-applied lm_contract for this group
+                std::vector<double> saved_lm(muscle_ids.size());
+                for (size_t i = 0; i < muscle_ids.size(); ++i)
+                    saved_lm[i] = muscles[muscle_ids[i]]->lm_contract;
+
+                // Perturb group g
+                double ratio_plus = parameters[0][g] + h;
+                for (size_t i = 0; i < muscle_ids.size(); ++i) {
+                    int m_idx = muscle_ids[i];
+                    auto it = base_lm_contract_.find(m_idx);
+                    double base = (it != base_lm_contract_.end())
+                        ? it->second : old_lm_contract[m_idx];
+                    muscles[m_idx]->lm_contract = base * ratio_plus;
+                    muscles[m_idx]->RefreshMuscleParams();
+                    muscles[m_idx]->UpdateGeometry();
                 }
 
-                double residual_plus = std::sqrt(pose_.weight) * (tau_plus - pose_.tau_obs);
-                jacobians[0][g] = (residual_plus - residuals[0]) / h;
+                // Perturbed group contribution
+                double perturbed_group_tau = groupTorque(muscle_ids);
+
+                // Restore group g
+                for (size_t i = 0; i < muscle_ids.size(); ++i) {
+                    muscles[muscle_ids[i]]->lm_contract = saved_lm[i];
+                    muscles[muscle_ids[i]]->RefreshMuscleParams();
+                    muscles[muscle_ids[i]]->UpdateGeometry();
+                }
+
+                // Delta-based Jacobian (exact, not approximate)
+                jacobians[0][g] = std::sqrt(pose_.weight) *
+                    (perturbed_group_tau - base_group_tau) / h;
             }
+        }
+
+        // Final restore: all muscles back to pre-evaluation state
+        for (size_t i = 0; i < muscles.size(); ++i) {
+            muscles[i]->lm_contract = old_lm_contract[i];
+            muscles[i]->RefreshMuscleParams();
         }
 
         return true;
@@ -1222,8 +1269,11 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     std::map<int, std::vector<double>> torque_matrix_before;
     for (int g = 0; g < num_groups; ++g) {
         torque_matrix_before[g].resize(pose_data.size());
-        for (size_t t = 0; t < pose_data.size(); ++t) {
-            torque_matrix_before[g][t] = computeGroupTorqueAtTrial(character, pose_data, g, t);
+    }
+    for (size_t t = 0; t < pose_data.size(); ++t) {
+        setPoseAndUpdateGeometry(character, pose_data[t].q);
+        for (int g = 0; g < num_groups; ++g) {
+            torque_matrix_before[g][t] = computeGroupTorqueAtCurrentPose(character, pose_data[t], g);
         }
     }
 
@@ -1329,8 +1379,11 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
     std::map<int, std::vector<double>> torque_matrix_after;
     for (int g = 0; g < num_groups; ++g) {
         torque_matrix_after[g].resize(pose_data.size());
-        for (size_t t = 0; t < pose_data.size(); ++t) {
-            torque_matrix_after[g][t] = computeGroupTorqueAtTrial(character, pose_data, g, t);
+    }
+    for (size_t t = 0; t < pose_data.size(); ++t) {
+        setPoseAndUpdateGeometry(character, pose_data[t].q);
+        for (int g = 0; g < num_groups; ++g) {
+            torque_matrix_after[g][t] = computeGroupTorqueAtCurrentPose(character, pose_data[t], g);
         }
     }
 
@@ -1609,6 +1662,37 @@ double ContractureOptimizer::computeGroupTorqueAtTrial(
     setPoseAndUpdateGeometry(character, pose.q);
 
     // Sum passive torques from muscles in this group at the trial's target DOF
+    auto* joint = skeleton->getJoint(pose.joint_idx);
+    int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
+    int target_dof = first_dof + pose.joint_dof;
+
+    double group_torque = 0.0;
+    auto grp_it = mMuscleGroups.find(group_id);
+    if (grp_it != mMuscleGroups.end()) {
+        for (int m_idx : grp_it->second) {
+            auto* muscle = muscles[m_idx];
+            Eigen::VectorXd jtp = muscle->GetRelatedJtp();
+            const auto& related_indices = muscle->related_dof_indices;
+
+            for (size_t i = 0; i < related_indices.size(); ++i) {
+                if (related_indices[i] == target_dof) {
+                    group_torque += jtp[i];
+                    break;
+                }
+            }
+        }
+    }
+    return group_torque;
+}
+
+double ContractureOptimizer::computeGroupTorqueAtCurrentPose(
+    Character* character,
+    const PoseData& pose,
+    int group_id) const
+{
+    auto skeleton = character->getSkeleton();
+    const auto& muscles = character->getMuscles();
+
     auto* joint = skeleton->getJoint(pose.joint_idx);
     int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
     int target_dof = first_dof + pose.joint_dof;
@@ -2391,8 +2475,11 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimizeWithPrecomputed(
     std::map<int, std::vector<double>> torque_matrix_before;
     for (int g = 0; g < num_groups; ++g) {
         torque_matrix_before[g].resize(preOpt.pose_data.size());
-        for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
-            torque_matrix_before[g][t] = computeGroupTorqueAtTrial(character, preOpt.pose_data, g, t);
+    }
+    for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
+        setPoseAndUpdateGeometry(character, preOpt.pose_data[t].q);
+        for (int g = 0; g < num_groups; ++g) {
+            torque_matrix_before[g][t] = computeGroupTorqueAtCurrentPose(character, preOpt.pose_data[t], g);
         }
     }
 
@@ -2500,8 +2587,11 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimizeWithPrecomputed(
     std::map<int, std::vector<double>> torque_matrix_after;
     for (int g = 0; g < num_groups; ++g) {
         torque_matrix_after[g].resize(preOpt.pose_data.size());
-        for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
-            torque_matrix_after[g][t] = computeGroupTorqueAtTrial(character, preOpt.pose_data, g, t);
+    }
+    for (size_t t = 0; t < preOpt.pose_data.size(); ++t) {
+        setPoseAndUpdateGeometry(character, preOpt.pose_data[t].q);
+        for (int g = 0; g < num_groups; ++g) {
+            torque_matrix_after[g][t] = computeGroupTorqueAtCurrentPose(character, preOpt.pose_data[t], g);
         }
     }
 
@@ -2672,9 +2762,6 @@ std::vector<SearchGroupResult> ContractureOptimizer::runSearchGroupGridSearch(
 
             processed_search_groups.insert(search_id);
             results.push_back(sr);
-
-            LOG_INFO("[Contracture] Search group '" << sr.search_group_name
-                     << "': best ratio=" << sr.ratio << ", error=" << sr.best_error);
         }
     }
 
@@ -2682,6 +2769,28 @@ std::vector<SearchGroupResult> ContractureOptimizer::runSearchGroupGridSearch(
     for (size_t i = 0; i < muscles.size(); ++i) {
         muscles[i]->lm_contract = original_lm_contract[i];
         muscles[i]->RefreshMuscleParams();
+    }
+
+    // Print search group results as a table
+    if (!results.empty()) {
+        size_t max_len = 12;
+        for (const auto& sr : results)
+            max_len = std::max(max_len, sr.search_group_name.size());
+
+        LOG_INFO("[Contracture] Search group grid search results:");
+        std::ostringstream header;
+        header << std::left << std::setw(max_len) << "search_group"
+               << " | ratio   | error";
+        LOG_INFO(header.str());
+        LOG_INFO(std::string(max_len + 22, '-'));
+
+        for (const auto& sr : results) {
+            std::ostringstream row;
+            row << std::left << std::setw(max_len) << sr.search_group_name
+                << " | " << std::fixed << std::setprecision(4) << std::setw(7) << sr.ratio
+                << " | " << std::scientific << std::setprecision(3) << sr.best_error;
+            LOG_INFO(row.str());
+        }
     }
 
     return results;
@@ -3259,12 +3368,9 @@ std::vector<SimpleSearchResult> ContractureOptimizer::simpleGridSearch(
     for (size_t ti = 0; ti < num_trials; ++ti) {
         const auto& pose = pose_data[ti];
         setPoseAndUpdateGeometry(character, pose.q);
-        int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
-        bool use_global_y = pose.use_composite_axis;
 
         for (int gid : group_ids) {
-            double group_torque = computeGroupTorqueAtTrial(character, pose_data, gid, ti);
-            torques_before[gid][ti] = group_torque;
+            torques_before[gid][ti] = computeGroupTorqueAtCurrentPose(character, pose, gid);
         }
     }
 
@@ -3404,8 +3510,7 @@ std::vector<SimpleSearchResult> ContractureOptimizer::simpleGridSearch(
         setPoseAndUpdateGeometry(character, pose.q);
 
         for (int gid : group_ids) {
-            double group_torque = computeGroupTorqueAtTrial(character, pose_data, gid, ti);
-            torques_after[gid][ti] = group_torque;
+            torques_after[gid][ti] = computeGroupTorqueAtCurrentPose(character, pose, gid);
         }
     }
 

@@ -251,7 +251,7 @@ private:
     bool mShowGroupTorqueChart = false;
     bool mShowLineConsistencyChart = false;
     int mLineConsistencyChartPage = 0;
-    float mLineConsistencyThreshold = 0.01f;  // MSE threshold for display
+    float mLineConsistencyThreshold = 0.0f;  // MSE threshold for display
 
     // Tiered UI state (for sub-tabs)
     int mContractureSubTab = 0;        // 0=Grid Search, 1=Optimization

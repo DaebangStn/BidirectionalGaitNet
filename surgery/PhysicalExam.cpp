@@ -1143,12 +1143,12 @@ TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
         // For composite DOF, num_steps is not used (sweep until IK fails)
         if (!trial.angle_sweep.dof_type.empty()) {
             trial.angle_sweep.num_steps = 0;
-            LOG_INFO("Parsed ROM config (composite DOF): " << trial.name
+            LOG_VERBOSE("Parsed ROM config (composite DOF): " << trial.name
                       << " (joint: " << trial.angle_sweep.joint_name
                       << ", dof: " << trial.angle_sweep.dof_type
                       << ", torque_cutoff: " << trial.torque_cutoff << " Nm)");
         } else {
-            LOG_INFO("Parsed ROM config: " << trial.name
+            LOG_VERBOSE("Parsed ROM config: " << trial.name
                       << " (joint: " << trial.angle_sweep.joint_name
                       << ", dof_index: " << trial.angle_sweep.dof_index
                       << ", torque_cutoff: " << trial.torque_cutoff << " Nm)");
@@ -1251,17 +1251,17 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             if (lastSlash != std::string::npos) {
                 normKey = normKey.substr(0, lastSlash);
             }
-            LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+            LOG_VERBOSE("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
             auto normIt = mNormativeROM.find(normKey);
             if (normIt != mNormativeROM.end()) {
                 double normative_deg = normIt->second;
                 double normative_rad = normative_deg * M_PI / 180.0;
-                LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+                LOG_VERBOSE("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
 
                 // Apply neg flag: if neg=true, negate the angle for internal representation
                 if (trial.angle_sweep.neg) {
                     normative_rad = -normative_rad;
-                    LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+                    LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
                 }
 
                 auto skel = mCharacter->getSkeleton();
@@ -1273,7 +1273,7 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
                     pos[dof_idx] = normative_rad;
                     skel->setPositions(pos);
                     buffer.normative_pose = skel->getPositions();
-                    LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                    LOG_VERBOSE("[NormativePose] Joint=" << trial.angle_sweep.joint_name
                              << ", dof_idx=" << dof_idx
                              << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
                              << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
@@ -1352,17 +1352,17 @@ void PhysicalExam::startNextTrial() {
         if (lastSlash != std::string::npos) {
             normKey = normKey.substr(0, lastSlash);
         }
-        LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+        LOG_VERBOSE("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
         auto normIt = mNormativeROM.find(normKey);
         if (normIt != mNormativeROM.end()) {
             double normative_deg = normIt->second;
             double normative_rad = normative_deg * M_PI / 180.0;
-            LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+            LOG_VERBOSE("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
 
             // Apply neg flag: if neg=true, negate the angle for internal representation
             if (trial.angle_sweep.neg) {
                 normative_rad = -normative_rad;
-                LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+                LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
             }
 
             auto skel = mCharacter->getSkeleton();
@@ -1374,7 +1374,7 @@ void PhysicalExam::startNextTrial() {
                 pos[dof_idx] = normative_rad;
                 skel->setPositions(pos);
                 buffer.normative_pose = skel->getPositions();
-                LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                LOG_VERBOSE("[NormativePose] Joint=" << trial.angle_sweep.joint_name
                          << ", dof_idx=" << dof_idx
                          << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
                          << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
@@ -1880,7 +1880,7 @@ std::vector<double> PhysicalExam::computeCutoffAngles(
         min_tau = std::min(min_tau, pt.passive_torque_total);
         max_tau = std::max(max_tau, pt.passive_torque_total);
     }
-    LOG_INFO("[computeCutoffAngles] Torque range: [" << min_tau << ", " << max_tau
+    LOG_VERBOSE("[computeCutoffAngles] Torque range: [" << min_tau << ", " << max_tau
              << "] Nm, cutoff: " << torque_cutoff << " Nm, data points: " << data.size());
 
     for (size_t i = 1; i < data.size(); ++i) {
@@ -1900,7 +1900,7 @@ std::vector<double> PhysicalExam::computeCutoffAngles(
             double crossing_angle = ang0 + t * (ang1 - ang0);
             double crossing_deg = crossing_angle * 180.0 / M_PI;
             crossings.push_back(crossing_deg);
-            LOG_INFO("[computeCutoffAngles] Found crossing at " << crossing_deg << "° (torque "
+            LOG_VERBOSE("[computeCutoffAngles] Found crossing at " << crossing_deg << "° (torque "
                      << tau0 << " -> " << tau1 << " Nm)");
         }
     }
@@ -2650,17 +2650,17 @@ void PhysicalExam::runAllTrials() {
             if (lastSlash != std::string::npos) {
                 normKey = normKey.substr(0, lastSlash);
             }
-            LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+            LOG_VERBOSE("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
             auto normIt = mNormativeROM.find(normKey);
             if (normIt != mNormativeROM.end()) {
                 double normative_deg = normIt->second;
                 double normative_rad = normative_deg * M_PI / 180.0;
-                LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+                LOG_VERBOSE("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
 
                 // Apply neg flag: if neg=true, negate the angle for internal representation
                 if (trial.angle_sweep.neg) {
                     normative_rad = -normative_rad;
-                    LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+                    LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
                 }
 
                 auto skel = mCharacter->getSkeleton();
@@ -2672,7 +2672,7 @@ void PhysicalExam::runAllTrials() {
                     pos[dof_idx] = normative_rad;
                     skel->setPositions(pos);
                     buffer.normative_pose = skel->getPositions();
-                    LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                    LOG_VERBOSE("[NormativePose] Joint=" << trial.angle_sweep.joint_name
                              << ", dof_idx=" << dof_idx
                              << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
                              << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
@@ -5697,7 +5697,7 @@ void PhysicalExam::addTrialToBuffer(const TrialDataBuffer& buffer) {
     }
 
     mTrialBuffers.push_back(buffer);
-    LOG_INFO("Added trial to buffer: " << buffer.trial_name
+    LOG_VERBOSE("Added trial to buffer: " << buffer.trial_name
               << " (total: " << mTrialBuffers.size() << ")");
 }
 
@@ -5861,17 +5861,17 @@ void PhysicalExam::runSelectedTrials() {
             if (lastSlash != std::string::npos) {
                 normKey = normKey.substr(0, lastSlash);
             }
-            LOG_INFO("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
+            LOG_VERBOSE("[NormativePose] Searching for key: '" << normKey << "' (alias: '" << buffer.alias << "')");
             auto normIt = mNormativeROM.find(normKey);
             if (normIt != mNormativeROM.end()) {
                 double normative_deg = normIt->second;
                 double normative_rad = normative_deg * M_PI / 180.0;
-                LOG_INFO("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
+                LOG_VERBOSE("[NormativePose] Found normative: " << normative_deg << " deg, neg=" << trial.angle_sweep.neg);
 
                 // Apply neg flag: if neg=true, negate the angle for internal representation
                 if (trial.angle_sweep.neg) {
                     normative_rad = -normative_rad;
-                    LOG_INFO("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
+                    LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
                 }
 
                 auto skel = mCharacter->getSkeleton();
@@ -5883,7 +5883,7 @@ void PhysicalExam::runSelectedTrials() {
                     pos[dof_idx] = normative_rad;
                     skel->setPositions(pos);
                     buffer.normative_pose = skel->getPositions();
-                    LOG_INFO("[NormativePose] Joint=" << trial.angle_sweep.joint_name
+                    LOG_VERBOSE("[NormativePose] Joint=" << trial.angle_sweep.joint_name
                              << ", dof_idx=" << dof_idx
                              << ", before=" << (before_angle * 180.0 / M_PI) << " deg"
                              << ", after=" << (normative_rad * 180.0 / M_PI) << " deg");
@@ -5913,7 +5913,44 @@ void PhysicalExam::runSelectedTrials() {
         loadBufferForVisualization(mSelectedBufferIndex);
     }
 
-    LOG_INFO("All selected trials completed. " << mTrialBuffers.size() << " buffers available");
+    // Print summary table
+    {
+        size_t start_idx = mTrialBuffers.size() >= selected_paths.size()
+            ? mTrialBuffers.size() - selected_paths.size() : 0;
+
+        std::ostringstream table;
+        table << "\n=== ROM Summary (" << selected_paths.size() << " trials) ===\n";
+        table << std::left << std::setw(30) << "Trial"
+              << std::setw(15) << "ROM (deg)"
+              << "Normative\n";
+        table << std::string(55, '-') << "\n";
+
+        for (size_t i = start_idx; i < mTrialBuffers.size(); ++i) {
+            const auto& buf = mTrialBuffers[i];
+            table << std::left << std::setw(30) << buf.trial_name;
+
+            if (!buf.cutoff_angles.empty()) {
+                double val = buf.cutoff_angles[0];
+                if (buf.neg) val = -val;
+                table << std::setw(15) << std::fixed << std::setprecision(1) << val;
+            } else {
+                table << std::setw(15) << "--";
+            }
+
+            // Normative value
+            std::string normKey = buf.alias;
+            size_t lastSlash = normKey.rfind('/');
+            if (lastSlash != std::string::npos) normKey = normKey.substr(0, lastSlash);
+            auto normIt = mNormativeROM.find(normKey);
+            if (normIt != mNormativeROM.end()) {
+                table << std::fixed << std::setprecision(1) << normIt->second;
+            } else {
+                table << "--";
+            }
+            table << "\n";
+        }
+        LOG_INFO(table.str());
+    }
 }
 
 // ============================================================================
