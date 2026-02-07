@@ -2371,6 +2371,23 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimizeWithPrecomputed(
     options.gradient_tolerance = 1e-8;
     options.minimizer_progress_to_stdout = false;
 
+    // Iteration callback for progress reporting
+    struct ProgressCallback : public ceres::IterationCallback {
+        std::function<void(int, double)> callback;
+        explicit ProgressCallback(std::function<void(int, double)> cb) : callback(std::move(cb)) {}
+        ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary) override {
+            if (callback) callback(summary.iteration, summary.cost);
+            return ceres::SOLVER_CONTINUE;
+        }
+    };
+
+    std::unique_ptr<ProgressCallback> progressCallback;
+    if (config.iterationCallback) {
+        progressCallback = std::make_unique<ProgressCallback>(config.iterationCallback);
+        options.callbacks.push_back(progressCallback.get());
+        options.update_state_every_iteration = true;
+    }
+
     // Solve
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
@@ -2684,6 +2701,23 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runOptGroupCeresOptimizatio
     options.function_tolerance = 1e-6;
     options.gradient_tolerance = 1e-8;
     options.minimizer_progress_to_stdout = false;  // Results logged via LOG_INFO
+
+    // Iteration callback for progress reporting
+    struct ProgressCallback : public ceres::IterationCallback {
+        std::function<void(int, double)> callback;
+        explicit ProgressCallback(std::function<void(int, double)> cb) : callback(std::move(cb)) {}
+        ceres::CallbackReturnType operator()(const ceres::IterationSummary& summary) override {
+            if (callback) callback(summary.iteration, summary.cost);
+            return ceres::SOLVER_CONTINUE;
+        }
+    };
+
+    std::unique_ptr<ProgressCallback> progressCallback;
+    if (config.iterationCallback) {
+        progressCallback = std::make_unique<ProgressCallback>(config.iterationCallback);
+        options.callbacks.push_back(progressCallback.get());
+        options.update_state_every_iteration = true;
+    }
 
     // Solve
     ceres::Solver::Summary summary;

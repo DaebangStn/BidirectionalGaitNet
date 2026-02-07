@@ -108,6 +108,7 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
 
     // Rendering Options (mDrawFlags initialized with struct defaults)
     mStochasticPolicy = false;
+    mInitLogStd = 1.0f;
 
     mMuscleRenderType = activationLevel;
     mMuscleRenderTypeInt = 2;
@@ -3866,6 +3867,15 @@ void RenderCkpt::drawSimControlPanelContent()
     ImGui::SameLine();
     if (ImGui::Button("Set Mass")) mRenderEnv->getCharacter()->setBodyMass(static_cast<double>(targetMass));
 
+    ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
+
+    ImGui::SetNextItemWidth(100);
+    if (ImGui::InputFloat("Init Log Std", &mInitLogStd, 0.1f, 0.5f, "%.2f")) {
+        if (!mViewerNetworks.empty() && mViewerNetworks[0].useCpp && mViewerNetworks[0].policy) {
+            mViewerNetworks[0].policy->setLogStd(mInitLogStd);
+        }
+    }
+
     // Reward Control with TreeNode categories
     if (collapsingHeaderWithControls("Reward##control"))
     {
@@ -4592,7 +4602,6 @@ void RenderCkpt::drawRenderingContent()
     ImGui::Checkbox("Playable Motion", &mDrawFlags.playableMotion);
     ImGui::Checkbox("Ref Motion", &mDrawFlags.refMotion);
     ImGui::Checkbox("Joint Sphere", &mDrawFlags.jointSphere);
-    ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
     ImGui::Checkbox("Foot Step", &mDrawFlags.footStep);
     ImGui::Checkbox("EOE", &mDrawFlags.eoe);
     ImGui::Checkbox("Collision", &mDrawFlags.collision);

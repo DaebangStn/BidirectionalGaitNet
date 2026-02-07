@@ -340,6 +340,7 @@ private:
     // Rendering Options
     DrawFlags mDrawFlags;
     bool mStochasticPolicy;
+    float mInitLogStd;
 
     MuscleRenderingType mMuscleRenderType;
     int mMuscleRenderTypeInt;

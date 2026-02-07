@@ -1,6 +1,7 @@
 args:
   checkpoint_interval: 1000
   total_timesteps: 500000000
+  
 
 environment:
   pid: "29792292/pre"
@@ -23,8 +24,8 @@ environment:
 
   # Simulation Timing
   simulation:
-    sim_hz: 800
-    control_hz: 50
+    sim_hz: 180
+    control_hz: 30
 
   # Action and Control
   action:
@@ -53,7 +54,7 @@ environment:
     # Metabolic configuration
     metabolic:
       type: "A"  # A, A2, MA, MA2
-      weight: 0.02
+      weight: 0.002
       scale: 1.0
       multiplicative: true  # if true, multiplies with main reward term
       torque:
@@ -66,6 +67,12 @@ train:
       - op: mask
         joints: ["FootPinkyR", "FootThumbR", "FootPinkyL", "FootThumbL"]
         from_iteration: 0
+    log_std:
+      init: 1.0
+      final: 0.0
+      start_iteration: 2000
+      end_iteration: 3000
+
     # virtual_force:
       # kp_init: 500.0
       # kp_ignore_cutoff: 1.0

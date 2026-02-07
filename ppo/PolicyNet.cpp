@@ -117,6 +117,11 @@ PolicyNetImpl::PolicyNetImpl(int num_states, int num_actions, torch::Device devi
     this->to(device_);
 }
 
+void PolicyNetImpl::setLogStd(float value) {
+    torch::NoGradGuard no_grad;
+    actor_logstd.fill_(value);
+}
+
 torch::Tensor PolicyNetImpl::get_value(torch::Tensor x) {
     // Critic forward pass: obs → fc1 → ReLU → fc2 → ReLU → fc3 → ReLU → value
     auto h = torch::relu(critic_fc1->forward(x));

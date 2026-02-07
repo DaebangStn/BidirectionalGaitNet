@@ -125,6 +125,7 @@ public:
         double parameterTolerance;   // Convergence tolerance on parameter change
 
         bool adaptiveSampleWeight;   // Use adaptive weighting for sample matching
+        bool multiDofJointSweep;     // Sweep all DOFs of best DOF's parent joint for shape energy
 
         Config() : maxIterations(10000), numSampling(10), lambdaShape(0.1),
                    lambdaLengthCurve(0.1), fixOriginInsertion(true), verbose(false),
@@ -133,7 +134,7 @@ public:
                    lengthType(LengthCurveType::MTU_LENGTH), numParallel(1),
                    maxDisplacement(0.2), maxDisplacementOriginInsertion(0.03),
                    functionTolerance(1e-4), gradientTolerance(1e-5), parameterTolerance(1e-5),
-                   adaptiveSampleWeight(false) {}
+                   adaptiveSampleWeight(false), multiDofJointSweep(false) {}
     };
 
     WaypointOptimizer() = default;

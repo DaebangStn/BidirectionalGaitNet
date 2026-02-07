@@ -118,6 +118,7 @@ private:
     float mWaypointGradientTolerance = 1e-5f;  // Convergence tolerance on gradient
     float mWaypointParameterTolerance = 1e-5f;  // Convergence tolerance on parameters
     bool mWaypointAdaptiveSampleWeight = false;  // Adaptive weighting for samples
+    bool mWaypointMultiDofJointSweep = false;    // Sweep all DOFs of best DOF's parent joint
 
     // Waypoint optimization progress (thread-safe)
     std::atomic<bool> mWaypointOptRunning{false};
@@ -322,6 +323,7 @@ private:
     bool mRenderMuscles = true;
     bool mShowAnchorPoints = false;  // Show anchor points instead of muscle cylinders
     bool mRenderReferenceCharacter = false;  // Toggle between subject and reference
+    bool mShowTitlePanel = false;  // Toggle title panel (T key)
 
     // Muscle color mode
     enum class MuscleColorMode { Contracture, ContractureExt, Symmetry, MuscleLength };
@@ -386,6 +388,7 @@ private:
     void drawContractureEstimationSection();
     void drawRenderTab();
 
+    void drawTitlePanel();
     void drawRightPanel();
     void drawExportSection();
     void drawWaypointCurvesTab();
@@ -427,6 +430,8 @@ private:
     void scanMuscleFiles();    // Scans based on mCharacterDataSource
     void scanMotionFiles();
     void rescanCharacterFiles();  // Re-scan skeleton/muscle based on current source
+
+    std::string characterConfig() const;  // Title string: pid + skeleton + muscle stems
 
     // Helper for collapsing header
     bool collapsingHeaderWithControls(const std::string& title);

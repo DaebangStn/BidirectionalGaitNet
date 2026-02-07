@@ -61,6 +61,9 @@ void MusclePersonalizerApp::keyPress(int key, int scancode, int action, int mods
                     }
                 }
                 return;
+            case GLFW_KEY_T:
+                mShowTitlePanel = !mShowTitlePanel;
+                return;
         }
     }
 
@@ -129,6 +132,7 @@ void MusclePersonalizerApp::drawUI()
 
     drawLeftPanel();
     drawRightPanel();
+    drawTitlePanel();
 
     // Draw progress overlay on top of everything (when not running, this returns early)
     drawProgressOverlay();
@@ -189,6 +193,7 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
             mWaypointGradientTolerance = wp["gradient_tolerance"].as<float>(1e-5f);
             mWaypointParameterTolerance = wp["parameter_tolerance"].as<float>(1e-5f);
             mWaypointAdaptiveSampleWeight = wp["adaptive_sample_weight"].as<bool>(false);
+            mWaypointMultiDofJointSweep = wp["multi_dof_joint_sweep"].as<bool>(false);
         }
 
         // Contracture estimation defaults
@@ -453,6 +458,15 @@ void MusclePersonalizerApp::drawMuscles()
 
     // Draw anchor points if enabled (separate from muscle line rendering)
     if (mShowAnchorPoints) {
+        // Get matrices for 3D-to-screen projection of anchor index labels
+        GLdouble modelview[16], projection[16];
+        GLint viewport[4];
+        glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+        glGetDoublev(GL_PROJECTION_MATRIX, projection);
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+        ImFont* font = ImGui::GetFont();
+
         for (size_t i = 0; i < muscles.size(); i++) {
             if (i < mMuscleSelectionStates.size() && !mMuscleSelectionStates[i]) continue;
 
@@ -463,7 +477,8 @@ void MusclePersonalizerApp::drawMuscles()
                 (muscle->name == symHighlightL || muscle->name == symHighlightR));
 
             // Draw anchor points and connections to bodynodes
-            for (auto& anchor : anchors) {
+            for (size_t ai = 0; ai < anchors.size(); ai++) {
+                auto& anchor = anchors[ai];
                 Eigen::Vector3d anchorPos = anchor->GetPoint();
 
                 // Lines to bodynodes
@@ -489,6 +504,20 @@ void MusclePersonalizerApp::drawMuscles()
                 } else {
                     glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
                     GUI::DrawSphere(anchorPos, 0.004);
+                }
+
+                // Draw anchor index label
+                GLdouble screenX, screenY, screenZ;
+                if (gluProject(anchorPos.x(), anchorPos.y(), anchorPos.z(),
+                              modelview, projection, viewport, &screenX, &screenY, &screenZ) == GL_TRUE) {
+                    if (screenZ > 0.0 && screenZ < 1.0) {
+                        float sx = static_cast<float>(screenX) + 6.0f;
+                        float sy = mHeight - static_cast<float>(screenY) - 4.0f;
+                        std::string label = std::to_string(ai);
+                        // Outline for readability
+                        drawList->AddText(font, 30.0f, ImVec2(sx + 1, sy + 1), IM_COL32(0, 0, 0, 200), label.c_str());
+                        drawList->AddText(font, 30.0f, ImVec2(sx, sy), IM_COL32(255, 255, 100, 255), label.c_str());
+                    }
                 }
             }
         }
@@ -1178,6 +1207,13 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                                       "len<1.0: w=1, len<1.2: w=2^len, else: w=5^len");
                 }
 
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Multi-DOF Joint Sweep", &mWaypointMultiDofJointSweep);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Sweep all DOFs of the best DOF's parent joint\n"
+                                      "for shape energy (cost: samples * joint_dofs).");
+                }
+
                 ImGui::EndTable();
             }
 
@@ -1201,6 +1237,29 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
     }
 }
 
+
+std::string MusclePersonalizerApp::characterConfig() const {
+    std::string skel_stem = mSkeletonPath.empty() ? "" : fs::path(mSkeletonPath).stem().string();
+    std::string musc_stem = mMusclePath.empty() ? "" : fs::path(mMusclePath).stem().string();
+    std::string result = skel_stem;
+    if (!musc_stem.empty()) result += " | " + musc_stem;
+    if (!mCharacterPID.empty()) result = "pid:" + mCharacterPID + " " + result;
+    return result;
+}
+
+void MusclePersonalizerApp::drawTitlePanel()
+{
+    if (!mShowTitlePanel) return;
+
+    // Create a compact floating window
+    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 50), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Title Panel (T to toggle)", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::SetWindowFontScale(1.5f);
+    ImGui::Text("%s", characterConfig().c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::End();
+}
 
 void MusclePersonalizerApp::drawProgressOverlay()
 {
@@ -2520,6 +2579,7 @@ void MusclePersonalizerApp::runWaypointOptimizationAsync()
     config.gradientTolerance = static_cast<double>(mWaypointGradientTolerance);
     config.parameterTolerance = static_cast<double>(mWaypointParameterTolerance);
     config.adaptiveSampleWeight = mWaypointAdaptiveSampleWeight;
+    config.multiDofJointSweep = mWaypointMultiDofJointSweep;
 
     LOG_INFO("[MusclePersonalizer] Starting async waypoint optimization" );
     LOG_INFO("[MusclePersonalizer]   HDF: " << hdfPath );

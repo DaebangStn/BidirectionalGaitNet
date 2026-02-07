@@ -10,7 +10,7 @@ environment:
   # Motion Reference
   motion:
     get_stride_from_motion: true
-    file: "@pid:/motion/walk_single.h5"
+    file: "@pid:/motion/walk_single_cyc.h5"
 
   # Muscle System
   muscle:
@@ -37,8 +37,8 @@ environment:
   reward:
     type: "gaitnet"  # deepmimic, gaitnet, scadiver
     clip:
-      step: 50
-      value: 0.2
+      step: 100
+      value: 0.1
 
     # Locomotion rewards (for gaitnet)
     locomotion:

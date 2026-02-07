@@ -26,6 +26,9 @@ struct DOFSweepConfig {
     double lower = -M_PI;
     double upper = M_PI;
 
+    struct JointDOF { int dof_idx; double lower, upper; };
+    std::vector<JointDOF> joint_dofs;  // all DOFs of the best DOF's parent joint
+
     bool isValid() const { return dof_idx >= 0; }
 };
 
@@ -64,6 +67,16 @@ static DOFSweepConfig findBestDOF(
     return config;
 }
 
+static void findBestJointDOFs(DOFSweepConfig& config, dart::dynamics::SkeletonPtr skeleton) {
+    auto* joint = skeleton->getDof(config.dof_idx)->getJoint();
+    for (int d = 0; d < static_cast<int>(joint->getNumDofs()); ++d) {
+        int idx = static_cast<int>(joint->getIndexInSkeleton(d));
+        double lo = std::max(skeleton->getPositionLowerLimit(idx), -M_PI);
+        double hi = std::min(skeleton->getPositionUpperLimit(idx),  M_PI);
+        config.joint_dofs.push_back({idx, lo, hi});
+    }
+}
+
 // ============================================================================
 // Optimization Context
 // ============================================================================
@@ -87,6 +100,7 @@ struct OptimizationContext {
     int lossPower = 2;
     LengthCurveType lengthType = LengthCurveType::MTU_LENGTH;
     bool adaptiveSampleWeight = false;
+    bool multiDofJointSweep = false;
 
     static std::shared_ptr<OptimizationContext> create(
         Muscle* subj_muscle, Muscle* ref_muscle,
@@ -97,7 +111,7 @@ struct OptimizationContext {
         double weight_phase = 1.0, double weight_delta = 50.0,
         double weight_samples = 1.0, int num_phase_samples = 3,
         int loss_power = 2, LengthCurveType length_type = LengthCurveType::MTU_LENGTH,
-        bool adaptive_sample_weight = false)
+        bool adaptive_sample_weight = false, bool multi_dof_joint_sweep = false)
     {
         auto ctx = std::make_shared<OptimizationContext>();
         ctx->subject_muscle = subj_muscle;
@@ -117,6 +131,7 @@ struct OptimizationContext {
         ctx->lossPower = loss_power;
         ctx->lengthType = length_type;
         ctx->adaptiveSampleWeight = adaptive_sample_weight;
+        ctx->multiDofJointSweep = multi_dof_joint_sweep;
         return ctx;
     }
 };
@@ -143,6 +158,24 @@ static void sweepDOF(const OptimizationContext& ctx, Func&& func) {
     }
 }
 
+template<typename Func>
+static void sweepMultiDOF(const OptimizationContext& ctx, Func&& func) {
+    int sample_idx = 0;
+    for (const auto& jdof : ctx.dof_config.joint_dofs) {
+        for (int s = 0; s <= ctx.num_samples; ++s) {
+            double t = static_cast<double>(s) / ctx.num_samples;
+            double dof_val = jdof.lower + t * (jdof.upper - jdof.lower);
+            Eigen::VectorXd pose = ctx.ref_pose;
+            pose[jdof.dof_idx] = dof_val;
+            ctx.subject_skeleton->setPositions(pose);
+            ctx.reference_skeleton->setPositions(pose);
+            ctx.subject_muscle->UpdateGeometry();
+            ctx.reference_muscle->UpdateGeometry();
+            func(sample_idx++);
+        }
+    }
+}
+
 // ============================================================================
 // Length Curve Computation
 // ============================================================================
@@ -161,11 +194,11 @@ int WaypointOptimizer::getMotionDOF(const std::string& hdf_filepath)
 /**
  * Compute muscle length curve by sweeping a specific DOF.
  *
- * lmt_ref must be initialized before calling this function.
- * This function only calls UpdateGeometry() (not SetMuscle/updateLmtRef)
- * to keep the normalization base stable during optimization.
+ * For NORMALIZED mode, recomputes lmt_ref at zero pose before sweeping.
+ * This creates a moving normalization target that tracks the current
+ * anchor positions, which improves optimization results.
  *
- * @param length_type MTU_LENGTH uses lmt, NORMALIZED uses lm_norm
+ * @param length_type MTU_LENGTH uses lmt (raw MTU length), NORMALIZED uses lm_norm
  */
 static std::vector<double> computeMuscleLengthCurveWithDOF(
     Muscle* muscle,
@@ -184,6 +217,13 @@ static std::vector<double> computeMuscleLengthCurveWithDOF(
     }
 
     Eigen::VectorXd saved_pose = skeleton->getPositions();
+
+    // For NORMALIZED mode, recompute lmt_ref at zero pose before sweeping
+    // This ensures lm_norm is correctly normalized for the current anchor positions
+    if (length_type == LengthCurveType::NORMALIZED) {
+        skeleton->setPositions(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
+        muscle->SetMuscle();
+    }
 
     for (int i = 0; i < num_samples; ++i) {
         double t = static_cast<double>(i) / (num_samples - 1);
@@ -269,7 +309,7 @@ static double computeShapeEnergy(const OptimizationContext& ctx) {
     int count = 0;
     int idx = ctx.anchor_index;
 
-    sweepDOF(ctx, [&](int) {
+    auto callback = [&](int) {
         auto& subj_anchors = ctx.subject_muscle->GetAnchors();
         auto& ref_anchors = ctx.reference_muscle->GetAnchors();
 
@@ -306,7 +346,13 @@ static double computeShapeEnergy(const OptimizationContext& ctx) {
                 ++count;
             }
         }
-    });
+    };
+
+    if (ctx.multiDofJointSweep && !ctx.dof_config.joint_dofs.empty()) {
+        sweepMultiDOF(ctx, callback);
+    } else {
+        sweepDOF(ctx, callback);
+    }
 
     return (count > 0) ? energy / count : 0.0;
 }
@@ -404,6 +450,13 @@ static Eigen::Vector3d computeShapeGradientNumeric(const OptimizationContext& ct
 // ============================================================================
 
 static double computeLengthCurveEnergy(const OptimizationContext& ctx) {
+    // For NORMALIZED mode, recompute lmt_ref at zero pose first
+    // This creates a moving normalization target that tracks current anchor positions
+    if (ctx.lengthType == LengthCurveType::NORMALIZED) {
+        ctx.subject_skeleton->setPositions(Eigen::VectorXd::Zero(ctx.subject_skeleton->getNumDofs()));
+        ctx.subject_muscle->SetMuscle();
+    }
+
     ctx.subject_skeleton->setPositions(ctx.ref_pose);
 
     auto lengths = computeMuscleLengthCurveWithDOF(
@@ -469,113 +522,23 @@ static Eigen::Vector3d computeLengthCurveGradientNumeric(const OptimizationConte
 // ============================================================================
 
 /**
- * Unified shape cost: single parameter block of size 3*N_opt containing all
- * optimizable anchor positions. Ceres passes trial values for ALL anchors
- * simultaneously, eliminating stale-value artifacts during trust-region steps.
+ * Per-anchor shape cost: 3-param block for a single anchor.
+ * Each anchor is optimized independently in a sequential sweep.
  *
- * cost = 0.5 * r² = lambda_S * sum_i(E_shape_i)
+ * cost = 0.5 * r² = lambda_S * E_shape_i
  */
-class UnifiedShapeCost : public ceres::CostFunction {
+class PerAnchorShapeCost : public ceres::CostFunction {
 public:
-    UnifiedShapeCost(
-        std::vector<std::shared_ptr<OptimizationContext>> contexts,
-        std::vector<int> opt_indices,
+    PerAnchorShapeCost(
+        std::shared_ptr<OptimizationContext> ctx,
+        int anchor_index,
         double lambda_S)
-        : contexts_(std::move(contexts))
-        , opt_indices_(std::move(opt_indices))
+        : ctx_(std::move(ctx))
+        , anchor_index_(anchor_index)
         , lambda_S_(lambda_S)
     {
-        int N_opt = static_cast<int>(opt_indices_.size());
         set_num_residuals(1);
-        mutable_parameter_block_sizes()->push_back(3 * N_opt);
-    }
-
-    bool Evaluate(double const* const* parameters,
-                  double* residuals,
-                  double** jacobians) const override {
-        const double* params = parameters[0];
-        auto& anchors = contexts_[0]->subject_muscle->GetAnchors();
-
-        // Set all optimizable anchors from unified parameter block
-        for (size_t k = 0; k < opt_indices_.size(); ++k) {
-            int ai = opt_indices_[k];
-            anchors[ai]->local_positions[0] = Eigen::Vector3d(
-                params[3*k+0], params[3*k+1], params[3*k+2]);
-        }
-        contexts_[0]->subject_muscle->UpdateGeometry();
-
-        // Compute total shape energy across all optimizable anchors
-        double E_total = 0.0;
-        for (const auto& ctx : contexts_) {
-            E_total += computeShapeEnergy(*ctx);
-        }
-
-        double sqrt_E = std::sqrt(E_total + kSqrtEpsilon);
-        double sqrt_2w = std::sqrt(2.0 * lambda_S_);
-        residuals[0] = sqrt_2w * sqrt_E;
-
-        if (jacobians && jacobians[0]) {
-            constexpr double h = 1e-6;
-            double scale = sqrt_2w / (2.0 * sqrt_E + kEpsilon);
-            int N_opt = static_cast<int>(opt_indices_.size());
-
-            for (int k = 0; k < N_opt; ++k) {
-                int ai = opt_indices_[k];
-                Eigen::Vector3d orig = anchors[ai]->local_positions[0];
-
-                for (int axis = 0; axis < 3; ++axis) {
-                    anchors[ai]->local_positions[0] = orig;
-                    anchors[ai]->local_positions[0][axis] += h;
-                    contexts_[0]->subject_muscle->UpdateGeometry();
-                    double E_plus = 0.0;
-                    for (const auto& ctx : contexts_)
-                        E_plus += computeShapeEnergy(*ctx);
-
-                    anchors[ai]->local_positions[0] = orig;
-                    anchors[ai]->local_positions[0][axis] -= h;
-                    contexts_[0]->subject_muscle->UpdateGeometry();
-                    double E_minus = 0.0;
-                    for (const auto& ctx : contexts_)
-                        E_minus += computeShapeEnergy(*ctx);
-
-                    double dE = (E_plus - E_minus) / (2.0 * h);
-                    jacobians[0][3*k + axis] = scale * dE;
-
-                    anchors[ai]->local_positions[0] = orig;
-                }
-            }
-            contexts_[0]->subject_muscle->UpdateGeometry();
-        }
-        return true;
-    }
-
-private:
-    std::vector<std::shared_ptr<OptimizationContext>> contexts_;
-    std::vector<int> opt_indices_;
-    double lambda_S_;
-};
-
-/**
- * Unified length curve cost: single parameter block of size 3*N_opt.
- * Length curve energy is the same regardless of which context computes it
- * (all contexts share the same muscle), so we call it once.
- *
- * cost = 0.5 * r² = N_opt * lambda_L * E_length
- */
-class UnifiedLengthCurveCost : public ceres::CostFunction {
-public:
-    UnifiedLengthCurveCost(
-        std::shared_ptr<OptimizationContext> ctx,
-        std::vector<int> opt_indices,
-        int N_opt,
-        double lambda_L)
-        : ctx_(std::move(ctx))
-        , opt_indices_(std::move(opt_indices))
-        , N_opt_(N_opt)
-        , lambda_L_(lambda_L)
-    {
-        set_num_residuals(1);
-        mutable_parameter_block_sizes()->push_back(3 * N_opt);
+        mutable_parameter_block_sizes()->push_back(3);
     }
 
     bool Evaluate(double const* const* parameters,
@@ -584,44 +547,36 @@ public:
         const double* params = parameters[0];
         auto& anchors = ctx_->subject_muscle->GetAnchors();
 
-        // Set all optimizable anchors from unified parameter block
-        for (size_t k = 0; k < opt_indices_.size(); ++k) {
-            int ai = opt_indices_[k];
-            anchors[ai]->local_positions[0] = Eigen::Vector3d(
-                params[3*k+0], params[3*k+1], params[3*k+2]);
-        }
+        anchors[anchor_index_]->local_positions[0] = Eigen::Vector3d(
+            params[0], params[1], params[2]);
         ctx_->subject_muscle->UpdateGeometry();
 
-        double E_length = computeLengthCurveEnergy(*ctx_);
+        double E_shape = computeShapeEnergy(*ctx_);
 
-        double sqrt_E = std::sqrt(E_length + kSqrtEpsilon);
-        double sqrt_2w = std::sqrt(2.0 * N_opt_ * lambda_L_);
+        double sqrt_E = std::sqrt(E_shape + kSqrtEpsilon);
+        double sqrt_2w = std::sqrt(2.0 * lambda_S_);
         residuals[0] = sqrt_2w * sqrt_E;
 
         if (jacobians && jacobians[0]) {
             constexpr double h = 1e-6;
             double scale = sqrt_2w / (2.0 * sqrt_E + kEpsilon);
+            Eigen::Vector3d orig(params[0], params[1], params[2]);
 
-            for (int k = 0; k < N_opt_; ++k) {
-                int ai = opt_indices_[k];
-                Eigen::Vector3d orig = anchors[ai]->local_positions[0];
+            for (int axis = 0; axis < 3; ++axis) {
+                anchors[anchor_index_]->local_positions[0] = orig;
+                anchors[anchor_index_]->local_positions[0][axis] += h;
+                ctx_->subject_muscle->UpdateGeometry();
+                double E_plus = computeShapeEnergy(*ctx_);
 
-                for (int axis = 0; axis < 3; ++axis) {
-                    anchors[ai]->local_positions[0] = orig;
-                    anchors[ai]->local_positions[0][axis] += h;
-                    ctx_->subject_muscle->UpdateGeometry();
-                    double E_plus = computeLengthCurveEnergy(*ctx_);
+                anchors[anchor_index_]->local_positions[0] = orig;
+                anchors[anchor_index_]->local_positions[0][axis] -= h;
+                ctx_->subject_muscle->UpdateGeometry();
+                double E_minus = computeShapeEnergy(*ctx_);
 
-                    anchors[ai]->local_positions[0] = orig;
-                    anchors[ai]->local_positions[0][axis] -= h;
-                    ctx_->subject_muscle->UpdateGeometry();
-                    double E_minus = computeLengthCurveEnergy(*ctx_);
+                double dE = (E_plus - E_minus) / (2.0 * h);
+                jacobians[0][axis] = scale * dE;
 
-                    double dE = (E_plus - E_minus) / (2.0 * h);
-                    jacobians[0][3*k + axis] = scale * dE;
-
-                    anchors[ai]->local_positions[0] = orig;
-                }
+                anchors[anchor_index_]->local_positions[0] = orig;
             }
             ctx_->subject_muscle->UpdateGeometry();
         }
@@ -630,8 +585,75 @@ public:
 
 private:
     std::shared_ptr<OptimizationContext> ctx_;
-    std::vector<int> opt_indices_;
-    int N_opt_;
+    int anchor_index_;
+    double lambda_S_;
+};
+
+/**
+ * Per-anchor length curve cost: 3-param block for a single anchor.
+ * No N_opt multiplier — each anchor gets its own length cost.
+ *
+ * cost = 0.5 * r² = lambda_L * E_length
+ */
+class PerAnchorLengthCurveCost : public ceres::CostFunction {
+public:
+    PerAnchorLengthCurveCost(
+        std::shared_ptr<OptimizationContext> ctx,
+        int anchor_index,
+        double lambda_L)
+        : ctx_(std::move(ctx))
+        , anchor_index_(anchor_index)
+        , lambda_L_(lambda_L)
+    {
+        set_num_residuals(1);
+        mutable_parameter_block_sizes()->push_back(3);
+    }
+
+    bool Evaluate(double const* const* parameters,
+                  double* residuals,
+                  double** jacobians) const override {
+        const double* params = parameters[0];
+        auto& anchors = ctx_->subject_muscle->GetAnchors();
+
+        anchors[anchor_index_]->local_positions[0] = Eigen::Vector3d(
+            params[0], params[1], params[2]);
+        ctx_->subject_muscle->UpdateGeometry();
+
+        double E_length = computeLengthCurveEnergy(*ctx_);
+
+        double sqrt_E = std::sqrt(E_length + kSqrtEpsilon);
+        double sqrt_2w = std::sqrt(2.0 * lambda_L_);
+        residuals[0] = sqrt_2w * sqrt_E;
+
+        if (jacobians && jacobians[0]) {
+            constexpr double h = 1e-6;
+            double scale = sqrt_2w / (2.0 * sqrt_E + kEpsilon);
+            Eigen::Vector3d orig(params[0], params[1], params[2]);
+
+            for (int axis = 0; axis < 3; ++axis) {
+                anchors[anchor_index_]->local_positions[0] = orig;
+                anchors[anchor_index_]->local_positions[0][axis] += h;
+                ctx_->subject_muscle->UpdateGeometry();
+                double E_plus = computeLengthCurveEnergy(*ctx_);
+
+                anchors[anchor_index_]->local_positions[0] = orig;
+                anchors[anchor_index_]->local_positions[0][axis] -= h;
+                ctx_->subject_muscle->UpdateGeometry();
+                double E_minus = computeLengthCurveEnergy(*ctx_);
+
+                double dE = (E_plus - E_minus) / (2.0 * h);
+                jacobians[0][axis] = scale * dE;
+
+                anchors[anchor_index_]->local_positions[0] = orig;
+            }
+            ctx_->subject_muscle->UpdateGeometry();
+        }
+        return true;
+    }
+
+private:
+    std::shared_ptr<OptimizationContext> ctx_;
+    int anchor_index_;
     double lambda_L_;
 };
 
@@ -695,18 +717,6 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     subject_skeleton->setPositions(ref_pose);
     reference_skeleton->setPositions(ref_pose);
 
-    // For NORMALIZED mode: initialize lmt_ref at zero pose ONCE.
-    // lmt_ref must not change during optimization; UpdateGeometry() uses
-    // this fixed value to compute lm_norm at each DOF sweep position.
-    if (config.lengthType == LengthCurveType::NORMALIZED) {
-        subject_skeleton->setPositions(Eigen::VectorXd::Zero(subject_skeleton->getNumDofs()));
-        subject_muscle->SetMuscle();
-        reference_skeleton->setPositions(Eigen::VectorXd::Zero(reference_skeleton->getNumDofs()));
-        reference_muscle->SetMuscle();
-        subject_skeleton->setPositions(ref_pose);
-        reference_skeleton->setPositions(ref_pose);
-    }
-
     // 4. Compute initial curves
     result.reference_lengths = computeMuscleLengthCurveWithDOF(
         reference_muscle, reference_skeleton, config.numSampling, dof_config, config.lengthType);
@@ -738,6 +748,16 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
                  << " [" << dof_config.lower << ", " << dof_config.upper << "]");
     }
 
+    if (config.multiDofJointSweep) {
+        findBestJointDOFs(dof_config, subject_skeleton);
+        if (config.verbose) {
+            auto* joint = subject_skeleton->getDof(dof_config.dof_idx)->getJoint();
+            LOG_INFO("[WaypointOpt] Multi-DOF joint sweep: joint '"
+                     << joint->getName() << "' has "
+                     << dof_config.joint_dofs.size() << " DOFs");
+        }
+    }
+
     computePerPhaseShapeMetrics(result, subject_muscle, reference_muscle,
         subject_skeleton, reference_skeleton,
         config.numSampling, dof_config, ref_pose, true);
@@ -754,19 +774,11 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     }
     int N_opt = static_cast<int>(opt_indices.size());
 
-    // Contiguous parameter block: [x0,y0,z0, x1,y1,z1, ..., x_{N-1},y_{N-1},z_{N-1}]
-    std::vector<double> unified_params(3 * N_opt);
+    // Save initial positions for bounds and revert
+    std::vector<Eigen::Vector3d> initial_positions(N_opt);
     for (int k = 0; k < N_opt; ++k) {
         int ai = opt_indices[k];
-        unified_params[3*k+0] = anchors[ai]->local_positions[0].x();
-        unified_params[3*k+1] = anchors[ai]->local_positions[0].y();
-        unified_params[3*k+2] = anchors[ai]->local_positions[0].z();
-    }
-
-    // Save initial positions for bounds and revert
-    std::vector<std::array<double, 3>> initial_positions(N_opt);
-    for (int k = 0; k < N_opt; ++k) {
-        initial_positions[k] = {unified_params[3*k+0], unified_params[3*k+1], unified_params[3*k+2]};
+        initial_positions[k] = anchors[ai]->local_positions[0];
     }
 
     if (config.verbose) {
@@ -780,15 +792,25 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
         }
     }
 
-    // 6. Build Ceres problem with unified parameter block
+    // Capture initial world-space segment directions at ref_pose for force direction diagnostic
+    std::vector<Eigen::Vector3d> initial_world_points(anchors.size());
+    if (config.verbose) {
+        subject_skeleton->setPositions(ref_pose);
+        subject_muscle->UpdateGeometry();
+        for (size_t i = 0; i < anchors.size(); ++i) {
+            initial_world_points[i] = anchors[i]->GetPoint();
+        }
+    }
+
+    // 6. Create optimization contexts and Ceres solver options
     ceres::Solver::Options options;
     options.max_num_iterations = config.maxIterations;
     options.linear_solver_type = ceres::DENSE_QR;
     options.function_tolerance = config.functionTolerance;
     options.gradient_tolerance = config.gradientTolerance;
     options.parameter_tolerance = config.parameterTolerance;
+    options.minimizer_progress_to_stdout = false;
 
-    ceres::Problem problem;
     std::vector<std::shared_ptr<OptimizationContext>> contexts;
 
     // Create one OptimizationContext per optimizable anchor
@@ -801,54 +823,13 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
             dof_config, ref_pose, result.reference_chars, config.verbose,
             config.weightPhase, config.weightDelta,
             config.weightSamples, config.numPhaseSamples, config.lossPower, config.lengthType,
-            config.adaptiveSampleWeight);
+            config.adaptiveSampleWeight, config.multiDofJointSweep);
         contexts.push_back(ctx);
     }
 
-    if (N_opt > 0) {
-        double* param_block = unified_params.data();
-        problem.AddParameterBlock(param_block, 3 * N_opt);
-
-        // Set per-element bounds
-        for (int k = 0; k < N_opt; ++k) {
-            int ai = opt_indices[k];
-            bool is_origin_insertion = (ai == 0 || ai == static_cast<int>(anchors.size()) - 1);
-            double max_disp = is_origin_insertion
-                ? config.maxDisplacementOriginInsertion
-                : config.maxDisplacement;
-            for (int dim = 0; dim < 3; ++dim) {
-                double current_val = unified_params[3*k + dim];
-                problem.SetParameterLowerBound(param_block, 3*k + dim, current_val - max_disp);
-                problem.SetParameterUpperBound(param_block, 3*k + dim, current_val + max_disp);
-            }
-        }
-
-        // Add 2 residual blocks (shape + length) pointing to unified parameter block
-        if (config.lambdaShape > 0) {
-            problem.AddResidualBlock(
-                new UnifiedShapeCost(contexts, opt_indices, config.lambdaShape),
-                nullptr, param_block);
-        }
-        if (config.lambdaLengthCurve > 0) {
-            problem.AddResidualBlock(
-                new UnifiedLengthCurveCost(contexts[0], opt_indices, N_opt, config.lambdaLengthCurve),
-                nullptr, param_block);
-        }
-    }
-
-    // Helper: sync anchors from unified_params
-    auto syncAnchorsFromParams = [&]() {
-        for (int k = 0; k < N_opt; ++k) {
-            int ai = opt_indices[k];
-            anchors[ai]->local_positions[0] = Eigen::Vector3d(
-                unified_params[3*k+0], unified_params[3*k+1], unified_params[3*k+2]);
-        }
-        subject_muscle->UpdateGeometry();
-    };
-
-    // Compute energies from current unified_params state
+    // Compute energies from current anchor state
     auto computeEnergies = [&](double& shape_out, double& length_out, double& total_out, const char* label) {
-        syncAnchorsFromParams();
+        subject_muscle->UpdateGeometry();
 
         shape_out = 0.0;
         length_out = 0.0;
@@ -878,7 +859,7 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     if (config.verbose && !contexts.empty()) {
         LOG_INFO("[WaypointOpt] === PURITY CHECK (5 repeated calls at same x) ===");
 
-        syncAnchorsFromParams();
+        subject_muscle->UpdateGeometry();
 
         int purity_fail_count = 0;
 
@@ -1023,139 +1004,104 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
                  << std::fixed << std::setprecision(2) << max_angle << "°");
     }
 
-    // 7. Solve with iteration callback for verification
-    class VerificationCallback : public ceres::IterationCallback {
-    public:
-        VerificationCallback(
-            const std::vector<std::shared_ptr<OptimizationContext>>& ctxs,
-            std::vector<double>& params, const std::vector<int>& opt_idx,
-            const std::vector<Anchor*>& anch,
-            Muscle* muscle, double ls, double ll, int n_opt, bool verb)
-            : contexts_(ctxs), unified_params_(params), opt_indices_(opt_idx)
-            , anchors_(anch), muscle_(muscle)
-            , lambdaShape_(ls), lambdaLength_(ll), N_opt_(n_opt), verbose_(verb) {}
+    // 7. Sequential per-anchor optimization loop
+    constexpr int kMaxOuterIterations = 20;
+    constexpr double kOuterConvergenceTol = 1e-6;
 
-        ceres::CallbackReturnType operator()(const ceres::IterationSummary& iter_summary) override {
-            if (!verbose_) return ceres::SOLVER_CONTINUE;
+    double prev_total = result.initial_total_cost;
+    int total_outer_iters = 0;
 
-            // Sync anchors from current Ceres parameter state
-            for (int k = 0; k < N_opt_; ++k) {
-                int ai = opt_indices_[k];
-                anchors_[ai]->local_positions[0] = Eigen::Vector3d(
-                    unified_params_[3*k+0], unified_params_[3*k+1], unified_params_[3*k+2]);
+    for (int outer = 0; outer < kMaxOuterIterations; ++outer) {
+        // Save start-of-pass positions for revert
+        std::vector<Eigen::Vector3d> pass_start(N_opt);
+        for (int k = 0; k < N_opt; ++k) {
+            pass_start[k] = anchors[opt_indices[k]]->local_positions[0];
+        }
+
+        for (int k = 0; k < N_opt; ++k) {
+            int ai = opt_indices[k];
+            double params[3] = {
+                anchors[ai]->local_positions[0].x(),
+                anchors[ai]->local_positions[0].y(),
+                anchors[ai]->local_positions[0].z()
+            };
+
+            // 3-param Ceres problem for this single anchor
+            ceres::Problem problem;
+            problem.AddParameterBlock(params, 3);
+
+            // Bounds: initial_positions[k] ± maxDisp (fixed across all outer iters)
+            bool is_origin_insertion = (ai == 0 || ai == static_cast<int>(anchors.size()) - 1);
+            double max_disp = is_origin_insertion
+                ? config.maxDisplacementOriginInsertion
+                : config.maxDisplacement;
+            for (int dim = 0; dim < 3; ++dim) {
+                problem.SetParameterLowerBound(params, dim, initial_positions[k][dim] - max_disp);
+                problem.SetParameterUpperBound(params, dim, initial_positions[k][dim] + max_disp);
             }
-            muscle_->UpdateGeometry();
 
-            double shape_total = 0.0, length_total = 0.0;
-            for (const auto& ctx : contexts_) {
-                shape_total += computeShapeEnergy(*ctx);
-                length_total += computeLengthCurveEnergy(*ctx);
+            // Add residuals
+            if (config.lambdaShape > 0) {
+                problem.AddResidualBlock(
+                    new PerAnchorShapeCost(contexts[k], ai, config.lambdaShape),
+                    nullptr, params);
+            }
+            if (config.lambdaLengthCurve > 0) {
+                problem.AddResidualBlock(
+                    new PerAnchorLengthCurveCost(contexts[k], ai, config.lambdaLengthCurve),
+                    nullptr, params);
             }
 
-            // Expected Ceres cost with unified blocks:
-            // cost = lambda_S * shape_total + N_opt * lambda_L * length_total
-            double expected_ceres = lambdaShape_ * shape_total + N_opt_ * lambdaLength_ * length_total;
-            double ratio = (expected_ceres > 1e-12) ? iter_summary.cost / expected_ceres : 0.0;
+            ceres::Solver::Summary summary;
+            ceres::Solve(options, &problem, &summary);
 
-            LOG_INFO("[WaypointOpt] iter=" << iter_summary.iteration
-                     << " ceres=" << iter_summary.cost
-                     << " expected=" << expected_ceres
-                     << " ratio=" << ratio
-                     << " shape=" << shape_total
-                     << " length=" << length_total);
-
-            return ceres::SOLVER_CONTINUE;
+            // Apply immediately (next anchor sees updated neighbor)
+            anchors[ai]->local_positions[0] = Eigen::Vector3d(params[0], params[1], params[2]);
+            subject_muscle->UpdateGeometry();
         }
 
-    private:
-        const std::vector<std::shared_ptr<OptimizationContext>>& contexts_;
-        std::vector<double>& unified_params_;
-        const std::vector<int>& opt_indices_;
-        const std::vector<Anchor*>& anchors_;
-        Muscle* muscle_;
-        double lambdaShape_, lambdaLength_;
-        int N_opt_;
-        bool verbose_;
-    };
+        ++total_outer_iters;
 
-    VerificationCallback verification_cb(
-        contexts, unified_params, opt_indices, anchors, subject_muscle,
-        config.lambdaShape, config.lambdaLengthCurve, N_opt, config.verbose);
-    options.callbacks.push_back(&verification_cb);
-    options.update_state_every_iteration = true;
+        // Compute pass total energy
+        double shape_pass, length_pass, total_pass;
+        computeEnergies(shape_pass, length_pass, total_pass,
+            (std::string("Pass ") + std::to_string(total_outer_iters)).c_str());
 
-    ceres::Solver::Summary summary;
-    ceres::Solve(options, &problem, &summary);
+        if (config.verbose) {
+            LOG_INFO("[WaypointOpt] outer " << total_outer_iters
+                     << ": total=" << total_pass
+                     << " shape=" << shape_pass
+                     << " length=" << length_pass);
+        }
 
-    result.num_iterations = static_cast<int>(summary.iterations.size());
+        // Pass revert: if energy increased, restore pass_start and stop
+        if (total_pass > prev_total + kEpsilon) {
+            if (config.verbose) {
+                LOG_WARN("[WaypointOpt] Pass " << total_outer_iters
+                         << " increased energy (" << prev_total << " -> " << total_pass
+                         << "), reverting pass");
+            }
+            for (int k = 0; k < N_opt; ++k) {
+                anchors[opt_indices[k]]->local_positions[0] = pass_start[k];
+            }
+            subject_muscle->UpdateGeometry();
+            break;
+        }
 
-    if (config.verbose) {
-        LOG_INFO("[WaypointOpt] " << subject_muscle->name
-                 << ": " << summary.iterations.size() << " iters, "
-                 << ceres::TerminationTypeToString(summary.termination_type));
+        // Convergence: relative improvement < tolerance
+        if ((prev_total - total_pass) / (prev_total + kEpsilon) < kOuterConvergenceTol) {
+            if (config.verbose) {
+                LOG_INFO("[WaypointOpt] Converged at outer " << total_outer_iters
+                         << " (rel improvement="
+                         << (prev_total - total_pass) / (prev_total + kEpsilon) << ")");
+            }
+            break;
+        }
+
+        prev_total = total_pass;
     }
 
-    // ========================================================================
-    // DIAGNOSTIC 3: Post-solve comparison — Ceres.Evaluate vs our verification
-    // ========================================================================
-    if (config.verbose && N_opt > 0) {
-        // A) Ceres' own re-evaluation at final parameters
-        double ceres_eval_cost = 0.0;
-        std::vector<double> ceres_residuals;
-        ceres::Problem::EvaluateOptions eval_opts;
-        problem.Evaluate(eval_opts, &ceres_eval_cost, &ceres_residuals, nullptr, nullptr);
-
-        // B) Our independent verification at the same parameter state
-        double verify_shape = 0.0, verify_length = 0.0;
-        syncAnchorsFromParams();
-        for (const auto& ctx : contexts) {
-            verify_shape += computeShapeEnergy(*ctx);
-            verify_length += computeLengthCurveEnergy(*ctx);
-        }
-
-        // C) Expected Ceres cost with unified blocks (2 residual blocks, not 2*N_opt):
-        // cost = lambda_S * shape_total + N_opt * lambda_L * length_total + epsilon_terms
-        int num_residual_blocks = 0;
-        if (config.lambdaShape > 0) ++num_residual_blocks;
-        if (config.lambdaLengthCurve > 0) ++num_residual_blocks;
-        double eps_term = 0.0;
-        if (config.lambdaShape > 0) eps_term += config.lambdaShape * kSqrtEpsilon;
-        if (config.lambdaLengthCurve > 0) eps_term += N_opt * config.lambdaLengthCurve * kSqrtEpsilon;
-        double expected_ceres = config.lambdaShape * verify_shape
-                              + N_opt * config.lambdaLengthCurve * verify_length
-                              + eps_term;
-
-        double ratio_eval_expected = (expected_ceres > 1e-15) ? ceres_eval_cost / expected_ceres : 0.0;
-        double ratio_eval_summary = (summary.final_cost > 1e-15) ? ceres_eval_cost / summary.final_cost : 0.0;
-
-        LOG_INFO("[WaypointOpt] POST-SOLVE DIAGNOSTIC:"
-                 << "\n    summary.final_cost  = " << summary.final_cost
-                 << "\n    ceres.Evaluate()    = " << ceres_eval_cost
-                 << "\n    our expected        = " << expected_ceres
-                 << "\n    our shape_total     = " << verify_shape
-                 << "\n    our length_total    = " << verify_length
-                 << "\n    ratio(eval/expected)= " << ratio_eval_expected
-                 << "\n    ratio(eval/summary) = " << ratio_eval_summary);
-
-        // D) Print individual residuals for detailed comparison
-        LOG_INFO("[WaypointOpt] Ceres residuals (" << ceres_residuals.size() << " total):");
-        for (size_t i = 0; i < ceres_residuals.size(); ++i) {
-            LOG_INFO("    r[" << i << "] = " << ceres_residuals[i]
-                     << " r²=" << ceres_residuals[i] * ceres_residuals[i]);
-        }
-
-        if (std::abs(ratio_eval_expected - 1.0) > 0.01) {
-            LOG_WARN("[WaypointOpt] *** MISMATCH: Ceres.Evaluate disagrees with our verification by "
-                     << std::abs(ratio_eval_expected - 1.0) * 100.0 << "% ***");
-        }
-    }
-
-    // Apply results: write from unified_params back to anchors
-    for (int k = 0; k < N_opt; ++k) {
-        int ai = opt_indices[k];
-        anchors[ai]->local_positions[0] = Eigen::Vector3d(
-            unified_params[3*k+0], unified_params[3*k+1], unified_params[3*k+2]);
-    }
+    result.num_iterations = total_outer_iters;
 
     if (config.verbose) {
         LOG_INFO("[WaypointOpt] Final anchor positions:");
@@ -1169,6 +1115,47 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     subject_muscle->UpdateGeometry();
     reference_muscle->UpdateGeometry();
 
+    // Force direction change diagnostic
+    if (config.verbose) {
+        LOG_INFO("[WaypointOpt] Force direction change (ref_pose):");
+        int n = static_cast<int>(anchors.size());
+        for (int i = 0; i < n; ++i) {
+            Eigen::Vector3d after_pt = anchors[i]->GetPoint();
+
+            // Incoming segment direction (from previous anchor)
+            if (i > 0) {
+                Eigen::Vector3d prev_before = initial_world_points[i] - initial_world_points[i-1];
+                Eigen::Vector3d prev_after  = after_pt - anchors[i-1]->GetPoint();
+                double nb = prev_before.norm(), na = prev_after.norm();
+                if (nb > kEpsilon && na > kEpsilon) {
+                    Eigen::Vector3d ub = prev_before / nb;
+                    Eigen::Vector3d ua = prev_after / na;
+                    double dot = std::clamp(ub.dot(ua), -1.0, 1.0);
+                    double angle_deg = std::acos(dot) * 180.0 / M_PI;
+                    LOG_INFO("  [" << i << "] seg_in:  before=" << ub.transpose()
+                             << "  after=" << ua.transpose()
+                             << "  angle=" << std::fixed << std::setprecision(2) << angle_deg << "°");
+                }
+            }
+
+            // Outgoing segment direction (to next anchor)
+            if (i < n - 1) {
+                Eigen::Vector3d next_before = initial_world_points[i+1] - initial_world_points[i];
+                Eigen::Vector3d next_after  = anchors[i+1]->GetPoint() - after_pt;
+                double nb = next_before.norm(), na = next_after.norm();
+                if (nb > kEpsilon && na > kEpsilon) {
+                    Eigen::Vector3d ub = next_before / nb;
+                    Eigen::Vector3d ua = next_after / na;
+                    double dot = std::clamp(ub.dot(ua), -1.0, 1.0);
+                    double angle_deg = std::acos(dot) * 180.0 / M_PI;
+                    LOG_INFO("  [" << i << "] seg_out: before=" << ub.transpose()
+                             << "  after=" << ua.transpose()
+                             << "  angle=" << std::fixed << std::setprecision(2) << angle_deg << "°");
+                }
+            }
+        }
+    }
+
     // Detect bound hits
     constexpr double kBoundTolerance = 1e-4;
     result.num_bound_hits = 0;
@@ -1179,8 +1166,9 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
             ? config.maxDisplacementOriginInsertion
             : config.maxDisplacement;
 
+        Eigen::Vector3d current_pos = anchors[ai]->local_positions[0];
         for (int dim = 0; dim < 3; ++dim) {
-            double disp = std::abs(unified_params[3*k + dim] - initial_positions[k][dim]);
+            double disp = std::abs(current_pos[dim] - initial_positions[k][dim]);
             if (disp >= max_disp - kBoundTolerance) {
                 result.num_bound_hits++;
                 if (config.verbose) {
@@ -1190,20 +1178,6 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
                 break;
             }
         }
-    }
-
-    // Check convergence
-    const bool converged = (summary.termination_type == ceres::CONVERGENCE);
-    if (!converged) {
-        std::string reason;
-        switch (summary.termination_type) {
-            case ceres::NO_CONVERGENCE:   reason = "NO_CONVERGENCE"; break;
-            case ceres::FAILURE:          reason = "FAILURE"; break;
-            case ceres::USER_FAILURE:     reason = "USER_FAILURE"; break;
-            default:                      reason = "Unknown"; break;
-        }
-        LOG_WARN("[WaypointOpt] Did not converge: " << reason
-                 << " (cost " << summary.initial_cost << " -> " << summary.final_cost << ")");
     }
 
     // 8. Compute final energies
@@ -1220,20 +1194,17 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
         config.numSampling, dof_config, ref_pose, false);
 
     // 10. Revert if optimization made things worse
-    bool ceres_cost_increased = summary.final_cost > summary.initial_cost;
     bool total_energy_increased = result.final_total_cost > result.initial_total_cost;
 
-    if (ceres_cost_increased || total_energy_increased) {
+    if (total_energy_increased) {
         LOG_WARN("[WaypointOpt] " << subject_muscle->name << " FAILED:"
-                 << " Ceres(" << summary.initial_cost << "->" << summary.final_cost << ")"
                  << " Shape(" << result.initial_shape_energy << "->" << result.final_shape_energy << ")"
                  << " Length(" << result.initial_length_energy << "->" << result.final_length_energy << ")"
                  << " — reverting");
 
         for (int k = 0; k < N_opt; ++k) {
             int ai = opt_indices[k];
-            anchors[ai]->local_positions[0] = Eigen::Vector3d(
-                initial_positions[k][0], initial_positions[k][1], initial_positions[k][2]);
+            anchors[ai]->local_positions[0] = initial_positions[k];
         }
 
         // Re-initialize muscle state with restored positions
@@ -1242,7 +1213,7 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
         subject_skeleton->setPositions(ref_pose);
     }
 
-    result.success = converged && !ceres_cost_increased && !total_energy_increased;
+    result.success = !total_energy_increased;
     restorePoses();
     return result;
 }

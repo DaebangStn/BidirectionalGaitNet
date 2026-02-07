@@ -87,6 +87,13 @@ public:
      */
     torch::Device device() const { return device_; }
 
+    /**
+     * Set actor log_std to a uniform value.
+     *
+     * @param value The float value to fill actor_logstd with
+     */
+    void setLogStd(float value);
+
 private:
     // Initialize layer with orthogonal weights
     template<typename ModuleType>

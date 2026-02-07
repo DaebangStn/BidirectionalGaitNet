@@ -7,6 +7,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <functional>
 #include <Eigen/Core>
 #include <dart/dynamics/dynamics.hpp>
 #include "Character.h"
@@ -239,6 +240,9 @@ public:
 
         // Outer iterations for biarticular convergence
         int outerIterations = 1;       // Number of outer iterations (1 = single pass)
+
+        // Progress callback: (iteration, cost) called after each Ceres iteration
+        std::function<void(int iteration, double cost)> iterationCallback;
 
         Config() : maxIterations(100), minRatio(0.7), maxRatio(1.3),
                    verbose(false), lambdaRatioReg(0.0), lambdaTorqueReg(0.0),

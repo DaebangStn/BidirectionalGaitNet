@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
     int num_phase_samples = 3;
     int loss_power = 2;
     bool adaptive_sample_weight = false;
+    bool multi_dof_joint_sweep = false;
 
     po::options_description desc("Waypoint Optimization CLI");
     desc.add_options()
@@ -121,7 +122,9 @@ int main(int argc, char** argv) {
         ("loss-power", po::value<int>(&loss_power)->default_value(2),
          "Loss power exponent (2=squared, 3=cube)")
         ("adaptive-sample-weight", po::bool_switch(&adaptive_sample_weight),
-         "Use adaptive weighting for sample matching");
+         "Use adaptive weighting for sample matching")
+        ("multi-dof-joint", po::bool_switch(&multi_dof_joint_sweep),
+         "Sweep all DOFs of best DOF's parent joint for shape energy");
 
     po::variables_map vm;
     try {
@@ -191,7 +194,8 @@ int main(int argc, char** argv) {
                  << " samples=" << weight_samples
                  << " phaseSamples=" << num_phase_samples
                  << " lossPower=" << loss_power
-                 << " adaptive=" << adaptive_sample_weight);
+                 << " adaptive=" << adaptive_sample_weight
+                 << " multiDofJoint=" << multi_dof_joint_sweep);
     }
 
     // Create subject character
@@ -249,6 +253,7 @@ int main(int argc, char** argv) {
     config.numPhaseSamples = num_phase_samples;
     config.lossPower = loss_power;
     config.adaptiveSampleWeight = adaptive_sample_weight;
+    config.multiDofJointSweep = multi_dof_joint_sweep;
 
     // Run optimization
     LOG_INFO("Running waypoint optimization for " << muscle_names.size() << " muscle(s)...");

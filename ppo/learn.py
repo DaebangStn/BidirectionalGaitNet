@@ -425,6 +425,15 @@ if __name__ == "__main__":
                   f"discount_interval={vf_config.get('discount_interval', 1000)}, "
                   f"kp_ignore_cutoff={vf_config.get('kp_ignore_cutoff', 1.0)}")
 
+    # Log std curriculum
+    log_std_config = None
+    log_std_current = args.init_log_std
+    if train_cfg and 'curriculum' in train_cfg and 'log_std' in train_cfg['curriculum']:
+        log_std_config = train_cfg['curriculum']['log_std']
+        log_std_current = log_std_config.get('init', args.init_log_std)
+        print(f"Log std curriculum: init={log_std_current}, final={log_std_config['final']}, "
+              f"iterations={log_std_config['start_iteration']}-{log_std_config['end_iteration']}")
+
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
@@ -739,6 +748,24 @@ if __name__ == "__main__":
             lrnow = args.lr_final + frac * (args.learning_rate - args.lr_final)
             optimizer.param_groups[0]["lr"] = lrnow
 
+        # Log std curriculum annealing
+        if log_std_config is not None:
+            start_iter = log_std_config['start_iteration']
+            end_iter = log_std_config['end_iteration']
+            init_val = log_std_config['init']
+            final_val = log_std_config['final']
+            if iteration < start_iter:
+                log_std_current = init_val
+            elif iteration >= end_iter:
+                log_std_current = final_val
+            else:
+                frac = (iteration - start_iter) / (end_iter - start_iter)
+                log_std_current = init_val + frac * (final_val - init_val)
+            with torch.no_grad():
+                agent.actor_logstd[:, :18].fill_(log_std_current)
+                if agent.actor_logstd.shape[1] > 18:
+                    agent.actor_logstd[:, 18:].fill_(log_std_current - 0.5)
+
         # ===== AUTONOMOUS C++ ROLLOUT =====
         epoch_start = time.perf_counter()
 
@@ -1001,8 +1028,11 @@ if __name__ == "__main__":
                 for key, avg_value in trajectory['info'].items():
                     writer.add_scalar(f"info/{key}", avg_value, global_step)
 
-            # Log virtual force curriculum
-            writer.add_scalar("info/vf_kp", vf_kp_current, global_step)
+            # Log curricula (only when active)
+            if vf_config is not None:
+                writer.add_scalar("info/vf_kp", vf_kp_current, global_step)
+            if log_std_config is not None:
+                writer.add_scalar("info/log_std_curriculum", log_std_current, global_step)
             writer.add_scalar("charts/epoch", iteration, global_step)
 
             # Log episode statistics from C++ accumulation
