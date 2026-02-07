@@ -1,0 +1,103 @@
+digraph ContractureOptPipeline {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled"];
+    edge [fontname="Helvetica", fontsize=9];
+    compound=true;
+    newrank=true;
+
+    // Title
+    labelloc="t";
+    label="ContractureOptimizer Pipeline";
+    fontsize=14;
+    fontname="Helvetica-Bold";
+
+    // ==================== ENTRY POINTS ====================
+    node [fillcolor="#4A90D9", fontcolor=white, penwidth=2];
+    optimize     [label="optimize()\n→ ContractureOptResult"];
+    seedSearch   [label="seedSearch()\n[CLI --grid-only mode]"];
+
+    // ==================== PIPELINE STAGES ====================
+    node [fillcolor="#F5A623", fontcolor=black, penwidth=1];
+    buildPoseData      [label="buildPoseData()\nROM YAML → PoseData[]"];
+    captureBeforeState [label="Capture BEFORE state\nlm_contract, torques", shape=parallelogram, fillcolor="#E8E8E8"];
+    captureAfterState  [label="Capture AFTER state\nlm_contract, torques", shape=parallelogram, fillcolor="#E8E8E8"];
+
+    // ==================== TIERED PHASES ====================
+    node [fillcolor="#7ED321", fontcolor=black];
+    phase1 [label="PHASE 1: runSearchGroupGridSearch()\nCoarse 1D grid on search groups\n(~28 groups)"];
+    phase2 [label="PHASE 2: initOptGroupRatiosFromSearch()\nInherit search → opt group ratios"];
+
+    // ==================== OUTER ITERATION LOOP ====================
+    subgraph cluster_outer_loop {
+        label="Outer iteration loop (1..outerIterations)";
+        style=rounded;
+        bgcolor="#F0F0F0";
+
+        phase3 [label="PHASE 3: runCeresOnOptGroups()\nFine Ceres optimization\n(~118 opt groups)", fillcolor="#7ED321"];
+        computeCumulative [label="computeCumulativeGroupRatios()\nFinal ratio = after/before", fillcolor="#D0D0D0", fontcolor=black];
+    }
+
+    // ==================== SHARED INTERNALS ====================
+    node [fillcolor="#D0D0D0", fontcolor=black, fontsize=10];
+    computePassive     [label="computePassiveTorque()\nAll muscles → total torque"];
+    setPoseUpdate      [label="setPoseAndUpdateGeometry()"];
+    computeGroupTorque [label="computeGroupTorque()\nGroup muscles → DOF torque"];
+
+    // ==================== CERES COST FUNCTIONS ====================
+    node [fillcolor="#E74C3C", fontcolor=white, fontsize=10, shape=component];
+    torqueResidual [label="TorqueResidual::Evaluate()\n+ delta-based Jacobian"];
+    ratioReg       [label="RatioRegCost\nλ·(ratio − 1)"];
+    torqueReg      [label="TorqueRegCost\nλ·group_torque"];
+    lineReg        [label="LineConsistencyRegCost\nλ·(ratio − mean)"];
+
+    // ==================== LOGGING ====================
+    node [fillcolor="#95A5A6", fontcolor=white, fontsize=10, shape=note];
+    logParamFull [label="logParameterTable()\nPer-trial torque table"];
+
+    // ==================== EDGES: TIERED PIPELINE ====================
+    optimize -> buildPoseData;
+    optimize -> captureBeforeState;
+    captureBeforeState -> phase1 [label="search\ngroups"];
+    phase1 -> phase2;
+    phase2 -> phase3;
+    phase3 -> computeCumulative [label="next iteration\nor done", style=dashed, color=blue];
+    computeCumulative -> captureAfterState;
+    captureAfterState -> logParamFull [style=dashed, label="verbose"];
+
+    // ==================== EDGES: GRID SEARCH ====================
+    phase1 -> computePassive [label="evaluate\neach ratio"];
+
+    // ==================== EDGES: CERES INTERNALS ====================
+    phase3 -> torqueResidual;
+    phase3 -> ratioReg;
+    phase3 -> torqueReg;
+    phase3 -> lineReg;
+
+    // ==================== EDGES: RESIDUAL INTERNALS ====================
+    torqueResidual -> computePassive [label="base\nresidual"];
+    torqueResidual -> computeGroupTorque [label="delta\njacobian", style=bold, color="#2ECC71"];
+
+    // ==================== EDGES: HELPERS ====================
+    computePassive -> setPoseUpdate [style=dotted];
+    computeGroupTorque -> setPoseUpdate [style=dotted];
+
+    // ==================== EDGES: SEED SEARCH ====================
+    seedSearch -> buildPoseData;
+    seedSearch -> computePassive;
+
+    // ==================== LEGEND ====================
+    subgraph cluster_legend {
+        label="Legend";
+        style=dashed;
+        color="#CCCCCC";
+        fontsize=10;
+        node [shape=box, fontsize=9, width=1.5, height=0.3];
+        l1 [label="Entry point", fillcolor="#4A90D9", fontcolor=white];
+        l2 [label="Pipeline stage", fillcolor="#F5A623"];
+        l3 [label="Tiered phase", fillcolor="#7ED321"];
+        l4 [label="Ceres cost", fillcolor="#E74C3C", fontcolor=white, shape=component];
+        l5 [label="Shared helper", fillcolor="#D0D0D0"];
+        l1 -> l2 -> l3 -> l4 -> l5 [style=invis];
+    }
+}

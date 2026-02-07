@@ -230,11 +230,8 @@ private:
     };
     std::vector<MuscleGroupResult> mGroupResults;
 
-    // Comprehensive optimization results (for visualization tab)
+    // Optimization results (for visualization tab)
     std::optional<PMuscle::ContractureOptResult> mContractureOptResult;
-
-    // Tiered optimization results (dual-tier: search groups + optimization groups)
-    std::optional<PMuscle::TieredContractureOptResult> mTieredContractureResult;
 
     // Store configs used for contracture estimation (for export metadata)
     std::vector<PMuscle::ContractureTrialInput> mContractureUsedTrials;

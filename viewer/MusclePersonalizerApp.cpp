@@ -2699,79 +2699,37 @@ void MusclePersonalizerApp::runContractureEstimation()
         glfwPostEmptyEvent();  // Wake up main thread to update display
     };
 
-    LOG_INFO("[MusclePersonalizer] Running optimization with results capture..." );
+    LOG_INFO("[MusclePersonalizer] Running optimization..." );
 
-    // Use tiered optimization if available (dual-tier: search groups + optimization groups)
-    if (optimizer.hasTieredGroups()) {
-        LOG_INFO("[MusclePersonalizer] Using tiered optimization (search + optimization groups)" );
-        mTieredContractureResult = optimizer.optimizeWithTieredResults(mExecutor->getCharacter(), configs, optConfig);
+    mContractureOptResult = optimizer.optimize(mExecutor->getCharacter(), configs, optConfig);
 
-        if (!mTieredContractureResult.has_value() || mTieredContractureResult->opt_group_results.empty()) {
-            LOG_WARN("[MusclePersonalizer] Tiered optimization returned no results" );
-            mTieredContractureResult = std::nullopt;
-            return;
-        }
-
-        // Convert to local result type for backwards compatibility
-        mGroupResults.clear();
-        for (const auto& optResult : mTieredContractureResult->opt_group_results) {
-            MuscleGroupResult result;
-            result.group_name = optResult.group_name;
-            result.muscle_names = optResult.muscle_names;
-            result.ratio = optResult.ratio;
-            result.lm_contract_values = optResult.lm_contract_values;
-            mGroupResults.push_back(result);
-        }
-
-        // Reset selection indices for visualization tab
-        mContractureSelectedGroupIdx = mTieredContractureResult->opt_group_results.empty() ? -1 : 0;
-        mContractureSelectedTrialIdx = mTieredContractureResult->trial_results.empty() ? -1 : 0;
-        mGridSearchSelectedGroup = mTieredContractureResult->search_group_results.empty() ? -1 : 0;
-        mContractureSubTab = 0;  // Start with Grid Search tab
-
-        // Also set mContractureOptResult for legacy code compatibility
-        mContractureOptResult = PMuscle::ContractureOptResult();
-        mContractureOptResult->group_results = mTieredContractureResult->opt_group_results;
-        mContractureOptResult->muscle_results = mTieredContractureResult->muscle_results;
-        mContractureOptResult->trial_results = mTieredContractureResult->trial_results;
-
-        LOG_INFO("[MusclePersonalizer] Tiered optimization complete: "
-                  << mTieredContractureResult->search_group_results.size() << " search groups, "
-                  << mTieredContractureResult->opt_group_results.size() << " opt groups, "
-                  << mTieredContractureResult->muscle_results.size() << " muscles" );
-    } else {
-        // Fall back to standard optimization
-        LOG_INFO("[MusclePersonalizer] Using standard optimization (no tiered groups)" );
-        mTieredContractureResult = std::nullopt;
-
-        mContractureOptResult = optimizer.optimizeWithResults(mExecutor->getCharacter(), configs, optConfig);
-
-        if (!mContractureOptResult.has_value() || mContractureOptResult->group_results.empty()) {
-            LOG_WARN("[MusclePersonalizer] Optimization returned no results" );
-            mContractureOptResult = std::nullopt;
-            return;
-        }
-
-        // Convert to local result type for backwards compatibility
-        mGroupResults.clear();
-        for (const auto& optResult : mContractureOptResult->group_results) {
-            MuscleGroupResult result;
-            result.group_name = optResult.group_name;
-            result.muscle_names = optResult.muscle_names;
-            result.ratio = optResult.ratio;
-            result.lm_contract_values = optResult.lm_contract_values;
-            mGroupResults.push_back(result);
-        }
-
-        // Reset selection indices for visualization tab
-        mContractureSelectedGroupIdx = mContractureOptResult->group_results.empty() ? -1 : 0;
-        mContractureSelectedTrialIdx = mContractureOptResult->trial_results.empty() ? -1 : 0;
-
-        LOG_INFO("[MusclePersonalizer] Standard optimization complete: "
-                  << mGroupResults.size() << " groups, "
-                  << mContractureOptResult->muscle_results.size() << " muscles, "
-                  << mContractureOptResult->trial_results.size() << " trials" );
+    if (!mContractureOptResult.has_value() || mContractureOptResult->group_results.empty()) {
+        LOG_WARN("[MusclePersonalizer] Optimization returned no results" );
+        mContractureOptResult = std::nullopt;
+        return;
     }
+
+    // Convert to local result type for backwards compatibility
+    mGroupResults.clear();
+    for (const auto& optResult : mContractureOptResult->group_results) {
+        MuscleGroupResult result;
+        result.group_name = optResult.group_name;
+        result.muscle_names = optResult.muscle_names;
+        result.ratio = optResult.ratio;
+        result.lm_contract_values = optResult.lm_contract_values;
+        mGroupResults.push_back(result);
+    }
+
+    // Reset selection indices for visualization tab
+    mContractureSelectedGroupIdx = mContractureOptResult->group_results.empty() ? -1 : 0;
+    mContractureSelectedTrialIdx = mContractureOptResult->trial_results.empty() ? -1 : 0;
+    mGridSearchSelectedGroup = mContractureOptResult->search_group_results.empty() ? -1 : 0;
+    mContractureSubTab = 0;
+
+    LOG_INFO("[MusclePersonalizer] Optimization complete: "
+              << mContractureOptResult->search_group_results.size() << " search groups, "
+              << mContractureOptResult->group_results.size() << " opt groups, "
+              << mContractureOptResult->muscle_results.size() << " muscles" );
 }
 
 void MusclePersonalizerApp::runContractureEstimationAsync()
@@ -3255,8 +3213,8 @@ void MusclePersonalizerApp::drawContractureResultsTab()
         return;
     }
 
-    // Check if we have tiered results (dual-tier: search groups + optimization groups)
-    bool hasTiered = mTieredContractureResult.has_value() && mTieredContractureResult->used_tiered;
+    // Check if we have search group results (search groups + optimization groups)
+    bool hasTiered = mContractureOptResult.has_value() && !mContractureOptResult->search_group_results.empty();
 
     if (hasTiered) {
         // Show sub-tabs for tiered results
@@ -3282,9 +3240,9 @@ void MusclePersonalizerApp::drawContractureResultsTab()
 
 void MusclePersonalizerApp::drawGridSearchSubTab()
 {
-    if (!mTieredContractureResult.has_value()) return;
+    if (!mContractureOptResult.has_value()) return;
 
-    const auto& result = mTieredContractureResult.value();
+    const auto& result = mContractureOptResult.value();
 
     // ===== Search Group Selector =====
     ImGui::Text("Search Groups (%zu)", result.search_group_results.size());
@@ -3378,22 +3336,22 @@ void MusclePersonalizerApp::drawGridSearchSubTab()
 
 void MusclePersonalizerApp::drawOptimizationSubTab()
 {
-    if (!mTieredContractureResult.has_value()) return;
+    if (!mContractureOptResult.has_value()) return;
 
-    const auto& result = mTieredContractureResult.value();
+    const auto& result = mContractureOptResult.value();
 
-    // This is similar to the legacy view but shows opt_group_results
+    // This is similar to the legacy view but shows group_results
     // ===== Selectors Section =====
     if (ImGui::TreeNodeEx("Optimization Groups", ImGuiTreeNodeFlags_DefaultOpen)) {
         // Count entries outside grid search boundary
         int outsideBoundaryCount = 0;
-        for (const auto& grp : result.opt_group_results) {
+        for (const auto& grp : result.group_results) {
             if (grp.ratio < mContractureGridBegin || grp.ratio > mContractureGridEnd) {
                 outsideBoundaryCount++;
             }
         }
 
-        ImGui::Text("Opt Groups (%zu)", result.opt_group_results.size());
+        ImGui::Text("Opt Groups (%zu)", result.group_results.size());
         if (outsideBoundaryCount > 0) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[%d outside grid %.2f~%.2f]",
@@ -3403,18 +3361,18 @@ void MusclePersonalizerApp::drawOptimizationSubTab()
             mContractureGroupFilter, sizeof(mContractureGroupFilter));
 
         // Create sorted indices by |ratio - 1| descending
-        std::vector<size_t> sortedIndices(result.opt_group_results.size());
+        std::vector<size_t> sortedIndices(result.group_results.size());
         std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
         std::sort(sortedIndices.begin(), sortedIndices.end(),
             [&result](size_t a, size_t b) {
-                double devA = std::abs(result.opt_group_results[a].ratio - 1.0);
-                double devB = std::abs(result.opt_group_results[b].ratio - 1.0);
+                double devA = std::abs(result.group_results[a].ratio - 1.0);
+                double devB = std::abs(result.group_results[b].ratio - 1.0);
                 return devA > devB;
             });
 
         if (ImGui::BeginListBox("##OptGroupList", ImVec2(-FLT_MIN, 100))) {
             for (size_t idx : sortedIndices) {
-                const auto& grp = result.opt_group_results[idx];
+                const auto& grp = result.group_results[idx];
                 if (strlen(mContractureGroupFilter) > 0 &&
                     grp.group_name.find(mContractureGroupFilter) == std::string::npos)
                     continue;
@@ -3443,7 +3401,7 @@ void MusclePersonalizerApp::drawOptimizationSubTab()
     ImGui::Separator();
 
     // Use the legacy view for the rest (charts, etc.) - it uses mContractureOptResult
-    // which was populated to match opt_group_results
+    // which was populated to match group_results
     drawLegacyContractureView();
 }
 

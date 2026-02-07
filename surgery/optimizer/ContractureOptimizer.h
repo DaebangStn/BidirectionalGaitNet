@@ -151,9 +151,9 @@ struct GridSearch1DResult {
 /**
  * @brief Simple grid search result for a single muscle group
  *
- * Used by simpleGridSearch() for standalone CLI-based optimization.
+ * Used by search() for standalone CLI-based optimization.
  */
-struct SimpleSearchResult {
+struct SeedSearchResult {
     std::string group_name;
     double best_ratio = 1.0;
     double best_error = 0.0;
@@ -180,34 +180,19 @@ struct SearchGroupResult {
 };
 
 /**
- * @brief Comprehensive contracture optimization result
+ * @brief Contracture optimization result
+ *
+ * Contains search group (coarse grid search) and optimization group (Ceres) results.
  */
 struct ContractureOptResult {
-    std::vector<MuscleGroupResult> group_results;
+    std::vector<SearchGroupResult> search_group_results;   // Grid search (coarse)
+    std::vector<MuscleGroupResult> group_results;          // Ceres optimization (fine)
     std::vector<MuscleContractureResult> muscle_results;
     std::vector<TrialTorqueResult> trial_results;
     std::vector<GridSearch1DResult> grid_search_1d_results;  // 1D grid search results
     int iterations = 0;
     double final_cost = 0.0;
     bool converged = false;
-};
-
-/**
- * @brief Extended result with dual-tier grouping information
- *
- * Contains both search group (coarse) and optimization group (fine) results.
- * Search groups are used for grid search initialization; optimization groups
- * are used for Ceres optimization with finer control.
- */
-struct TieredContractureOptResult {
-    std::vector<SearchGroupResult> search_group_results;   // Grid search (coarse)
-    std::vector<MuscleGroupResult> opt_group_results;      // Ceres optimization (fine)
-    std::vector<MuscleContractureResult> muscle_results;
-    std::vector<TrialTorqueResult> trial_results;
-    int iterations = 0;
-    double final_cost = 0.0;
-    bool converged = false;
-    bool used_tiered = false;  // True if tiered grouping was actually used
 };
 
 /**
@@ -360,53 +345,18 @@ public:
     // ========== Optimization ==========
 
     /**
-     * @brief Run contracture optimization using stored muscle groups
-     *
-     * Must call loadMuscleGroups() or detectMuscleGroups() first.
-     *
-     * @param character Character with muscles to optimize
-     * @param rom_configs ROM trial configurations
-     * @param config Optimization configuration
-     * @return Vector of results per muscle group
-     */
-    std::vector<MuscleGroupResult> optimize(
-        Character* character,
-        const std::vector<ROMTrialConfig>& rom_configs,
-        const Config& config = Config()
-    );
-
-    /**
-     * @brief Run contracture optimization with comprehensive before/after results
-     *
-     * Captures lm_contract and passive torque values before and after optimization
-     * for visualization and analysis.
-     *
-     * @param character Character with muscles to optimize
-     * @param rom_configs ROM trial configurations
-     * @param config Optimization configuration
-     * @return Comprehensive result with before/after comparison
-     */
-    ContractureOptResult optimizeWithResults(
-        Character* character,
-        const std::vector<ROMTrialConfig>& rom_configs,
-        const Config& config = Config()
-    );
-
-    /**
-     * @brief Run contracture optimization with dual-tier grouping
+     * @brief Run contracture optimization (grid search → Ceres)
      *
      * Uses search groups for grid search initialization, then optimization groups
-     * for Ceres fine-tuning. Each optimization group inherits its parent search
-     * group's best ratio as initial value.
-     *
-     * Falls back to single-tier optimization if tiered grouping is not configured.
+     * for Ceres fine-tuning. Falls back to flat optimization if tiered grouping
+     * is not configured.
      *
      * @param character Character with muscles to optimize
      * @param rom_configs ROM trial configurations
      * @param config Optimization configuration
-     * @return Extended result with search and optimization group information
+     * @return Optimization result with group ratios and torque comparisons
      */
-    TieredContractureOptResult optimizeWithTieredResults(
+    ContractureOptResult optimize(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
         const Config& config = Config()
@@ -423,24 +373,13 @@ public:
      * @param rom_configs All ROM trials to evaluate
      * @param group_names List of muscle group names to search (from optimization_groups)
      * @param config Search configuration (gridSearchBegin/End/Interval)
-     * @return Vector of SimpleSearchResult (one per group)
+     * @return Vector of SeedSearchResult (one per group)
      */
-    std::vector<SimpleSearchResult> simpleGridSearch(
+    std::vector<SeedSearchResult> seedSearch(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
         const std::vector<std::string>& group_names,
         const Config& config = Config()
-    );
-
-    /**
-     * @brief Apply optimized ratios to character muscles
-     *
-     * @param character Character to modify
-     * @param results Optimization results from optimize()
-     */
-    static void applyResults(
-        Character* character,
-        const std::vector<MuscleGroupResult>& results
     );
 
     /**
@@ -536,14 +475,14 @@ private:
     void setPoseAndUpdateGeometry(Character* character, const Eigen::VectorXd& q) const;
 
     // Compute group passive torque at a specific trial's joint
-    double computeGroupTorqueAtTrial(
+    double computeGroupTorqueSettingPose(
         Character* character,
         const std::vector<PoseData>& pose_data,
         int group_id,
         size_t trial_idx) const;
 
     // Compute group passive torque assuming pose is already set and geometry updated
-    double computeGroupTorqueAtCurrentPose(
+    double computeGroupTorque(
         Character* character,
         const PoseData& pose,
         int group_id) const;
@@ -562,28 +501,8 @@ private:
         const std::vector<Muscle*>& muscles,
         bool verbose) const;
 
-    // Run grid search initialization using centralized mapping
-    void runGridSearchInitialization(
-        Character* character,
-        const std::vector<ROMTrialConfig>& rom_configs,
-        const std::vector<PoseData>& pose_data,
-        const std::map<int, double>& base_lm_contract,
-        const Config& config,
-        const std::vector<GridSearchMapping>& mapping,
-        std::vector<double>& x);
-
-    // Run joint multi-group grid search for related trials
-    // Returns map of group_id -> best_ratio
-    std::map<int, double> runJointGridSearch(
-        Character* character,
-        const std::vector<size_t>& trial_indices,
-        const std::vector<int>& group_ids,
-        const std::vector<PoseData>& pose_data,
-        const std::map<int, double>& base_lm_contract,
-        const Config& config);
-
     // Capture per-muscle torque and force contributions at a pose
-    void captureMuscleTorqueContributions(
+    void captureMuscleTorques(
         Character* character,
         const PoseData& pose,
         const std::set<int>& muscle_indices,
@@ -600,7 +519,7 @@ private:
 
     // Run grid search on search groups (coarse level)
     // Returns vector of SearchGroupResult with error curves per search group
-    std::vector<SearchGroupResult> runSearchGroupGridSearch(
+    std::vector<SearchGroupResult> runGridSearchOnSearchGroups(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
         const std::vector<PoseData>& pose_data,
@@ -609,12 +528,12 @@ private:
 
     // Initialize optimization group ratios from search group results
     // Each opt group inherits its parent search group's best ratio
-    std::vector<double> initOptGroupRatiosFromSearch(
+    std::vector<double> initOptRatiosFromSearch(
         const std::vector<SearchGroupResult>& search_results);
 
     // Run Ceres optimization on optimization groups (fine level)
     // Returns vector of MuscleGroupResult per opt group
-    std::vector<MuscleGroupResult> runOptGroupCeresOptimization(
+    std::vector<MuscleGroupResult> runCeresOnOptGroups(
         Character* character,
         const std::vector<ROMTrialConfig>& rom_configs,
         const std::vector<PoseData>& pose_data,
@@ -625,56 +544,12 @@ private:
     // Find search group ID by name
     int findSearchGroupIdByName(const std::string& name) const;
 
-    // ========== Pre-Optimization Helpers ==========
-
-    /**
-     * @brief Data computed once before outer iterations
-     *
-     * Contains pose data, group mappings, grid search results, and BEFORE state
-     * that can be reused across multiple optimization iterations.
-     */
-    struct PreOptimizationData {
-        // Pose and mapping data (constant across iterations)
-        std::vector<PoseData> pose_data;
-        std::map<int, size_t> group_to_trial;  // group_id -> trial index
-
-        // Grid search results
-        std::vector<double> initial_x;          // Initial ratios from grid search
-
-        // BEFORE state capture
-        std::map<int, double> lm_contract_before;  // Per-muscle lm_contract before any optimization
-        std::set<int> all_muscle_indices;          // All muscle indices in any group
-
-        // BEFORE passive torques per trial
-        std::vector<TrialTorqueResult> trial_results_before;
-    };
-
-    // Build group-to-trial mapping from ROM configs
-    std::map<int, size_t> buildGroupToTrialMapping(
-        const std::vector<ROMTrialConfig>& rom_configs,
-        const std::vector<PoseData>& pose_data) const;
-
     // Build fiber groups: maps base muscle name -> list of opt group indices
     // Groups fibers like vastus_intermedius0_r, vastus_intermedius1_r by base name
     std::map<std::string, std::vector<int>> buildFiberGroups() const;
 
     // Log initial parameters in R/L table format
     void logInitialParameterTable(const std::vector<double>& x) const;
-
-    // Pre-compute data that's constant across outer iterations
-    PreOptimizationData preOptimization(
-        Character* character,
-        const std::vector<ROMTrialConfig>& rom_configs,
-        const Config& config);
-
-    // Optimization using pre-computed data (avoids redundant work)
-    // outer_iteration: 0 = use grid search initial_x, >0 = start at 1.0
-    std::vector<MuscleGroupResult> optimizeWithPrecomputed(
-        Character* character,
-        const std::vector<ROMTrialConfig>& rom_configs,
-        const Config& config,
-        const PreOptimizationData& preOpt,
-        int outer_iteration = 0);
 
     // Member variables
     std::map<int, std::vector<int>> mMuscleGroups;  // group_id -> muscle indices

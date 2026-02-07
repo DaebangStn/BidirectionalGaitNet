@@ -580,21 +580,21 @@ int main(int argc, char** argv)
         optConfig.verbose = verbose;
         optConfig.outerIterations = 1;
 
-        // Run tiered optimization (includes torque summary table output)
-        std::cout << "\n[Contracture CLI] Running tiered optimization..." << std::endl;
-        auto tieredResult = optimizer.optimizeWithTieredResults(character, trials, optConfig);
+        // Run optimization (includes torque summary table output)
+        std::cout << "\n[Contracture CLI] Running optimization..." << std::endl;
+        auto optResult = optimizer.optimize(character, trials, optConfig);
 
         // Print summary
         std::cout << "\n========== CONTRACTURE OPTIMIZATION SUMMARY ==========" << std::endl;
         std::cout << std::fixed << std::setprecision(4);
-        std::cout << "Converged: " << (tieredResult.converged ? "yes" : "no")
-                  << " | Iterations: " << tieredResult.iterations
-                  << " | Final cost: " << tieredResult.final_cost << std::endl;
+        std::cout << "Converged: " << (optResult.converged ? "yes" : "no")
+                  << " | Iterations: " << optResult.iterations
+                  << " | Final cost: " << optResult.final_cost << std::endl;
 
         // Print search group results (grid search phase)
-        if (!tieredResult.search_group_results.empty()) {
+        if (!optResult.search_group_results.empty()) {
             std::cout << "\n--- Search Groups (Grid Search) ---" << std::endl;
-            for (const auto& sg : tieredResult.search_group_results) {
+            for (const auto& sg : optResult.search_group_results) {
                 std::cout << "  " << std::setw(25) << std::left << sg.search_group_name
                           << " ratio=" << std::setw(6) << sg.ratio
                           << " error=" << sg.best_error << std::endl;
@@ -603,14 +603,14 @@ int main(int argc, char** argv)
 
         // Print optimization group results (Ceres phase)
         std::cout << "\n--- Optimization Groups (Ceres) ---" << std::endl;
-        for (const auto& gr : tieredResult.opt_group_results) {
+        for (const auto& gr : optResult.group_results) {
             std::cout << "  " << std::setw(25) << std::left << gr.group_name
                       << " ratio=" << gr.ratio << std::endl;
         }
 
         // Print trial results
         std::cout << "\n--- Trial Results ---" << std::endl;
-        for (const auto& tr : tieredResult.trial_results) {
+        for (const auto& tr : optResult.trial_results) {
             double error = tr.computed_torque_after - tr.observed_torque;
             std::cout << "  " << std::setw(20) << std::left << tr.trial_name
                       << " target=" << std::setw(8) << tr.observed_torque
