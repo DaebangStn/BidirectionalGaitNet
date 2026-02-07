@@ -8,6 +8,7 @@
 #include <implot.h>
 #include <tinycolormap.hpp>
 #include <ctime>
+#include <regex>
 
 namespace fs = std::filesystem;
 
@@ -207,6 +208,7 @@ void MusclePersonalizerApp::loadRenderConfigImpl()
             mContractureMaxRatio = ce["max_ratio"].as<float>(1.2f);
             mContractureLambdaRatioReg = ce["lambda_ratio_reg"].as<float>(0.1f);
             mContractureLambdaTorqueReg = ce["lambda_torque_reg"].as<float>(0.01f);
+            mContractureLambdaLineReg = ce["lambda_line_reg"].as<float>(0.1f);
             mContractureOuterIterations = ce["outer_iterations"].as<int>(3);
 
             if (ce["grid_search"]) {
@@ -1375,45 +1377,99 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGui::EndChild();
 
         ImGui::Separator();
-        ImGui::Text("Optimization Parameters:");
-        ImGui::SetNextItemWidth(100);
-        ImGui::InputInt("Max Iterations##Contract", &mContractureMaxIterations);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        ImGui::InputFloat("Min Ratio", &mContractureMinRatio, 0.0f, 0.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        ImGui::InputFloat("Max Ratio", &mContractureMaxRatio, 0.0f, 0.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::Checkbox("Verbose##Contracture", &mContractureVerbose);
+        if (ImGui::TreeNodeEx("Parameters##Contracture", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Two-column layout for numeric parameters
+            if (ImGui::BeginTable("##contracture_params", 2, ImGuiTableFlags_None)) {
+                ImGui::TableSetupColumn("##col1", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("##col2", ImGuiTableColumnFlags_WidthStretch);
 
-        ImGui::Text("Grid Search Range:");
-        ImGui::SetNextItemWidth(60);
-        ImGui::InputFloat("Begin##Grid", &mContractureGridBegin, 0.0f, 0.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        ImGui::InputFloat("End##Grid", &mContractureGridEnd, 0.0f, 0.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        ImGui::InputFloat("Step##Grid", &mContractureGridInterval, 0.0f, 0.0f, "%.2f");
+                // Row 1: Max Iterations | Outer Iters
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Max Iterations");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputInt("##contract_max_iter", &mContractureMaxIterations);
 
-        ImGui::Text("Regularization:");
-        ImGui::SetNextItemWidth(80);
-        ImGui::InputFloat("Ratio##Reg", &mContractureLambdaRatioReg, 0.0f, 0.0f, "%.3f");
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Penalize (ratio - 1.0)^2\n0 = disabled");
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        ImGui::InputFloat("Torque##Reg", &mContractureLambdaTorqueReg, 0.0f, 0.0f, "%.3f");
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Penalize passive torque magnitude\n0 = disabled");
-        }
+                ImGui::TableNextColumn();
+                ImGui::Text("Outer Iters");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::SliderInt("##contract_outer_iter", &mContractureOuterIterations, 1, 10);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Outer iterations for biarticular convergence\n1 = single pass");
+                }
 
-        ImGui::SetNextItemWidth(120);
-        ImGui::SliderInt("Outer Iters", &mContractureOuterIterations, 1, 10);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Outer iterations for biarticular convergence\n1 = single pass");
+                // Row 2: Min Ratio | Max Ratio
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Min Ratio");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_min_ratio", &mContractureMinRatio, 0.0f, 0.0f, "%.2f");
+
+                ImGui::TableNextColumn();
+                ImGui::Text("Max Ratio");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_max_ratio", &mContractureMaxRatio, 0.0f, 0.0f, "%.2f");
+
+                // Row 3: Grid Begin | Grid End
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Grid Begin");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_grid_begin", &mContractureGridBegin, 0.0f, 0.0f, "%.2f");
+
+                ImGui::TableNextColumn();
+                ImGui::Text("Grid End");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_grid_end", &mContractureGridEnd, 0.0f, 0.0f, "%.2f");
+
+                // Row 4: Grid Step | Ratio Reg
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Grid Step");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_grid_step", &mContractureGridInterval, 0.0f, 0.0f, "%.2f");
+
+                ImGui::TableNextColumn();
+                ImGui::Text("Ratio Reg");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_ratio_reg", &mContractureLambdaRatioReg, 0.0f, 0.0f, "%.3f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Penalize (ratio - 1.0)^2\n0 = disabled");
+                }
+
+                // Row 5: Torque Reg | (empty)
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Torque Reg");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_torque_reg", &mContractureLambdaTorqueReg, 0.0f, 0.0f, "%.3f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Penalize passive torque magnitude\n0 = disabled");
+                }
+
+                // Row 6: Line Reg
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Line Reg");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputFloat("##contract_line_reg", &mContractureLambdaLineReg, 0.0f, 0.0f, "%.3f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Penalize ratio variance among fibers\nof same muscle. 0 = disabled");
+                }
+
+                ImGui::EndTable();
+            }
+
+            // Checkboxes
+            if (ImGui::BeginTable("##contracture_checkboxes", 2, ImGuiTableFlags_None)) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Verbose##Contracture", &mContractureVerbose);
+
+                ImGui::EndTable();
+            }
+
+            ImGui::TreePop();
         }
 
     ImGui::Separator();
@@ -2633,6 +2689,7 @@ void MusclePersonalizerApp::runContractureEstimation()
     optConfig.gridSearchInterval = mContractureGridInterval;
     optConfig.lambdaRatioReg = mContractureLambdaRatioReg;
     optConfig.lambdaTorqueReg = mContractureLambdaTorqueReg;
+    optConfig.lambdaLineReg = mContractureLambdaLineReg;
     optConfig.outerIterations = mContractureOuterIterations;
 
     // Progress callback for Ceres iterations (thread-safe via atomics)
@@ -3006,8 +3063,8 @@ void MusclePersonalizerApp::onPIDChanged(const std::string& pid)
     scanSkeletonFiles();
 
     // Auto-select patient muscle (first available file)
-    // mMuscleDataSource = CharacterDataSource::PatientData;
-    // scanMuscleFiles();
+    mMuscleDataSource = CharacterDataSource::PatientData;
+    scanMuscleFiles();
 
     // Select skeleton file: prefer trimmed_unified.yaml, otherwise first available
     if (!mSkeletonCandidates.empty()) {
@@ -3486,6 +3543,14 @@ void MusclePersonalizerApp::drawLegacyContractureView()
     ImGui::Checkbox("Force", &mShowForceChart);
     ImGui::SameLine();
     ImGui::Checkbox("Group Torque", &mShowGroupTorqueChart);
+    ImGui::SameLine();
+    ImGui::Checkbox("Line Consist.", &mShowLineConsistencyChart);
+    if (mShowLineConsistencyChart) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputFloat("##lc_thresh", &mLineConsistencyThreshold, 0.0f, 0.0f, "%.3f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("MSE threshold (show groups above this)");
+    }
 
     // Page navigation (controls all charts) - always visible
     {
@@ -3858,6 +3923,119 @@ void MusclePersonalizerApp::drawLegacyContractureView()
             double pct_change = (sum_before != 0) ? (change / std::abs(sum_before)) * 100.0 : 0.0;
             ImGui::Text("Before: %.2f Nm | After: %.2f Nm | Change: %+.2f Nm (%.1f%%)",
                        sum_before, sum_after, change, pct_change);
+        }
+    }
+
+    ImGui::Spacing();
+
+    // ===== Chart 3.7: Fiber Ratio Consistency (MSE per base muscle) =====
+    if (mShowLineConsistencyChart && !result.group_results.empty()) {
+        // Group fibers by base muscle using regex
+        std::regex fiber_re("^(.+?)(\\d+)_(l|r)$");
+        struct BaseGroupStats {
+            std::string name;
+            int n_fibers;
+            double mean;
+            double mse;  // mean squared error w.r.t. mean
+        };
+        std::map<std::string, std::vector<double>> raw_groups;
+
+        for (const auto& grp : result.group_results) {
+            std::smatch match;
+            if (std::regex_match(grp.group_name, match, fiber_re)) {
+                std::string key = match[1].str() + "_" + match[3].str();
+                raw_groups[key].push_back(grp.ratio);
+            }
+        }
+
+        // Compute stats, keep only groups with >= 2 fibers
+        std::vector<BaseGroupStats> stats;
+        for (const auto& [name, ratios] : raw_groups) {
+            if (ratios.size() < 2) continue;
+            double sum = 0.0;
+            for (double r : ratios) sum += r;
+            double mean = sum / ratios.size();
+            double mse = 0.0;
+            for (double r : ratios) mse += (r - mean) * (r - mean);
+            mse /= ratios.size();
+            stats.push_back({name, static_cast<int>(ratios.size()), mean, mse});
+        }
+
+        // Sort by MSE descending (worst consistency first)
+        std::sort(stats.begin(), stats.end(),
+            [](const BaseGroupStats& a, const BaseGroupStats& b) { return a.mse > b.mse; });
+
+        // Filter by threshold
+        float thresh = mLineConsistencyThreshold;
+        stats.erase(std::remove_if(stats.begin(), stats.end(),
+            [thresh](const BaseGroupStats& s) { return s.mse < thresh; }), stats.end());
+
+        if (!stats.empty()) {
+            int total = static_cast<int>(stats.size());
+            int maxPages = (total + mPlotBarsPerChart - 1) / mPlotBarsPerChart;
+            mLineConsistencyChartPage = std::max(0, std::min(mLineConsistencyChartPage, maxPages - 1));
+            int startIdx = mLineConsistencyChartPage * mPlotBarsPerChart;
+            int endIdx = std::min(startIdx + mPlotBarsPerChart, total);
+            int n = endIdx - startIdx;
+
+            // Compute mean MSE across filtered groups
+            double mean_mse = 0.0;
+            for (const auto& s : stats) mean_mse += s.mse;
+            mean_mse /= total;
+
+            // Title + page nav
+            ImGui::Text("Fiber Ratio Consistency (%d groups, mean MSE: %.4f)", total, mean_mse);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(mLineConsistencyChartPage == 0);
+            if (ImGui::ArrowButton("##lc_prev", ImGuiDir_Left)) mLineConsistencyChartPage--;
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::Text("%d/%d", mLineConsistencyChartPage + 1, maxPages);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(mLineConsistencyChartPage >= maxPages - 1);
+            if (ImGui::ArrowButton("##lc_next", ImGuiDir_Right)) mLineConsistencyChartPage++;
+            ImGui::EndDisabled();
+
+            if (n > 0) {
+                std::vector<const char*> tick_labels;
+                std::vector<double> page_mse;
+                for (int i = startIdx; i < endIdx; ++i) {
+                    tick_labels.push_back(stats[i].name.c_str());
+                    page_mse.push_back(stats[i].mse);
+                }
+
+                // Y range
+                double y_max = *std::max_element(page_mse.begin(), page_mse.end());
+                double y_margin = y_max * 0.25;
+                if (y_margin < 1e-6) y_margin = 1e-4;
+
+                if (ImPlot::BeginPlot("##line_consist_chart", ImVec2(-1, 200),
+                    mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
+                    ImPlot::SetupAxes("Base Muscle", "MSE");
+                    ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, n - 0.5, ImPlotCond_Always);
+                    ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, y_max + y_margin, ImPlotCond_Always);
+                    ImPlot::SetupAxisTicks(ImAxis_X1, 0, n - 1, n, tick_labels.data());
+
+                    std::vector<double> x_pos(n);
+                    for (int i = 0; i < n; ++i) x_pos[i] = i;
+
+                    ImPlot::SetNextFillStyle(ImVec4(0.9f, 0.4f, 0.3f, 0.8f));
+                    ImPlot::PlotBars("MSE", x_pos.data(), page_mse.data(), n, 0.6);
+
+                    // Value labels: show MSE and (N fibers, mean)
+                    for (int i = 0; i < n; ++i) {
+                        int si = startIdx + i;
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%.4f", page_mse[i]);
+                        ImPlot::PlotText(buf, x_pos[i], page_mse[i], ImVec2(0, -5));
+                        char buf2[32];
+                        snprintf(buf2, sizeof(buf2), "n=%d avg=%.3f", stats[si].n_fibers, stats[si].mean);
+                        ImPlot::PlotText(buf2, x_pos[i], 0.0, ImVec2(0, 10));
+                    }
+
+                    ImPlot::EndPlot();
+                }
+            }
         }
     }
 

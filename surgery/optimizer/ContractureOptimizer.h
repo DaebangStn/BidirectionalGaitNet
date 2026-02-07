@@ -237,6 +237,7 @@ public:
         // Regularization
         double lambdaRatioReg = 0.0;   // Penalize (ratio - 1.0)^2 for each group
         double lambdaTorqueReg = 0.0;  // Penalize passive torque magnitude per group/trial
+        double lambdaLineReg = 0.0;    // Penalize ratio variance among fibers of same muscle
 
         // Outer iterations for biarticular convergence
         int outerIterations = 1;       // Number of outer iterations (1 = single pass)
@@ -246,7 +247,7 @@ public:
 
         Config() : maxIterations(100), minRatio(0.7), maxRatio(1.3),
                    verbose(false), lambdaRatioReg(0.0), lambdaTorqueReg(0.0),
-                   outerIterations(1) {}
+                   lambdaLineReg(0.0), outerIterations(1) {}
     };
 
     /**
@@ -646,6 +647,10 @@ private:
     std::map<int, size_t> buildGroupToTrialMapping(
         const std::vector<ROMTrialConfig>& rom_configs,
         const std::vector<PoseData>& pose_data) const;
+
+    // Build fiber groups: maps base muscle name -> list of opt group indices
+    // Groups fibers like vastus_intermedius0_r, vastus_intermedius1_r by base name
+    std::map<std::string, std::vector<int>> buildFiberGroups() const;
 
     // Log initial parameters in R/L table format
     void logInitialParameterTable(const std::vector<double>& x) const;

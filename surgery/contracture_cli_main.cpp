@@ -21,6 +21,8 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <regex>
+#include <cmath>
 
 namespace po = boost::program_options;
 using namespace PMuscle;
@@ -109,18 +111,104 @@ void printResults(
               << results[0].best_error << "\n\n";
 }
 
+void printCeresResults(const ContractureOptResult& result, bool verbose)
+{
+    std::cout << "\n========== CERES OPTIMIZATION RESULTS ==========\n";
+    std::cout << "Converged: " << (result.converged ? "yes" : "no")
+              << " | Iterations: " << result.iterations
+              << " | Final cost: " << std::fixed << std::setprecision(6) << result.final_cost << "\n\n";
+
+    // Group results table
+    size_t name_width = 30;
+    for (const auto& grp : result.group_results) {
+        name_width = std::max(name_width, grp.group_name.size() + 2);
+    }
+
+    std::cout << std::left << std::setw(name_width) << "Group"
+              << std::setw(10) << "Ratio" << "\n";
+    std::cout << std::string(name_width + 10, '-') << "\n";
+
+    for (const auto& grp : result.group_results) {
+        std::cout << std::left << std::setw(name_width) << grp.group_name
+                  << std::fixed << std::setprecision(4) << std::setw(10) << grp.ratio << "\n";
+    }
+
+    // Fiber consistency summary
+    std::regex fiber_re("^(.+?)(\\d+)_(l|r)$");
+    std::map<std::string, std::vector<double>> fiber_groups;
+    for (const auto& grp : result.group_results) {
+        std::smatch match;
+        if (std::regex_match(grp.group_name, match, fiber_re)) {
+            std::string key = match[1].str() + "_" + match[3].str();
+            fiber_groups[key].push_back(grp.ratio);
+        }
+    }
+
+    // Remove single-fiber groups
+    for (auto it = fiber_groups.begin(); it != fiber_groups.end(); ) {
+        if (it->second.size() < 2)
+            it = fiber_groups.erase(it);
+        else
+            ++it;
+    }
+
+    if (!fiber_groups.empty()) {
+        std::cout << "\n--- Fiber Consistency ---\n";
+        std::cout << std::left << std::setw(30) << "Base Muscle"
+                  << std::setw(8) << "N"
+                  << std::setw(10) << "Mean"
+                  << std::setw(10) << "Std" << "\n";
+        std::cout << std::string(58, '-') << "\n";
+
+        for (const auto& [base_name, ratios] : fiber_groups) {
+            double sum = 0.0;
+            for (double r : ratios) sum += r;
+            double mean = sum / ratios.size();
+            double var = 0.0;
+            for (double r : ratios) var += (r - mean) * (r - mean);
+            double std_dev = std::sqrt(var / ratios.size());
+
+            std::cout << std::left << std::setw(30) << base_name
+                      << std::setw(8) << ratios.size()
+                      << std::fixed << std::setprecision(4)
+                      << std::setw(10) << mean
+                      << std::setw(10) << std_dev << "\n";
+        }
+    }
+
+    // Per-trial torque summary
+    if (verbose && !result.trial_results.empty()) {
+        std::cout << "\n--- Per-Trial Torque ---\n";
+        for (const auto& trial : result.trial_results) {
+            std::cout << trial.trial_name << " (" << trial.joint << " DOF " << trial.dof_index << "): "
+                      << "obs=" << std::fixed << std::setprecision(2) << trial.observed_torque
+                      << " before=" << trial.computed_torque_before
+                      << " after=" << trial.computed_torque_after << "\n";
+        }
+    }
+
+    std::cout << std::string(50, '=') << "\n\n";
+}
+
 int main(int argc, char** argv) {
     std::string config_path;
     std::vector<std::string> rom_config_paths;
     std::vector<std::string> group_names;
     bool verbose = false;
+    bool use_ceres = false;
 
     // Grid search parameters
     double grid_begin = 0.5;
     double grid_end = 1.3;
     double grid_interval = 0.025;
 
-    po::options_description desc("Contracture Grid Search CLI");
+    // Ceres parameters
+    double lambda_line_reg = 0.1;
+    double lambda_ratio_reg = 0.1;
+    double lambda_torque_reg = 0.01;
+    int max_iterations = 100;
+
+    po::options_description desc("Contracture CLI");
     desc.add_options()
         ("help,h", "Show help message")
         ("config,c", po::value<std::string>(&config_path)
@@ -137,7 +225,17 @@ int main(int argc, char** argv) {
         ("grid-end", po::value<double>(&grid_end)->default_value(1.3),
          "Grid search end ratio")
         ("grid-interval", po::value<double>(&grid_interval)->default_value(0.025),
-         "Grid search step interval");
+         "Grid search step interval")
+        ("ceres", po::bool_switch(&use_ceres),
+         "Use Ceres optimization instead of grid search")
+        ("lambda-line-reg", po::value<double>(&lambda_line_reg)->default_value(0.1),
+         "Line consistency regularization lambda (Ceres mode only)")
+        ("lambda-ratio-reg", po::value<double>(&lambda_ratio_reg)->default_value(0.1),
+         "Ratio regularization lambda (Ceres mode only)")
+        ("lambda-torque-reg", po::value<double>(&lambda_torque_reg)->default_value(0.01),
+         "Torque regularization lambda (Ceres mode only)")
+        ("max-iterations", po::value<int>(&max_iterations)->default_value(100),
+         "Max Ceres iterations (Ceres mode only)");
 
     po::variables_map vm;
     try {
@@ -163,36 +261,10 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Validate required arguments
-    if (rom_config_paths.empty()) {
-        LOG_ERROR("--rom-configs is required");
-        std::cout << desc << std::endl;
-        return 1;
-    }
-
-    if (group_names.empty()) {
-        LOG_ERROR("--groups is required");
-        std::cout << desc << std::endl;
-        return 1;
-    }
-
     // Resolve paths
     config_path = resolvePath(config_path);
     for (auto& path : rom_config_paths) {
         path = resolvePath(path);
-    }
-
-    if (verbose) {
-        LOG_INFO("Config: " << config_path);
-        LOG_INFO("ROM configs: " << rom_config_paths.size() << " files");
-        for (const auto& p : rom_config_paths) {
-            LOG_INFO("  - " << p);
-        }
-        LOG_INFO("Groups: " << group_names.size());
-        for (const auto& g : group_names) {
-            LOG_INFO("  - " << g);
-        }
-        LOG_INFO("Grid: " << grid_begin << " to " << grid_end << " by " << grid_interval);
     }
 
     // Load configuration
@@ -208,14 +280,55 @@ int main(int argc, char** argv) {
     std::string skeleton_path = "@data/skeleton/base.yaml";
     std::string muscle_path = "@data/muscle/base.yaml";
     std::string muscle_groups_path = "@data/config/muscle_groups.yaml";
+    std::string rom_config_dir = "@data/config/rom";
 
     if (config["paths"]) {
-        if (config["paths"]["skeleton_default"]) {
+        if (config["paths"]["skeleton_default"])
             skeleton_path = config["paths"]["skeleton_default"].as<std::string>();
-        }
-        if (config["paths"]["muscle_default"]) {
+        if (config["paths"]["muscle_default"])
             muscle_path = config["paths"]["muscle_default"].as<std::string>();
+        if (config["paths"]["muscle_groups"])
+            muscle_groups_path = config["paths"]["muscle_groups"].as<std::string>();
+        if (config["paths"]["rom_config_dir"])
+            rom_config_dir = config["paths"]["rom_config_dir"].as<std::string>();
+    }
+
+    // If no --rom-configs provided, use default_rom_trials from config
+    if (rom_config_paths.empty() && config["contracture_estimation"]["default_rom_trials"]) {
+        std::string dir = resolvePath(rom_config_dir);
+        for (const auto& trial : config["contracture_estimation"]["default_rom_trials"]) {
+            std::string name = trial.as<std::string>();
+            rom_config_paths.push_back(dir + "/" + name + ".yaml");
         }
+        if (verbose) {
+            LOG_INFO("Using " << rom_config_paths.size() << " default ROM trials from config");
+        }
+    }
+
+    // Validate required arguments
+    if (rom_config_paths.empty()) {
+        LOG_ERROR("--rom-configs is required (or set default_rom_trials in config)");
+        std::cout << desc << std::endl;
+        return 1;
+    }
+
+    if (group_names.empty() && !use_ceres) {
+        LOG_ERROR("--groups is required for grid search mode (not needed for --ceres)");
+        std::cout << desc << std::endl;
+        return 1;
+    }
+
+    if (verbose) {
+        LOG_INFO("Config: " << config_path);
+        LOG_INFO("ROM configs: " << rom_config_paths.size() << " files");
+        for (const auto& p : rom_config_paths) {
+            LOG_INFO("  - " << p);
+        }
+        LOG_INFO("Groups: " << group_names.size());
+        for (const auto& g : group_names) {
+            LOG_INFO("  - " << g);
+        }
+        LOG_INFO("Grid: " << grid_begin << " to " << grid_end << " by " << grid_interval);
     }
 
     skeleton_path = resolvePath(skeleton_path);
@@ -274,31 +387,51 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Configure grid search
+    // Configure optimization
     ContractureOptimizer::Config opt_config;
     opt_config.gridSearchBegin = grid_begin;
     opt_config.gridSearchEnd = grid_end;
     opt_config.gridSearchInterval = grid_interval;
     opt_config.verbose = verbose;
 
-    // Run simple grid search
-    LOG_INFO("Running grid search over " << group_names.size() << " groups and "
-             << rom_configs.size() << " trials...");
+    if (use_ceres) {
+        // Ceres optimization mode
+        opt_config.lambdaLineReg = lambda_line_reg;
+        opt_config.lambdaRatioReg = lambda_ratio_reg;
+        opt_config.lambdaTorqueReg = lambda_torque_reg;
+        opt_config.maxIterations = max_iterations;
 
-    auto results = optimizer.simpleGridSearch(
-        character,
-        rom_configs,
-        group_names,
-        opt_config
-    );
+        LOG_INFO("Running Ceres optimization over " << group_names.size() << " groups and "
+                 << rom_configs.size() << " trials...");
+        if (verbose) {
+            LOG_INFO("  lambda_line_reg=" << lambda_line_reg
+                     << " lambda_ratio_reg=" << lambda_ratio_reg
+                     << " lambda_torque_reg=" << lambda_torque_reg
+                     << " max_iterations=" << max_iterations);
+        }
 
-    if (results.empty()) {
-        LOG_ERROR("Grid search returned no results");
-        return 1;
+        auto result = optimizer.optimizeWithResults(character, rom_configs, opt_config);
+
+        printCeresResults(result, verbose);
+    } else {
+        // Grid search mode
+        LOG_INFO("Running grid search over " << group_names.size() << " groups and "
+                 << rom_configs.size() << " trials...");
+
+        auto results = optimizer.simpleGridSearch(
+            character,
+            rom_configs,
+            group_names,
+            opt_config
+        );
+
+        if (results.empty()) {
+            LOG_ERROR("Grid search returned no results");
+            return 1;
+        }
+
+        printResults(results, verbose);
     }
-
-    // Print results
-    printResults(results, verbose);
 
     return 0;
 }

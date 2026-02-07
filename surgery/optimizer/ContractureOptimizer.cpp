@@ -240,6 +240,26 @@ struct TorqueRegCost {
     }
 };
 
+// Penalize ratio variance among fibers of the same base muscle
+struct LineConsistencyRegCost {
+    std::vector<int> group_indices;  // parameter indices for fibers of one base muscle
+    double sqrt_lambda;
+
+    LineConsistencyRegCost(std::vector<int> indices, double sl)
+        : group_indices(std::move(indices)), sqrt_lambda(sl) {}
+
+    bool operator()(const double* const* parameters, double* residuals) const {
+        int N = static_cast<int>(group_indices.size());
+        double sum = 0.0;
+        for (int i = 0; i < N; ++i)
+            sum += parameters[0][group_indices[i]];
+        double mean = sum / N;
+        for (int i = 0; i < N; ++i)
+            residuals[i] = sqrt_lambda * (parameters[0][group_indices[i]] - mean);
+        return true;
+    }
+};
+
 
 ROMTrialConfig ContractureOptimizer::loadROMConfig(
     const std::string& yaml_path,
@@ -1252,6 +1272,23 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimize(
         }
     }
 
+    // Line consistency regularization
+    if (config.lambdaLineReg > 0.0) {
+        double sqrt_lambda = std::sqrt(config.lambdaLineReg);
+        auto fiber_groups = buildFiberGroups();
+        for (const auto& [base_name, gids] : fiber_groups) {
+            auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<LineConsistencyRegCost>(
+                new LineConsistencyRegCost(gids, sqrt_lambda));
+            reg_cost->AddParameterBlock(num_groups);
+            reg_cost->SetNumResiduals(static_cast<int>(gids.size()));
+            problem.AddResidualBlock(reg_cost, nullptr, x.data());
+        }
+        if (config.verbose) {
+            LOG_INFO("[Contracture] Line consistency reg: lambda=" << config.lambdaLineReg
+                     << ", " << fiber_groups.size() << " base muscles");
+        }
+    }
+
     // Set bounds
     for (int g = 0; g < num_groups; ++g) {
         problem.SetParameterLowerBound(x.data(), g, config.minRatio);
@@ -2135,6 +2172,49 @@ std::map<int, size_t> ContractureOptimizer::buildGroupToTrialMapping(
     return group_to_trial;
 }
 
+std::map<std::string, std::vector<int>> ContractureOptimizer::buildFiberGroups() const
+{
+    std::map<std::string, std::vector<int>> fiber_groups;
+    std::regex fiber_re("^(.+?)(\\d+)_(l|r)$");
+
+    // Use opt groups if available (tiered mode), fall back to muscle groups
+    if (!mOptGroups.empty()) {
+        for (const auto& [opt_id, muscle_ids] : mOptGroups) {
+            auto name_it = mOptGroupNames.find(opt_id);
+            if (name_it == mOptGroupNames.end()) continue;
+            const std::string& name = name_it->second;
+
+            std::smatch match;
+            if (std::regex_match(name, match, fiber_re)) {
+                std::string key = match[1].str() + "_" + match[3].str();
+                fiber_groups[key].push_back(opt_id);
+            }
+        }
+    } else {
+        for (const auto& [group_id, muscle_ids] : mMuscleGroups) {
+            auto name_it = mGroupNames.find(group_id);
+            if (name_it == mGroupNames.end()) continue;
+            const std::string& name = name_it->second;
+
+            std::smatch match;
+            if (std::regex_match(name, match, fiber_re)) {
+                std::string key = match[1].str() + "_" + match[3].str();
+                fiber_groups[key].push_back(group_id);
+            }
+        }
+    }
+
+    // Remove entries with fewer than 2 fibers
+    for (auto it = fiber_groups.begin(); it != fiber_groups.end(); ) {
+        if (it->second.size() < 2)
+            it = fiber_groups.erase(it);
+        else
+            ++it;
+    }
+
+    return fiber_groups;
+}
+
 void ContractureOptimizer::logInitialParameterTable(const std::vector<double>& x) const
 {
     int num_groups = static_cast<int>(mMuscleGroups.size());
@@ -2352,6 +2432,19 @@ std::vector<MuscleGroupResult> ContractureOptimizer::optimizeWithPrecomputed(
                 reg_cost->SetNumResiduals(1);
                 problem.AddResidualBlock(reg_cost, nullptr, x.data());
             }
+        }
+    }
+
+    // Line consistency regularization
+    if (config.lambdaLineReg > 0.0) {
+        double sqrt_lambda = std::sqrt(config.lambdaLineReg);
+        auto fiber_groups = buildFiberGroups();
+        for (const auto& [base_name, gids] : fiber_groups) {
+            auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<LineConsistencyRegCost>(
+                new LineConsistencyRegCost(gids, sqrt_lambda));
+            reg_cost->AddParameterBlock(num_groups);
+            reg_cost->SetNumResiduals(static_cast<int>(gids.size()));
+            problem.AddResidualBlock(reg_cost, nullptr, x.data());
         }
     }
 
@@ -2608,6 +2701,7 @@ std::vector<double> ContractureOptimizer::initOptGroupRatiosFromSearch(
     }
 
     // Each opt group inherits its parent search group's ratio
+    std::map<std::string, std::vector<std::string>> inherited_groups; // search_name -> [opt_names]
     for (const auto& [opt_id, search_id] : mOptToSearchGroup) {
         if (static_cast<size_t>(opt_id) >= initial_x.size()) continue;
 
@@ -2615,9 +2709,18 @@ std::vector<double> ContractureOptimizer::initOptGroupRatiosFromSearch(
         auto it = search_ratios.find(search_name);
         if (it != search_ratios.end()) {
             initial_x[opt_id] = it->second;
-            LOG_INFO("[Contracture] Opt group '" << mOptGroupNames.at(opt_id)
-                     << "' inherits ratio=" << it->second << " from search group '" << search_name << "'");
+            inherited_groups[search_name].push_back(mOptGroupNames.at(opt_id));
         }
+    }
+    for (const auto& [search_name, opt_names] : inherited_groups) {
+        std::ostringstream oss;
+        oss << "[Contracture] " << search_name << " ratio=" << search_ratios[search_name]
+            << " -> " << opt_names.size() << " groups: ";
+        for (size_t i = 0; i < opt_names.size(); ++i) {
+            if (i > 0) oss << ", ";
+            oss << opt_names[i];
+        }
+        LOG_INFO(oss.str());
     }
 
     return initial_x;
@@ -2683,6 +2786,19 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runOptGroupCeresOptimizatio
                 reg_cost->SetNumResiduals(1);
                 problem.AddResidualBlock(reg_cost, nullptr, x.data());
             }
+        }
+    }
+
+    // Line consistency regularization
+    if (config.lambdaLineReg > 0.0) {
+        double sqrt_lambda = std::sqrt(config.lambdaLineReg);
+        auto fiber_groups = buildFiberGroups();
+        for (const auto& [base_name, gids] : fiber_groups) {
+            auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<LineConsistencyRegCost>(
+                new LineConsistencyRegCost(gids, sqrt_lambda));
+            reg_cost->AddParameterBlock(num_groups);
+            reg_cost->SetNumResiduals(static_cast<int>(gids.size()));
+            problem.AddResidualBlock(reg_cost, nullptr, x.data());
         }
     }
 

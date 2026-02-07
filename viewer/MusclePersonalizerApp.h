@@ -216,6 +216,7 @@ private:
     // Regularization
     float mContractureLambdaRatioReg = 0.1f;   // Penalize (ratio - 1.0)^2
     float mContractureLambdaTorqueReg = 0.01f; // Penalize passive torque magnitude
+    float mContractureLambdaLineReg = 0.1f;   // Penalize ratio variance among fibers of same muscle
 
     // Outer iterations for biarticular convergence
     int mContractureOuterIterations = 3;
@@ -248,6 +249,9 @@ private:
     bool mShowTorqueChart = false;
     bool mShowForceChart = false;
     bool mShowGroupTorqueChart = false;
+    bool mShowLineConsistencyChart = false;
+    int mLineConsistencyChartPage = 0;
+    float mLineConsistencyThreshold = 0.01f;  // MSE threshold for display
 
     // Tiered UI state (for sub-tabs)
     int mContractureSubTab = 0;        // 0=Grid Search, 1=Optimization

@@ -16,7 +16,7 @@ paths:
   reference_skeleton: "@data/skeleton/base.yaml"
   reference_muscle: "@data/muscle/base.yaml"
   # muscle_groups: "@data/config/muscle_groups.yaml"
-  muscle_groups: "@data/config/muscle_groups_detailed.yaml"
+  muscle_groups: "@data/config/muscle_groups_detailed3.yaml"
 
 # Weight scaling defaults
 weight_scaling:
@@ -53,6 +53,7 @@ contracture_estimation:
   solver_verbose: false
   lambda_ratio_reg: 0.0    # Penalize (ratio - 1.0)^2 (0=disabled)
   lambda_torque_reg: 0.0  # Penalize passive torque magnitude (0=disabled)
+  lambda_line_reg: 0.1    # Penalize ratio variance among fibers of same muscle (0=disabled)
   outer_iterations: 1      # Outer iterations for biarticular convergence (1=single pass)
   grid_search:
     begin: 0.5
