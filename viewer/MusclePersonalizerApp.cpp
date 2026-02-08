@@ -1947,16 +1947,48 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                 return mWaypointSortAscending ? less : !less;
             });
 
+        // Compute mean values for column headers
+        double meanShapeE = 0.0, meanLengthE = 0.0, meanTotalE = 0.0, meanIters = 0.0;
+        if (!mWaypointOptResults.empty()) {
+            for (const auto& r : mWaypointOptResults) {
+                if (mWaypointEnergyDisplayMode == 0) {
+                    meanShapeE += r.initial_shape_energy;
+                    meanLengthE += r.initial_length_energy;
+                    meanTotalE += r.initial_total_cost;
+                } else if (mWaypointEnergyDisplayMode == 1) {
+                    meanShapeE += r.final_shape_energy;
+                    meanLengthE += r.final_length_energy;
+                    meanTotalE += r.final_total_cost;
+                } else {
+                    meanShapeE += r.final_shape_energy - r.initial_shape_energy;
+                    meanLengthE += r.final_length_energy - r.initial_length_energy;
+                    meanTotalE += r.final_total_cost - r.initial_total_cost;
+                }
+                meanIters += r.num_iterations;
+            }
+            double n = static_cast<double>(mWaypointOptResults.size());
+            meanShapeE /= n;
+            meanLengthE /= n;
+            meanTotalE /= n;
+            meanIters /= n;
+        }
+
+        char colShapeE[32], colLengthE[32], colCost[32], colIters[32];
+        snprintf(colShapeE, sizeof(colShapeE), "Shape E (%.4f)", meanShapeE);
+        snprintf(colLengthE, sizeof(colLengthE), "Length E (%.4f)", meanLengthE);
+        snprintf(colCost, sizeof(colCost), "Cost (%.4f)", meanTotalE);
+        snprintf(colIters, sizeof(colIters), "Iters (%.1f)", meanIters);
+
         // Table with radio button, name, shape energy, length energy, total energy, iterations
         ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                      ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
         if (ImGui::BeginTable("ResultsTable", 6, tableFlags, ImVec2(0, mResultsTableHeight))) {
             ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 15.0f);
             ImGui::TableSetupColumn("Muscle", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Shape E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-            ImGui::TableSetupColumn("Length E", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-            ImGui::TableSetupColumn("Cost", ImGuiTableColumnFlags_WidthFixed, 45.0f);
-            ImGui::TableSetupColumn("Iters", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+            ImGui::TableSetupColumn(colShapeE, ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn(colLengthE, ImGuiTableColumnFlags_WidthFixed, 110.0f);
+            ImGui::TableSetupColumn(colCost, ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn(colIters, ImGuiTableColumnFlags_WidthFixed, 70.0f);
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
@@ -2133,6 +2165,18 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
         ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "(SUCCESS)");
     } else {
         ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "(FAILED)");
+    }
+
+    // Bound hit details
+    if (!result.bound_hit_indices.empty()) {
+        ImGui::SameLine();
+        std::string bound_str = "Bound [";
+        for (size_t i = 0; i < result.bound_hit_indices.size(); ++i) {
+            if (i > 0) bound_str += ", ";
+            bound_str += std::to_string(result.bound_hit_indices[i]);
+        }
+        bound_str += "] / " + std::to_string(result.num_anchors) + " anchors";
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "%s", bound_str.c_str());
     }
 
     // Characteristics table with 4 columns: Metric, Reference, Subject Before, Subject After

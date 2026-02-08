@@ -29,7 +29,7 @@ waypoint_optimization:
   fix_origin_insertion: false
   use_normalized_length: true
   max_iterations: 500
-  num_sampling: 200
+  num_sampling: 100
   lambda_shape: 1.0
   lambda_length_curve: 0.2
   weight_phase: 1.0      # weight for (min_phase - ref)² + (max_phase - ref)²
@@ -39,7 +39,7 @@ waypoint_optimization:
   loss_power: 2          # Power exponent (2=squared, 3=cube)
   parallelism: 32
   max_displacement: 0.2          # Max waypoint displacement (meters)
-  max_displacement_origin_insertion: 0.03  # Tighter constraint for origin/insertion
+  max_displacement_origin_insertion: 0.01  # Tighter constraint for origin/insertion
   function_tolerance: 1e-5       # Convergence tolerance on cost function
   gradient_tolerance: 1e-6      # Convergence tolerance on gradient
   parameter_tolerance: 1e-5      # Convergence tolerance on parameters

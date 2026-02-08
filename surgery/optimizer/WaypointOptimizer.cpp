@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <memory>
+#include <unordered_map>
 
 namespace PMuscle {
 
@@ -136,6 +137,12 @@ struct OptimizationContext {
     }
 };
 
+// Cached reference anchor world positions per sweep sample (for Jacobian optimization)
+struct CachedSweepRef {
+    // ref_positions[sample_idx] maps anchor_index -> world position
+    std::vector<std::unordered_map<int, Eigen::Vector3d>> ref_positions;
+};
+
 // ============================================================================
 // DOF Sweep
 // ============================================================================
@@ -171,6 +178,39 @@ static void sweepMultiDOF(const OptimizationContext& ctx, Func&& func) {
             ctx.reference_skeleton->setPositions(pose);
             ctx.subject_muscle->UpdateGeometry();
             ctx.reference_muscle->UpdateGeometry();
+            func(sample_idx++);
+        }
+    }
+}
+
+// Subject-only sweep variants — skip reference skeleton/muscle update (for Jacobian with cached ref)
+template <typename Func>
+static void sweepDOFSubjectOnly(const OptimizationContext& ctx, Func&& func) {
+    for (int sample = 0; sample <= ctx.num_samples; ++sample) {
+        double t = static_cast<double>(sample) / ctx.num_samples;
+        double dof_val = ctx.dof_config.lower + t * (ctx.dof_config.upper - ctx.dof_config.lower);
+
+        Eigen::VectorXd pose = ctx.ref_pose;
+        pose[ctx.dof_config.dof_idx] = dof_val;
+
+        ctx.subject_skeleton->setPositions(pose);
+        ctx.subject_muscle->UpdateGeometry();
+
+        func(sample);
+    }
+}
+
+template <typename Func>
+static void sweepMultiDOFSubjectOnly(const OptimizationContext& ctx, Func&& func) {
+    int sample_idx = 0;
+    for (const auto& jdof : ctx.dof_config.joint_dofs) {
+        for (int s = 0; s <= ctx.num_samples; ++s) {
+            double t = static_cast<double>(s) / ctx.num_samples;
+            double dof_val = jdof.lower + t * (jdof.upper - jdof.lower);
+            Eigen::VectorXd pose = ctx.ref_pose;
+            pose[jdof.dof_idx] = dof_val;
+            ctx.subject_skeleton->setPositions(pose);
+            ctx.subject_muscle->UpdateGeometry();
             func(sample_idx++);
         }
     }
@@ -352,6 +392,146 @@ static double computeShapeEnergy(const OptimizationContext& ctx) {
         sweepMultiDOF(ctx, callback);
     } else {
         sweepDOF(ctx, callback);
+    }
+
+    return (count > 0) ? energy / count : 0.0;
+}
+
+// Compute shape energy AND populate reference position cache (for forward evaluation)
+static double computeShapeEnergyWithCache(const OptimizationContext& ctx, CachedSweepRef& cache) {
+    double energy = 0.0;
+    int count = 0;
+    int idx = ctx.anchor_index;
+    int sample_counter = 0;
+
+    // Determine total samples for cache sizing
+    int total_samples;
+    if (ctx.multiDofJointSweep && !ctx.dof_config.joint_dofs.empty()) {
+        total_samples = static_cast<int>(ctx.dof_config.joint_dofs.size()) * (ctx.num_samples + 1);
+    } else {
+        total_samples = ctx.num_samples + 1;
+    }
+    cache.ref_positions.resize(total_samples);
+
+    auto callback = [&](int sample_idx) {
+        auto& subj_anchors = ctx.subject_muscle->GetAnchors();
+        auto& ref_anchors = ctx.reference_muscle->GetAnchors();
+
+        // Cache reference positions for this sample
+        auto& ref_map = cache.ref_positions[sample_counter];
+        if (idx > 0) {
+            ref_map[idx] = ref_anchors[idx]->GetPoint();
+            ref_map[idx - 1] = ref_anchors[idx - 1]->GetPoint();
+        }
+        if (idx < static_cast<int>(ref_anchors.size()) - 1) {
+            ref_map[idx] = ref_anchors[idx]->GetPoint();
+            ref_map[idx + 1] = ref_anchors[idx + 1]->GetPoint();
+        }
+        ++sample_counter;
+
+        // Segment before: anchor is END point
+        if (idx > 0) {
+            Eigen::Vector3d subj_seg = subj_anchors[idx]->GetPoint() - subj_anchors[idx-1]->GetPoint();
+            Eigen::Vector3d ref_seg = ref_anchors[idx]->GetPoint() - ref_anchors[idx-1]->GetPoint();
+
+            double subj_len = subj_seg.norm();
+            double ref_len = ref_seg.norm();
+
+            if (subj_len > kEpsilon && ref_len > kEpsilon) {
+                double dot = (subj_seg / subj_len).dot(ref_seg / ref_len);
+                double e = 1.0 - dot;
+                if (e > 0.3) e = std::pow(5.0, e);
+                energy += e;
+                ++count;
+            }
+        }
+
+        // Segment after: anchor is START point
+        if (idx < static_cast<int>(subj_anchors.size()) - 1) {
+            Eigen::Vector3d subj_seg = subj_anchors[idx+1]->GetPoint() - subj_anchors[idx]->GetPoint();
+            Eigen::Vector3d ref_seg = ref_anchors[idx+1]->GetPoint() - ref_anchors[idx]->GetPoint();
+
+            double subj_len = subj_seg.norm();
+            double ref_len = ref_seg.norm();
+
+            if (subj_len > kEpsilon && ref_len > kEpsilon) {
+                double dot = (subj_seg / subj_len).dot(ref_seg / ref_len);
+                double e = 1.0 - dot;
+                if (e > 0.3) e = std::pow(5.0, e);
+                energy += e;
+                ++count;
+            }
+        }
+    };
+
+    if (ctx.multiDofJointSweep && !ctx.dof_config.joint_dofs.empty()) {
+        sweepMultiDOF(ctx, callback);
+    } else {
+        sweepDOF(ctx, callback);
+    }
+
+    return (count > 0) ? energy / count : 0.0;
+}
+
+// Compute shape energy using cached reference positions (subject-only sweep for Jacobian)
+static double computeShapeEnergyCached(const OptimizationContext& ctx, const CachedSweepRef& cache) {
+    double energy = 0.0;
+    int count = 0;
+    int idx = ctx.anchor_index;
+    int sample_counter = 0;
+
+    auto callback = [&](int sample_idx) {
+        auto& subj_anchors = ctx.subject_muscle->GetAnchors();
+        const auto& ref_map = cache.ref_positions[sample_counter];
+        ++sample_counter;
+
+        // Segment before: anchor is END point
+        if (idx > 0) {
+            auto it_cur = ref_map.find(idx);
+            auto it_prev = ref_map.find(idx - 1);
+            if (it_cur != ref_map.end() && it_prev != ref_map.end()) {
+                Eigen::Vector3d subj_seg = subj_anchors[idx]->GetPoint() - subj_anchors[idx-1]->GetPoint();
+                Eigen::Vector3d ref_seg = it_cur->second - it_prev->second;
+
+                double subj_len = subj_seg.norm();
+                double ref_len = ref_seg.norm();
+
+                if (subj_len > kEpsilon && ref_len > kEpsilon) {
+                    double dot = (subj_seg / subj_len).dot(ref_seg / ref_len);
+                    double e = 1.0 - dot;
+                    if (e > 0.3) e = std::pow(5.0, e);
+                    energy += e;
+                    ++count;
+                }
+            }
+        }
+
+        // Segment after: anchor is START point
+        if (idx < static_cast<int>(subj_anchors.size()) - 1) {
+            auto it_cur = ref_map.find(idx);
+            auto it_next = ref_map.find(idx + 1);
+            if (it_cur != ref_map.end() && it_next != ref_map.end()) {
+                Eigen::Vector3d subj_seg = subj_anchors[idx+1]->GetPoint() - subj_anchors[idx]->GetPoint();
+                Eigen::Vector3d ref_seg = it_next->second - it_cur->second;
+
+                double subj_len = subj_seg.norm();
+                double ref_len = ref_seg.norm();
+
+                if (subj_len > kEpsilon && ref_len > kEpsilon) {
+                    double dot = (subj_seg / subj_len).dot(ref_seg / ref_len);
+                    double e = 1.0 - dot;
+                    if (e > 0.3) e = std::pow(5.0, e);
+                    energy += e;
+                    ++count;
+                }
+            }
+        }
+    };
+
+    if (ctx.multiDofJointSweep && !ctx.dof_config.joint_dofs.empty()) {
+        sweepMultiDOFSubjectOnly(ctx, callback);
+    } else {
+        sweepDOFSubjectOnly(ctx, callback);
     }
 
     return (count > 0) ? energy / count : 0.0;
@@ -551,7 +731,14 @@ public:
             params[0], params[1], params[2]);
         ctx_->subject_muscle->UpdateGeometry();
 
-        double E_shape = computeShapeEnergy(*ctx_);
+        // Forward evaluation: compute energy and cache reference positions
+        CachedSweepRef cache;
+        double E_shape;
+        if (jacobians && jacobians[0]) {
+            E_shape = computeShapeEnergyWithCache(*ctx_, cache);
+        } else {
+            E_shape = computeShapeEnergy(*ctx_);
+        }
 
         double sqrt_E = std::sqrt(E_shape + kSqrtEpsilon);
         double sqrt_2w = std::sqrt(2.0 * lambda_S_);
@@ -562,22 +749,20 @@ public:
             double scale = sqrt_2w / (2.0 * sqrt_E + kEpsilon);
             Eigen::Vector3d orig(params[0], params[1], params[2]);
 
+            // Forward differences with cached reference geometry
+            double E_base = E_shape;
+
             for (int axis = 0; axis < 3; ++axis) {
                 anchors[anchor_index_]->local_positions[0] = orig;
                 anchors[anchor_index_]->local_positions[0][axis] += h;
                 ctx_->subject_muscle->UpdateGeometry();
-                double E_plus = computeShapeEnergy(*ctx_);
+                double E_plus = computeShapeEnergyCached(*ctx_, cache);
 
-                anchors[anchor_index_]->local_positions[0] = orig;
-                anchors[anchor_index_]->local_positions[0][axis] -= h;
-                ctx_->subject_muscle->UpdateGeometry();
-                double E_minus = computeShapeEnergy(*ctx_);
-
-                double dE = (E_plus - E_minus) / (2.0 * h);
+                double dE = (E_plus - E_base) / h;
                 jacobians[0][axis] = scale * dE;
-
-                anchors[anchor_index_]->local_positions[0] = orig;
             }
+
+            anchors[anchor_index_]->local_positions[0] = orig;
             ctx_->subject_muscle->UpdateGeometry();
         }
         return true;
@@ -630,22 +815,20 @@ public:
             double scale = sqrt_2w / (2.0 * sqrt_E + kEpsilon);
             Eigen::Vector3d orig(params[0], params[1], params[2]);
 
+            // Forward differences: reuse E_length as E_base
+            double E_base = E_length;
+
             for (int axis = 0; axis < 3; ++axis) {
                 anchors[anchor_index_]->local_positions[0] = orig;
                 anchors[anchor_index_]->local_positions[0][axis] += h;
                 ctx_->subject_muscle->UpdateGeometry();
                 double E_plus = computeLengthCurveEnergy(*ctx_);
 
-                anchors[anchor_index_]->local_positions[0] = orig;
-                anchors[anchor_index_]->local_positions[0][axis] -= h;
-                ctx_->subject_muscle->UpdateGeometry();
-                double E_minus = computeLengthCurveEnergy(*ctx_);
-
-                double dE = (E_plus - E_minus) / (2.0 * h);
+                double dE = (E_plus - E_base) / h;
                 jacobians[0][axis] = scale * dE;
-
-                anchors[anchor_index_]->local_positions[0] = orig;
             }
+
+            anchors[anchor_index_]->local_positions[0] = orig;
             ctx_->subject_muscle->UpdateGeometry();
         }
         return true;
@@ -804,7 +987,6 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
 
     // 6. Create optimization contexts and Ceres solver options
     ceres::Solver::Options options;
-    options.max_num_iterations = config.maxIterations;
     options.linear_solver_type = ceres::DENSE_QR;
     options.function_tolerance = config.functionTolerance;
     options.gradient_tolerance = config.gradientTolerance;
@@ -852,6 +1034,33 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     };
 
     computeEnergies(result.initial_shape_energy, result.initial_length_energy, result.initial_total_cost, "Initial");
+
+    // Early-skip: if initial energy is negligible, muscle is already well-aligned
+    constexpr double kEarlySkipThreshold = 1e-8;
+    if (result.initial_total_cost < kEarlySkipThreshold) {
+        if (config.verbose) {
+            LOG_INFO("[WaypointOpt] " << subject_muscle->name
+                     << ": skipping (initial_total_cost=" << result.initial_total_cost << " < threshold)");
+        }
+        result.final_shape_energy = result.initial_shape_energy;
+        result.final_length_energy = result.initial_length_energy;
+        result.final_total_cost = result.initial_total_cost;
+        result.num_iterations = 0;
+        result.num_bound_hits = 0;
+
+        subject_skeleton->setPositions(ref_pose);
+        result.subject_after_lengths = computeMuscleLengthCurveWithDOF(
+            subject_muscle, subject_skeleton, config.numSampling, dof_config, config.lengthType);
+        result.subject_after_chars = analyzeLengthCurve(result.subject_after_lengths, config.numPhaseSamples);
+
+        computePerPhaseShapeMetrics(result, subject_muscle, reference_muscle,
+            subject_skeleton, reference_skeleton,
+            config.numSampling, dof_config, ref_pose, false);
+
+        result.success = true;
+        restorePoses();
+        return result;
+    }
 
     // ========================================================================
     // DIAGNOSTIC 1: Purity check — call f(x) 5 times at same state
@@ -1005,25 +1214,30 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     }
 
     // 7. Sequential per-anchor optimization loop
-    constexpr int kMaxOuterIterations = 20;
-    constexpr double kOuterConvergenceTol = 1e-6;
+    //    config.maxIterations = max outer passes
+    //    Stop when ALL anchors converge in the same pass
+    constexpr double kAnchorConvergenceTol = 1e-6;
 
-    double prev_total = result.initial_total_cost;
+    std::vector<double> prev_anchor_energy(N_opt, 0.0);
+
+    subject_muscle->UpdateGeometry();
+    for (int k = 0; k < N_opt; ++k) {
+        double s = computeShapeEnergy(*contexts[k]);
+        double l = computeLengthCurveEnergy(*contexts[k]);
+        prev_anchor_energy[k] = config.lambdaShape * s + config.lambdaLengthCurve * l;
+    }
+
     int total_outer_iters = 0;
 
-    for (int outer = 0; outer < kMaxOuterIterations; ++outer) {
-        // Save start-of-pass positions for revert
-        std::vector<Eigen::Vector3d> pass_start(N_opt);
-        for (int k = 0; k < N_opt; ++k) {
-            pass_start[k] = anchors[opt_indices[k]]->local_positions[0];
-        }
+    for (int outer = 0; outer < config.maxIterations; ++outer) {
+        int num_converged = 0;
 
         for (int k = 0; k < N_opt; ++k) {
             int ai = opt_indices[k];
+            Eigen::Vector3d saved_pos = anchors[ai]->local_positions[0];
+
             double params[3] = {
-                anchors[ai]->local_positions[0].x(),
-                anchors[ai]->local_positions[0].y(),
-                anchors[ai]->local_positions[0].z()
+                saved_pos.x(), saved_pos.y(), saved_pos.z()
             };
 
             // 3-param Ceres problem for this single anchor
@@ -1058,47 +1272,38 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
             // Apply immediately (next anchor sees updated neighbor)
             anchors[ai]->local_positions[0] = Eigen::Vector3d(params[0], params[1], params[2]);
             subject_muscle->UpdateGeometry();
+
+            // Per-anchor convergence check
+            double s = computeShapeEnergy(*contexts[k]);
+            double l = computeLengthCurveEnergy(*contexts[k]);
+            double cur_energy = config.lambdaShape * s + config.lambdaLengthCurve * l;
+
+            if (cur_energy > prev_anchor_energy[k] + kEpsilon) {
+                // Energy increased — revert this anchor, counts as converged for this pass
+                anchors[ai]->local_positions[0] = saved_pos;
+                subject_muscle->UpdateGeometry();
+                ++num_converged;
+                if (config.verbose) {
+                    LOG_WARN("[WaypointOpt] Anchor " << ai << " energy increased ("
+                             << prev_anchor_energy[k] << " -> " << cur_energy << "), reverting");
+                }
+            } else if (prev_anchor_energy[k] < kEpsilon ||
+                       (prev_anchor_energy[k] - cur_energy) / (prev_anchor_energy[k] + kEpsilon) < kAnchorConvergenceTol) {
+                prev_anchor_energy[k] = cur_energy;
+                ++num_converged;
+            } else {
+                prev_anchor_energy[k] = cur_energy;
+            }
         }
 
         ++total_outer_iters;
 
-        // Compute pass total energy
-        double shape_pass, length_pass, total_pass;
-        computeEnergies(shape_pass, length_pass, total_pass,
-            (std::string("Pass ") + std::to_string(total_outer_iters)).c_str());
-
-        if (config.verbose) {
+        if (config.verbose && (total_outer_iters % 50 == 0 || num_converged == N_opt)) {
             LOG_INFO("[WaypointOpt] outer " << total_outer_iters
-                     << ": total=" << total_pass
-                     << " shape=" << shape_pass
-                     << " length=" << length_pass);
+                     << ": converged " << num_converged << "/" << N_opt);
         }
 
-        // Pass revert: if energy increased, restore pass_start and stop
-        if (total_pass > prev_total + kEpsilon) {
-            if (config.verbose) {
-                LOG_WARN("[WaypointOpt] Pass " << total_outer_iters
-                         << " increased energy (" << prev_total << " -> " << total_pass
-                         << "), reverting pass");
-            }
-            for (int k = 0; k < N_opt; ++k) {
-                anchors[opt_indices[k]]->local_positions[0] = pass_start[k];
-            }
-            subject_muscle->UpdateGeometry();
-            break;
-        }
-
-        // Convergence: relative improvement < tolerance
-        if ((prev_total - total_pass) / (prev_total + kEpsilon) < kOuterConvergenceTol) {
-            if (config.verbose) {
-                LOG_INFO("[WaypointOpt] Converged at outer " << total_outer_iters
-                         << " (rel improvement="
-                         << (prev_total - total_pass) / (prev_total + kEpsilon) << ")");
-            }
-            break;
-        }
-
-        prev_total = total_pass;
+        if (num_converged == N_opt) break;
     }
 
     result.num_iterations = total_outer_iters;
@@ -1159,6 +1364,8 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     // Detect bound hits
     constexpr double kBoundTolerance = 1e-4;
     result.num_bound_hits = 0;
+    result.num_anchors = static_cast<int>(anchors.size());
+    result.bound_hit_indices.clear();
     for (int k = 0; k < N_opt; ++k) {
         int ai = opt_indices[k];
         bool is_origin_insertion = (ai == 0 || ai == static_cast<int>(anchors.size()) - 1);
@@ -1171,6 +1378,7 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
             double disp = std::abs(current_pos[dim] - initial_positions[k][dim]);
             if (disp >= max_disp - kBoundTolerance) {
                 result.num_bound_hits++;
+                result.bound_hit_indices.push_back(ai);
                 if (config.verbose) {
                     LOG_WARN("[WaypointOpt] Anchor " << ai << " dim " << dim
                              << " hit bound: disp=" << disp << " max=" << max_disp);

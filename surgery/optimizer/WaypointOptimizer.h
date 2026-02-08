@@ -79,8 +79,10 @@ struct WaypointOptResult {
     // Which length type was used (for plot labeling)
     LengthCurveType length_type = LengthCurveType::MTU_LENGTH;
 
-    // Bound hit tracking: number of waypoints that hit displacement bounds
+    // Bound hit tracking
     int num_bound_hits = 0;
+    std::vector<int> bound_hit_indices;  // anchor indices that hit bounds
+    int num_anchors = 0;                 // total anchor count
 
     // Optimization progress: number of iterations used
     int num_iterations = 0;
@@ -127,7 +129,7 @@ public:
         bool adaptiveSampleWeight;   // Use adaptive weighting for sample matching
         bool multiDofJointSweep;     // Sweep all DOFs of best DOF's parent joint for shape energy
 
-        Config() : maxIterations(10000), numSampling(10), lambdaShape(0.1),
+        Config() : maxIterations(500), numSampling(10), lambdaShape(0.1),
                    lambdaLengthCurve(0.1), fixOriginInsertion(true), verbose(false),
                    weightPhase(1.0), weightDelta(50.0),
                    weightSamples(1.0), numPhaseSamples(3), lossPower(2),
