@@ -266,38 +266,24 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
     // Note: GLFW/ImGui initialization handled by ViewerAppBase constructor
     // Base class registers callbacks that dispatch to virtual methods (keyPress, mouseMove, etc.)
 
-    mns = py::module::import("__main__").attr("__dict__");
-    py::module::import("sys").attr("path").attr("insert")(1, "python");
-
     mSelectedMuscles.clear();
     mRelatedDofs.clear();
 
     // Initialize muscle plot UI
     memset(mPlotMuscleFilterText, 0, sizeof(mPlotMuscleFilterText));
 
-    py::gil_scoped_acquire gil;
-    
-    // Import checkpoint loader
-    try {
-        loading_network = py::module::import("ppo.model").attr("loading_network");
-    } catch (const py::error_already_set& e) {
-        LOG_WARN("[Checkpoint] Failed to import checkpoint loader: " << e.what());
-        loading_network = py::none();
-    }
-
-    // Determine metadata path (loading_metadata returns a filepath)
+    // Determine metadata path from checkpoint directory (pure C++)
     if (!mNetworkPaths.empty()) {
         std::string path = mNetworkPaths.back();
-        try {
-            py::object py_metadata = py::module::import("ppo.model").attr("loading_metadata")(path);
-            if (!py_metadata.is_none()) {
-                mCachedMetadata = py_metadata.cast<std::string>();
-            }
-            // Note: Keep path in mNetworkPaths - it's used later for checkpoint name and network loading
-        } catch (const py::error_already_set& e) {
-            LOG_ERROR("[Checkpoint] Error: Failed to load checkpoint from path: " << path);
-            LOG_ERROR("[Checkpoint] Reason: " << e.what());
-            LOG_ERROR("[Checkpoint] Please check that the checkpoint path exists and is in a valid format.");
+        // Check for metadata.yaml in checkpoint directory
+        fs::path metadata_path = fs::path(path) / "metadata.yaml";
+        if (fs::exists(metadata_path)) {
+            mCachedMetadata = metadata_path.string();
+        } else if (fs::exists(path) && fs::path(path).extension() == ".yaml") {
+            // Path is already a metadata file
+            mCachedMetadata = path;
+        } else {
+            LOG_ERROR("[Checkpoint] No metadata.yaml found in: " << path);
             std::exit(1);
         }
     }
@@ -500,22 +486,10 @@ void RenderCkpt::update(bool _isSave)
 
     // Get action from network (prefer C++ if available)
     Eigen::VectorXf action;
-    if (!mViewerNetworks.empty()) {
-        auto& net = mViewerNetworks[0];
-        if (net.useCpp && net.policy) {
-            // C++ inference (TorchScript format)
-            auto [act, value, logprob] = net.policy->sample_action(
-                mRenderEnv->getState().cast<float>(), mStochasticPolicy);
-            action = act;
-        } else if (!net.joint.is_none()) {
-            // Python fallback (pickle format)
-            action = net.joint.attr("get_action")(mRenderEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>();
-        } else {
-            action = mRenderEnv->getAction().cast<float>();
-        }
-    } else if (!mNetworks.empty()) {
-        // Legacy fallback
-        action = mNetworks[0].joint.attr("get_action")(mRenderEnv->getState(), mStochasticPolicy).cast<Eigen::VectorXf>();
+    if (!mViewerNetworks.empty() && mViewerNetworks[0].policy) {
+        auto [act, value, logprob] = mViewerNetworks[0].policy->sample_action(
+            mRenderEnv->getState().cast<float>(), mStochasticPolicy);
+        action = act;
     } else {
         action = mRenderEnv->getAction().cast<float>();
     }
@@ -1959,16 +1933,8 @@ void RenderCkpt::initEnv(std::string metadata)
 
     // Load networks
     auto character = mRenderEnv->getCharacter();
-    mNetworks.clear();
     for (const auto& path : mNetworkPaths) {
         loadNetworkFromPath(path);
-    }
-    
-    // Load muscle network weights into the Environment's MuscleNN
-    // (The C++ MuscleNN is created automatically in initialize())
-    if (!mNetworks.empty() && mNetworks.back().muscle && !mMuscleStateDict.is_none()) {
-        // Transfer the stored Python state_dict to Environment's MuscleNN
-        mRenderEnv->setMuscleNetworkWeight(mMuscleStateDict);
     }
 
     // Initialize DOF tracking
@@ -3871,7 +3837,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
     ImGui::SetNextItemWidth(100);
     if (ImGui::InputFloat("Init Log Std", &mInitLogStd, 0.1f, 0.5f, "%.2f")) {
-        if (!mViewerNetworks.empty() && mViewerNetworks[0].useCpp && mViewerNetworks[0].policy) {
+        if (!mViewerNetworks.empty() && mViewerNetworks[0].policy) {
             mViewerNetworks[0].policy->setLogStd(mInitLogStd);
         }
     }
@@ -5160,51 +5126,12 @@ void RenderCkpt::drawContent()
         }
         if (mDrawFlags.collision) drawCollision();
 
-        // FGN - use viewer phase for playback
-        if (mDrawFlags.fgnSkeleton)
-        {
-            Eigen::VectorXd FGN_in = Eigen::VectorXd::Zero(mRenderEnv->getNumParamState() + 2);
-            Eigen::VectorXd phase = Eigen::VectorXd::Zero(2);
-
-            // Use viewer phase instead of simulation phase
-            phase[0] = sin(2 * M_PI * mViewerPhase);
-            phase[1] = cos(2 * M_PI * mViewerPhase);
-
-            FGN_in << mRenderEnv->getNormalizedParamStateFromParam(mRenderEnv->getParamState()), phase;
-
-            Eigen::VectorXd res = mFGN.attr("get_action")(FGN_in).cast<Eigen::VectorXd>();
-            if (!mRolloutStatus.pause || mRolloutStatus.cycle > 0)
-            {
-                // Because of display Hz
-                mFGNRootOffset[0] += res[6] * 0.5;
-                mFGNRootOffset[2] += res[8] * 0.5;
-            }
-            res[6] = mFGNRootOffset[0];
-            res[8] = mFGNRootOffset[2];
-
-            Eigen::VectorXd pos = mRenderEnv->getCharacter()->sixDofToPos(res);
-            drawSkeleton(pos, Eigen::Vector4d(0.35, 0.35, 1.0, 1.0));
-        }
+        // FGN rendering removed (requires Python)
     }
 
     if (mDrawFlags.playableMotion)
         drawPlayableMotion();
 
-    // FGN playback using viewer time (independent of mRenderEnv)
-    if (!mRenderEnv && mDrawFlags.fgnSkeleton && !mFGN.is_none())
-    {
-        drawPhase(mViewerPhase, mViewerPhase);  // Draw phase bar using viewer phase
-
-        // FGN network forward pass
-        // Note: Full implementation requires mRenderEnv for parameter state
-        Eigen::VectorXd phase = Eigen::VectorXd::Zero(2);
-        phase[0] = sin(2 * M_PI * mViewerPhase);
-        phase[1] = cos(2 * M_PI * mViewerPhase);
-
-        // Would need: FGN_in << normalized_param_state, phase
-        // Then: res = mFGN.attr("get_action")(FGN_in).cast<Eigen::VectorXd>();
-        // Then: drawSkeleton with converted position
-    }
 
 
     if (mMouseDown) drawAxis();
@@ -6534,7 +6461,6 @@ void RenderCkpt::loadNetworkFromPath(const std::string& path)
             LOG_INFO("Loading TorchScript checkpoint (C++): " << path);
             new_elem.policy = std::make_shared<PolicyNetImpl>(num_states, num_actions);
             new_elem.policy->load_state_dict(policy_weights);
-            new_elem.useCpp = true;
 
             // Load muscle network if needed (TorchScript format)
             if (use_muscle) {
@@ -6553,82 +6479,7 @@ void RenderCkpt::loadNetworkFromPath(const std::string& path)
 
             mViewerNetworks.push_back(new_elem);
         } else {
-            // Pickle format - fall back to Python loading
-            if (loading_network.is_none()) {
-                LOG_ERROR("No TorchScript checkpoint and loading_network not available: " << path);
-                return;
-            }
-
-            LOG_INFO("Loading pickle checkpoint via Python: " << path);
-            new_elem.useCpp = false;
-
-            // Legacy Python loading
-            Network legacy_elem;
-            legacy_elem.name = path;
-
-            py::tuple res;
-            if (use_muscle) {
-                int num_muscles = character->getNumMuscles();
-                int num_muscle_dofs = character->getNumMuscleRelatedDof();
-                int num_actuator_action = mRenderEnv->getNumActuatorAction();
-
-                res = loading_network(
-                    path.c_str(),
-                    num_states,
-                    num_actions,
-                    use_muscle,
-                    "cpu",
-                    num_muscles,
-                    num_muscle_dofs,
-                    num_actuator_action
-                );
-            } else {
-                res = loading_network(
-                    path.c_str(),
-                    num_states,
-                    num_actions,
-                    use_muscle
-                );
-            }
-
-            legacy_elem.joint = res[0];
-            new_elem.joint = res[0];  // Also store in ViewerNetwork
-
-            // Convert Python muscle state_dict to C++ MuscleNN
-            if (use_muscle && !res[1].is_none()) {
-                int num_muscles = character->getNumMuscles();
-                int num_muscle_dofs = character->getNumMuscleRelatedDof();
-                int num_actuator_action = mRenderEnv->getNumActuatorAction();
-                bool is_cascaded = false;
-
-                legacy_elem.muscle = make_muscle_nn(num_muscle_dofs, num_actuator_action, num_muscles, is_cascaded, true);
-                py::dict state_dict = res[1].cast<py::dict>();
-
-                mMuscleStateDict = res[1];
-
-                std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
-                for (auto item : state_dict) {
-                    std::string key = item.first.cast<std::string>();
-                    py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
-
-                    auto buf = np_array.request();
-                    std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
-
-                    torch::Tensor tensor = torch::from_blob(
-                        buf.ptr,
-                        shape,
-                        torch::TensorOptions().dtype(torch::kFloat32)
-                    ).clone();
-
-                    cpp_state_dict[key] = tensor;
-                }
-
-                legacy_elem.muscle->load_state_dict(cpp_state_dict);
-                new_elem.muscle = legacy_elem.muscle;  // Share the muscle network
-            }
-
-            mNetworks.push_back(legacy_elem);
-            mViewerNetworks.push_back(new_elem);
+            LOG_ERROR("No TorchScript checkpoint (agent.pt) found: " << agent_path);
         }
     } catch (const std::exception& e) {
         LOG_ERROR("Error loading network from " << path << ": " << e.what());

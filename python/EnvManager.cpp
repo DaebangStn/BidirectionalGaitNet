@@ -106,6 +106,22 @@ public:
         return py_map;
     }
     void setAction(py::array_t<float> action) { Environment::setAction(toEigenVector(action)); }
+    void setMuscleNetworkWeightPy(py::object w) {
+        std::unordered_map<std::string, torch::Tensor> state_dict;
+        py::dict py_dict = w.cast<py::dict>();
+        for (auto item : py_dict) {
+            std::string key = item.first.cast<std::string>();
+            py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+            auto buf = np_array.request();
+            std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+            torch::Tensor tensor = torch::from_blob(
+                buf.ptr, shape,
+                torch::TensorOptions().dtype(torch::kFloat32)
+            ).clone();
+            state_dict[key] = tensor;
+        }
+        Environment::setMuscleNetworkWeight(state_dict);
+    }
     int getNumMuscles() { return Environment::getCharacter()->getMuscles().size(); }
 
     int getNumMuscleDof() { return Environment::getCharacter()->getNumMuscleRelatedDof(); }
@@ -168,8 +184,7 @@ PYBIND11_MODULE(pysim, m)
         .def("getMetadata", &EnvManager::getMetadata)
         .def("getRandomMuscleTuple", &EnvManager::getRandomMuscleTuple)
         .def("getUseMuscle", &EnvManager::getUseMuscle)
-        .def("setMuscleNetwork", &EnvManager::setMuscleNetwork)
-        .def("setMuscleNetworkWeight", &EnvManager::setMuscleNetworkWeight)
+        .def("setMuscleNetworkWeight", &EnvManager::setMuscleNetworkWeightPy)
         .def("isTwoLevelController", &EnvManager::isTwoLevelController)
 
         .def("getUseCascading", &EnvManager::getUseCascading)

@@ -238,9 +238,8 @@ void PhysicalExam::onPIDChanged(const std::string& pid)
     mBrowseSkeletonDataSource = CharacterDataSource::PatientData;
     scanSkeletonFilesForBrowse();
 
-    if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
-        scanMuscleFilesForBrowse();
-    }
+    mBrowseMuscleDataSource = CharacterDataSource::PatientData;
+    scanMuscleFilesForBrowse();
 
     // Select skeleton file: prefer trimmed_unified.yaml, otherwise first available
     if (!mBrowseSkeletonCandidates.empty()) {

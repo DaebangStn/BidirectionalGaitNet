@@ -34,19 +34,14 @@ struct ResizablePlot {
 };
 
 /**
- * @brief Unified network struct supporting both C++ and Python policy loading.
- *
- * C++ loading (TorchScript format): Uses policy for inference, no Python dependency.
- * Python loading (pickle format): Uses joint for inference, requires Python.
+ * @brief Network struct for C++ TorchScript policy loading.
  *
  * Note: The base Network struct is defined in Environment.h.
  */
 struct ViewerNetwork {
     std::string name;       ///< Network path/identifier
-    PolicyNet policy;       ///< C++ policy network (if TorchScript loaded)
-    py::object joint;       ///< Python policy network (fallback for pickle)
+    PolicyNet policy;       ///< C++ policy network (TorchScript)
     MuscleNN muscle;        ///< C++ muscle activation network
-    bool useCpp = false;    ///< True if using C++ policy, false if Python fallback
 };
 
 enum MuscleRenderingType
@@ -219,9 +214,6 @@ protected:
     double getSimulationTime() const override;  // Return actual simulation time for video recording
 
 private:
-    py::object mns;
-    py::object loading_network;
-
     // Helper functions for pre-computing cycle distances
     Eigen::Vector3d computeMotionCycleDistance(Motion* motion);
 
@@ -328,8 +320,7 @@ private:
     // mMotionSkeleton removed - use mMotionCharacter->getSkeleton() instead
 
     std::vector<std::string> mNetworkPaths;
-    std::vector<Network> mNetworks;                 ///< Legacy networks (Python-only)
-    std::vector<ViewerNetwork> mViewerNetworks;     ///< Dual-mode networks (C++ preferred)
+    std::vector<ViewerNetwork> mViewerNetworks;
 
     // Graph Data Buffer
     CBufferData<double>* mGraphData;
@@ -383,7 +374,7 @@ private:
     std::vector<std::string> mFGNList;
     std::vector<std::string> mBGNList;
 
-    py::object mFGN;
+    // FGN loading removed
     std::string mFGNmetadata;
     Eigen::Vector3d mFGNRootOffset;
     int selected_fgn;
@@ -413,8 +404,7 @@ private:
     std::string mSkeletonPath;  // Skeleton path from simulator metadata
     std::string mMotionPath;    // Current motion file path for reloading
 
-    // For GVAE
-    py::object mGVAE;
+    // For GVAE (loading removed)
     bool mGVAELoaded;
     std::vector<BoneInfo> mSkelInfosForMotions;
 
@@ -625,6 +615,4 @@ private:
     void alignMotionToSimulation();
     void setMotion(Motion* motion);  // Helper: delete old, assign new, initialize state
 
-    // Store muscle network state_dict for transfer to Environment
-    py::object mMuscleStateDict;
 };

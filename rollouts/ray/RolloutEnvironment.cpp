@@ -1,4 +1,5 @@
 #include "RolloutEnvironment.h"
+#include <pybind11/numpy.h>
 #include <yaml-cpp/yaml.h>
 #include <cmath>
 #include <iostream>
@@ -68,7 +69,21 @@ void RolloutEnvironment::Step(RolloutRecord* record) {
 }
 
 void RolloutEnvironment::SetMuscleNetworkWeight(py::object weights) {
-    mEnv->setMuscleNetworkWeight(weights);
+    // Convert Python state_dict to C++ format
+    std::unordered_map<std::string, torch::Tensor> state_dict;
+    py::dict py_dict = weights.cast<py::dict>();
+    for (auto item : py_dict) {
+        std::string key = item.first.cast<std::string>();
+        py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+        auto buf = np_array.request();
+        std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+        torch::Tensor tensor = torch::from_blob(
+            buf.ptr, shape,
+            torch::TensorOptions().dtype(torch::kFloat32)
+        ).clone();
+        state_dict[key] = tensor;
+    }
+    mEnv->setMuscleNetworkWeight(state_dict);
 }
 
 void RolloutEnvironment::RecordStep(RolloutRecord* record) {

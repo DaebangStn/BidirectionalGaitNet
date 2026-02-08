@@ -11,6 +11,7 @@
 #include "dart/collision/bullet/bullet.hpp"
 #include "export.h"
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <memory>
 
@@ -37,13 +38,12 @@ struct param_group
 struct DLL_PUBLIC Network
 {
     std::string name; // Actually Path
-    py::object joint;        // Python joint network (for compatibility)
     MuscleNN muscle;         // C++ muscle network (libtorch)
 
     // Only for cascading learning
     Eigen::VectorXd minV;
     Eigen::VectorXd maxV;
-};
+};;
 
 enum RewardType
 {
@@ -194,15 +194,7 @@ public:
     // Metabolic Reward
     void setIncludeMetabolicReward(bool _includeMetabolicReward) { mIncludeMetabolicReward = _includeMetabolicReward; }
     bool getIncludeMetabolicReward() { return mIncludeMetabolicReward; }
-    // DEPRECATED: MuscleNN is now created in C++ during initialize()
-    // This method is kept for backward compatibility but does nothing
-    void setMuscleNetwork(py::object nn)
-    {
-        // Network is already created in initialize() with C++ libtorch
-        // This method is now a no-op for backward compatibility
-        std::cout << "Warning: setMuscleNetwork is deprecated. MuscleNN is created automatically." << std::endl;
-    }
-    void setMuscleNetworkWeight(py::object w)
+    void setMuscleNetworkWeight(const std::unordered_map<std::string, torch::Tensor>& state_dict)
     {
         if (!mController->hasLoadedMuscleNN())
         {
@@ -214,27 +206,6 @@ public:
                 child_elem.push_back(i);
             }
             mController->getChildNetworks().push_back(child_elem);
-        }
-
-        // Convert Python state_dict to C++ format
-        std::unordered_map<std::string, torch::Tensor> state_dict;
-        py::dict py_dict = w.cast<py::dict>();
-
-        for (auto item : py_dict) {
-            std::string key = item.first.cast<std::string>();
-            py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
-
-            // Convert numpy array to torch::Tensor
-            auto buf = np_array.request();
-            std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
-
-            torch::Tensor tensor = torch::from_blob(
-                buf.ptr,
-                shape,
-                torch::TensorOptions().dtype(torch::kFloat32)
-            ).clone();  // Clone to own the memory
-
-            state_dict[key] = tensor;
         }
 
         mController->getMuscleNN()->load_state_dict(state_dict);
@@ -598,8 +569,6 @@ private:
     std::vector<double> mDmins, mWeights, mBetas;
 
     Eigen::VectorXd mState, mJointState;
-
-    py::object loading_network;
 
     std::vector<bool> mUseWeights; // Only For Rendering
     int mHorizon;

@@ -731,80 +731,8 @@ void Environment::setAction(Eigen::VectorXd _action)
         std::cout << "[ERROR] Environment SetAction" << std::endl;
         exit(-1);
     }
-    // Cascading
-    if (mUseCascading)
-    {
-        mProjStates.clear();
-        mProjJointStates.clear();
-        for (Network nn : mPrevNetworks)
-        {
-            std::pair<Eigen::VectorXd, Eigen::VectorXd> prev_states = getProjState(nn.minV, nn.maxV);
-            mProjStates.push_back(prev_states.first);
-            mProjJointStates.push_back(prev_states.second);
-        }
-        mProjStates.push_back(mState);
-        mProjJointStates.push_back(mJointState);
-
-        mDmins.clear();
-        mWeights.clear();
-        mBetas.clear();
-
-        for (int i = 0; i < mPrevNetworks.size() + 1; i++)
-        {
-            mDmins.push_back(99999999);
-            mWeights.push_back(0.0);
-            mBetas.push_back(0.0);
-        }
-
-        if (mPrevNetworks.size() > 0)
-        {
-            mDmins[0] = 0.0;
-            mWeights[0] = 1.0;
-            mBetas[0] = 0.0;
-        }
-
-        for (Eigen::Vector2i edge : mEdges)
-        {
-            double d = (mProjJointStates[edge[1]] - mProjJointStates[edge[0]]).norm() * 0.008;
-            if (mDmins[edge[1]] > d)
-                mDmins[edge[1]] = d;
-        }
-
-        for (int i = 0; i < mPrevNetworks.size(); i++)
-        {
-            Eigen::VectorXd prev_action = mPrevNetworks[i].joint.attr("get_action")(mProjStates[i]).cast<Eigen::VectorXd>();
-            if (i == 0)
-            {
-                mAction.head(mNumActuatorAction) = mActionScale * (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * prev_action.head(mNumActuatorAction);
-                mAction.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction) += (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * prev_action.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction);
-                phaseAction += mPhaseDisplacementScale * prev_action[mNumActuatorAction];
-                continue;
-            }
-            double beta = 0.2 + 0.1 * prev_action[prev_action.rows() - 1];
-            mBetas[i] = beta;
-            mWeights[i] = mPrevNetworks.front().joint.attr("weight_filter")(mDmins[i], beta).cast<double>();
-
-            // Joint Anlge 부분은 add position 을 통해서
-            mAction.head(mNumActuatorAction) = mCharacter->addPositions(mAction.head(mNumActuatorAction), (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights[i] * mActionScale * prev_action.head(mNumActuatorAction), false); // mAction.head(mNumActuatorAction)
-            mAction.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction) += (mUseWeights[i * (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights[i] * prev_action.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction);
-            phaseAction += mWeights[i] * mPhaseDisplacementScale * prev_action[mNumActuatorAction];
-        }
-        // Current Networks
-        if (mController->hasLoadedMuscleNN())
-        {
-            double beta = 0.2 + 0.1 * _action[_action.rows() - 1];
-            mBetas[mBetas.size() - 1] = beta;
-            mWeights[mWeights.size() - 1] = mPrevNetworks.front().joint.attr("weight_filter")(mDmins.back(), beta).cast<double>();
-            // mAction.head(mAction.rows() - 1) += (mUseWeights[mWeights.size() - 1] ? 1 : 0) * mWeights[mWeights.size() - 1] * _action.head(mAction.rows() - 1);
-            mAction.head(mNumActuatorAction) = mCharacter->addPositions(mAction.head(mNumActuatorAction), (mUseWeights[mUseWeights.size() - (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights.back() * mActionScale * _action.head(mNumActuatorAction), false); // mAction.head(mNumActuatorAction)
-            mAction.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction) += (mUseWeights[mUseWeights.size() - (mUseMuscle ? 2 : 1)] ? 1 : 0) * mWeights.back() * _action.segment(mNumActuatorAction, (mAction.rows() - 1) - mNumActuatorAction);
-        }
-    }
-    else
-    {
-        mAction = _action;
-        mAction.head(mNumActuatorAction) *= mActionScale;
-    }
+    mAction = _action;
+    mAction.head(mNumActuatorAction) *= mActionScale;
      
     if (mPhaseDisplacementScale > 0.0) phaseAction += (mWeights.size() > 0 ? mWeights.back() : 1.0) * mPhaseDisplacementScale * mAction[mNumActuatorAction];
     else phaseAction = 0.0;

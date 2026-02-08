@@ -77,9 +77,8 @@ target_include_directories(render_ckpt PRIVATE
 )
 
 target_link_libraries(render_ckpt
-        ${Python3_LIBRARIES}
         tinyxml2::tinyxml2
-        GL GLU glut glad pybind11::embed glfw imgui
+        GL GLU glut glad glfw imgui
         sim
         dart-gui
         ${HDF5_CXX_LIBRARIES}
