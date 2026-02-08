@@ -1448,7 +1448,6 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 }
 
                 // Row 6: Line Reg
-                ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("Line Reg");
                 ImGui::SetNextItemWidth(-1);
@@ -1480,7 +1479,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
     }
     if (isContractureRunning) ImGui::EndDisabled();
 
-    // Display brief optimization result summary
+    // Display optimization result: per-trial torque (before->after, t:target) and per-group ratios
     if (mContractureOptResult.has_value() && !mContractureOptResult->trial_results.empty()) {
         ImGui::Spacing();
 
@@ -1499,46 +1498,60 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
 
         // Display header with success rate
         ImVec4 rateColor = (successRate >= 100.0f)
-            ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f)   // Green if 100%
-            : ImVec4(0.9f, 0.6f, 0.2f, 1.0f);  // Orange otherwise
+            ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f)
+            : ImVec4(0.9f, 0.6f, 0.2f, 1.0f);
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Outer %d/%d]",
             mContractureOuterIterations, mContractureOuterIterations);
         ImGui::SameLine();
         ImGui::TextColored(rateColor, "Success: %d/%d (%.0f%%)", successCount, totalCount, successRate);
 
-        // Display each trial result with wrapping
-        float availableWidth = ImGui::GetContentRegionAvail().x;
-        float currentX = 0.0f;
+        // Per-trial torque table: trial_name (before->after, t:target)
+        ImGuiTableFlags trialTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                          ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("##contracture_trials", 2, trialTableFlags)) {
+            ImGui::TableSetupColumn("Trial", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Torque (before->after, t:target)", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
 
-        for (const auto& trial : mContractureOptResult->trial_results) {
-            // Calculate error percentage
-            double error_pct = 0.0;
-            if (std::abs(trial.observed_torque) > 1e-6) {
-                error_pct = std::abs(trial.computed_torque_after - trial.observed_torque)
-                          / std::abs(trial.observed_torque) * 100.0;
+            for (const auto& trial : mContractureOptResult->trial_results) {
+                double error_pct = 0.0;
+                if (std::abs(trial.observed_torque) > 1e-6) {
+                    error_pct = std::abs(trial.computed_torque_after - trial.observed_torque)
+                              / std::abs(trial.observed_torque) * 100.0;
+                }
+                ImVec4 color = (error_pct > 5.0)
+                    ? ImVec4(0.9f, 0.3f, 0.3f, 1.0f)
+                    : ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(color, "%s", trial.trial_name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextColored(color, "(%.1f->%.1f, t:%.1f)",
+                    trial.computed_torque_before, trial.computed_torque_after, trial.observed_torque);
             }
+            ImGui::EndTable();
+        }
 
-            // Red if error > 5%, green otherwise
-            ImVec4 color = (error_pct > 5.0)
-                ? ImVec4(0.9f, 0.3f, 0.3f, 1.0f)   // Red
-                : ImVec4(0.3f, 0.9f, 0.3f, 1.0f);  // Green
+        // Per-group ratio table
+        if (!mContractureOptResult->group_results.empty()) {
+            if (ImGui::BeginTable("##contracture_groups", 2, trialTableFlags)) {
+                ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Ratio", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
 
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%s[%d]=%.2f(%.2f)",
-                trial.joint.c_str(), trial.dof_index,
-                trial.computed_torque_after, trial.observed_torque);
-
-            // Calculate text width for wrapping
-            float textWidth = ImGui::CalcTextSize(buf).x + ImGui::GetStyle().ItemSpacing.x;
-            if (currentX + textWidth > availableWidth && currentX > 0) {
-                // Wrap to next line
-                currentX = 0.0f;
-            } else if (currentX > 0) {
-                ImGui::SameLine();
+                for (const auto& grp : mContractureOptResult->group_results) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", grp.group_name.c_str());
+                    ImGui::TableNextColumn();
+                    ImVec4 ratioColor = (std::abs(grp.ratio - 1.0) > 0.05)
+                        ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f)
+                        : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                    ImGui::TextColored(ratioColor, "%.3f", grp.ratio);
+                }
+                ImGui::EndTable();
             }
-
-            ImGui::TextColored(color, "%s", buf);
-            currentX += textWidth;
         }
     }
 }
@@ -1796,6 +1809,19 @@ void MusclePersonalizerApp::drawExportSection()
 
             // Populate from stored contracture trials
             record.contracture_trials = mContractureUsedTrials;
+            if (!mContractureUsedTrials.empty()) {
+                record.contracture_config.maxIterations = mContractureMaxIterations;
+                record.contracture_config.minRatio = mContractureMinRatio;
+                record.contracture_config.maxRatio = mContractureMaxRatio;
+                record.contracture_config.verbose = mContractureVerbose;
+                record.contracture_config.gridSearchBegin = mContractureGridBegin;
+                record.contracture_config.gridSearchEnd = mContractureGridEnd;
+                record.contracture_config.gridSearchInterval = mContractureGridInterval;
+                record.contracture_config.lambdaRatioReg = mContractureLambdaRatioReg;
+                record.contracture_config.lambdaTorqueReg = mContractureLambdaTorqueReg;
+                record.contracture_config.lambdaLineReg = mContractureLambdaLineReg;
+                record.contracture_config.outerIterations = mContractureOuterIterations;
+            }
 
             // Populate from waypoint results
             if (!mWaypointOptResults.empty()) {
@@ -1805,6 +1831,27 @@ void MusclePersonalizerApp::drawExportSection()
                 for (const auto& r : mWaypointOptResults) {
                     record.waypoint_muscles.push_back(r.muscle_name);
                 }
+                record.waypoint_config.maxIterations = mWaypointMaxIterations;
+                record.waypoint_config.numSampling = mWaypointNumSampling;
+                record.waypoint_config.lambdaShape = static_cast<double>(mWaypointLambdaShape);
+                record.waypoint_config.lambdaLengthCurve = static_cast<double>(mWaypointLambdaLengthCurve);
+                record.waypoint_config.fixOriginInsertion = mWaypointFixOriginInsertion;
+                record.waypoint_config.weightPhase = static_cast<double>(mWaypointWeightPhase);
+                record.waypoint_config.weightDelta = static_cast<double>(mWaypointWeightDelta);
+                record.waypoint_config.weightSamples = static_cast<double>(mWaypointWeightSamples);
+                record.waypoint_config.numPhaseSamples = mWaypointNumPhaseSamples;
+                record.waypoint_config.lossPower = mWaypointLossPower;
+                record.waypoint_config.numParallel = mWaypointNumParallel;
+                record.waypoint_config.lengthType = mWaypointUseNormalizedLength
+                    ? PMuscle::LengthCurveType::NORMALIZED
+                    : PMuscle::LengthCurveType::MTU_LENGTH;
+                record.waypoint_config.maxDisplacement = static_cast<double>(mWaypointMaxDisplacement);
+                record.waypoint_config.maxDisplacementOriginInsertion = static_cast<double>(mWaypointMaxDispOriginInsertion);
+                record.waypoint_config.functionTolerance = static_cast<double>(mWaypointFunctionTolerance);
+                record.waypoint_config.gradientTolerance = static_cast<double>(mWaypointGradientTolerance);
+                record.waypoint_config.parameterTolerance = static_cast<double>(mWaypointParameterTolerance);
+                record.waypoint_config.adaptiveSampleWeight = mWaypointAdaptiveSampleWeight;
+                record.waypoint_config.multiDofJointSweep = mWaypointMultiDofJointSweep;
             }
 
             mExecutor->setModificationRecord(record);
@@ -1947,36 +1994,35 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                 return mWaypointSortAscending ? less : !less;
             });
 
-        // Compute mean values for column headers
-        double meanShapeE = 0.0, meanLengthE = 0.0, meanTotalE = 0.0, meanIters = 0.0;
+        // Compute mean before/after values for column headers
+        double meanShapeBefore = 0.0, meanShapeAfter = 0.0;
+        double meanLengthBefore = 0.0, meanLengthAfter = 0.0;
+        double meanCostBefore = 0.0, meanCostAfter = 0.0;
+        double meanIters = 0.0;
         if (!mWaypointOptResults.empty()) {
             for (const auto& r : mWaypointOptResults) {
-                if (mWaypointEnergyDisplayMode == 0) {
-                    meanShapeE += r.initial_shape_energy;
-                    meanLengthE += r.initial_length_energy;
-                    meanTotalE += r.initial_total_cost;
-                } else if (mWaypointEnergyDisplayMode == 1) {
-                    meanShapeE += r.final_shape_energy;
-                    meanLengthE += r.final_length_energy;
-                    meanTotalE += r.final_total_cost;
-                } else {
-                    meanShapeE += r.final_shape_energy - r.initial_shape_energy;
-                    meanLengthE += r.final_length_energy - r.initial_length_energy;
-                    meanTotalE += r.final_total_cost - r.initial_total_cost;
-                }
+                meanShapeBefore += r.initial_shape_energy;
+                meanShapeAfter += r.final_shape_energy;
+                meanLengthBefore += r.initial_length_energy;
+                meanLengthAfter += r.final_length_energy;
+                meanCostBefore += r.initial_total_cost;
+                meanCostAfter += r.final_total_cost;
                 meanIters += r.num_iterations;
             }
             double n = static_cast<double>(mWaypointOptResults.size());
-            meanShapeE /= n;
-            meanLengthE /= n;
-            meanTotalE /= n;
+            meanShapeBefore /= n;
+            meanShapeAfter /= n;
+            meanLengthBefore /= n;
+            meanLengthAfter /= n;
+            meanCostBefore /= n;
+            meanCostAfter /= n;
             meanIters /= n;
         }
 
-        char colShapeE[32], colLengthE[32], colCost[32], colIters[32];
-        snprintf(colShapeE, sizeof(colShapeE), "Shape E (%.4f)", meanShapeE);
-        snprintf(colLengthE, sizeof(colLengthE), "Length E (%.4f)", meanLengthE);
-        snprintf(colCost, sizeof(colCost), "Cost (%.4f)", meanTotalE);
+        char colShapeE[64], colLengthE[64], colCost[64], colIters[32];
+        snprintf(colShapeE, sizeof(colShapeE), "Shape E (%.4f->%.4f)", meanShapeBefore, meanShapeAfter);
+        snprintf(colLengthE, sizeof(colLengthE), "Length E (%.4f->%.4f)", meanLengthBefore, meanLengthAfter);
+        snprintf(colCost, sizeof(colCost), "Cost (%.4f->%.4f)", meanCostBefore, meanCostAfter);
         snprintf(colIters, sizeof(colIters), "Iters (%.1f)", meanIters);
 
         // Table with radio button, name, shape energy, length energy, total energy, iterations

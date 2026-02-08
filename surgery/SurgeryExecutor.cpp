@@ -808,6 +808,20 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
                 mfs << "      - {name: \"" << trial.name << "\", rom_angle: "
                     << std::fixed << std::setprecision(1) << trial.rom_angle << "}" << std::endl;
             }
+            const auto& cc = mModificationRecord.contracture_config;
+            mfs << "    parameters:" << std::endl;
+            mfs << "      max_iterations: " << cc.maxIterations << std::endl;
+            mfs << "      outer_iterations: " << cc.outerIterations << std::endl;
+            mfs << std::fixed << std::setprecision(2);
+            mfs << "      min_ratio: " << cc.minRatio << std::endl;
+            mfs << "      max_ratio: " << cc.maxRatio << std::endl;
+            mfs << "      grid_begin: " << cc.gridSearchBegin << std::endl;
+            mfs << "      grid_end: " << cc.gridSearchEnd << std::endl;
+            mfs << "      grid_interval: " << cc.gridSearchInterval << std::endl;
+            mfs << std::setprecision(3);
+            mfs << "      lambda_ratio_reg: " << cc.lambdaRatioReg << std::endl;
+            mfs << "      lambda_torque_reg: " << cc.lambdaTorqueReg << std::endl;
+            mfs << "      lambda_line_reg: " << cc.lambdaLineReg << std::endl;
         }
 
         if (hasWaypoint) {
@@ -819,6 +833,29 @@ void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
                 mfs << "\"" << mModificationRecord.waypoint_muscles[i] << "\"";
             }
             mfs << "]" << std::endl;
+            const auto& wc = mModificationRecord.waypoint_config;
+            mfs << "    parameters:" << std::endl;
+            mfs << "      max_iterations: " << wc.maxIterations << std::endl;
+            mfs << "      num_sampling: " << wc.numSampling << std::endl;
+            mfs << std::fixed << std::setprecision(3);
+            mfs << "      lambda_shape: " << wc.lambdaShape << std::endl;
+            mfs << "      lambda_length_curve: " << wc.lambdaLengthCurve << std::endl;
+            mfs << "      weight_phase: " << wc.weightPhase << std::endl;
+            mfs << "      weight_delta: " << wc.weightDelta << std::endl;
+            mfs << "      weight_samples: " << wc.weightSamples << std::endl;
+            mfs << "      num_phase_samples: " << wc.numPhaseSamples << std::endl;
+            mfs << "      loss_power: " << wc.lossPower << std::endl;
+            mfs << "      num_parallel: " << wc.numParallel << std::endl;
+            mfs << "      length_type: " << (wc.lengthType == LengthCurveType::NORMALIZED ? "normalized" : "mtu") << std::endl;
+            mfs << "      fix_origin_insertion: " << (wc.fixOriginInsertion ? "true" : "false") << std::endl;
+            mfs << "      adaptive_sample_weight: " << (wc.adaptiveSampleWeight ? "true" : "false") << std::endl;
+            mfs << "      multi_dof_joint_sweep: " << (wc.multiDofJointSweep ? "true" : "false") << std::endl;
+            mfs << "      max_displacement: " << wc.maxDisplacement << std::endl;
+            mfs << "      max_displacement_origin_insertion: " << wc.maxDisplacementOriginInsertion << std::endl;
+            mfs << std::scientific << std::setprecision(1);
+            mfs << "      function_tolerance: " << wc.functionTolerance << std::endl;
+            mfs << "      gradient_tolerance: " << wc.gradientTolerance << std::endl;
+            mfs << "      parameter_tolerance: " << wc.parameterTolerance << std::endl;
         }
 
         mfs << std::endl;

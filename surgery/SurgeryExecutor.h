@@ -8,6 +8,7 @@
 #include "Character.h"
 #include "DARTHelper.h"
 #include "optimizer/WaypointOptimizer.h"
+#include "optimizer/ContractureOptimizer.h"
 
 namespace PMuscle {
 
@@ -21,10 +22,12 @@ struct ContractureTrialInput {
 struct MuscleModificationRecord {
     // Contracture estimation input
     std::vector<ContractureTrialInput> contracture_trials;
+    ContractureOptimizer::Config contracture_config;
 
     // Waypoint optimization input
     std::string waypoint_motion_file;
     std::vector<std::string> waypoint_muscles;
+    WaypointOptimizer::Config waypoint_config;
 };
 
 // Progress callback for waypoint optimization: (current, total, muscleName)

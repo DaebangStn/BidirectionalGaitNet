@@ -1,0 +1,483 @@
+# Ultra-detailed muscle groups configuration for contracture optimization
+# Each muscle FIBER as separate optimization group for hip, knee, AND ankle muscles
+# ============ SEARCH GROUPS (coarse, for grid search) ============
+search_groups:
+  # Hip Flexors - separated by muscle fiber
+  iliopsoas_l: [psoas_major0_l, psoas_major1_l, psoas_major2_l, iliacus0_l, iliacus1_l, iliacus2_l]
+  iliopsoas_r: [psoas_major0_r, psoas_major1_r, psoas_major2_r, iliacus0_r, iliacus1_r, iliacus2_r]
+  rectus_femoris_biart_l: [rectus_femoris0_l, rectus_femoris1_l]
+  rectus_femoris_biart_r: [rectus_femoris0_r, rectus_femoris1_r]
+  sartorius_biart_l: [sartorius_l]
+  sartorius_biart_r: [sartorius_r]
+
+  # Hip Extensors - separated by fiber
+  hip_extensor_l: [gluteus_maximus0_l, gluteus_maximus1_l, gluteus_maximus2_l, gluteus_maximus3_l, gluteus_maximus4_l]
+  hip_extensor_r: [gluteus_maximus0_r, gluteus_maximus1_r, gluteus_maximus2_r, gluteus_maximus3_r, gluteus_maximus4_r]
+
+  # Hip Lateral Rotators - separated by muscle/fiber
+  hip_lateral_rotator_l: [quadratus_femoris_l, obturator_externus_l, obturator_internus_l, piriformis0_l, piriformis1_l, superior_gemellus_l, inferior_gemellus_l]
+  hip_lateral_rotator_r: [quadratus_femoris_r, obturator_externus_r, obturator_internus_r, piriformis0_r, piriformis1_r, superior_gemellus_r, inferior_gemellus_r]
+
+  # Hip Abductors - separated by fiber
+  hip_abductor_l: [gluteus_minimus0_l, gluteus_minimus1_l, gluteus_minimus2_l, gluteus_medius0_l, gluteus_medius1_l, gluteus_medius2_l, gluteus_medius3_l, tfl0_l, tfl1_l, tfl2_l]
+  hip_abductor_r: [gluteus_minimus0_r, gluteus_minimus1_r, gluteus_minimus2_r, gluteus_medius0_r, gluteus_medius1_r, gluteus_medius2_r, gluteus_medius3_r, tfl0_r, tfl1_r, tfl2_r]
+
+  # Hip Adductors - separated by fiber
+  hip_adductor_l: [adductor_longus0_l, adductor_longus1_l, adductor_brevis0_l, adductor_brevis1_l, adductor_magnus0_l, adductor_magnus1_l, adductor_magnus2_l, adductor_magnus3_l, adductor_magnus4_l, pectineus_l]
+  hip_adductor_r: [adductor_longus0_r, adductor_longus1_r, adductor_brevis0_r, adductor_brevis1_r, adductor_magnus0_r, adductor_magnus1_r, adductor_magnus2_r, adductor_magnus3_r, adductor_magnus4_r, pectineus_r]
+
+  # Hamstrings (Hip-Knee Biarticular) - separated by fiber
+  hamstring_biart_l: [bicep_femoris_longus_l, semitendinosus_l, semimembranosus0_l, semimembranosus1_l]
+  hamstring_biart_r: [bicep_femoris_longus_r, semitendinosus_r, semimembranosus0_r, semimembranosus1_r]
+
+  # Gracilis (Hip-Knee Biarticular)
+  gracilis_biart_l: [gracilis_l]
+  gracilis_biart_r: [gracilis_r]
+
+  # Knee Extensors - separated by fiber
+  knee_extensor_l: [vastus_medialis0_l, vastus_medialis1_l, vastus_medialis2_l, vastus_intermedius0_l, vastus_intermedius1_l, vastus_lateralis0_l, vastus_lateralis1_l]
+  knee_extensor_r: [vastus_medialis0_r, vastus_medialis1_r, vastus_medialis2_r, vastus_intermedius0_r, vastus_intermedius1_r, vastus_lateralis0_r, vastus_lateralis1_r]
+
+  # Knee Flexors - separated by fiber
+  knee_flexor_l: [bicep_femoris_short0_l, bicep_femoris_short1_l, popliteus_l]
+  knee_flexor_r: [bicep_femoris_short0_r, bicep_femoris_short1_r, popliteus_r]
+
+  # ============ ANKLE GROUPS (now separated by fiber) ============
+  knee_ankle_biart_l: [gastrocnemius_lateral_l, gastrocnemius_medial_l, plantaris_l]
+  knee_ankle_biart_r: [gastrocnemius_lateral_r, gastrocnemius_medial_r, plantaris_r]
+  plantarflexor_l: [plantarflexor_l]
+  plantarflexor_r: [plantarflexor_r]
+  dorsiflexor_l: [tibialis_anterior_l, extensor_hallucis_longus_l, extensor_digitorum_longus_l, peroneus_tertius0_l, peroneus_tertius1_l]
+  dorsiflexor_r: [tibialis_anterior_r, extensor_hallucis_longus_r, extensor_digitorum_longus_r, peroneus_tertius0_r, peroneus_tertius1_r]
+
+# ============ OPTIMIZATION GROUPS (fine, for Ceres) ============
+optimization_groups:
+  # ============ HIP FLEXORS - EACH FIBER SEPARATE ============
+  psoas_major0_l:
+    - L_Psoas_Major
+
+  psoas_major1_l:
+    - L_Psoas_Major1
+
+  psoas_major2_l:
+    - L_Psoas_Major2
+
+  psoas_major0_r:
+    - R_Psoas_Major
+
+  psoas_major1_r:
+    - R_Psoas_Major1
+
+  psoas_major2_r:
+    - R_Psoas_Major2
+
+  iliacus0_l:
+    - L_iliacus
+
+  iliacus1_l:
+    - L_iliacus1
+
+  iliacus2_l:
+    - L_iliacus2
+
+  iliacus0_r:
+    - R_iliacus
+
+  iliacus1_r:
+    - R_iliacus1
+
+  iliacus2_r:
+    - R_iliacus2
+
+  # ============ HIP EXTENSORS - EACH FIBER SEPARATE ============
+  gluteus_maximus0_l:
+    - L_Gluteus_Maximus
+
+  gluteus_maximus1_l:
+    - L_Gluteus_Maximus1
+
+  gluteus_maximus2_l:
+    - L_Gluteus_Maximus2
+
+  gluteus_maximus3_l:
+    - L_Gluteus_Maximus3
+
+  gluteus_maximus4_l:
+    - L_Gluteus_Maximus4
+
+  gluteus_maximus0_r:
+    - R_Gluteus_Maximus
+
+  gluteus_maximus1_r:
+    - R_Gluteus_Maximus1
+
+  gluteus_maximus2_r:
+    - R_Gluteus_Maximus2
+
+  gluteus_maximus3_r:
+    - R_Gluteus_Maximus3
+
+  gluteus_maximus4_r:
+    - R_Gluteus_Maximus4
+
+  # ============ HIP LATERAL ROTATORS - EACH FIBER SEPARATE ============
+  quadratus_femoris_l:
+    - L_Quadratus_Femoris
+
+  quadratus_femoris_r:
+    - R_Quadratus_Femoris
+
+  obturator_externus_l:
+    - L_Obturator_Externus
+
+  obturator_externus_r:
+    - R_Obturator_Externus
+
+  obturator_internus_l:
+    - L_Obturator_Internus
+
+  obturator_internus_r:
+    - R_Obturator_Internus
+
+  piriformis0_l:
+    - L_Piriformis
+
+  piriformis1_l:
+    - L_Piriformis1
+
+  piriformis0_r:
+    - R_Piriformis
+
+  piriformis1_r:
+    - R_Piriformis1
+
+  superior_gemellus_l:
+    - L_Superior_Gemellus
+
+  inferior_gemellus_l:
+    - L_Inferior_Gemellus
+
+  superior_gemellus_r:
+    - R_Superior_Gemellus
+
+  inferior_gemellus_r:
+    - R_Inferior_Gemellus
+
+  # ============ HIP ABDUCTORS - EACH FIBER SEPARATE ============
+  gluteus_minimus0_l:
+    - L_Gluteus_Minimus
+
+  gluteus_minimus1_l:
+    - L_Gluteus_Minimus1
+
+  gluteus_minimus2_l:
+    - L_Gluteus_Minimus2
+
+  gluteus_minimus0_r:
+    - R_Gluteus_Minimus
+
+  gluteus_minimus1_r:
+    - R_Gluteus_Minimus1
+
+  gluteus_minimus2_r:
+    - R_Gluteus_Minimus2
+
+  gluteus_medius0_l:
+    - L_Gluteus_Medius
+
+  gluteus_medius1_l:
+    - L_Gluteus_Medius1
+
+  gluteus_medius2_l:
+    - L_Gluteus_Medius2
+
+  gluteus_medius3_l:
+    - L_Gluteus_Medius3
+
+  gluteus_medius0_r:
+    - R_Gluteus_Medius
+
+  gluteus_medius1_r:
+    - R_Gluteus_Medius1
+
+  gluteus_medius2_r:
+    - R_Gluteus_Medius2
+
+  gluteus_medius3_r:
+    - R_Gluteus_Medius3
+
+  tfl0_l:
+    - L_Tensor_Fascia_Lata
+
+  tfl1_l:
+    - L_Tensor_Fascia_Lata1
+
+  tfl2_l:
+    - L_Tensor_Fascia_Lata2
+
+  tfl0_r:
+    - R_Tensor_Fascia_Lata
+
+  tfl1_r:
+    - R_Tensor_Fascia_Lata1
+
+  tfl2_r:
+    - R_Tensor_Fascia_Lata2
+
+  # ============ HIP ADDUCTORS - EACH FIBER SEPARATE ============
+  adductor_longus0_l:
+    - L_Adductor_Longus
+
+  adductor_longus1_l:
+    - L_Adductor_Longus1
+
+  adductor_longus0_r:
+    - R_Adductor_Longus
+
+  adductor_longus1_r:
+    - R_Adductor_Longus1
+
+  adductor_brevis0_l:
+    - L_Adductor_Brevis
+
+  adductor_brevis1_l:
+    - L_Adductor_Brevis1
+
+  adductor_brevis0_r:
+    - R_Adductor_Brevis
+
+  adductor_brevis1_r:
+    - R_Adductor_Brevis1
+
+  adductor_magnus0_l:
+    - L_Adductor_Magnus
+
+  adductor_magnus1_l:
+    - L_Adductor_Magnus1
+
+  adductor_magnus2_l:
+    - L_Adductor_Magnus2
+
+  adductor_magnus3_l:
+    - L_Adductor_Magnus3
+
+  adductor_magnus4_l:
+    - L_Adductor_Magnus4
+
+  adductor_magnus0_r:
+    - R_Adductor_Magnus
+
+  adductor_magnus1_r:
+    - R_Adductor_Magnus1
+
+  adductor_magnus2_r:
+    - R_Adductor_Magnus2
+
+  adductor_magnus3_r:
+    - R_Adductor_Magnus3
+
+  adductor_magnus4_r:
+    - R_Adductor_Magnus4
+
+  pectineus_l:
+    - L_Pectineus
+
+  pectineus_r:
+    - R_Pectineus
+
+  # ============ HAMSTRINGS - EACH FIBER SEPARATE ============
+  bicep_femoris_longus_l:
+    - L_Bicep_Femoris_Longus
+
+  bicep_femoris_longus_r:
+    - R_Bicep_Femoris_Longus
+
+  semitendinosus_l:
+    - L_Semitendinosus
+
+  semitendinosus_r:
+    - R_Semitendinosus
+
+  semimembranosus0_l:
+    - L_Semimembranosus
+
+  semimembranosus1_l:
+    - L_Semimembranosus1
+
+  semimembranosus0_r:
+    - R_Semimembranosus
+
+  semimembranosus1_r:
+    - R_Semimembranosus1
+
+  # ============ HIP-KNEE BIARTICULAR: RECTUS FEMORIS - EACH FIBER ============
+  rectus_femoris0_l:
+    - L_Rectus_Femoris
+
+  rectus_femoris1_l:
+    - L_Rectus_Femoris1
+
+  rectus_femoris0_r:
+    - R_Rectus_Femoris
+
+  rectus_femoris1_r:
+    - R_Rectus_Femoris1
+
+  # ============ HIP-KNEE BIARTICULAR: SARTORIUS ============
+  sartorius_l:
+    - L_Sartorius
+
+  sartorius_r:
+    - R_Sartorius
+
+  # ============ HIP-KNEE BIARTICULAR: GRACILIS ============
+  gracilis_l:
+    - L_Gracilis
+
+  gracilis_r:
+    - R_Gracilis
+
+  # ============ KNEE EXTENSORS - EACH FIBER SEPARATE ============
+  vastus_medialis0_l:
+    - L_Vastus_Medialis
+
+  vastus_medialis1_l:
+    - L_Vastus_Medialis1
+
+  vastus_medialis2_l:
+    - L_Vastus_Medialis2
+
+  vastus_medialis0_r:
+    - R_Vastus_Medialis
+
+  vastus_medialis1_r:
+    - R_Vastus_Medialis1
+
+  vastus_medialis2_r:
+    - R_Vastus_Medialis2
+
+  vastus_intermedius0_l:
+    - L_Vastus_Intermedius
+
+  vastus_intermedius1_l:
+    - L_Vastus_Intermedius1
+
+  vastus_intermedius0_r:
+    - R_Vastus_Intermedius
+
+  vastus_intermedius1_r:
+    - R_Vastus_Intermedius1
+
+  vastus_lateralis0_l:
+    - L_Vastus_Lateralis
+
+  vastus_lateralis1_l:
+    - L_Vastus_Lateralis1
+
+  vastus_lateralis0_r:
+    - R_Vastus_Lateralis
+
+  vastus_lateralis1_r:
+    - R_Vastus_Lateralis1
+
+  # ============ KNEE FLEXORS - EACH FIBER SEPARATE ============
+  bicep_femoris_short0_l:
+    - L_Bicep_Femoris_Short
+
+  bicep_femoris_short1_l:
+    - L_Bicep_Femoris_Short1
+
+  bicep_femoris_short0_r:
+    - R_Bicep_Femoris_Short
+
+  bicep_femoris_short1_r:
+    - R_Bicep_Femoris_Short1
+
+  popliteus_l:
+    - L_Popliteus
+
+  popliteus_r:
+    - R_Popliteus
+
+  # ============ KNEE-ANKLE BIARTICULAR - EACH FIBER SEPARATE ============
+  gastrocnemius_lateral_l:
+    - L_Gastrocnemius_Lateral_Head
+
+  gastrocnemius_medial_l:
+    - L_Gastrocnemius_Medial_Head
+
+  plantaris_l:
+    - L_Plantaris
+
+  gastrocnemius_lateral_r:
+    - R_Gastrocnemius_Lateral_Head
+
+  gastrocnemius_medial_r:
+    - R_Gastrocnemius_Medial_Head
+
+  plantaris_r:
+    - R_Plantaris
+
+  # ============ PLANTARFLEXORS (unchanged from original) ============
+  plantarflexor_l:
+    - L_Soleus
+    - L_Soleus1
+    - L_Tibialis_Posterior
+    - L_Flexor_Digitorum_Longus
+    - L_Flexor_Digitorum_Longus1
+    - L_Flexor_Digitorum_Longus2
+    - L_Flexor_Digitorum_Longus3
+    - L_Flexor_Hallucis
+    - L_Flexor_Hallucis1
+    - L_Peroneus_Longus
+    - L_Peroneus_Brevis
+
+  plantarflexor_r:
+    - R_Soleus
+    - R_Soleus1
+    - R_Tibialis_Posterior
+    - R_Flexor_Digitorum_Longus
+    - R_Flexor_Digitorum_Longus1
+    - R_Flexor_Digitorum_Longus2
+    - R_Flexor_Digitorum_Longus3
+    - R_Flexor_Hallucis
+    - R_Flexor_Hallucis1
+    - R_Peroneus_Longus
+    - R_Peroneus_Brevis
+
+  # ============ DORSIFLEXORS - EACH FIBER SEPARATE ============
+  tibialis_anterior_l:
+    - L_Tibialis_Anterior
+
+  extensor_hallucis_longus_l:
+    - L_Extensor_Hallucis_Longus
+
+  extensor_digitorum_longus_l:
+    - L_Extensor_Digitorum_Longus
+    - L_Extensor_Digitorum_Longus1
+    - L_Extensor_Digitorum_Longus2
+    - L_Extensor_Digitorum_Longus3
+
+  peroneus_tertius0_l:
+    - L_Peroneus_Tertius
+
+  peroneus_tertius1_l:
+    - L_Peroneus_Tertius1
+
+  tibialis_anterior_r:
+    - R_Tibialis_Anterior
+
+  extensor_hallucis_longus_r:
+    - R_Extensor_Hallucis_Longus
+
+  extensor_digitorum_longus_r:
+    - R_Extensor_Digitorum_Longus
+    - R_Extensor_Digitorum_Longus1
+    - R_Extensor_Digitorum_Longus2
+    - R_Extensor_Digitorum_Longus3
+
+  peroneus_tertius0_r:
+    - R_Peroneus_Tertius
+
+  peroneus_tertius1_r:
+    - R_Peroneus_Tertius1

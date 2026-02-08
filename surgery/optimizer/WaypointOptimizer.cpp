@@ -702,22 +702,25 @@ static Eigen::Vector3d computeLengthCurveGradientNumeric(const OptimizationConte
 // ============================================================================
 
 /**
- * Per-anchor shape cost: 3-param block for a single anchor.
- * Each anchor is optimized independently in a sequential sweep.
+ * Combined per-anchor cost: shape + length in a single CostFunction.
+ * 2 residuals sharing one forward eval and one set of 3 perturbations.
  *
- * cost = 0.5 * r² = lambda_S * E_shape_i
+ * residuals[0] = sqrt(2 * lambda_S) * sqrt(E_shape)
+ * residuals[1] = sqrt(2 * lambda_L) * sqrt(E_length)
  */
-class PerAnchorShapeCost : public ceres::CostFunction {
+class PerAnchorCombinedCost : public ceres::CostFunction {
 public:
-    PerAnchorShapeCost(
+    PerAnchorCombinedCost(
         std::shared_ptr<OptimizationContext> ctx,
         int anchor_index,
-        double lambda_S)
+        double lambda_S,
+        double lambda_L)
         : ctx_(std::move(ctx))
         , anchor_index_(anchor_index)
         , lambda_S_(lambda_S)
+        , lambda_L_(lambda_L)
     {
-        set_num_residuals(1);
+        set_num_residuals(2);
         mutable_parameter_block_sizes()->push_back(3);
     }
 
@@ -731,35 +734,42 @@ public:
             params[0], params[1], params[2]);
         ctx_->subject_muscle->UpdateGeometry();
 
-        // Forward evaluation: compute energy and cache reference positions
+        // Forward evaluation: compute both energies in one pass
         CachedSweepRef cache;
-        double E_shape;
+        double E_shape, E_length;
         if (jacobians && jacobians[0]) {
             E_shape = computeShapeEnergyWithCache(*ctx_, cache);
         } else {
             E_shape = computeShapeEnergy(*ctx_);
         }
+        E_length = computeLengthCurveEnergy(*ctx_);
 
-        double sqrt_E = std::sqrt(E_shape + kSqrtEpsilon);
-        double sqrt_2w = std::sqrt(2.0 * lambda_S_);
-        residuals[0] = sqrt_2w * sqrt_E;
+        double sqrt_Es = std::sqrt(E_shape + kSqrtEpsilon);
+        double sqrt_El = std::sqrt(E_length + kSqrtEpsilon);
+        double sqrt_2s = std::sqrt(2.0 * lambda_S_);
+        double sqrt_2l = std::sqrt(2.0 * lambda_L_);
+        residuals[0] = sqrt_2s * sqrt_Es;
+        residuals[1] = sqrt_2l * sqrt_El;
 
         if (jacobians && jacobians[0]) {
             constexpr double h = 1e-6;
-            double scale = sqrt_2w / (2.0 * sqrt_E + kEpsilon);
+            double scale_s = sqrt_2s / (2.0 * sqrt_Es + kEpsilon);
+            double scale_l = sqrt_2l / (2.0 * sqrt_El + kEpsilon);
             Eigen::Vector3d orig(params[0], params[1], params[2]);
 
-            // Forward differences with cached reference geometry
-            double E_base = E_shape;
-
+            // Single set of 3 perturbations for both residuals
             for (int axis = 0; axis < 3; ++axis) {
                 anchors[anchor_index_]->local_positions[0] = orig;
                 anchors[anchor_index_]->local_positions[0][axis] += h;
                 ctx_->subject_muscle->UpdateGeometry();
-                double E_plus = computeShapeEnergyCached(*ctx_, cache);
 
-                double dE = (E_plus - E_base) / h;
-                jacobians[0][axis] = scale * dE;
+                double Es_plus = computeShapeEnergyCached(*ctx_, cache);
+                double El_plus = computeLengthCurveEnergy(*ctx_);
+
+                // Jacobian layout: jacobians[0] is 2×3 row-major
+                // Row 0 = shape residual, Row 1 = length residual
+                jacobians[0][0 * 3 + axis] = scale_s * (Es_plus - E_shape) / h;
+                jacobians[0][1 * 3 + axis] = scale_l * (El_plus - E_length) / h;
             }
 
             anchors[anchor_index_]->local_positions[0] = orig;
@@ -772,71 +782,6 @@ private:
     std::shared_ptr<OptimizationContext> ctx_;
     int anchor_index_;
     double lambda_S_;
-};
-
-/**
- * Per-anchor length curve cost: 3-param block for a single anchor.
- * No N_opt multiplier — each anchor gets its own length cost.
- *
- * cost = 0.5 * r² = lambda_L * E_length
- */
-class PerAnchorLengthCurveCost : public ceres::CostFunction {
-public:
-    PerAnchorLengthCurveCost(
-        std::shared_ptr<OptimizationContext> ctx,
-        int anchor_index,
-        double lambda_L)
-        : ctx_(std::move(ctx))
-        , anchor_index_(anchor_index)
-        , lambda_L_(lambda_L)
-    {
-        set_num_residuals(1);
-        mutable_parameter_block_sizes()->push_back(3);
-    }
-
-    bool Evaluate(double const* const* parameters,
-                  double* residuals,
-                  double** jacobians) const override {
-        const double* params = parameters[0];
-        auto& anchors = ctx_->subject_muscle->GetAnchors();
-
-        anchors[anchor_index_]->local_positions[0] = Eigen::Vector3d(
-            params[0], params[1], params[2]);
-        ctx_->subject_muscle->UpdateGeometry();
-
-        double E_length = computeLengthCurveEnergy(*ctx_);
-
-        double sqrt_E = std::sqrt(E_length + kSqrtEpsilon);
-        double sqrt_2w = std::sqrt(2.0 * lambda_L_);
-        residuals[0] = sqrt_2w * sqrt_E;
-
-        if (jacobians && jacobians[0]) {
-            constexpr double h = 1e-6;
-            double scale = sqrt_2w / (2.0 * sqrt_E + kEpsilon);
-            Eigen::Vector3d orig(params[0], params[1], params[2]);
-
-            // Forward differences: reuse E_length as E_base
-            double E_base = E_length;
-
-            for (int axis = 0; axis < 3; ++axis) {
-                anchors[anchor_index_]->local_positions[0] = orig;
-                anchors[anchor_index_]->local_positions[0][axis] += h;
-                ctx_->subject_muscle->UpdateGeometry();
-                double E_plus = computeLengthCurveEnergy(*ctx_);
-
-                double dE = (E_plus - E_base) / h;
-                jacobians[0][axis] = scale * dE;
-            }
-
-            anchors[anchor_index_]->local_positions[0] = orig;
-            ctx_->subject_muscle->UpdateGeometry();
-        }
-        return true;
-    }
-
-private:
-    std::shared_ptr<OptimizationContext> ctx_;
-    int anchor_index_;
     double lambda_L_;
 };
 
@@ -1215,18 +1160,7 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
 
     // 7. Sequential per-anchor optimization loop
     //    config.maxIterations = max outer passes
-    //    Stop when ALL anchors converge in the same pass
-    constexpr double kAnchorConvergenceTol = 1e-6;
-
-    std::vector<double> prev_anchor_energy(N_opt, 0.0);
-
-    subject_muscle->UpdateGeometry();
-    for (int k = 0; k < N_opt; ++k) {
-        double s = computeShapeEnergy(*contexts[k]);
-        double l = computeLengthCurveEnergy(*contexts[k]);
-        prev_anchor_energy[k] = config.lambdaShape * s + config.lambdaLengthCurve * l;
-    }
-
+    //    Stop when ALL anchors converge in the same pass (parameter displacement check)
     int total_outer_iters = 0;
 
     for (int outer = 0; outer < config.maxIterations; ++outer) {
@@ -1254,45 +1188,24 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
                 problem.SetParameterUpperBound(params, dim, initial_positions[k][dim] + max_disp);
             }
 
-            // Add residuals
-            if (config.lambdaShape > 0) {
-                problem.AddResidualBlock(
-                    new PerAnchorShapeCost(contexts[k], ai, config.lambdaShape),
-                    nullptr, params);
-            }
-            if (config.lambdaLengthCurve > 0) {
-                problem.AddResidualBlock(
-                    new PerAnchorLengthCurveCost(contexts[k], ai, config.lambdaLengthCurve),
-                    nullptr, params);
-            }
+            // Add combined residual (shape + length in one cost function)
+            problem.AddResidualBlock(
+                new PerAnchorCombinedCost(contexts[k], ai,
+                    config.lambdaShape, config.lambdaLengthCurve),
+                nullptr, params);
 
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
 
             // Apply immediately (next anchor sees updated neighbor)
-            anchors[ai]->local_positions[0] = Eigen::Vector3d(params[0], params[1], params[2]);
+            Eigen::Vector3d new_pos(params[0], params[1], params[2]);
+            anchors[ai]->local_positions[0] = new_pos;
             subject_muscle->UpdateGeometry();
 
-            // Per-anchor convergence check
-            double s = computeShapeEnergy(*contexts[k]);
-            double l = computeLengthCurveEnergy(*contexts[k]);
-            double cur_energy = config.lambdaShape * s + config.lambdaLengthCurve * l;
-
-            if (cur_energy > prev_anchor_energy[k] + kEpsilon) {
-                // Energy increased — revert this anchor, counts as converged for this pass
-                anchors[ai]->local_positions[0] = saved_pos;
-                subject_muscle->UpdateGeometry();
+            // Per-anchor convergence: check if parameters barely moved
+            double displacement = (new_pos - saved_pos).norm();
+            if (displacement < config.parameterTolerance) {
                 ++num_converged;
-                if (config.verbose) {
-                    LOG_WARN("[WaypointOpt] Anchor " << ai << " energy increased ("
-                             << prev_anchor_energy[k] << " -> " << cur_energy << "), reverting");
-                }
-            } else if (prev_anchor_energy[k] < kEpsilon ||
-                       (prev_anchor_energy[k] - cur_energy) / (prev_anchor_energy[k] + kEpsilon) < kAnchorConvergenceTol) {
-                prev_anchor_energy[k] = cur_energy;
-                ++num_converged;
-            } else {
-                prev_anchor_energy[k] = cur_energy;
             }
         }
 
