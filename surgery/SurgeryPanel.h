@@ -5,20 +5,23 @@
 #include "SurgeryOperation.h"
 #include "Character.h"
 #include "common/ShapeRenderer.h"
+#include "optimizer/ContractureOptimizer.h"
 #include "Log.h"
 #include <imgui.h>
+#include <yaml-cpp/yaml.h>
 #include <map>
 #include <vector>
 #include <string>
 #include <memory>
+#include <optional>
 
 namespace PMuscle {
 
 /**
- * SurgeryPanel - UI and execution for muscle surgery operations
- * 
- * Inherits from SurgeryExecutor to provide GUI-specific overrides
- * with cache invalidation for visual updates.
+ * SurgeryPanel - SEMLS surgery planning UI
+ *
+ * Provides 5 tabs: Project, TAL, DHL, FDO, RFT
+ * Inherits from SurgeryExecutor for cache-invalidating overrides.
  */
 class SurgeryPanel : public SurgeryExecutor {
 public:
@@ -27,12 +30,10 @@ public:
 
     // Main UI rendering
     void drawSurgeryPanel(bool* show_panel, int window_height);
-
-    // Draw just the content (for embedding in another application's tab)
     void drawSurgeryContent();
 
-    // Update character reference (needed when character is reloaded)
     void setCharacter(Character* character);
+    void onPIDChanged(const std::string& pid, const std::string& visit);
 
     // Surgery operation overrides (with cache invalidation)
     bool editAnchorPosition(const std::string& muscle, int anchor_index,
@@ -58,9 +59,8 @@ public:
     // FDO combined surgery
     bool executeFDO(const std::string& ref_muscle, int ref_anchor_index,
                    const Eigen::Vector3d& search_dir, const Eigen::Vector3d& rot_axis,
-                   double angle);
+                   double angle) override;
 
-    // Reset skeleton
     void resetSkeleton();
 
     // Script recording
@@ -70,50 +70,104 @@ public:
     void exportRecording(const std::string& filepath);
     void loadSurgeryScript(const std::string& filepath);
 
-    // Getters for rendering (anchor visualization)
-    std::string getCandidateMuscle() const { return mAnchorCandidateMuscle; }
-    int getCandidateAnchorIndex() const { return mSelectedCandidateAnchorIndex; }
-    std::string getReferenceMuscle() const { return mAnchorReferenceMuscle; }
-    int getReferenceAnchorIndex() const { return mSelectedReferenceAnchorIndex; }
+    // --- SEMLS Surgery Config ---
+    struct ROMTrialEntry {
+        std::string trial_name;
+        float angle_deg = 0.0f;
+    };
+    struct TALConfig {
+        std::vector<ROMTrialEntry> rom_trials;
+        std::vector<std::string> muscles;
+        bool enabled = true;
+    };
+    struct DHLConfig {
+        std::string target_muscle;
+        std::string donor_muscle;
+        int donor_anchor = 3;
+        std::vector<int> remove_anchors;
+        std::vector<std::string> rom_trials;
+        std::vector<std::string> muscles;
+        float popliteal_angle_deg = 0.0f;
+        bool enabled = true;
+        bool do_anchor_transfer = true;
+        bool do_contracture_opt = true;
+    };
+    struct FDOConfig {
+        std::string joint;
+        std::string ref_muscle;
+        int ref_anchor = 0;
+        float rotation_axis[3] = {0, 1, 0};
+        float search_direction[3] = {0, -1, 0};
+        float angle_deg = 0.0f;
+        bool enabled = true;
+    };
+    struct RFTConfig {
+        std::vector<std::string> target_muscles;
+        std::string donor_muscle;
+        std::vector<int> remove_anchors;
+        std::vector<int> copy_donor_anchors;
+        bool enabled = true;
+    };
+    struct SEMLSConfig {
+        TALConfig tal_left, tal_right;
+        DHLConfig dhl_left, dhl_right;
+        FDOConfig fdo_left, fdo_right;
+        RFTConfig rft_left, rft_right;
+    };
 
-    // Getters for FDO visualization
-    std::string getRotateAnchorMuscle() const { return mSelectedRotateAnchorMuscle; }
-    int getRotateAnchorIndex() const { return mSelectedRotateAnchorIndex; }
-    Eigen::Vector3f getRotateAnchorSearchDir() const {
-        return Eigen::Vector3f(mRotateAnchorSearchDir[0], mRotateAnchorSearchDir[1], mRotateAnchorSearchDir[2]);
-    }
+    // Load default surgery parameters from YAML
+    void loadSurgeryConfig(const std::string& yaml_path);
+    void loadPatientMetadata(const std::string& metadata_path);
+
+    // Execute individual surgeries
+    bool executeTAL(bool left);
+    bool executeDHL(bool left);
+    bool executeRFT(bool left);
+
+    // Execute all enabled surgeries in SEMLS order
+    void executeSEMLS();
+
+    // Highlighted anchors for 3D rendering (populated by FDO tab)
+    struct HighlightAnchor {
+        Eigen::Vector3d position;
+        bool is_reference;  // true = ref anchor (red), false = affected (sky blue)
+    };
+    const std::vector<HighlightAnchor>& getHighlightedAnchors() const { return mHighlightedAnchors; }
+    bool shouldDrawFDOAnchors() const { return mDrawFDOAnchors; }
 
 private:
-    // Tab content rendering
-    void drawScriptTabContent();
+    // SEMLS tab draw methods
+    void drawProjectTab();
+    void drawTALTab();
+    void drawDHLTab();
+    void drawFDOTab();
+    void drawRFTTab();
+    void drawOptimizerTab();
 
-    // UI section rendering
+    // Kept UI sections (used in Project tab)
     void drawScriptControlsSection();
-    void drawResetMusclesSection();
-    void drawDistributePassiveForceSection();
-    void drawRelaxPassiveForceSection();
-    void drawAnchorManipulationSection();
     void drawSaveMuscleConfigSection();
-
-    // FDO UI sections
-    void drawRotateJointOffsetSection();
-    void drawRotateAnchorPointsSection();
-    void drawFDOCombinedSection();
-
-    // Save/Reset skeleton sections
-    void drawResetSkeletonSection();
     void drawSaveSkeletonConfigSection();
+    void drawResetMusclesSection();
+    void drawResetSkeletonSection();
 
     // Script preview popup
     void showScriptPreview();
     void executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops);
     void recordOperation(std::unique_ptr<SurgeryOperation> op);
 
-    // Helper - invalidate muscle cache for rendering update
     void invalidateMuscleCache(const std::string& muscleName);
+    void drawOptResultDisplay(const std::string& id_suffix, const std::optional<ContractureOptResult>& result);
+
+    // Shared contracture optimization helper for TAL/DHL
+    ContractureOptResult runContractureOpt(
+        const std::string& search_group_name,
+        const std::vector<std::string>& muscles,
+        const std::vector<std::string>& trial_names,
+        const std::vector<ROMTrialConfig>& rom_configs,
+        const ContractureOptimizer::Config& opt_config);
 
 private:
-    // Character and rendering
     Character* mCharacter;
     ShapeRenderer* mShapeRenderer;
 
@@ -133,50 +187,31 @@ private:
     char mSaveMuscleFilename[256];
     bool mSavingMuscle;
 
-    // Distribute passive force section
-    char mDistributeFilterBuffer[128];
-    std::map<std::string, bool> mDistributeSelection;
-    std::string mDistributeRefMuscle;
-
-    // Relax passive force section
-    char mRelaxFilterBuffer[128];
-    std::map<std::string, bool> mRelaxSelection;
-
-    // Anchor manipulation section
-    char mAnchorCandidateFilterBuffer[128];
-    char mAnchorReferenceFilterBuffer[128];
-    std::string mAnchorCandidateMuscle;
-    std::string mAnchorReferenceMuscle;
-    int mSelectedCandidateAnchorIndex;
-    int mSelectedReferenceAnchorIndex;
-
-    // Rotate Joint Offset section (FDO)
-    char mRotateJointComboBuffer[128];
-    std::string mSelectedRotateJoint;
-    float mRotateJointAxis[3];
-    float mRotateJointAngleDeg;
-    bool mRotateJointPreservePosition;
-
-    // Rotate Anchor Points section (FDO)
-    char mRotateAnchorMuscleComboBuffer[128];
-    char mRotateAnchorMuscleFilterBuffer[128];
-    std::string mSelectedRotateAnchorMuscle;
-    int mSelectedRotateAnchorIndex;
-    float mRotateAnchorSearchDir[3];
-    float mRotateAnchorRotAxis[3];
-    float mRotateAnchorAngleDeg;
-
-    // FDO Combined Mode
-    bool mFDOMode;
-    std::string mSelectedFDOTargetBodynode;
-    char mFDOBodynodeFilterBuffer[128];
-
     // Save Skeleton section
     char mSaveSkeletonFilename[64];
-    bool mSaveAsYAML;  // Format toggle for muscle/skeleton save
+
+    // PID state for save paths
+    std::string mPID;
+    std::string mVisit;
+
+    // --- SEMLS state ---
+    std::vector<HighlightAnchor> mHighlightedAnchors;
+    bool mDrawFDOAnchors = false;
+    SEMLSConfig mSEMLSConfig;
+    ContractureOptimizer mContractureOptimizer;
+    std::string mPatientMetadataPath;
+    YAML::Node mPatientMetadata;
+    bool mPatientLoaded = false;
+    char mPatientPathBuffer[256];
+    char mSurgeryConfigPathBuffer[256];
+    bool mSurgeryConfigLoaded = false;
+
+    // Optimizer hyperparameters and results
+    ContractureOptimizer::Config mOptConfig;
+    std::optional<ContractureOptResult> mTALResult;
+    std::optional<ContractureOptResult> mDHLResult;
 };
 
 } // namespace PMuscle
 
 #endif // SURGERY_PANEL_H
-

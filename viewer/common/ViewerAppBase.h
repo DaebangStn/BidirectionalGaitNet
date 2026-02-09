@@ -67,7 +67,7 @@ protected:
     // Video orbit camera
     float mVideoOrbitSpeed = 10.0f;    // Degrees per second
     double mVideoOrbitAngle = 0.0;     // Current accumulated angle
-    bool mVideoOrbitEnabled = true;   // Enable orbit during recording
+    bool mVideoOrbitEnabled = false;   // Enable orbit during recording
     CameraFocusMode mPreRecordingFocusMode = CameraFocusMode::FOLLOW_CHARACTER;  // Saved mode before recording
 
     // ============================================================
@@ -135,6 +135,7 @@ protected:
     FILE* mFFmpegPipe = nullptr;
     double mVideoStartSimTime = 0.0;      // Simulation time when recording started
     double mVideoLastCaptureSimTime = 0.0; // Simulation time of last captured frame
+    bool mVideoConvertGif = false;
 
     // Capture/video methods
     bool captureRegionPNG(const char* filename, int x0, int y0, int x1, int y1);

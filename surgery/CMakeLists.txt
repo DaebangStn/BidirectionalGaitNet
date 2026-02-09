@@ -38,12 +38,12 @@ target_link_libraries(surgery
     surgery_optimizer
 )
 
-# Surgery Tool executable (CLI-only)
-add_executable(surgery_tool
-    "surgery_main.cpp"
+# Surgery CLI executable
+add_executable(surgery_cli
+    "surgery_cli_main.cpp"
 )
 
-target_link_libraries(surgery_tool
+target_link_libraries(surgery_cli
     surgery
     tinyxml2::tinyxml2
     sim

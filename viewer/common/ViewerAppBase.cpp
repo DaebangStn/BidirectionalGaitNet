@@ -580,8 +580,8 @@ void ViewerAppBase::stopVideoRecording()
                   << std::fixed << std::setprecision(1) << videoDuration << "s"
                   << ", Frames: " << mVideoFrameCounter << std::endl;
 
-        // Convert MP4 to GIF
-        if (!mVideoCurrentPath.empty()) {
+        // Convert MP4 to GIF (only if user enabled the option)
+        if (mVideoConvertGif && !mVideoCurrentPath.empty()) {
             // Replace .mp4 with .gif for output path
             std::string gifPath = mVideoCurrentPath;
             size_t dotPos = gifPath.rfind(".mp4");

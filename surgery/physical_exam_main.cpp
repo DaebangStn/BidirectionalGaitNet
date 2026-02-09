@@ -72,7 +72,6 @@ int main(int argc, char** argv) {
     PMuscle::PhysicalExam exam(1920, 1080);
 
     LOG_INFO("Loading exam setting from config: " << config_path);
-    LOG_INFO("Output directory: " << output_dir);
 
     try {
         exam.setOutputDir(output_dir);

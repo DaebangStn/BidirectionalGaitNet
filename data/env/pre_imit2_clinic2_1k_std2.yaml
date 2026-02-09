@@ -27,6 +27,7 @@ environment:
   simulation:
     sim_hz: 800
     control_hz: 50
+    horizon: 2000
 
   # Action and Control
   action:

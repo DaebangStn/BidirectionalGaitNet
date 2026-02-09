@@ -193,6 +193,7 @@ struct ContractureOptResult {
     int iterations = 0;
     double final_cost = 0.0;
     bool converged = false;
+    std::string param_name;  // "lt_rel" or "lm_contract"
 };
 
 /**
@@ -208,6 +209,9 @@ public:
     /**
      * @brief Configuration for single-pass optimization
      */
+    // Which muscle parameter to optimize
+    enum class OptParam { LM_CONTRACT, LT_REL };
+
     struct Config {
         int maxIterations;
         double minRatio;
@@ -227,12 +231,16 @@ public:
         // Outer iterations for biarticular convergence
         int outerIterations = 1;       // Number of outer iterations (1 = single pass)
 
+        // Which parameter to optimize (lm_contract or lt_rel)
+        OptParam paramType = OptParam::LM_CONTRACT;
+
         // Progress callback: (iteration, cost) called after each Ceres iteration
         std::function<void(int iteration, double cost)> iterationCallback;
 
         Config() : maxIterations(100), minRatio(0.7), maxRatio(1.3),
                    verbose(false), lambdaRatioReg(0.0), lambdaTorqueReg(0.0),
-                   lambdaLineReg(0.0), outerIterations(1) {}
+                   lambdaLineReg(0.0), outerIterations(1),
+                   paramType(OptParam::LM_CONTRACT) {}
     };
 
     /**
@@ -248,6 +256,10 @@ public:
 
     ContractureOptimizer() = default;
     ~ContractureOptimizer() = default;
+
+    // Helpers for parameterized muscle property access (public for cost functors)
+    static double getParam(Muscle* m, OptParam type);
+    static void setParam(Muscle* m, OptParam type, double value);
 
     // ========== Group Configuration ==========
 

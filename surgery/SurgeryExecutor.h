@@ -124,6 +124,7 @@ public:
     Eigen::Isometry3d getBodyNodeZeroPoseTransform(dart::dynamics::BodyNode* bn);
     bool validateAnchorReferencesBodynode(const std::string& muscle_name, int anchor_index,
                                          const std::string& bodynode_name);
+    bool validateAnchorCount(const std::string& muscleName, int expectedCount);
     dart::dynamics::Joint* getChildJoint(dart::dynamics::BodyNode* bodynode);
 
     // Metadata helper methods

@@ -3394,12 +3394,15 @@ void RenderCkpt::drawCaptureSection() {
                 mPreRecordingPlaybackSpeed = mViewerPlaybackSpeed;
                 mViewerPlaybackSpeed = 1.0f;
 
-                startVideoRecording(filename, 30);
+                mVideoFPS = mRenderEnv->getControlHz();
+                startVideoRecording(filename, mVideoFPS);
             }
             ImGui::SameLine();
             ImGui::Checkbox("Orbit##video", &mVideoOrbitEnabled);
             ImGui::SameLine();
-            ImGui::PushItemWidth(60);
+            ImGui::Checkbox("GIF##video", &mVideoConvertGif);
+            ImGui::SameLine();
+            ImGui::PushItemWidth(30);
             ImGui::InputDouble("Max(s)##video", &mVideoMaxTime, 0, 0, "%.0f");
             ImGui::PopItemWidth();
             // Orbit speed (only show when orbit enabled)

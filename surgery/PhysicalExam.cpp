@@ -258,6 +258,11 @@ void PhysicalExam::onPIDChanged(const std::string& pid)
 
     // Load clinical ROM data for the new PID
     loadClinicalROM(pid, visit);
+
+    // Update surgery panel with PID and patient metadata
+    if (mSurgeryPanel) {
+        mSurgeryPanel->onPIDChanged(pid, visit);
+    }
 }
 
 void PhysicalExam::onVisitChanged(const std::string& pid, const std::string& visit)
@@ -560,6 +565,22 @@ void PhysicalExam::createGround() {
 }
 
 void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string& muscle_path) {
+    // Clean up previous character if exists
+    if (mCharacter) {
+        auto skel = mCharacter->getSkeleton();
+        glFinish();
+        mShapeRenderer.clearCache();
+        if (mWorld && skel) {
+            mWorld->removeSkeleton(skel);
+        }
+        delete mCharacter;
+        mCharacter = nullptr;
+    }
+    if (mStdCharacter) {
+        delete mStdCharacter;
+        mStdCharacter = nullptr;
+    }
+
     // Store file paths for UI display
     mSkeletonPath = skel_path;
     mMusclePath = muscle_path;
@@ -3680,12 +3701,15 @@ void PhysicalExam::drawMuscles() {
             double f_p = muscle->Getf_p();
             double normalized = std::min(1.0, f_p / mPassiveForceNormalizer);
             return Eigen::Vector4f(0.1f, 0.1f, 0.1f + 0.9f * normalized, mMuscleTransparency);
-        } else {
+        } else if (mMuscleColorMode == 1) {
             // Normalized Length mode (viridis)
             double lm_norm = muscle->GetLmNorm();
             double t = (lm_norm - mLmNormMin) / (mLmNormMax - mLmNormMin);
             Eigen::Vector3d rgb = tinycolormap::GetColor(t, tinycolormap::ColormapType::Viridis).ConvertToEigen();
             return Eigen::Vector4f(rgb[0], rgb[1], rgb[2], mMuscleTransparency);
+        } else {
+            // Constant bright green
+            return Eigen::Vector4f(0.0f, 1.0f, 0.0f, mMuscleTransparency);
         }
     };
 
@@ -3810,146 +3834,28 @@ void PhysicalExam::drawConfinementForces() {
 }
 
 void PhysicalExam::drawSelectedAnchors() {
-    if (!mCharacter || !mSurgeryPanel) return;
-
-    auto muscles = mCharacter->getMuscles();
-    if (muscles.empty()) return;
-
-    // Get selection state from SurgeryPanel
-    std::string candidateMuscle = mSurgeryPanel->getCandidateMuscle();
-    int candidateAnchorIdx = mSurgeryPanel->getCandidateAnchorIndex();
-    std::string referenceMuscle = mSurgeryPanel->getReferenceMuscle();
-    int referenceAnchorIdx = mSurgeryPanel->getReferenceAnchorIndex();
-
-    glDisable(GL_LIGHTING);
-
-    // Draw selected candidate anchor with green dot
-    if (!candidateMuscle.empty() && candidateAnchorIdx >= 0) {
-        Muscle* candidateMusclePtr = nullptr;
-        for (auto m : muscles) {
-            if (m->name == candidateMuscle) {
-                candidateMusclePtr = m;
-                break;
-            }
-        }
-
-        if (candidateMusclePtr) {
-            auto anchors = candidateMusclePtr->GetAnchors();
-            if (candidateAnchorIdx < (int)anchors.size()) {
-                auto anchor = anchors[candidateAnchorIdx];
-                Eigen::Vector3d anchorPos = anchor->GetPoint();
-
-                // Draw green sphere at selected candidate anchor
-                glColor3f(0.2f, 1.0f, 0.2f);  // Bright green
-                glPushMatrix();
-                glTranslatef(anchorPos[0], anchorPos[1], anchorPos[2]);
-                glutSolidSphere(0.015, 15, 15);
-                glPopMatrix();
-            }
-        }
-    }
-
-    // Draw selected reference anchor with cyan dot
-    if (!referenceMuscle.empty() && referenceAnchorIdx >= 0) {
-        Muscle* referenceMusclePtr = nullptr;
-        for (auto m : muscles) {
-            if (m->name == referenceMuscle) {
-                referenceMusclePtr = m;
-                break;
-            }
-        }
-
-        if (referenceMusclePtr) {
-            auto anchors = referenceMusclePtr->GetAnchors();
-            if (referenceAnchorIdx < (int)anchors.size()) {
-                auto anchor = anchors[referenceAnchorIdx];
-                Eigen::Vector3d anchorPos = anchor->GetPoint();
-
-                // Draw cyan sphere at selected reference anchor
-                glColor3f(0.2f, 1.0f, 1.0f);  // Cyan
-                glPushMatrix();
-                glTranslatef(anchorPos[0], anchorPos[1], anchorPos[2]);
-                glutSolidSphere(0.012, 15, 15);
-                glPopMatrix();
-            }
-        }
-    }
-
-    glEnable(GL_LIGHTING);
+    // Anchor selection UI was removed during SEMLS refactoring
 }
 
 void PhysicalExam::drawReferenceAnchor() {
-    if (!mCharacter || !mSurgeryPanel) return;
+    if (!mSurgeryPanel) return;
+    if (!mSurgeryPanel->shouldDrawFDOAnchors()) return;
+    const auto& highlights = mSurgeryPanel->getHighlightedAnchors();
+    if (highlights.empty()) return;
 
-    auto muscles = mCharacter->getMuscles();
-    if (muscles.empty()) return;
-
-    // Get FDO selection state from SurgeryPanel
-    std::string rotateAnchorMuscle = mSurgeryPanel->getRotateAnchorMuscle();
-    int rotateAnchorIdx = mSurgeryPanel->getRotateAnchorIndex();
-    Eigen::Vector3f searchDirF = mSurgeryPanel->getRotateAnchorSearchDir();
-    Eigen::Vector3d search_dir(searchDirF[0], searchDirF[1], searchDirF[2]);
-
-    // Draw reference anchor for FDO rotation operations
-    if (!rotateAnchorMuscle.empty() && rotateAnchorIdx >= 0) {
-        Muscle* refMuscle = nullptr;
-        for (auto m : muscles) {
-            if (m->name == rotateAnchorMuscle) {
-                refMuscle = m;
-                break;
-            }
+    glDisable(GL_LIGHTING);
+    for (const auto& h : highlights) {
+        if (h.is_reference) {
+            glColor4f(1.0f, 0.0f, 0.0f, 1.0f);  // Red for reference
+        } else {
+            glColor4f(0.3f, 0.7f, 1.0f, 0.8f);   // Sky blue for affected
         }
-
-        if (refMuscle) {
-            auto anchors = refMuscle->GetAnchors();
-            if (rotateAnchorIdx < (int)anchors.size()) {
-                auto anchor = anchors[rotateAnchorIdx];
-                Eigen::Vector3d anchorPos = anchor->GetPoint();
-
-                glDisable(GL_LIGHTING);
-
-                // Draw red sphere at reference anchor (larger and brighter)
-                glColor4f(1.0f, 0.0f, 0.0f, 1.0f);  // Bright red, fully opaque
-                glPushMatrix();
-                glTranslatef(anchorPos[0], anchorPos[1], anchorPos[2]);
-                glutSolidSphere(0.007, 15, 15);  // Reduced size
-                glPopMatrix();
-
-                // Draw affected anchors in sky blue based on search direction
-                // Use shared computeAffectedAnchors method for consistency with execution
-                if (search_dir.norm() > 1e-6 && !anchor->bodynodes.empty()) {
-                    try {
-                        // Create AnchorReference for reference anchor
-                        AnchorReference ref_anchor(rotateAnchorMuscle, rotateAnchorIdx, 0);
-
-                        // Compute affected anchors using shared method (this class inherits from SurgeryExecutor)
-                        auto affected_anchors = computeAffectedAnchors(ref_anchor, search_dir);
-
-                        // Render affected anchors in sky blue
-                        glColor4f(0.3f, 0.7f, 1.0f, 0.8f);  // Transparent sky blue
-
-                        for (const auto& anchor_ref : affected_anchors) {
-                            Muscle* muscle = mCharacter->getMuscleByName(anchor_ref.muscle_name);
-                            if (!muscle) continue;
-
-                            auto affected_anchor = muscle->GetAnchors()[anchor_ref.anchor_index];
-                            Eigen::Vector3d world_pos = affected_anchor->GetPoint();
-
-                            glPushMatrix();
-                            glTranslatef(world_pos[0], world_pos[1], world_pos[2]);
-                            glutSolidSphere(0.005, 15, 15);  // Reduced size
-                            glPopMatrix();
-                        }
-                    } catch (const std::runtime_error& e) {
-                        // Multi-LBS anchor - already validated during selection
-                        LOG_ERROR("[PhysicalExam] " << e.what());
-                    }
-                }
-
-                glEnable(GL_LIGHTING);
-            }
-        }
+        glPushMatrix();
+        glTranslated(h.position[0], h.position[1], h.position[2]);
+        glutSolidSphere(h.is_reference ? 0.007 : 0.005, 15, 15);
+        glPopMatrix();
     }
+    glEnable(GL_LIGHTING);
 }
 
 void PhysicalExam::drawJointPassiveForces() {
@@ -4181,24 +4087,15 @@ void PhysicalExam::keyPress(int key, int scancode, int action, int mods) {
             LOG_INFO("Rendering mode: Primitive");
         }
     }
-    else if (key == GLFW_KEY_1) {
-        setPoseStanding();
+    // Number keys 1-8: load camera presets (key N -> preset N-1)
+    else if (key >= GLFW_KEY_1 && key <= GLFW_KEY_8) {
+        loadCameraPreset(key - GLFW_KEY_1);
     }
-    else if (key == GLFW_KEY_2) {
-        setPoseSupine();
-    }
-    else if (key == GLFW_KEY_3) {
-        setPoseProne();
-    }
-    else if (key == GLFW_KEY_4) {
-        setPoseSupineKneeFlexed(mPresetKneeAngle);
-    }
-    // Camera preset loading (hardcoded presets)
     else if (key == GLFW_KEY_9) {
         selectCameraPresetInteractive();
     }
     else if (key == GLFW_KEY_0) {
-        loadCameraPreset(0);  // Top view
+        loadCameraPreset(0);
     }
 }
 
@@ -4873,7 +4770,7 @@ void PhysicalExam::loadCameraPreset(int index) {
 const char* CAMERA_PRESET_DEFINITIONS[] = {
     "PRESET|Initial view|0,0.992519,2.97756|0,1,0|0.0119052,-0.723115,0.108916|1|0.823427,0.0367708,0.561259,0.0748684",
     "PRESET|Front Thigh view|0,0.431401,1.2942|0,1,0|-0.0612152,-0.655993,-0.0328963|1|0.81416,0.580639,0.0,0.0",
-    // "PRESET|Back Thigh view|0,0.256203,0.768607|0,1,0|0.123724,-1.05037,-0.222596|1|0.0,0.0,0.593647,-0.803454",
+    "PRESET|Back Thigh view|0,0.256203,0.768607|0,1,0|0.123724,-1.05037,-0.222596|1|0.0,0.0,0.593647,-0.803454",
     "PRESET|Foot side view|0,0.564545,1.69364|0,1,0|-0.382306,-0.960299,-0.632363|1|0.767598,0.0,0.630236,0.11053",
     "PRESET|Surgery overview|0,0.813471,2.44041|0,1,0|-0.289215,-0.570655,-0.280608|1|0.81416,0.580639,0,0"
 };
@@ -6328,6 +6225,8 @@ void PhysicalExam::drawRenderOptionsSection() {
         ImGui::RadioButton("Passive Force", &mMuscleColorMode, 0);
         ImGui::SameLine();
         ImGui::RadioButton("Norm. Length", &mMuscleColorMode, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Constant", &mMuscleColorMode, 2);
 
         // Mode-specific controls
         if (mMuscleColorMode == 0) {

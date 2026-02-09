@@ -1,7 +1,10 @@
 #include "SurgeryOperation.h"
 #include "SurgeryExecutor.h"
+#include "optimizer/ContractureOptimizer.h"
 #include "Log.h"
 #include <sstream>
+#include <fstream>
+#include <filesystem>
 
 namespace PMuscle {
 
@@ -710,6 +713,235 @@ std::unique_ptr<SurgeryOperation> MirrorAnchorPositionsOp::fromYAML(const YAML::
         return std::make_unique<MirrorAnchorPositionsOp>(muscles);
     }
     return std::make_unique<MirrorAnchorPositionsOp>();
+}
+
+// ============================================================================
+// ContractureOptOp
+// ============================================================================
+
+bool ContractureOptOp::execute(SurgeryExecutor* executor) {
+    Character* character = executor->getCharacter();
+    if (!character) {
+        LOG_ERROR("[ContractureOptOp] No character loaded");
+        return false;
+    }
+
+    auto skel = character->getSkeleton();
+
+    // Load ROM trial configs
+    std::vector<ROMTrialConfig> rom_configs;
+    std::vector<std::string> trial_names;
+    for (const auto& trial : mROMTrials) {
+        std::string path = "data/config/rom/" + trial.name + ".yaml";
+        try {
+            auto rom = ContractureOptimizer::loadROMConfig(path, skel);
+            if (trial.angle_deg != 0.0) {
+                rom.rom_angle = rom.cd_neg ? -trial.angle_deg : trial.angle_deg;
+            }
+            rom_configs.push_back(rom);
+            trial_names.push_back(trial.name);
+        } catch (const std::exception& e) {
+            LOG_ERROR("[ContractureOptOp] Failed to load ROM config: " << path << " - " << e.what());
+        }
+    }
+
+    if (rom_configs.empty()) {
+        LOG_ERROR("[ContractureOptOp] No valid ROM configs loaded");
+        return false;
+    }
+
+    // Build inline muscle groups YAML
+    YAML::Emitter emitter;
+    emitter << YAML::BeginMap;
+
+    if (!mSearchGroupMap.empty()) {
+        // Multi-group mode: each search group has its own set of muscles
+        emitter << YAML::Key << "search_groups" << YAML::Value << YAML::BeginMap;
+        for (const auto& [group_name, group_muscles] : mSearchGroupMap) {
+            emitter << YAML::Key << group_name << YAML::Value << YAML::BeginSeq;
+            for (const auto& m : group_muscles) emitter << m;
+            emitter << YAML::EndSeq;
+        }
+        emitter << YAML::EndMap;
+
+        // Each muscle is its own optimization group
+        emitter << YAML::Key << "optimization_groups" << YAML::Value << YAML::BeginMap;
+        for (const auto& [group_name, group_muscles] : mSearchGroupMap) {
+            for (const auto& m : group_muscles) {
+                emitter << YAML::Key << m << YAML::Value << YAML::BeginSeq << m << YAML::EndSeq;
+            }
+        }
+        emitter << YAML::EndMap;
+
+        // All search groups in one mapping entry for joint N-dim grid search
+        emitter << YAML::Key << "grid_search_mapping" << YAML::Value << YAML::BeginSeq;
+        emitter << YAML::BeginMap;
+        emitter << YAML::Key << "trials" << YAML::Value << YAML::BeginSeq;
+        for (const auto& t : trial_names) emitter << t;
+        emitter << YAML::EndSeq;
+        emitter << YAML::Key << "groups" << YAML::Value << YAML::BeginSeq;
+        for (const auto& [group_name, _] : mSearchGroupMap) emitter << group_name;
+        emitter << YAML::EndSeq;
+        emitter << YAML::EndMap;
+        emitter << YAML::EndSeq;
+    } else {
+        // Legacy single-group mode
+        emitter << YAML::Key << "search_groups" << YAML::Value << YAML::BeginMap;
+        emitter << YAML::Key << mSearchGroup << YAML::Value << YAML::BeginSeq;
+        for (const auto& m : mMuscles) emitter << m;
+        emitter << YAML::EndSeq;
+        emitter << YAML::EndMap;
+
+        emitter << YAML::Key << "optimization_groups" << YAML::Value << YAML::BeginMap;
+        for (const auto& m : mMuscles) {
+            emitter << YAML::Key << m << YAML::Value << YAML::BeginSeq << m << YAML::EndSeq;
+        }
+        emitter << YAML::EndMap;
+
+        emitter << YAML::Key << "grid_search_mapping" << YAML::Value << YAML::BeginSeq;
+        emitter << YAML::BeginMap;
+        emitter << YAML::Key << "trials" << YAML::Value << YAML::BeginSeq;
+        for (const auto& t : trial_names) emitter << t;
+        emitter << YAML::EndSeq;
+        emitter << YAML::Key << "groups" << YAML::Value << YAML::BeginSeq << mSearchGroup << YAML::EndSeq;
+        emitter << YAML::EndMap;
+        emitter << YAML::EndSeq;
+    }
+
+    emitter << YAML::EndMap;
+
+    std::string tmp_path = "/tmp/contracture_opt_groups.yaml";
+    { std::ofstream ofs(tmp_path); ofs << emitter.c_str(); }
+
+    ContractureOptimizer optimizer;
+    optimizer.loadMuscleGroups(tmp_path, character);
+
+    YAML::Node tmp_config = YAML::LoadFile(tmp_path);
+    if (tmp_config["grid_search_mapping"]) {
+        std::vector<GridSearchMapping> mappings;
+        for (const auto& entry : tmp_config["grid_search_mapping"]) {
+            GridSearchMapping gm;
+            if (entry["trials"]) for (const auto& t : entry["trials"]) gm.trials.push_back(t.as<std::string>());
+            if (entry["groups"]) for (const auto& g : entry["groups"]) gm.groups.push_back(g.as<std::string>());
+            mappings.push_back(gm);
+        }
+        optimizer.setGridSearchMapping(mappings);
+    }
+
+    ContractureOptimizer::Config opt_config;
+    opt_config.maxIterations = mMaxIterations;
+    opt_config.minRatio = mMinRatio;
+    opt_config.maxRatio = mMaxRatio;
+    opt_config.gridSearchBegin = mGridBegin;
+    opt_config.gridSearchEnd = mGridEnd;
+    opt_config.gridSearchInterval = mGridInterval;
+
+    if (mParamType == "lt_rel") {
+        opt_config.paramType = ContractureOptimizer::OptParam::LT_REL;
+    } else {
+        opt_config.paramType = ContractureOptimizer::OptParam::LM_CONTRACT;
+    }
+
+    auto result = optimizer.optimize(character, rom_configs, opt_config);
+    std::filesystem::remove(tmp_path);
+
+    LOG_INFO("[ContractureOptOp] Optimization complete (" << mSearchGroup << ", " << mParamType
+             << "): " << result.muscle_results.size() << " muscles modified");
+    for (const auto& mr : result.muscle_results) {
+        LOG_INFO("  " << mr.muscle_name << ": " << mr.lm_contract_before << " -> " << mr.lm_contract_after
+                 << " (ratio=" << mr.ratio << ")");
+    }
+
+    return true;
+}
+
+YAML::Node ContractureOptOp::toYAML() const {
+    YAML::Node node;
+    node["type"] = "contracture_opt";
+
+    if (!mSearchGroupMap.empty()) {
+        for (const auto& [name, muscles] : mSearchGroupMap) {
+            node["search_groups"][name] = muscles;
+        }
+    } else {
+        node["search_group"] = mSearchGroup;
+        node["muscles"] = mMuscles;
+    }
+
+    for (const auto& trial : mROMTrials) {
+        YAML::Node t;
+        t["name"] = trial.name;
+        t["angle"] = trial.angle_deg;
+        node["rom_trials"].push_back(t);
+    }
+
+    node["param_type"] = mParamType;
+    node["max_iterations"] = mMaxIterations;
+    node["min_ratio"] = mMinRatio;
+    node["max_ratio"] = mMaxRatio;
+    node["grid_begin"] = mGridBegin;
+    node["grid_end"] = mGridEnd;
+    node["grid_interval"] = mGridInterval;
+    return node;
+}
+
+std::string ContractureOptOp::getDescription() const {
+    std::ostringstream oss;
+    if (!mSearchGroupMap.empty()) {
+        size_t total_muscles = 0;
+        std::string group_names;
+        for (const auto& [name, muscles] : mSearchGroupMap) {
+            if (!group_names.empty()) group_names += "+";
+            group_names += name;
+            total_muscles += muscles.size();
+        }
+        oss << "Contracture optimization (" << group_names << ", " << mParamType
+            << ", " << total_muscles << " muscles, " << mROMTrials.size() << " trials)";
+    } else {
+        oss << "Contracture optimization (" << mSearchGroup << ", " << mParamType
+            << ", " << mMuscles.size() << " muscles, " << mROMTrials.size() << " trials)";
+    }
+    return oss.str();
+}
+
+std::unique_ptr<SurgeryOperation> ContractureOptOp::fromYAML(const YAML::Node& node) {
+    std::vector<ContractureOptOp::ROMTrialParam> rom_trials;
+    if (node["rom_trials"]) {
+        for (const auto& t : node["rom_trials"]) {
+            ROMTrialParam param;
+            param.name = t["name"].as<std::string>();
+            param.angle_deg = t["angle"] ? t["angle"].as<double>() : 0.0;
+            rom_trials.push_back(param);
+        }
+    }
+
+    std::string param_type = node["param_type"] ? node["param_type"].as<std::string>() : "lm_contract";
+    int max_iterations = node["max_iterations"] ? node["max_iterations"].as<int>() : 100;
+    double min_ratio = node["min_ratio"] ? node["min_ratio"].as<double>() : 0.5;
+    double max_ratio = node["max_ratio"] ? node["max_ratio"].as<double>() : 2.0;
+    double grid_begin = node["grid_begin"] ? node["grid_begin"].as<double>() : 0.5;
+    double grid_end = node["grid_end"] ? node["grid_end"].as<double>() : 2.0;
+    double grid_interval = node["grid_interval"] ? node["grid_interval"].as<double>() : 0.05;
+
+    // New multi-group format
+    if (node["search_groups"]) {
+        std::map<std::string, std::vector<std::string>> search_groups;
+        for (const auto& sg : node["search_groups"]) {
+            std::string name = sg.first.as<std::string>();
+            auto muscles = sg.second.as<std::vector<std::string>>();
+            search_groups[name] = muscles;
+        }
+        return std::make_unique<ContractureOptOp>(
+            search_groups, rom_trials, param_type,
+            max_iterations, min_ratio, max_ratio, grid_begin, grid_end, grid_interval);
+    }
+
+    // Legacy single-group format
+    std::string search_group = node["search_group"].as<std::string>();
+    auto muscles = node["muscles"].as<std::vector<std::string>>();
+    return std::make_unique<ContractureOptOp>(
+        search_group, muscles, rom_trials, param_type,
+        max_iterations, min_ratio, max_ratio, grid_begin, grid_end, grid_interval);
 }
 
 } // namespace PMuscle

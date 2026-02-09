@@ -15,18 +15,36 @@
 
 namespace PMuscle {
 
+// --- OptParam helpers ---
+double ContractureOptimizer::getParam(Muscle* m, OptParam type) {
+    if (type == OptParam::LT_REL) return m->lt_rel;
+    return m->lm_contract;  // LM_CONTRACT (default)
+}
+
+void ContractureOptimizer::setParam(Muscle* m, OptParam type, double value) {
+    if (type == OptParam::LT_REL) {
+        // lt_rel = lt_rel_base + lt_rel_ofs  →  set ofs so that lt_rel == value
+        m->lt_rel_ofs = value - m->lt_rel_base;
+    } else {
+        m->lm_contract = value;
+    }
+    m->RefreshMuscleParams();
+}
+
 // Ceres cost functor for torque matching (uses numeric differentiation)
 struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
     TorqueResidual(
         Character* character,
         const PoseData& pose,
         const std::map<int, std::vector<int>>& muscle_groups,
-        const std::map<int, double>& base_lm_contract,
-        int num_groups
+        const std::map<int, double>& base_param,
+        int num_groups,
+        OptParam param_type = OptParam::LM_CONTRACT
     ) : character_(character),
         pose_(pose),
         muscle_groups_(muscle_groups),
-        base_lm_contract_(base_lm_contract) {
+        base_param_(base_param),
+        param_type_(param_type) {
         // Set parameter block sizes
         mutable_parameter_block_sizes()->push_back(num_groups);
         set_num_residuals(1);
@@ -38,21 +56,20 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
         int num_groups = static_cast<int>(muscle_groups_.size());
 
         auto muscles = character_->getMuscles();
-        std::vector<double> old_lm_contract(muscles.size());
+        std::vector<double> old_param(muscles.size());
 
-        // Save ALL muscle lm_contract values before modification
+        // Save ALL muscle param values before modification
         for (size_t i = 0; i < muscles.size(); ++i) {
-            old_lm_contract[i] = muscles[i]->lm_contract;
+            old_param[i] = getParam(muscles[i], param_type_);
         }
 
         // Apply base ratios to muscles
         for (const auto& [group_id, muscle_ids] : muscle_groups_) {
             double ratio = parameters[0][group_id];
             for (int m_idx : muscle_ids) {
-                auto it = base_lm_contract_.find(m_idx);
-                double base = (it != base_lm_contract_.end()) ? it->second : old_lm_contract[m_idx];
-                muscles[m_idx]->lm_contract = base * ratio;
-                muscles[m_idx]->RefreshMuscleParams();
+                auto it = base_param_.find(m_idx);
+                double base = (it != base_param_.end()) ? it->second : old_param[m_idx];
+                setParam(muscles[m_idx], param_type_, base * ratio);
             }
         }
 
@@ -71,10 +88,6 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
         residuals[0] = std::sqrt(pose_.weight) * (tau_pred - pose_.tau_obs);
 
         // Compute Jacobian via delta-based approach (exact, not approximate).
-        // Instead of calling computePassiveTorque (all ~150 muscles) per group,
-        // compute only the group's torque contribution before/after perturbation.
-        // tau_perturbed = tau_base - group_base + group_perturbed, so
-        // jacobian[g] = sqrt(w) * (group_perturbed - group_base) / h
         if (jacobians != nullptr && jacobians[0] != nullptr) {
             const double h = 1e-6;
 
@@ -129,20 +142,19 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
                 // Base group contribution at current (base) state
                 double base_group_tau = groupTorque(muscle_ids);
 
-                // Save base-applied lm_contract for this group
-                std::vector<double> saved_lm(muscle_ids.size());
+                // Save base-applied param for this group
+                std::vector<double> saved_param(muscle_ids.size());
                 for (size_t i = 0; i < muscle_ids.size(); ++i)
-                    saved_lm[i] = muscles[muscle_ids[i]]->lm_contract;
+                    saved_param[i] = getParam(muscles[muscle_ids[i]], param_type_);
 
                 // Perturb group g
                 double ratio_plus = parameters[0][g] + h;
                 for (size_t i = 0; i < muscle_ids.size(); ++i) {
                     int m_idx = muscle_ids[i];
-                    auto it = base_lm_contract_.find(m_idx);
-                    double base = (it != base_lm_contract_.end())
-                        ? it->second : old_lm_contract[m_idx];
-                    muscles[m_idx]->lm_contract = base * ratio_plus;
-                    muscles[m_idx]->RefreshMuscleParams();
+                    auto it = base_param_.find(m_idx);
+                    double base = (it != base_param_.end())
+                        ? it->second : old_param[m_idx];
+                    setParam(muscles[m_idx], param_type_, base * ratio_plus);
                     muscles[m_idx]->UpdateGeometry();
                 }
 
@@ -151,8 +163,7 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
 
                 // Restore group g
                 for (size_t i = 0; i < muscle_ids.size(); ++i) {
-                    muscles[muscle_ids[i]]->lm_contract = saved_lm[i];
-                    muscles[muscle_ids[i]]->RefreshMuscleParams();
+                    setParam(muscles[muscle_ids[i]], param_type_, saved_param[i]);
                     muscles[muscle_ids[i]]->UpdateGeometry();
                 }
 
@@ -164,8 +175,7 @@ struct ContractureOptimizer::TorqueResidual : public ceres::CostFunction {
 
         // Final restore: all muscles back to pre-evaluation state
         for (size_t i = 0; i < muscles.size(); ++i) {
-            muscles[i]->lm_contract = old_lm_contract[i];
-            muscles[i]->RefreshMuscleParams();
+            setParam(muscles[i], param_type_, old_param[i]);
         }
 
         return true;
@@ -175,7 +185,8 @@ private:
     Character* character_;
     PoseData pose_;
     std::map<int, std::vector<int>> muscle_groups_;
-    std::map<int, double> base_lm_contract_;
+    std::map<int, double> base_param_;
+    OptParam param_type_;
 };
 
 // Ratio regularization: penalizes deviation from ratio=1.0
@@ -199,15 +210,17 @@ struct TorqueRegCost {
     PoseData pose;
     int group_id;
     std::vector<int> muscle_indices;
-    std::map<int, double> base_lm_contract;
+    std::map<int, double> base_param;
     double sqrt_lambda;
+    ContractureOptimizer::OptParam param_type;
 
     TorqueRegCost(Character* c, const PoseData& p, int g,
                   const std::vector<int>& m_ids,
                   const std::map<int, double>& base_lm,
-                  double sl)
+                  double sl,
+                  ContractureOptimizer::OptParam pt = ContractureOptimizer::OptParam::LM_CONTRACT)
         : character(c), pose(p), group_id(g), muscle_indices(m_ids),
-          base_lm_contract(base_lm), sqrt_lambda(sl) {}
+          base_param(base_lm), sqrt_lambda(sl), param_type(pt) {}
 
     bool operator()(const double* const* parameters, double* residual) const {
         if (!character) {
@@ -220,13 +233,12 @@ struct TorqueRegCost {
 
         // Apply ratio to this group's muscles
         double ratio = parameters[0][group_id];
-        std::vector<double> old_lm_contract(muscles.size());
+        std::vector<double> old_param(muscles.size());
         for (int m_idx : muscle_indices) {
-            old_lm_contract[m_idx] = muscles[m_idx]->lm_contract;
-            auto it = base_lm_contract.find(m_idx);
-            double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
-            muscles[m_idx]->lm_contract = base * ratio;
-            muscles[m_idx]->RefreshMuscleParams();
+            old_param[m_idx] = ContractureOptimizer::getParam(muscles[m_idx], param_type);
+            auto it = base_param.find(m_idx);
+            double base = (it != base_param.end()) ? it->second : ContractureOptimizer::getParam(muscles[m_idx], param_type);
+            ContractureOptimizer::setParam(muscles[m_idx], param_type, base * ratio);
         }
 
         // Set pose and update geometry
@@ -276,10 +288,9 @@ struct TorqueRegCost {
             }
         }
 
-        // Restore original lm_contract
+        // Restore original param
         for (int m_idx : muscle_indices) {
-            muscles[m_idx]->lm_contract = old_lm_contract[m_idx];
-            muscles[m_idx]->RefreshMuscleParams();
+            ContractureOptimizer::setParam(muscles[m_idx], param_type, old_param[m_idx]);
         }
 
         residual[0] = sqrt_lambda * group_torque;
@@ -1168,11 +1179,12 @@ double ContractureOptimizer::findBestInitialRatio(
 
     double best_ratio = 1.0;
     double best_error = std::numeric_limits<double>::max();
+    auto pt = config.paramType;
 
-    // Store original lm_contract values
-    std::vector<double> original_lm_contract(muscles.size());
+    // Store original param values
+    std::vector<double> original_param(muscles.size());
     for (size_t i = 0; i < muscles.size(); ++i) {
-        original_lm_contract[i] = muscles[i]->lm_contract;
+        original_param[i] = getParam(muscles[i], pt);
     }
 
     // Grid search over ratio values
@@ -1183,9 +1195,8 @@ double ContractureOptimizer::findBestInitialRatio(
         // Apply ratio to this group's muscles
         for (int m_idx : muscle_indices) {
             auto it = base_lm_contract.find(m_idx);
-            double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
-            muscles[m_idx]->lm_contract = base * ratio;
-            muscles[m_idx]->RefreshMuscleParams();
+            double base = (it != base_lm_contract.end()) ? it->second : getParam(muscles[m_idx], pt);
+            setParam(muscles[m_idx], pt, base * ratio);
         }
 
         // Set pose and update muscle geometry
@@ -1208,10 +1219,9 @@ double ContractureOptimizer::findBestInitialRatio(
         }
     }
 
-    // Restore original lm_contract values
+    // Restore original param values
     for (size_t i = 0; i < muscles.size(); ++i) {
-        muscles[i]->lm_contract = original_lm_contract[i];
-        muscles[i]->RefreshMuscleParams();
+        setParam(muscles[i], pt, original_param[i]);
     }
 
     return best_ratio;
@@ -1665,10 +1675,12 @@ std::vector<SearchGroupResult> ContractureOptimizer::runGridSearchOnSearchGroups
         trial_name_to_index[rom_configs[i].name] = i;
     }
 
-    // Store original lm_contract values
+    auto pt = config.paramType;
+
+    // Store original param values
     std::vector<double> original_lm_contract(muscles.size());
     for (size_t i = 0; i < muscles.size(); ++i) {
-        original_lm_contract[i] = muscles[i]->lm_contract;
+        original_lm_contract[i] = getParam(muscles[i], pt);
     }
 
     // Build grid values
@@ -1706,80 +1718,152 @@ std::vector<SearchGroupResult> ContractureOptimizer::runGridSearchOnSearchGroups
 
         if (search_ids.empty()) continue;
 
-        // For each search group, run 1D grid search
-        for (int search_id : search_ids) {
+        if (search_ids.size() == 1) {
+            // 1D grid search (single group) — pose-outer / params-inner
+            int search_id = search_ids[0];
             SearchGroupResult sr;
             sr.search_group_name = mSearchGroupNames.at(search_id);
-
-            // Collect child opt group names
             if (mSearchToOptGroups.count(search_id)) {
-                for (int opt_id : mSearchToOptGroups.at(search_id)) {
+                for (int opt_id : mSearchToOptGroups.at(search_id))
                     sr.opt_group_names.push_back(mOptGroupNames.at(opt_id));
+            }
+            const auto& search_muscles = mSearchGroups.at(search_id);
+            const size_t G = grid_values.size();
+            std::vector<double> errors(G, 0.0);
+
+            // Outer: set pose once per trial (expensive geometry update)
+            for (size_t ti : trial_indices) {
+                if (ti >= pose_data.size()) continue;
+                const auto& pose = pose_data[ti];
+                setPoseAndUpdateGeometry(character, pose.q);
+                int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
+                bool use_global_y = pose.use_composite_axis;
+
+                // Inner: sweep all param values
+                for (size_t gi = 0; gi < G; ++gi) {
+                    double ratio = grid_values[gi];
+                    for (int m_idx : search_muscles) {
+                        auto it = base_lm_contract.find(m_idx);
+                        double base = (it != base_lm_contract.end()) ? it->second : original_lm_contract[m_idx];
+                        setParam(muscles[m_idx], pt, base * ratio);
+                        muscles[m_idx]->UpdateGeometry();
+                    }
+                    double computed_torque = computePassiveTorque(character, pose.joint_idx, false, dof_offset, use_global_y);
+                    double diff = computed_torque - pose.tau_obs;
+                    errors[gi] += diff * diff;
+                }
+                // Restore params after inner sweep
+                for (int m_idx : search_muscles) {
+                    setParam(muscles[m_idx], pt, original_lm_contract[m_idx]);
+                    muscles[m_idx]->UpdateGeometry();
                 }
             }
 
-            // Get muscles for this search group
-            const auto& search_muscles = mSearchGroups.at(search_id);
-
+            // Find best and populate result
             double best_error = std::numeric_limits<double>::max();
             int best_idx = 0;
-
-            // Grid search
-            for (size_t gi = 0; gi < grid_values.size(); ++gi) {
-                double ratio = grid_values[gi];
-
-                // Apply ratio to all muscles in this search group
-                for (int m_idx : search_muscles) {
-                    auto it = base_lm_contract.find(m_idx);
-                    double base = (it != base_lm_contract.end()) ? it->second : original_lm_contract[m_idx];
-                    muscles[m_idx]->lm_contract = base * ratio;
-                    muscles[m_idx]->RefreshMuscleParams();
-                }
-
-                // Compute total squared error across all associated trials
-                double total_error = 0.0;
-                for (size_t ti : trial_indices) {
-                    if (ti >= pose_data.size()) continue;
-                    const auto& pose = pose_data[ti];
-
-                    setPoseAndUpdateGeometry(character, pose.q);
-
-                    int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
-                    bool use_global_y = pose.use_composite_axis;
-                    double computed_torque = computePassiveTorque(character, pose.joint_idx, false, dof_offset, use_global_y);
-
-                    double error = computed_torque - pose.tau_obs;
-                    total_error += error * error;
-                }
-
-                sr.ratios.push_back(ratio);
-                sr.errors.push_back(total_error);
-
-                if (total_error < best_error) {
-                    best_error = total_error;
-                    best_idx = static_cast<int>(gi);
-                }
+            for (size_t gi = 0; gi < G; ++gi) {
+                sr.ratios.push_back(grid_values[gi]);
+                sr.errors.push_back(errors[gi]);
+                if (errors[gi] < best_error) { best_error = errors[gi]; best_idx = static_cast<int>(gi); }
             }
-
             sr.best_idx = best_idx;
             sr.ratio = grid_values[best_idx];
             sr.best_error = best_error;
-
-            // Restore muscles to original state before next group
-            for (int m_idx : search_muscles) {
-                muscles[m_idx]->lm_contract = original_lm_contract[m_idx];
-                muscles[m_idx]->RefreshMuscleParams();
-            }
-
             processed_search_groups.insert(search_id);
             results.push_back(sr);
+
+        } else {
+            // Joint N-dim grid search (multiple groups) — pose-outer / params-inner
+            const size_t N = search_ids.size();
+
+            // Pre-enumerate all N-dim param combos into a flat vector
+            std::vector<std::vector<double>> all_combos;
+            {
+                std::vector<double> combo(N);
+                std::function<void(size_t)> enumerate = [&](size_t depth) {
+                    if (depth == N) { all_combos.push_back(combo); return; }
+                    for (double r : grid_values) { combo[depth] = r; enumerate(depth + 1); }
+                };
+                enumerate(0);
+            }
+            const size_t C = all_combos.size();
+            LOG_INFO("[GridSearch] Joint " << N << "D grid search (" << C << " combos, " << trial_indices.size() << " trials)");
+
+            std::vector<double> errors(C, 0.0);
+
+            // Lambda to apply a combo's params and update geometry
+            auto applyCombo = [&](const std::vector<double>& combo_ratios) {
+                for (size_t g = 0; g < N; ++g) {
+                    const auto& sg_muscles = mSearchGroups.at(search_ids[g]);
+                    for (int m_idx : sg_muscles) {
+                        auto it = base_lm_contract.find(m_idx);
+                        double base = (it != base_lm_contract.end()) ? it->second : original_lm_contract[m_idx];
+                        setParam(muscles[m_idx], pt, base * combo_ratios[g]);
+                        muscles[m_idx]->UpdateGeometry();
+                    }
+                }
+            };
+
+            // Lambda to restore all search group muscles to original
+            auto restoreParams = [&]() {
+                for (size_t g = 0; g < N; ++g) {
+                    for (int m_idx : mSearchGroups.at(search_ids[g])) {
+                        setParam(muscles[m_idx], pt, original_lm_contract[m_idx]);
+                        muscles[m_idx]->UpdateGeometry();
+                    }
+                }
+            };
+
+            // Outer: set pose once per trial (expensive geometry update)
+            for (size_t ti : trial_indices) {
+                if (ti >= pose_data.size()) continue;
+                const auto& pose = pose_data[ti];
+                setPoseAndUpdateGeometry(character, pose.q);
+                int dof_offset = pose.use_composite_axis ? 1 : pose.joint_dof;
+                bool use_global_y = pose.use_composite_axis;
+
+                // Inner: sweep all param combos (cheap)
+                for (size_t ci = 0; ci < C; ++ci) {
+                    applyCombo(all_combos[ci]);
+                    double computed_torque = computePassiveTorque(character, pose.joint_idx, false, dof_offset, use_global_y);
+                    double diff = computed_torque - pose.tau_obs;
+                    errors[ci] += diff * diff;
+                }
+                restoreParams();
+            }
+
+            // Find best combo
+            double best_total_error = std::numeric_limits<double>::max();
+            size_t best_ci = 0;
+            for (size_t ci = 0; ci < C; ++ci) {
+                if (errors[ci] < best_total_error) { best_total_error = errors[ci]; best_ci = ci; }
+            }
+            const auto& best_ratios = all_combos[best_ci];
+
+            LOG_INFO("[GridSearch] Joint best error: " << std::fixed << std::setprecision(4) << best_total_error);
+            for (size_t g = 0; g < N; ++g) {
+                int search_id = search_ids[g];
+                SearchGroupResult sr;
+                sr.search_group_name = mSearchGroupNames.at(search_id);
+                if (mSearchToOptGroups.count(search_id)) {
+                    for (int opt_id : mSearchToOptGroups.at(search_id))
+                        sr.opt_group_names.push_back(mOptGroupNames.at(opt_id));
+                }
+                sr.ratio = best_ratios[g];
+                sr.best_error = best_total_error;
+                sr.best_idx = 0;
+                LOG_INFO("[GridSearch]   " << sr.search_group_name << " = " << std::fixed << std::setprecision(3) << sr.ratio);
+
+                processed_search_groups.insert(search_id);
+                results.push_back(sr);
+            }
         }
     }
 
     // Restore all muscles to original state
     for (size_t i = 0; i < muscles.size(); ++i) {
-        muscles[i]->lm_contract = original_lm_contract[i];
-        muscles[i]->RefreshMuscleParams();
+        setParam(muscles[i], pt, original_lm_contract[i]);
     }
 
     // Print search group results as a table
@@ -1863,6 +1947,7 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runCeresOnOptGroups(
 
     auto& muscles = character->getMuscles();
     int num_groups = static_cast<int>(mOptGroups.size());
+    auto pt = config.paramType;
 
     // Copy initial_x for optimization
     std::vector<double> x = initial_x;
@@ -1875,7 +1960,7 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runCeresOnOptGroups(
     ceres::Problem problem;
 
     for (const auto& pose : pose_data) {
-        auto* cost = new TorqueResidual(character, pose, mMuscleGroups, base_lm_contract, num_groups);
+        auto* cost = new TorqueResidual(character, pose, mMuscleGroups, base_lm_contract, num_groups, pt);
         problem.AddResidualBlock(cost, nullptr, x.data());
     }
 
@@ -1901,7 +1986,7 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runCeresOnOptGroups(
             for (size_t t = 0; t < pose_data.size(); ++t) {
                 auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<TorqueRegCost>(
                     new TorqueRegCost(character, pose_data[t], g,
-                                      grp_it->second, base_lm_contract, sqrt_lambda));
+                                      grp_it->second, base_lm_contract, sqrt_lambda, pt));
                 reg_cost->AddParameterBlock(num_groups);
                 reg_cost->SetNumResiduals(1);
                 problem.AddResidualBlock(reg_cost, nullptr, x.data());
@@ -1971,9 +2056,8 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runCeresOnOptGroups(
 
         for (int m_idx : grp_it->second) {
             auto it = base_lm_contract.find(m_idx);
-            double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
-            muscles[m_idx]->lm_contract = base * x[g];
-            muscles[m_idx]->RefreshMuscleParams();
+            double base = (it != base_lm_contract.end()) ? it->second : getParam(muscles[m_idx], pt);
+            setParam(muscles[m_idx], pt, base * x[g]);
         }
     }
 
@@ -1988,7 +2072,7 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runCeresOnOptGroups(
         for (int m_idx : muscle_ids) {
             result.muscle_names.push_back(muscles[m_idx]->name);
             auto it = base_lm_contract.find(m_idx);
-            double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
+            double base = (it != base_lm_contract.end()) ? it->second : getParam(muscles[m_idx], pt);
             result.lm_contract_values.push_back(base * x[group_id]);
         }
 
@@ -2005,6 +2089,7 @@ ContractureOptResult ContractureOptimizer::optimize(
     const Config& config)
 {
     ContractureOptResult result;
+    result.param_name = (config.paramType == OptParam::LT_REL) ? "lt_rel" : "lm_contract";
 
     if (!character) {
         LOG_ERROR("[ContractureOptimizer] No character provided");
@@ -2025,6 +2110,8 @@ ContractureOptResult ContractureOptimizer::optimize(
     auto skeleton = character->getSkeleton();
     const auto& muscles = character->getMuscles();
 
+    auto pt = config.paramType;
+
     // ============================================================
     // 1. Capture BEFORE state
     // ============================================================
@@ -2032,7 +2119,7 @@ ContractureOptResult ContractureOptimizer::optimize(
     std::set<int> all_muscle_indices;
     for (const auto& [opt_id, muscle_ids] : mOptGroups) {
         for (int m_idx : muscle_ids) {
-            lm_contract_before[m_idx] = muscles[m_idx]->lm_contract;
+            lm_contract_before[m_idx] = getParam(muscles[m_idx], pt);
             all_muscle_indices.insert(m_idx);
         }
     }
@@ -2105,8 +2192,9 @@ ContractureOptResult ContractureOptimizer::optimize(
         m_result.muscle_name = muscles[m_idx]->name;
         m_result.muscle_idx = m_idx;
         m_result.lm_contract_before = lm_contract_before.at(m_idx);
-        m_result.lm_contract_after = muscles[m_idx]->lm_contract;
-        m_result.ratio = m_result.lm_contract_after / m_result.lm_contract_before;
+        m_result.lm_contract_after = getParam(muscles[m_idx], pt);
+        m_result.ratio = (m_result.lm_contract_before != 0.0)
+            ? m_result.lm_contract_after / m_result.lm_contract_before : 1.0;
         result.muscle_results.push_back(m_result);
     }
 
@@ -2152,9 +2240,11 @@ ContractureOptResult ContractureOptimizer::optimize(
         std::string group_name = mOptGroupNames.count(opt_id) ? mOptGroupNames.at(opt_id) : "Group_" + std::to_string(opt_id);
         max_group_len = std::max(max_group_len, group_name.size());
 
-        // Classify group by side
-        bool is_left = (group_name.size() >= 2 && group_name.substr(group_name.size() - 2) == "_l");
-        bool is_right = (group_name.size() >= 2 && group_name.substr(group_name.size() - 2) == "_r");
+        // Classify group by side (suffix _l/_r or prefix L_/R_)
+        bool is_left = (group_name.size() >= 2 && group_name.substr(group_name.size() - 2) == "_l")
+                     || (group_name.size() >= 2 && group_name.substr(0, 2) == "L_");
+        bool is_right = (group_name.size() >= 2 && group_name.substr(group_name.size() - 2) == "_r")
+                      || (group_name.size() >= 2 && group_name.substr(0, 2) == "R_");
         if (is_left) group_names_l.push_back(group_name);
         else if (is_right) group_names_r.push_back(group_name);
 
@@ -2221,11 +2311,19 @@ ContractureOptResult ContractureOptimizer::optimize(
         header1 << std::left << std::setw(max_group_len + 2) << "Group" << std::setw(ratio_width) << "ratio";
         header2 << std::left << std::setw(max_group_len + 2) << "" << std::setw(ratio_width) << "";
         for (const auto& tn : trials) {
-            auto& tot = trial_totals[tn];
             double target = trial_observed.count(tn) ? trial_observed[tn] : 0.0;
+            // Use total passive torque (all muscles) from trial results
+            double total_before = 0.0, total_after = 0.0;
+            for (const auto& tr : result.trial_results) {
+                if (tr.trial_name == tn) {
+                    total_before = tr.computed_torque_before;
+                    total_after = tr.computed_torque_after;
+                    break;
+                }
+            }
             std::ostringstream val_str;
             val_str << std::fixed << std::setprecision(1)
-                    << "(" << tot.first << "->" << tot.second << ", t:" << target << ")";
+                    << "(" << total_before << "->" << total_after << ", t:" << target << ")";
             header1 << std::setw(col_width) << tn;
             header2 << std::setw(col_width) << val_str.str();
         }
@@ -2331,7 +2429,9 @@ std::vector<SeedSearchResult> ContractureOptimizer::seedSearch(
     const size_t num_groups = group_ids.size();
     const size_t num_trials = pose_data.size();
 
-    // 3. Store base lm_contract values for all muscles in target groups
+    auto pt = config.paramType;
+
+    // 3. Store base param values for all muscles in target groups
     std::map<int, double> base_lm_contract;
     std::set<int> all_muscle_indices;
     for (int gid : group_ids) {
@@ -2339,24 +2439,24 @@ std::vector<SeedSearchResult> ContractureOptimizer::seedSearch(
         auto opt_it = mOptGroups.find(gid);
         if (opt_it != mOptGroups.end()) {
             for (int m_idx : opt_it->second) {
-                base_lm_contract[m_idx] = muscles[m_idx]->lm_contract;
+                base_lm_contract[m_idx] = getParam(muscles[m_idx], pt);
                 all_muscle_indices.insert(m_idx);
             }
         } else {
             auto grp_it = mMuscleGroups.find(gid);
             if (grp_it != mMuscleGroups.end()) {
                 for (int m_idx : grp_it->second) {
-                    base_lm_contract[m_idx] = muscles[m_idx]->lm_contract;
+                    base_lm_contract[m_idx] = getParam(muscles[m_idx], pt);
                     all_muscle_indices.insert(m_idx);
                 }
             }
         }
     }
 
-    // Store original lm_contract for all muscles (for restoration)
+    // Store original param for all muscles (for restoration)
     std::vector<double> original_lm_contract(muscles.size());
     for (size_t i = 0; i < muscles.size(); ++i) {
-        original_lm_contract[i] = muscles[i]->lm_contract;
+        original_lm_contract[i] = getParam(muscles[i], pt);
     }
 
     // 4. Capture BEFORE torques per group per trial
@@ -2403,9 +2503,8 @@ std::vector<SeedSearchResult> ContractureOptimizer::seedSearch(
             if (muscle_indices) {
                 for (int m_idx : *muscle_indices) {
                     auto it = base_lm_contract.find(m_idx);
-                    double base = (it != base_lm_contract.end()) ? it->second : muscles[m_idx]->lm_contract;
-                    muscles[m_idx]->lm_contract = base * ratios[g];
-                    muscles[m_idx]->RefreshMuscleParams();
+                    double base = (it != base_lm_contract.end()) ? it->second : getParam(muscles[m_idx], pt);
+                    setParam(muscles[m_idx], pt, base * ratios[g]);
                 }
             }
         }
@@ -2545,10 +2644,9 @@ std::vector<SeedSearchResult> ContractureOptimizer::seedSearch(
         results.push_back(res);
     }
 
-    // 10. Restore original lm_contract values
+    // 10. Restore original param values
     for (size_t i = 0; i < muscles.size(); ++i) {
-        muscles[i]->lm_contract = original_lm_contract[i];
-        muscles[i]->RefreshMuscleParams();
+        setParam(muscles[i], pt, original_lm_contract[i]);
     }
 
     if (config.verbose) {

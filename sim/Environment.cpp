@@ -329,8 +329,8 @@ Environment::Environment(const std::string& filepath)
     }
 
     // === Horizon ===
-    if (config["Horizon"])
-        mHorizon = config["Horizon"].as<int>();
+    if (env["simulation"] && env["simulation"]["horizon"])
+        mHorizon = env["simulation"]["horizon"].as<int>();
 
     // === Reward parameters === (hardcoded)
     mUseNormalizedParamState = false;

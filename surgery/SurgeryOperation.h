@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <memory>
 #include <Eigen/Core>
 #include <yaml-cpp/yaml.h>
@@ -400,6 +401,77 @@ public:
 
 private:
     std::vector<std::string> mMuscles;  // Base names (empty = all pairs)
+};
+
+// ============================================================================
+// ContractureOptOp — Run contracture optimization (for TAL/DHL scripting)
+// ============================================================================
+
+class ContractureOptOp : public SurgeryOperation {
+public:
+    struct ROMTrialParam {
+        std::string name;       // e.g. "dorsi_k0_L"
+        double angle_deg;       // ROM angle override (0 = use default from config)
+    };
+
+    // Single search group constructor (backward compatible)
+    ContractureOptOp(const std::string& search_group,
+                     const std::vector<std::string>& muscles,
+                     const std::vector<ROMTrialParam>& rom_trials,
+                     const std::string& param_type,
+                     int max_iterations = 100,
+                     double min_ratio = 0.5,
+                     double max_ratio = 2.0,
+                     double grid_begin = 0.5,
+                     double grid_end = 2.0,
+                     double grid_interval = 0.05)
+        : mSearchGroup(search_group),
+          mMuscles(muscles),
+          mROMTrials(rom_trials),
+          mParamType(param_type),
+          mMaxIterations(max_iterations),
+          mMinRatio(min_ratio),
+          mMaxRatio(max_ratio),
+          mGridBegin(grid_begin),
+          mGridEnd(grid_end),
+          mGridInterval(grid_interval) {}
+
+    // Multiple search groups constructor (for 2D+ joint grid search)
+    ContractureOptOp(const std::map<std::string, std::vector<std::string>>& search_groups,
+                     const std::vector<ROMTrialParam>& rom_trials,
+                     const std::string& param_type,
+                     int max_iterations = 100,
+                     double min_ratio = 0.5,
+                     double max_ratio = 2.0,
+                     double grid_begin = 0.5,
+                     double grid_end = 2.0,
+                     double grid_interval = 0.05)
+        : mSearchGroupMap(search_groups),
+          mROMTrials(rom_trials),
+          mParamType(param_type),
+          mMaxIterations(max_iterations),
+          mMinRatio(min_ratio),
+          mMaxRatio(max_ratio),
+          mGridBegin(grid_begin),
+          mGridEnd(grid_end),
+          mGridInterval(grid_interval) {}
+
+    bool execute(SurgeryExecutor* executor) override;
+    YAML::Node toYAML() const override;
+    std::string getDescription() const override;
+    std::string getType() const override { return "contracture_opt"; }
+
+    static std::unique_ptr<SurgeryOperation> fromYAML(const YAML::Node& node);
+
+private:
+    std::string mSearchGroup;                                    // single group name (legacy)
+    std::vector<std::string> mMuscles;                           // flat muscle list (legacy)
+    std::map<std::string, std::vector<std::string>> mSearchGroupMap;  // multi-group: name -> muscles
+    std::vector<ROMTrialParam> mROMTrials;
+    std::string mParamType;   // "lt_rel" or "lm_contract"
+    int mMaxIterations;
+    double mMinRatio, mMaxRatio;
+    double mGridBegin, mGridEnd, mGridInterval;
 };
 
 } // namespace PMuscle

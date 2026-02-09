@@ -1,0 +1,84 @@
+# SEMLS Surgery Panel Configuration
+# Default surgery parameters for all 4 procedures, left and right
+
+tal:
+  left:
+    rom_trials:
+      - trial: "dorsi_k0_L"
+        angle: 0.0
+      - trial: "dorsi_k90_L"
+        angle: 0.0
+    search_groups:
+      sol_l:
+        - L_Soleus
+        - L_Soleus1
+      gast_l:
+        - L_Gastrocnemius_Medial_Head
+        - L_Gastrocnemius_Lateral_Head
+  right:
+    rom_trials:
+      - trial: "dorsi_k0_R"
+        angle: 0.0
+      - trial: "dorsi_k90_R"
+        angle: 0.0
+    search_groups:
+      sol_r:
+        - R_Soleus
+        - R_Soleus1
+      gast_r:
+        - R_Gastrocnemius_Medial_Head
+        - R_Gastrocnemius_Lateral_Head
+
+dhl:
+  left:
+    target_muscle: "L_Semitendinosus"
+    donor_muscle: "L_Adductor_Magnus4"
+    donor_anchor: 3
+    remove_anchors: [5, 4, 3, 2]
+    rom_trials: ["popliteal_L"]
+    muscles:
+      - L_Semimembranosus
+      - L_Semimembranosus1
+    popliteal_angle: 0.0
+  right:
+    target_muscle: "R_Semitendinosus"
+    donor_muscle: "R_Adductor_Magnus4"
+    donor_anchor: 3
+    remove_anchors: [5, 4, 3, 2]
+    rom_trials: ["popliteal_R"]
+    muscles:
+      - R_Semimembranosus
+      - R_Semimembranosus1
+    popliteal_angle: 0.0
+
+fdo:
+  left:
+    joint: "FemurL"
+    rotation_axis: [0, 1, 0]
+    angle_deg: 0.0
+    ref_muscle: "L_Vastus_Intermedius"
+    ref_anchor: 0
+    search_direction: [0, -1, 0]
+  right:
+    joint: "FemurR"
+    rotation_axis: [0, 1, 0]
+    angle_deg: 0.0
+    ref_muscle: "R_Vastus_Intermedius"
+    ref_anchor: 0
+    search_direction: [0, 1, 0]
+
+rft:
+  left:
+    target_muscles:
+      - L_Rectus_Femoris
+      - L_Rectus_Femoris1
+    donor_muscle: "L_Gracilis"
+    remove_anchors: [3, 2]
+    copy_donor_anchors: [1, 2, 3]
+  right:
+    target_muscles:
+      - R_Rectus_Femoris
+      - R_Rectus_Femoris1
+    donor_muscle: "R_Gracilis"
+    remove_anchors: [3, 2]
+    copy_donor_anchors: [1, 2, 3]

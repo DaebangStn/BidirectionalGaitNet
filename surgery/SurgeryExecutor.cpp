@@ -277,22 +277,38 @@ bool SurgeryExecutor::removeAnchorFromMuscle(const std::string& muscleName, int 
         return false;
     }
 
-    if (anchorIndex < 0 || anchorIndex >= targetMuscle->mAnchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << anchorIndex);
+    if (anchorIndex < 0 || anchorIndex >= (int)targetMuscle->mAnchors.size()) {
+        LOG_ERROR("[Surgery] Error: Invalid anchor index " << anchorIndex
+                  << " for muscle '" << muscleName << "' (has "
+                  << targetMuscle->mAnchors.size() << " anchors). "
+                  << "Surgery may have already been applied.");
         return false;
     }
 
-    LOG_INFO("[Surgery] Removing anchor #" << anchorIndex << " from muscle '" << muscleName << "'...");
-    
     // Remove the anchor
-    delete targetMuscle->mAnchors[anchorIndex];  // Free memory
+    delete targetMuscle->mAnchors[anchorIndex];
     targetMuscle->mAnchors.erase(targetMuscle->mAnchors.begin() + anchorIndex);
-    
+
     // Recalculate muscle parameters
     targetMuscle->SetMuscle();
-
-    LOG_INFO("[Surgery] Anchor removal complete. Muscle now has " << targetMuscle->mAnchors.size() << " anchors.");
     
+    return true;
+}
+
+bool SurgeryExecutor::validateAnchorCount(const std::string& muscleName, int expectedCount) {
+    if (!mCharacter) return false;
+    Muscle* m = mCharacter->getMuscleByName(muscleName);
+    if (!m) {
+        LOG_ERROR("[Surgery] Muscle '" << muscleName << "' not found");
+        return false;
+    }
+    int actual = (int)m->GetAnchors().size();
+    if (actual != expectedCount) {
+        LOG_ERROR("[Surgery] " << muscleName << " has " << actual
+                  << " anchors (expected " << expectedCount
+                  << "). Surgery may have already been applied.");
+        return false;
+    }
     return true;
 }
 
@@ -326,15 +342,15 @@ bool SurgeryExecutor::copyAnchorToMuscle(const std::string& fromMuscle, int from
     }
 
     auto sourceAnchors = sourceMuscle->GetAnchors();
-    if (fromIndex < 0 || fromIndex >= sourceAnchors.size()) {
-        LOG_ERROR("[Surgery] Error: Invalid anchor index " << fromIndex);
+    if (fromIndex < 0 || fromIndex >= (int)sourceAnchors.size()) {
+        LOG_ERROR("[Surgery] Error: Invalid anchor index " << fromIndex
+                  << " for source muscle '" << fromMuscle << "' (has "
+                  << sourceAnchors.size() << " anchors).");
         return false;
     }
 
     auto sourceAnchor = sourceAnchors[fromIndex];
 
-    LOG_INFO("[Surgery] Copying anchor #" << fromIndex << " from '" << fromMuscle << "' to '" << toMuscle << "'...");
-    
     // Create a deep copy of the anchor
     std::vector<dart::dynamics::BodyNode*> newBodyNodes = sourceAnchor->bodynodes;
     std::vector<Eigen::Vector3d> newLocalPositions = sourceAnchor->local_positions;
@@ -348,16 +364,6 @@ bool SurgeryExecutor::copyAnchorToMuscle(const std::string& fromMuscle, int from
     // Recalculate muscle parameters
     targetMuscle->SetMuscle();
 
-    LOG_INFO("[Surgery] Anchor copied successfully. Target muscle now has " << targetMuscle->mAnchors.size() << " anchors.");
-
-    // Display info about the copied anchor
-    if (!newBodyNodes.empty()) {
-        LOG_INFO("[Surgery]   Copied anchor attached to: " << newBodyNodes[0]->getName());
-        if (newBodyNodes.size() > 1) {
-            LOG_INFO("[Surgery]   (LBS with " << newBodyNodes.size() << " body nodes)");
-        }
-    }
-    
     return true;
 }
 
@@ -618,6 +624,17 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
 
     // Resolve URI path if needed
     std::string resolved_path = rm::resolve(path);
+
+    // If file doesn't exist yet, resolve parent directory and construct path
+    if (resolved_path.empty() || resolved_path == path) {
+        std::filesystem::path p(path);
+        std::string parent_uri = p.parent_path().string();
+        std::string filename = p.filename().string();
+        auto parent_dir = rm::getManager().resolveDirCreate(parent_uri);
+        if (!parent_dir.empty()) {
+            resolved_path = (parent_dir / filename).string();
+        }
+    }
 
     // Auto-detect format from file extension
     std::string ext;
@@ -1223,6 +1240,17 @@ void SurgeryExecutor::exportSkeleton(const std::string& path) {
 
     // Resolve URI path if needed
     std::string resolved_path = rm::resolve(path);
+
+    // If file doesn't exist yet, resolve parent directory and construct path
+    if (resolved_path.empty() || resolved_path == path) {
+        std::filesystem::path p(path);
+        std::string parent_uri = p.parent_path().string();
+        std::string filename = p.filename().string();
+        auto parent_dir = rm::getManager().resolveDirCreate(parent_uri);
+        if (!parent_dir.empty()) {
+            resolved_path = (parent_dir / filename).string();
+        }
+    }
 
     // Detect format from file extension
     std::string ext;
