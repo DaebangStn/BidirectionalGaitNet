@@ -418,10 +418,10 @@ private:
     bool mHasReferenceKinematics = false;       ///< True if current motion has kinematics
     bool mShowReferenceKinematics = true;       ///< Toggle for displaying reference overlay
 
-    // Kinematics source selection (Motion-specific vs Normative reference)
-    enum class KinematicsSource { FromMotion = 0, FromNormative = 1 };
-    KinematicsSource mKinematicsSource = KinematicsSource::FromMotion;
-    int mKinematicsSourceInt = 0;  ///< For ImGui radio button
+    // Kinematics source selection (Aggregated/Normative/Trained reference)
+    enum class KinematicsSource { FromMotion = 0, FromNormative = 1, FromTrained = 2 };
+    KinematicsSource mKinematicsSource = KinematicsSource::FromTrained;
+    int mKinematicsSourceInt = 2;  ///< For ImGui combo box
 
     // Kinematics side selection (Right or Left)
     enum class KinematicsSide { Right = 0, Left = 1 };
@@ -439,6 +439,11 @@ private:
     void loadNormativeKinematics();
     const KinematicsExportData* getActiveKinematics() const;
     std::string getActiveKinematicsLabel() const;
+
+    // Trained reference data (from environment's training motion file)
+    KinematicsExportData mTrainedKinematics;
+    bool mHasTrainedKinematics = false;
+    void loadTrainedKinematics();
 
     MotionData mPredictedMotion;
 

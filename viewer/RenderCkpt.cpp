@@ -147,7 +147,7 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
     // Register contact keys
     mGraphData->register_key("contact_left", 500);
     mGraphData->register_key("contact_right", 500);
-    mGraphData->register_key("contact_phaseR", 1000);
+    mGraphData->register_key("contact_phaseR", 3000);
     mGraphData->register_key("grf_left", 500);
     mGraphData->register_key("grf_right", 500);
 
@@ -164,7 +164,7 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
     // mGraphData->register_key("sway_AnteversionL", 1000);
     // Register kinematics keys (R, L, and pelvis)
     for (const auto& key : kRolloutKinKeys) {
-        mGraphData->register_key(key, 1000);
+        mGraphData->register_key(key, 3000);
     }
     
     mGraphData->register_key("energy_metabolic_step", 1000);
@@ -1525,8 +1525,25 @@ void RenderCkpt::loadNormativeKinematics()
     }
 }
 
+void RenderCkpt::loadTrainedKinematics()
+{
+    mHasTrainedKinematics = false;
+    if (!mRenderEnv || !mRenderEnv->getMotion()) return;
+
+    HDF* hdf = dynamic_cast<HDF*>(mRenderEnv->getMotion());
+    if (hdf && hdf->hasReferenceKinematics()) {
+        mTrainedKinematics = hdf->getReferenceKinematics();
+        mHasTrainedKinematics = true;
+        LOG_INFO("[RenderCkpt] Loaded trained kinematics: "
+                 << mTrainedKinematics.jointKeys.size() << " joints ("
+                 << hdf->getName() << ")");
+    }
+}
+
 const KinematicsExportData* RenderCkpt::getActiveKinematics() const
 {
+    if (mKinematicsSource == KinematicsSource::FromTrained && mHasTrainedKinematics)
+        return &mTrainedKinematics;
     if (mKinematicsSource == KinematicsSource::FromNormative && mHasNormativeKinematics)
         return &mNormativeKinematics;
     if (mKinematicsSource == KinematicsSource::FromMotion && mHasReferenceKinematics)
@@ -1536,26 +1553,31 @@ const KinematicsExportData* RenderCkpt::getActiveKinematics() const
 
 std::string RenderCkpt::getActiveKinematicsLabel() const
 {
-    if (mKinematicsSource == KinematicsSource::FromNormative && mHasNormativeKinematics) {
-        return "Normative (gait120)";
-    }
-    if (mKinematicsSource == KinematicsSource::FromMotion && mHasReferenceKinematics && mMotion) {
-        std::string fullPath = mMotion->getName();
-        // Try to get PID from navigator state
+    // Helper: format a motion path as @pid:PID/visit/... or fallback to filename
+    auto formatMotionLabel = [this](const std::string& fullPath) -> std::string {
         if (mPIDNavigator) {
             std::string pid = mPIDNavigator->getState().getSelectedPID();
             if (!pid.empty()) {
-                // Extract relative path after PID directory
-                // Path format: /base/path/{pid}/{visit}/{data_type}/{filename}
                 size_t pidPos = fullPath.find("/" + pid + "/");
                 if (pidPos != std::string::npos) {
-                    std::string relPath = fullPath.substr(pidPos + 1);  // {pid}/{visit}/...
+                    std::string relPath = fullPath.substr(pidPos + 1);
                     return "@pid:" + relPath;
                 }
             }
         }
-        // Fallback: just filename
         return fs::path(fullPath).filename().string();
+    };
+
+    if (mKinematicsSource == KinematicsSource::FromTrained && mHasTrainedKinematics) {
+        if (mRenderEnv && mRenderEnv->getMotion())
+            return formatMotionLabel(mRenderEnv->getMotion()->getName());
+        return "Trained";
+    }
+    if (mKinematicsSource == KinematicsSource::FromNormative && mHasNormativeKinematics) {
+        return "Normative (gait120)";
+    }
+    if (mKinematicsSource == KinematicsSource::FromMotion && mHasReferenceKinematics && mMotion) {
+        return formatMotionLabel(mMotion->getName());
     }
     return "";
 }
@@ -1974,6 +1996,9 @@ void RenderCkpt::initEnv(std::string metadata)
         }
     }
 
+    // Load trained kinematics from environment's motion file
+    loadTrainedKinematics();
+
     mRenderEnv->setParamDefault();
     reset();
 }
@@ -2230,26 +2255,35 @@ void RenderCkpt::drawRightPanel()
     ImGui::InputDouble("X(min)", &mXmin);
 
     // Reference kinematics source selector and overlay toggle
-    bool hasAnyKinematics = mHasReferenceKinematics || mHasNormativeKinematics;
+    bool hasAnyKinematics = mHasReferenceKinematics || mHasNormativeKinematics || mHasTrainedKinematics;
     if (hasAnyKinematics) {
         ImGui::Checkbox("Ref Overlay", &mShowReferenceKinematics);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
-        if (ImGui::BeginCombo("##RefSrc",
-            mKinematicsSource == KinematicsSource::FromMotion ? "Motion" : "Normative"))
+        const char* comboPreview = "Aggregated";
+        if (mKinematicsSource == KinematicsSource::FromNormative) comboPreview = "Normative";
+        else if (mKinematicsSource == KinematicsSource::FromTrained) comboPreview = "Trained";
+        if (ImGui::BeginCombo("##RefSrc", comboPreview))
         {
             if (mHasReferenceKinematics) {
-                if (ImGui::Selectable("Motion", mKinematicsSource == KinematicsSource::FromMotion)) {
+                if (ImGui::Selectable("Aggregated", mKinematicsSource == KinematicsSource::FromMotion)) {
                     mKinematicsSource = KinematicsSource::FromMotion;
                     mKinematicsSourceInt = 0;
-                    computeRolloutStatistics();  // Recalculate stats with new reference
+                    computeRolloutStatistics();
                 }
             }
             if (mHasNormativeKinematics) {
                 if (ImGui::Selectable("Normative", mKinematicsSource == KinematicsSource::FromNormative)) {
                     mKinematicsSource = KinematicsSource::FromNormative;
                     mKinematicsSourceInt = 1;
-                    computeRolloutStatistics();  // Recalculate stats with new reference
+                    computeRolloutStatistics();
+                }
+            }
+            if (mHasTrainedKinematics) {
+                if (ImGui::Selectable("Trained", mKinematicsSource == KinematicsSource::FromTrained)) {
+                    mKinematicsSource = KinematicsSource::FromTrained;
+                    mKinematicsSourceInt = 2;
+                    computeRolloutStatistics();
                 }
             }
             ImGui::EndCombo();

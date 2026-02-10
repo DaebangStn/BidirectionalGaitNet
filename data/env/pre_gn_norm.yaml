@@ -4,10 +4,10 @@ args:
   init_log_std: 0.2
 
 environment:
-  pid: "29792292/op1"
+  pid: "29792292/pre"
   # Skeleton and Character
   skeleton:
-    file: "@pid:/skeleton/trimmed_unified.yaml"
+    file: "@pid:/skeleton/trimmed_unified_kp10.yaml"
     actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
 
   # Motion Reference
@@ -17,7 +17,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@pid:/muscle/clinic_0202_2047.yaml"
+    file: "@pid:/muscle/norm_0208_0921.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
