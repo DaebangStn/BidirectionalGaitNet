@@ -1,0 +1,139 @@
+// Static & Dynamic Calibration Algorithms
+// Static vertical (left) | Dynamic staircase (right, A->B->C->D)
+digraph c3d_calibration_algorithms {
+    rankdir=TB;
+    splines=ortho;
+    nodesep=0.3;
+    ranksep=0.3;
+    fontname="Helvetica";
+    newrank=true;
+    size="16,9!";
+    ratio="fill";
+
+    node [
+        shape=box, style="rounded,filled", fillcolor="white", color="gray30",
+        fontname="Helvetica", fontsize=10, margin="0.12,0.08"
+    ];
+    edge [
+        color="gray30", penwidth=1.2, arrowsize=0.7,
+        fontname="Helvetica", fontsize=8
+    ];
+
+    // ============================================================
+    // STATIC (left column, vertical)
+    // ============================================================
+    subgraph cluster_static {
+        style=filled; fillcolor="#E3F2FD"; color="#1565C0"; penwidth=1.0;
+        label=<<font point-size="10"><b>Static Calibration</b> (single frame)</font>>;
+
+        s_hip [label="Hip Joint Centers\nHarrington regression", fillcolor="#BBDEFB"];
+        s_svd [label="SVD Bone Fitting\n1 frame, per bone", fillcolor="#BBDEFB"];
+        s_talus [label="Talus Alternating Opt\nshared ground height", fillcolor="#90CAF9"];
+        s_person [label="Marker Personalization\nback-project offsets", fillcolor="#BBDEFB"];
+        s_dep [label="Copy Dependent Scales", fillcolor="#BBDEFB"];
+        s_apply [label="Apply to Skeleton", fillcolor="#BBDEFB"];
+
+        s_hip -> s_svd -> s_talus -> s_person -> s_dep -> s_apply
+            [penwidth=2.0, color="#1565C0"];
+    }
+
+    // ============================================================
+    // SHARED CORE
+    // ============================================================
+    subgraph cluster_core {
+        style=filled; fillcolor="#FFF8E1"; color="#F9A825"; penwidth=1.0;
+        label=<<font point-size="9"><b>optimizeBoneScale</b></font>>;
+        core [label="Iterative SVD + Scale\nalign per frame\nscale solve per axis\nrepeat until converge", fillcolor="#FFF9C4"];
+    }
+
+    // ============================================================
+    // DYNAMIC A: Bone Fitting
+    // ============================================================
+    subgraph cluster_dyn_a {
+        style=filled; fillcolor="#FFF3E0"; color="#E65100"; penwidth=1.0;
+        label=<<font point-size="9"><b>A:</b> Bone Fitting (K frames)</font>>;
+
+        d_hip [label="Hip Joint Centers\nHarrington regression", fillcolor="#FFE0B2"];
+        d_svd [label="SVD Bone Fitting\nK frames, shared scale", fillcolor="#FFE0B2"];
+        d_arm [label="Arm Scaling\nmarker-distance ratio", fillcolor="#FFE0B2"];
+        d_dep [label="Dependent Scales\ncopy + interpolate", fillcolor="#FFE0B2"];
+        d_sym [label="Symmetry Enforcement\navg(L,R) per axis", fillcolor="#FFE0B2"];
+        d_apply [label="Apply to Both Skeletons", fillcolor="#FFE0B2"];
+
+        d_hip -> d_svd -> d_arm -> d_dep -> d_sym -> d_apply
+            [penwidth=2.0, color="#E65100"];
+    }
+
+    // ============================================================
+    // DYNAMIC B: Free Pose
+    // ============================================================
+    subgraph cluster_dyn_b {
+        style=filled; fillcolor="#F3E5F5"; color="#6A1B9A"; penwidth=1.0;
+        label=<<font point-size="9"><b>B:</b> Free Pose</font>>;
+
+        d_build [label="Build Frame Pose\nparent-relative\nrotation to DOFs", fillcolor="#E1BEE7"];
+        d_talus [label="Plantar Correction\nstance detection\nfoot-ground blend", fillcolor="#E1BEE7"];
+
+        d_build -> d_talus [penwidth=2.0, color="#6A1B9A"];
+    }
+
+    // ============================================================
+    // DYNAMIC C: Motion Conversion
+    // ============================================================
+    subgraph cluster_dyn_c {
+        style=filled; fillcolor="#E8F5E9"; color="#2E7D32"; penwidth=1.0;
+        label=<<font point-size="9"><b>C:</b> Motion Conversion</font>>;
+
+        d_rel [label="Relative Transforms\nparent-to-child", fillcolor="#C8E6C9"];
+        d_offset [label="Joint Offset Estimation\nregularized least-squares", fillcolor="#C8E6C9"];
+        d_mpose [label="Motion Frame Pose\nto joint angles", fillcolor="#C8E6C9"];
+        d_knee [label="Knee Refinement\nalign free vs motion", fillcolor="#A5D6A7"];
+
+        d_rel -> d_offset -> d_mpose -> d_knee [penwidth=2.0, color="#2E7D32"];
+    }
+
+    // ============================================================
+    // DYNAMIC D: IK Refinement
+    // ============================================================
+    subgraph cluster_dyn_d {
+        style=filled; fillcolor="#FFEBEE"; color="#C62828"; penwidth=1.0;
+        label=<<font point-size="9"><b>D:</b> IK Refinement</font>>;
+
+        d_arm_ik [label="Arm IK\n2-link analytic\ntwist constraints", fillcolor="#FFCDD2"];
+        d_leg_ik [label="Leg IK\n2-link analytic\njoint limits", fillcolor="#FFCDD2"];
+
+        d_arm_ik -> d_leg_ik [penwidth=2.0, color="#C62828"];
+    }
+
+    // ============================================================
+    // Dashed links to shared core
+    // ============================================================
+    s_svd -> core [penwidth=1.0, color="#9E9E9E", style=dashed, constraint=false];
+    d_svd -> core [penwidth=1.0, color="#9E9E9E", style=dashed, constraint=false];
+
+    // ============================================================
+    // Inter-stage flow arrows
+    // ============================================================
+    d_apply -> d_build [penwidth=1.8, color="#6A1B9A", style=bold];
+    d_talus -> d_rel [penwidth=1.8, color="#2E7D32", style=bold];
+    d_knee -> d_arm_ik [penwidth=1.8, color="#C62828", style=bold];
+
+    // ============================================================
+    // Staircase layout: each stage starts where previous ends
+    // ============================================================
+    {rank=same; s_hip; d_hip;}
+    {rank=same; s_svd; core; d_svd;}
+    {rank=same; s_dep; d_sym;}
+    {rank=same; s_apply; d_apply; d_build;}
+    {rank=same; d_talus; d_rel;}
+    {rank=same; d_knee; d_arm_ik;}
+
+    // Force left-to-right ordering within rows
+    s_hip -> d_hip [style=invis];
+    s_svd -> core [style=invis];
+    core -> d_svd [style=invis];
+    s_apply -> d_apply [style=invis];
+    d_apply -> d_build [style=invis];
+    d_talus -> d_rel [style=invis];
+    d_knee -> d_arm_ik [style=invis];
+}

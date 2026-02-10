@@ -88,6 +88,11 @@ def get_directory_stats(path: Path) -> tuple[int, int, int]:
     # Check if this is a date directory (contains checkpoint subdirs)
     subdirs = [d for d in path.iterdir() if d.is_dir()]
 
+    # Count tfevents files at this level
+    for f in path.iterdir():
+        if f.is_file() and f.name.startswith("events.out.tfevents"):
+            total_size += f.stat().st_size
+
     for subdir in subdirs:
         # Check if subdir is a checkpoint (contains .pt files)
         pt_files = list(subdir.glob("*.pt"))
@@ -100,6 +105,10 @@ def get_directory_stats(path: Path) -> tuple[int, int, int]:
         else:
             # This might be a date directory, count its checkpoints
             date_count += 1
+            # Count tfevents at date level
+            for f in subdir.iterdir():
+                if f.is_file() and f.name.startswith("events.out.tfevents"):
+                    total_size += f.stat().st_size
             for ckpt_dir in subdir.iterdir():
                 if ckpt_dir.is_dir() and list(ckpt_dir.glob("*.pt")):
                     ckpt_count += 1
@@ -130,6 +139,11 @@ def get_checkpoints_in_date(date_path: Path) -> list[Path]:
         if d.is_dir() and list(d.glob("*.pt")):
             checkpoints.append(d)
     return checkpoints
+
+
+def get_tfevents_in_date(date_path: Path) -> list[Path]:
+    """Get list of tfevents files in a date directory (tensorboard logs)."""
+    return sorted(date_path.glob("events.out.tfevents*"))
 
 
 def get_dates_in_env(env_path: Path) -> list[Path]:
@@ -844,9 +858,10 @@ class FTPUploader:
             total_dates = len(date_env_pairs)
             total_ckpts = sum(len(get_checkpoints_in_date(d)) for d, _ in date_env_pairs)
 
-            # Count total files across all checkpoints
+            # Count total files across all checkpoints + tfevents
             total_files = 0
             for date_path, _ in date_env_pairs:
+                total_files += len(get_tfevents_in_date(date_path))
                 for ckpt_path in get_checkpoints_in_date(date_path):
                     total_files += len([f for f in ckpt_path.iterdir() if f.is_file()])
 
@@ -882,6 +897,19 @@ class FTPUploader:
 
                     self._draw_progress(status, len(files), len(files),
                                       global_file_num, total_files, start_time, "Done")
+
+                # Upload tfevents files at the date directory level
+                tfevents = get_tfevents_in_date(date_path)
+                if tfevents:
+                    tb_remote_dir = f"{root}/{pid_visit}/ckpt/{env_name}/{date_name}"
+                    status = f"Uploading {env_name}/{date_name} - tfevents ({len(tfevents)} files)"
+                    for tf_idx, tf_path in enumerate(tfevents):
+                        self._draw_progress(status, tf_idx, len(tfevents),
+                                          global_file_num, total_files, start_time, tf_path.name)
+                        remote_file = f"{tb_remote_dir}/{tf_path.name}"
+                        with open(tf_path, 'rb') as f:
+                            self.ftp.storbinary(f'STOR {remote_file}', f)
+                        global_file_num += 1
 
             return True
 
