@@ -17,7 +17,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@pid:/muscle/norm_0208_1000.yaml"
+    file: "@pid:/muscle/norm_0211_0956.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
@@ -72,5 +72,9 @@ environment:
         separate: true
 
 train: 
-  # pd_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
-  # ckpt_from: "@pid:/ckpt/normal_imit_clinic/260125_213657/29792292_sca_clinic-12000-0125_213657"
+  curriculum:
+    virtual_force:
+      kp_init: 1000.0
+      kp_ignore_cutoff: 1.0
+      discount_rate: 0.8 # on the rollout, x_start @ t=0, x_end (=x_start * discount_rate^2) @ t=Horizon
+      discount_ep_ratio: 0.7

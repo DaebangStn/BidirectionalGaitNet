@@ -17,7 +17,7 @@ environment:
 
   # Muscle System
   muscle:
-    file: "@pid:/muscle/clinic_0208_1000.yaml"
+    file: "@pid:/muscle/clinic_0211_0956.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true

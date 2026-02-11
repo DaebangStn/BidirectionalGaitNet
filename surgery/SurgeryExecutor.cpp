@@ -625,8 +625,9 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
     // Resolve URI path if needed
     std::string resolved_path = rm::resolve(path);
 
-    // If file doesn't exist yet, resolve parent directory and construct path
-    if (resolved_path.empty() || resolved_path == path) {
+    // If URI resolution didn't change the path, try directory-based resolution
+    // But skip if the path is already an absolute filesystem path
+    if ((resolved_path.empty() || resolved_path == path) && !path.empty() && path[0] != '/') {
         std::filesystem::path p(path);
         std::string parent_uri = p.parent_path().string();
         std::string filename = p.filename().string();
@@ -1241,8 +1242,9 @@ void SurgeryExecutor::exportSkeleton(const std::string& path) {
     // Resolve URI path if needed
     std::string resolved_path = rm::resolve(path);
 
-    // If file doesn't exist yet, resolve parent directory and construct path
-    if (resolved_path.empty() || resolved_path == path) {
+    // If URI resolution didn't change the path, try directory-based resolution
+    // But skip if the path is already an absolute filesystem path
+    if ((resolved_path.empty() || resolved_path == path) && !path.empty() && path[0] != '/') {
         std::filesystem::path p(path);
         std::string parent_uri = p.parent_path().string();
         std::string filename = p.filename().string();

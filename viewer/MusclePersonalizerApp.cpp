@@ -932,7 +932,7 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                 ImGui::TableNextColumn();
                 ImGui::Text("Max Iterations");
                 ImGui::SetNextItemWidth(-1);
-                ImGui::InputInt("##max_iter", &mWaypointMaxIterations);
+                ImGui::InputInt("##max_iter", &mWaypointMaxIterations, 50, 50, ImGuiInputTextFlags_None);
 
                 ImGui::TableNextColumn();
                 ImGui::Text("Num Sampling");
