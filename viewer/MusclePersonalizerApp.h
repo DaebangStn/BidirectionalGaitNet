@@ -346,6 +346,7 @@ private:
     float mMuscleLineWidth = 5.0f;
     float mMuscleLabelFontSize = 14.0f;
     float mPlotHeight = 400.0f;  // Height of length curve plots
+    float mPlotCurveWidth = 4.0f; // Line width for ImPlot curves
     int mErrorPlotYLimMode = 0;  // 0: near best, 1: overview, 2: draggable
 
     // Muscle selection
@@ -370,7 +371,7 @@ private:
     // ============================================================
     // Export Config
     // ============================================================
-    char mExportMuscleName[64] = "base_rom";
+    char mExportMuscleName[64] = "temp";
 
     // ============================================================
     // Initialization

@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-from core.data import load_rom_data, get_rom_value, load_surgery_info, load_kinematics_data
+from core.data import load_rom_data, get_rom_value, load_surgery_info, load_kinematics_data, load_metadata
 from core.normative import get_dof_list, get_normative_value
 
 
@@ -198,6 +198,66 @@ def render_surgery_table(surgery_list: list):
     </table>
     '''
     st.markdown(html, unsafe_allow_html=True)
+
+
+def render_metadata_comparison(pid: str, visits: list):
+    """Render height/weight/age/foot comparison across visits."""
+    visit_labels = {'pre': 'Pre', 'op1': 'Op1', 'op2': 'Op2'}
+
+    # Load metadata for all visits
+    meta_by_visit = {}
+    for visit in visits:
+        meta = load_metadata(pid, visit)
+        if meta:
+            meta_by_visit[visit] = meta
+
+    if not meta_by_visit:
+        st.info("No metadata available")
+        return
+
+    fields = [
+        ('Age (yr)', lambda m: m.get('age')),
+        ('Height (cm)', lambda m: m.get('height')),
+        ('Weight (kg)', lambda m: m.get('weight')),
+        ('Foot L length (cm)', lambda m: m.get('foot', {}).get('left', {}).get('length')),
+        ('Foot L width (cm)', lambda m: m.get('foot', {}).get('left', {}).get('width')),
+        ('Foot R length (cm)', lambda m: m.get('foot', {}).get('right', {}).get('length')),
+        ('Foot R width (cm)', lambda m: m.get('foot', {}).get('right', {}).get('width')),
+    ]
+
+    pre_meta = meta_by_visit.get('pre')
+
+    rows = []
+    for label, extractor in fields:
+        row = {'Measure': label}
+        row_vals = []
+        for v in visits:
+            meta = meta_by_visit.get(v)
+            val = extractor(meta) if meta else None
+            row_vals.append(val)
+            row[visit_labels.get(v, v)] = f"{val:.1f}" if val is not None else "-"
+
+        # Skip row if all None
+        if all(v is None for v in row_vals):
+            continue
+
+        # Change columns relative to pre
+        pre_val = extractor(pre_meta) if pre_meta else None
+        for i, v in enumerate(visits):
+            if v == 'pre':
+                continue
+            post_val = row_vals[i]
+            if pre_val is not None and post_val is not None:
+                change = post_val - pre_val
+                row[f"Chg {visit_labels.get(v, v)}"] = f"{change:+.1f}"
+            else:
+                row[f"Chg {visit_labels.get(v, v)}"] = "-"
+
+        rows.append(row)
+
+    if rows:
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def render(pid_info: dict, visit: str, motion_file: str = None):

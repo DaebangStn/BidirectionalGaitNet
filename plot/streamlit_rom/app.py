@@ -24,7 +24,7 @@ def render_patient_sidebar():
 
     if not pids:
         st.warning("No patients found")
-        return None, None, False, None
+        return None, None, False, None, False
 
     # Patient selector
     options = [f"{p['pid']} ({p['name']}, {p['gmfcs']})" if p['name'] else f"{p['pid']} ({p['gmfcs']})" for p in pids]
@@ -35,19 +35,26 @@ def render_patient_sidebar():
 
     if not selected_patient:
         st.error("Patient not found")
-        return None, None, False, None
+        return None, None, False, None, False
 
     # Get available visits
     visits = list_visits(selected_pid)
     if not visits:
         st.warning(f"No ROM data found for {selected_pid}")
-        return None, None, False, None
+        return None, None, False, None, False
 
     # Compare mode checkbox
     compare_mode = st.checkbox(
         "Compare visits",
         value=False,
         help="Show pre/op1/op2 values side by side for comparison"
+    )
+
+    # Show metadata checkbox
+    show_metadata = st.checkbox(
+        "Show height/weight",
+        value=False,
+        help="Show height, weight, age, and foot measurements across visits"
     )
 
     if compare_mode:
@@ -76,9 +83,9 @@ def render_patient_sidebar():
         )
 
     if compare_mode:
-        return selected_patient, visits, True, selected_motion
+        return selected_patient, visits, True, selected_motion, show_metadata
     else:
-        return selected_patient, selected_visit, False, selected_motion
+        return selected_patient, selected_visit, False, selected_motion, show_metadata
 
 
 def render_distribution_sidebar():
@@ -127,6 +134,12 @@ def render_distribution_sidebar():
         help="If checked, shows patient ID. Otherwise shows patient name."
     )
 
+    show_anthro = st.checkbox(
+        "Show height/weight",
+        value=False,
+        help="Show height and weight comparison across visits"
+    )
+
     st.divider()
     st.subheader("Select DOFs")
 
@@ -146,7 +159,7 @@ def render_distribution_sidebar():
         if st.checkbox(dof['display_name'], value=default, key=key):
             selected_dofs.append(dof)
 
-    return selected_gmfcs, selected_dofs, anonymous, selected_surgery, selected_side, color_by
+    return selected_gmfcs, selected_dofs, anonymous, selected_surgery, selected_side, color_by, show_anthro
 
 
 # Main app
@@ -166,13 +179,20 @@ with st.sidebar:
     st.divider()
 
     if mode == "Patient":
-        patient, visit_or_visits, compare_mode, motion_file = render_patient_sidebar()
+        patient, visit_or_visits, compare_mode, motion_file, show_metadata = render_patient_sidebar()
     else:
-        gmfcs, dofs, anonymous, surgery, side, color_by = render_distribution_sidebar()
+        gmfcs, dofs, anonymous, surgery, side, color_by, show_anthro_dist = render_distribution_sidebar()
 
 # Main view - render based on mode selected above
 if mode == "Patient":
     if patient and visit_or_visits:
+        if show_metadata:
+            st.markdown("### Anthropometrics")
+            if compare_mode:
+                per_patient.render_metadata_comparison(patient['pid'], visit_or_visits)
+            else:
+                per_patient.render_metadata_comparison(patient['pid'], [visit_or_visits])
+            st.divider()
         if compare_mode:
             per_patient.render_compare(patient, visit_or_visits, motion_file)
         else:
@@ -180,4 +200,4 @@ if mode == "Patient":
     else:
         st.info("Select a patient from the sidebar")
 else:
-    distribution.render(gmfcs, dofs, anonymous, surgery, side, color_by)
+    distribution.render(gmfcs, dofs, anonymous, surgery, side, color_by, show_anthro_dist)

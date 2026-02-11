@@ -659,6 +659,11 @@ void MusclePersonalizerApp::drawCharacterLoadSection()
             skelRef, muscleRef,
             [this]() { loadCharacter(); },
             opts);
+
+        ImGui::Separator();
+        if (ImGui::Button("Rebuild Character")) { loadCharacter(); }
+        ImGui::Text("Skeleton: %s", mSkeletonPath.c_str());
+        ImGui::Text("Muscle:   %s", mMusclePath.c_str());
     }
 }
 
@@ -1229,13 +1234,26 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
     ImGui::Text("Estimate lm_contract from ROM trials");
         ImGui::Separator();
 
+        if (ImGui::Button("Rebuild Character")) { loadCharacter(); }
+        ImGui::Text("Skeleton: %s", mSkeletonPath.c_str());
+        ImGui::Text("Muscle:   %s", mMusclePath.c_str());
+        ImGui::Separator();
+
         ImGui::Text("ROM Config Directory:");
         ImGui::SameLine();
         ImGui::TextWrapped("%s", mROMConfigDir.c_str());
         ImGui::SameLine();
         if (ImGui::Button("Scan ROM Configs")) scanROMConfigs();
         ImGui::SameLine();
-        if (ImGui::Button("Default")) applyDefaultROMValues();
+        if (ImGui::Button("Default Trials")) {
+            for (auto& trial : mROMTrials) {
+                trial.selected = std::find(mDefaultSelectedROMTrials.begin(),
+                                           mDefaultSelectedROMTrials.end(),
+                                           trial.name) != mDefaultSelectedROMTrials.end();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Default ROM")) applyDefaultROMValues();
 
         // Count selected and filtered trials
         size_t selectedCount = 0;
@@ -1253,6 +1271,14 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
             for (auto& trial : mROMTrials) {
                 bool visible = (strlen(mROMFilter) == 0 || trial.name.find(mROMFilter) != std::string::npos);
                 if (visible) trial.selected = true;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Default")) {
+            for (auto& trial : mROMTrials) {
+                trial.selected = std::find(mDefaultSelectedROMTrials.begin(),
+                                           mDefaultSelectedROMTrials.end(),
+                                           trial.name) != mDefaultSelectedROMTrials.end();
             }
         }
         ImGui::SameLine();
@@ -1543,11 +1569,17 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 for (const auto& grp : mContractureOptResult->group_results) {
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::Text("%s", grp.group_name.c_str());
+                    bool hitBound = (std::abs(grp.ratio - mContractureMinRatio) < 0.01)
+                                 || (std::abs(grp.ratio - mContractureMaxRatio) < 0.01);
+                    ImVec4 ratioColor;
+                    if (hitBound)
+                        ratioColor = ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+                    else if (std::abs(grp.ratio - 1.0) > 0.05)
+                        ratioColor = ImVec4(1.0f, 0.8f, 0.3f, 1.0f);
+                    else
+                        ratioColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                    ImGui::TextColored(ratioColor, "%s", grp.group_name.c_str());
                     ImGui::TableNextColumn();
-                    ImVec4 ratioColor = (std::abs(grp.ratio - 1.0) > 0.05)
-                        ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f)
-                        : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
                     ImGui::TextColored(ratioColor, "%.3f", grp.ratio);
                 }
                 ImGui::EndTable();
@@ -1740,6 +1772,11 @@ void MusclePersonalizerApp::drawRenderTab()
     ImGui::InputInt("Bars per Chart", &mPlotBarsPerChart);
     mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
 
+    ImGui::SetNextItemWidth(60);
+    ImGui::InputFloat("##CurveWidth", &mPlotCurveWidth, 0.0f, 0.0f, "%.1f");
+    ImGui::SameLine();
+    ImGui::Text("Curve Width");
+    ImGui::SameLine();
     ImGui::Checkbox("Hide Legend", &mPlotHideLegend);
     ImGui::SameLine();
 
@@ -1756,6 +1793,7 @@ void MusclePersonalizerApp::drawRenderTab()
     }
 
     // Table settings
+    ImGui::SetNextItemWidth(200);
     ImGui::InputFloat("Results Table Height", &mResultsTableHeight, 50.0f, 200.0f, "%.0f");
     mResultsTableHeight = std::max(60.0f, std::min(500.0f, mResultsTableHeight));
 }
@@ -2370,6 +2408,8 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
             if (!mPlotHideLegend)
                 ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
+            ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, mPlotCurveWidth);
+
             // Reference curve (blue) - target behavior from standard character
             ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
             ImPlot::PlotLine("Reference", result.phases.data(),
@@ -2387,6 +2427,8 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
             ImPlot::PlotLine("After", result.phases.data(),
                             result.subject_after_lengths.data(), static_cast<int>(result.phases.size()));
             ImPlot::PopStyleColor();
+
+            ImPlot::PopStyleVar();
 
             ImPlot::EndPlot();
         }
@@ -2413,6 +2455,8 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                 if (!mPlotHideLegend)
                     ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
+                ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, mPlotCurveWidth);
+
                 // Before curve (orange)
                 ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.9f, 0.5f, 0.1f, 1.0f));
                 ImPlot::PlotLine("Before", result.phases.data(),
@@ -2426,6 +2470,8 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
                                 result.shape_angle_after.data(),
                                 static_cast<int>(result.phases.size()));
                 ImPlot::PopStyleColor();
+
+                ImPlot::PopStyleVar();
 
                 ImPlot::EndPlot();
             }
@@ -3406,8 +3452,10 @@ void MusclePersonalizerApp::drawGridSearchSubTab()
                 }
 
                 // Plot error curve
+                ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, mPlotCurveWidth);
                 ImPlot::PlotLine("Error", sr.ratios.data(), sr.errors.data(),
                                 static_cast<int>(sr.ratios.size()));
+                ImPlot::PopStyleVar();
 
                 // Mark best point
                 if (sr.best_idx >= 0 && sr.best_idx < static_cast<int>(sr.ratios.size())) {

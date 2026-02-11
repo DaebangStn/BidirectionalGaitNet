@@ -544,6 +544,7 @@ private:
 
     // Clinical ROM data (loaded from @pid:{pid}/{visit}/rom.yaml)
     // Key format: "side.joint.field" (e.g., "left.hip.abduction_ext_r2")
+    int mROMColorCompare = 0;  // 0 = compare to CD, 1 = compare to Norm
     std::map<std::string, std::optional<float>> mClinicalROM;
     std::string mClinicalROMPID;    // Track loaded PID for cache invalidation
     std::string mClinicalROMVisit;  // Track loaded visit for cache invalidation

@@ -3442,10 +3442,11 @@ void PhysicalExam::drawROMSummaryTable() {
         }
     }
 
-    // Helper lambda to render measured value with clinical comparison
-    // Color based on deviation from clinical value (degrees)
-    auto renderMeasuredWithClinicalComparison = [](const std::optional<double>& measured,
-                                                    const std::optional<float>& clinical) {
+    // Helper lambda to render measured value with comparison coloring
+    // compareMode: 0 = compare to clinical (degree diff), 1 = compare to normative (percentage diff)
+    auto renderMeasuredWithComparison = [this](const std::optional<double>& measured,
+                                               const std::optional<float>& clinical,
+                                               double normative, bool hasNorm) {
         if (!measured.has_value()) {
             ImGui::TextDisabled("-");
             return;
@@ -3455,26 +3456,34 @@ void PhysicalExam::drawROMSummaryTable() {
             return;
         }
 
-        // If no clinical data, show measured value in white
-        if (!clinical.has_value()) {
-            ImGui::Text("%.1f", *measured);
-            return;
-        }
-
-        // Color based on deviation from clinical value (direct comparison)
-        double diff = std::abs(*measured - *clinical);
-        ImVec4 color;
-        if (diff <= 5.0) {
-            // Within 5°: green (matching)
-            color = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
-        } else if (diff <= 15.0) {
-            // 5-15°: yellow (mild deviation)
-            color = ImVec4(0.9f, 0.9f, 0.3f, 1.0f);
+        if (mROMColorCompare == 0) {
+            // Compare to clinical data (degree difference)
+            if (!clinical.has_value()) {
+                ImGui::Text("%.1f", *measured);
+                return;
+            }
+            double diff = std::abs(*measured - *clinical);
+            ImVec4 color;
+            if (diff <= 5.0) {
+                color = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
+            } else if (diff <= 15.0) {
+                color = ImVec4(0.9f, 0.9f, 0.3f, 1.0f);
+            } else {
+                color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+            }
+            ImGui::TextColored(color, "%.1f", *measured);
         } else {
-            // >15°: red (significant deviation)
-            color = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+            // Compare to normative data (percentage difference)
+            if (!hasNorm || normative == 0.0) {
+                ImGui::Text("%.1f", *measured);
+                return;
+            }
+            double diff_pct = std::abs(*measured - normative) / normative * 100.0;
+            ImVec4 color = diff_pct <= 10.0 ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f) :
+                           diff_pct <= 25.0 ? ImVec4(0.9f, 0.9f, 0.3f, 1.0f) :
+                                              ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+            ImGui::TextColored(color, "%.1f", *measured);
         }
-        ImGui::TextColored(color, "%.1f", *measured);
     };
 
     // Helper lambda to get clinical value from mClinicalROM
@@ -3505,6 +3514,15 @@ void PhysicalExam::drawROMSummaryTable() {
         if (!title.empty()) {
             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "%s", title.c_str());
         }
+    }
+
+    // Color comparison target selector (only when clinical data is available)
+    if (hasClinicalData) {
+        ImGui::Text("Color compare to:");
+        ImGui::SameLine();
+        ImGui::RadioButton("CD", &mROMColorCompare, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Norm", &mROMColorCompare, 1);
     }
 
     // 6 columns when clinical data available, 4 columns otherwise
@@ -3556,9 +3574,9 @@ void PhysicalExam::drawROMSummaryTable() {
                         ImGui::TextDisabled("-");
                     }
 
-                    // Measured Left column (color-coded vs clinical)
+                    // Measured Left column (color-coded)
                     ImGui::TableNextColumn();
-                    renderMeasuredWithClinicalComparison(entry.left, clinicalLeft);
+                    renderMeasuredWithComparison(entry.left, clinicalLeft, normative, normIt != mNormativeROM.end());
 
                     // Clinical Data Right column
                     ImGui::TableNextColumn();
@@ -3569,9 +3587,9 @@ void PhysicalExam::drawROMSummaryTable() {
                         ImGui::TextDisabled("-");
                     }
 
-                    // Measured Right column (color-coded vs clinical)
+                    // Measured Right column (color-coded)
                     ImGui::TableNextColumn();
-                    renderMeasuredWithClinicalComparison(entry.right, clinicalRight);
+                    renderMeasuredWithComparison(entry.right, clinicalRight, normative, normIt != mNormativeROM.end());
 
                     // Normative column
                     ImGui::TableNextColumn();
@@ -5286,6 +5304,7 @@ void PhysicalExam::renderMusclePlots() {
                 ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
                 ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
                 ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
+                ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
                 ImPlot::PlotLine("Total Torque", x_data.data(), torque_data.data(), torque_data.size());
 
                 // Plot standard character data
@@ -5296,7 +5315,7 @@ void PhysicalExam::renderMusclePlots() {
                         std_torque_data.push_back(pt.passive_torque_total);
                     }
                     if (!std_torque_data.empty() && std_torque_data.size() == std_x_data.size()) {
-                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                        ImPlot::SetNextLineStyle(ImVec4(0.0, 0.8, 0.0, 1.0), 4.0f);
                         ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
                         ImPlot::PlotLine("Total Torque (std)", std_x_data.data(),
                             std_torque_data.data(), std_torque_data.size());
@@ -5359,6 +5378,7 @@ void PhysicalExam::renderMusclePlots() {
                 }
 
                 if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
+                    ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
                     ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                         lm_norm_data.data(), lm_norm_data.size());
                 }
@@ -5398,7 +5418,7 @@ void PhysicalExam::renderMusclePlots() {
 
                     if (!std_lm_norm_data.empty() && std_lm_norm_data.size() == std_x_data.size()) {
                         std::string label = muscle_name + " (std)";
-                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                        ImPlot::SetNextLineStyle(ImVec4(0.0, 0.8, 0.0, 1.0), 4.0f);
                         ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
                         ImPlot::PlotLine(label.c_str(), std_x_data.data(),
                             std_lm_norm_data.data(), std_lm_norm_data.size());
@@ -5434,6 +5454,7 @@ void PhysicalExam::renderMusclePlots() {
                 }
 
                 if (!fp_data.empty() && fp_data.size() == x_data.size()) {
+                    ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
                     ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                         fp_data.data(), fp_data.size());
                 }
@@ -5473,7 +5494,7 @@ void PhysicalExam::renderMusclePlots() {
 
                     if (!std_fp_data.empty() && std_fp_data.size() == std_x_data.size()) {
                         std::string label = muscle_name + " (std)";
-                        ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
+                        ImPlot::SetNextLineStyle(ImVec4(0.0, 0.8, 0.0, 1.0), 4.0f);
                         ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
                         ImPlot::PlotLine(label.c_str(), std_x_data.data(),
                             std_fp_data.data(), std_fp_data.size());
@@ -5553,6 +5574,7 @@ void PhysicalExam::renderMusclePlots() {
                     }
 
                     if (!magnitude_data.empty() && magnitude_data.size() == x_data.size()) {
+                        ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
                         ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                             magnitude_data.data(), magnitude_data.size());
                     }

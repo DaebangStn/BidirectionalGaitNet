@@ -133,6 +133,28 @@ def get_rom_value(rom_data: dict, side: str, joint: str, field: str) -> float:
 
 
 @st.cache_data
+def load_metadata(pid: str, visit: str) -> dict | None:
+    """Load metadata.yaml for a patient visit.
+
+    Args:
+        pid: Patient ID
+        visit: Visit name (pre, op1, op2)
+
+    Returns:
+        Dict with age, height, weight, foot data, or None if not found
+    """
+    try:
+        handle = rm_mgr.fetch(f"@pid:{pid}/{visit}/metadata.yaml")
+        if not handle.valid():
+            return None
+
+        data = yaml.safe_load(handle.as_string())
+        return data
+    except Exception:
+        return None
+
+
+@st.cache_data
 def load_surgery_info(pid: str, visit: str) -> list[str]:
     """Load surgery info from metadata.yaml for a patient visit.
 

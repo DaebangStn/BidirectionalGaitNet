@@ -670,6 +670,48 @@ if __name__ == "__main__":
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
+    # Copy skeleton, motion, muscle config files to runs/{run_name}/config/
+    project_root = Path(__file__).parent.parent
+    config_dir = Path(f"runs/{run_name}/config")
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get default pid for expanding @pid:/ URIs
+    default_pid = env_config.get('pid')
+    if not default_pid and 'environment' in env_config:
+        default_pid = env_config['environment'].get('pid')
+
+    env_section = env_config.get('environment', {})
+    for section_key in ('skeleton', 'motion', 'muscle'):
+        section = env_section.get(section_key, {})
+        if 'file' not in section:
+            continue
+        uri = section['file']
+        # Expand @pid:/path to @pid:{pid}/path
+        if default_pid and uri.startswith('@pid:/'):
+            uri = f"@pid:{default_pid}/" + uri[6:]
+        dst_name = f"{section_key}_{Path(uri).name}"
+        try:
+            if uri.startswith('@pid:'):
+                # Remote resource — fetch via pyrm (uses .tmp/rm_cache)
+                sys.path.insert(0, str(project_root / "rm/python"))
+                import pyrm
+                rm_config = str(project_root / "data/rm_config.yaml")
+                rm = pyrm.ResourceManager(rm_config)
+                handle = rm.fetch(uri)
+                shutil.copy2(handle.local_path(), config_dir / dst_name)
+            else:
+                # Local file — strip @ prefix if present
+                file_path = uri[1:] if uri.startswith('@') else uri
+                src_path = project_root / file_path
+                if not src_path.exists():
+                    print(f"Warning: {section_key} file not found: {src_path}")
+                    continue
+                shutil.copy2(src_path, config_dir / dst_name)
+            print(f"Copied {section_key}: {dst_name}")
+        except Exception as e:
+            print(f"Warning: failed to copy {section_key} config: {e}")
+
+
     # Training loop
     start_time = time.time()
 

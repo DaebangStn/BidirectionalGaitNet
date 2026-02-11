@@ -2,17 +2,17 @@
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from core.data import list_pids, load_rom_data, get_rom_value, load_surgery_info
+from core.data import list_pids, load_rom_data, get_rom_value, load_surgery_info, load_metadata
 from core.normative import get_dof_list
 
 
-def render(selected_gmfcs: str, selected_dofs: list, anonymous: bool, selected_surgery: str, selected_side: str = "Both", color_by: str = "Visit"):
+def render(selected_gmfcs: str, selected_dofs: list, anonymous: bool, selected_surgery: str, selected_side: str = "Both", color_by: str = "Visit", show_anthro: bool = False):
     """Render distribution scatter plot view."""
     # Display current filter info
     filter_text = f"**GMFCS:** {selected_gmfcs} | **Operation:** {selected_surgery} | **Side:** {selected_side}"
     st.markdown(filter_text)
 
-    if not selected_dofs:
+    if not selected_dofs and not show_anthro:
         st.info("Select at least one DOF to display")
         return
 
@@ -78,7 +78,12 @@ def render(selected_gmfcs: str, selected_dofs: list, anonymous: bool, selected_s
     if not pids:
         st.info("No patients selected. Check patients below to display data.")
     else:
-        _render_plot(pids, selected_dofs, selected_visits, anonymous, color_by)
+        if selected_dofs:
+            _render_plot(pids, selected_dofs, selected_visits, anonymous, color_by)
+        if show_anthro:
+            st.divider()
+            st.markdown("### Anthropometrics")
+            _render_anthro_plot(pids, selected_visits, anonymous, color_by)
 
     # Patient selection checkboxes at bottom
     st.markdown("---")
@@ -450,3 +455,141 @@ def render_data_table(pids: list, selected_visits: list, selected_dofs: list, an
     for row in rows:
         row_str = " | ".join(str(v).ljust(col_widths[i]) for i, v in enumerate(row))
         st.text(row_str)
+
+
+def _render_anthro_plot(pids: list, selected_visits: list, anonymous: bool, color_by: str):
+    """Render height/weight scatter plots across patients comparing pre/op1."""
+    measures = [
+        ('Height (cm)', 'height', lambda m: m.get('height')),
+        ('Weight (kg)', 'weight', lambda m: m.get('weight')),
+    ]
+
+    fig = make_subplots(
+        rows=len(measures), cols=1,
+        subplot_titles=[m[0] for m in measures],
+        vertical_spacing=0.2
+    )
+
+    visit_colors = {'pre': '#1f77b4', 'op1': '#2ca02c', 'op2': '#ff7f0e'}
+    gmfcs_colors = {'1': '#1f77b4', '2': '#2ca02c', '3': '#ff7f0e'}
+    visit_labels_map = {'pre': 'Pre', 'op1': 'Op1', 'op2': 'Op2'}
+    color_by_gmfcs = (color_by == "GMFCS")
+
+    # X positions: Pre, Op1
+    x_positions = {visit: i for i, visit in enumerate(selected_visits)}
+    tick_vals = list(range(len(selected_visits)))
+    tick_texts = [visit_labels_map.get(v, v) for v in selected_visits]
+    x_range = [-0.5, len(selected_visits) - 0.5]
+
+    # Legend (only once)
+    if color_by_gmfcs:
+        for gmfcs_level in ['1', '2', '3']:
+            fig.add_trace(
+                go.Scatter(
+                    x=[None], y=[None], mode='markers',
+                    marker=dict(size=10, color=gmfcs_colors.get(gmfcs_level, '#333')),
+                    name=f'GMFCS {gmfcs_level}', showlegend=True,
+                ),
+                row=1, col=1
+            )
+    else:
+        for visit in selected_visits:
+            fig.add_trace(
+                go.Scatter(
+                    x=[None], y=[None], mode='markers',
+                    marker=dict(size=10, color=visit_colors.get(visit, '#333')),
+                    name=visit_labels_map.get(visit, visit), showlegend=True,
+                ),
+                row=1, col=1
+            )
+
+    for m_idx, (m_label, m_key, extractor) in enumerate(measures):
+        deltas = []
+
+        for p in pids:
+            pid = p['pid']
+            label = p['pid'] if anonymous else (p['name'] or p['pid'])
+            gmfcs = p['gmfcs']
+
+            vals = {}
+            for visit in selected_visits:
+                meta = load_metadata(pid, visit)
+                if meta:
+                    val = extractor(meta)
+                    if val is not None:
+                        vals[visit] = val
+
+            if not vals:
+                continue
+
+            x_vals = []
+            y_vals = []
+            colors = []
+            hovertexts = []
+
+            for visit in selected_visits:
+                if visit not in vals:
+                    continue
+                val = vals[visit]
+                x_vals.append(x_positions[visit])
+                y_vals.append(val)
+
+                if color_by_gmfcs:
+                    colors.append(gmfcs_colors.get(gmfcs, '#333'))
+                else:
+                    colors.append(visit_colors.get(visit, '#333'))
+
+                hover_lines = [f"<b>{label}</b> {visit_labels_map.get(visit, visit)}"]
+                hover_lines.append(f"{m_label}: {val:.1f}")
+                pre_val = vals.get('pre')
+                if visit != 'pre' and pre_val is not None:
+                    hover_lines.append(f"Δ: {val - pre_val:+.1f}")
+                hovertexts.append("<br>".join(hover_lines))
+
+            # Track deltas
+            pre_val = vals.get('pre')
+            op1_val = vals.get('op1')
+            if pre_val is not None and op1_val is not None:
+                deltas.append(op1_val - pre_val)
+
+            line_color = gmfcs_colors.get(gmfcs, '#888') if color_by_gmfcs else '#888888'
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals, y=y_vals,
+                    mode='lines+markers',
+                    line=dict(color=line_color, width=1),
+                    marker=dict(size=10, color=colors),
+                    hovertext=hovertexts,
+                    hovertemplate='%{hovertext}<extra></extra>',
+                    showlegend=False, name=label,
+                ),
+                row=m_idx + 1, col=1
+            )
+
+        # Mean delta annotation
+        if deltas and len(selected_visits) >= 2:
+            mean_delta = sum(deltas) / len(deltas)
+            mid_x = (x_positions[selected_visits[0]] + x_positions[selected_visits[1]]) / 2
+            fig.add_annotation(
+                x=mid_x, y=0,
+                yref=f'y{m_idx + 1}' if m_idx > 0 else 'y',
+                xref=f'x{m_idx + 1}' if m_idx > 0 else 'x',
+                text=f"<b>Mean Δ: {mean_delta:+.1f}</b>",
+                showarrow=False, yanchor='top', yshift=-55,
+                font=dict(size=14, color='white')
+            )
+
+        fig.update_xaxes(
+            tickvals=tick_vals, ticktext=tick_texts,
+            range=x_range, row=m_idx + 1, col=1
+        )
+        fig.update_yaxes(title_text=m_label, row=m_idx + 1, col=1)
+
+    fig.update_layout(
+        height=350 * len(measures),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=50, b=60)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
