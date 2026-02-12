@@ -467,27 +467,67 @@ void MotionEditorApp::drawPIDBrowserTab()
 
 void MotionEditorApp::drawDirectPathTab()
 {
-    static char directPath[512] = {0};
+    static char h5Name[256] = {0};
+    static char skelName[256] = {0};
 
-    ImGui::Text("H5 Motion Path:");
-    ImGui::SetNextItemWidth(-60);
-    ImGui::InputText("##DirectH5Path", directPath, sizeof(directPath));
+    // Build full paths
+    std::string h5Full = std::string("data/motion/") + h5Name + ".h5";
+    std::string skelFull = std::string("data/skeleton/") + skelName + ".yaml";
+    bool h5Exists = (strlen(h5Name) > 0) && fs::exists(h5Full);
+    bool skelExists = (strlen(skelName) > 0) && fs::exists(skelFull);
+
+    // H5 Motion: prefix label + filename input + .h5 suffix
+    ImGui::Text("H5 Motion:");
+    ImGui::Text("data/motion/");
+    ImGui::SameLine(0, 0);
+    ImGui::SetNextItemWidth(-80);
+    ImGui::InputText("##DirectH5Path", h5Name, sizeof(h5Name));
+    ImGui::SameLine(0, 0);
+    ImGui::Text(".h5");
     ImGui::SameLine();
-    if (ImGui::Button("Load##Direct")) {
-        if (strlen(directPath) > 0) {
-            loadH5Motion(directPath);
-        }
+    if (strlen(h5Name) > 0) {
+        if (h5Exists)
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "OK");
+        else
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "!!");
     }
 
     ImGui::Separator();
-    ImGui::Text("Skeleton Path:");
-    ImGui::SetNextItemWidth(-60);
-    ImGui::InputText("##DirectSkelPath", mManualSkeletonPath, sizeof(mManualSkeletonPath));
+
+    // Skeleton: prefix label + filename input + .yaml suffix
+    ImGui::Text("Skeleton:");
+    ImGui::Text("data/skeleton/");
+    ImGui::SameLine(0, 0);
+    ImGui::SetNextItemWidth(-80);
+    ImGui::InputText("##DirectSkelPath", skelName, sizeof(skelName));
+    ImGui::SameLine(0, 0);
+    ImGui::Text(".yaml");
     ImGui::SameLine();
-    if (ImGui::Button("Load##Skel")) {
-        if (strlen(mManualSkeletonPath) > 0) {
-            loadSkeleton(mManualSkeletonPath);
+    if (strlen(skelName) > 0) {
+        if (skelExists)
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "OK");
+        else
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "!!");
+    }
+
+    ImGui::Separator();
+
+    // Single load button: skeleton first, then motion (so mCharacter is set for refreshMotion)
+    if (ImGui::Button("Load Both")) {
+        if (skelExists) {
+            loadSkeleton(skelFull);
         }
+        if (h5Exists) {
+            loadH5Motion(h5Full);
+        }
+    }
+    if (!h5Exists || !skelExists) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
+            "%s%s%s",
+            !h5Exists && strlen(h5Name) > 0 ? "motion not found" : "",
+            (!h5Exists && strlen(h5Name) > 0 && !skelExists && strlen(skelName) > 0) ? ", " : "",
+            !skelExists && strlen(skelName) > 0 ? "skeleton not found" : "");
     }
 }
 
@@ -1961,6 +2001,8 @@ void MotionEditorApp::loadH5Motion(const std::string& path)
         LOG_ERROR("[MotionEditor] Failed to load motion: " << e.what());
         mMotion = nullptr;
     }
+
+    refreshMotion();
 }
 
 void MotionEditorApp::refreshMotion()
