@@ -1468,7 +1468,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
                 ImGui::TableNextColumn();
                 ImGui::Text("Torque Reg");
                 ImGui::SetNextItemWidth(-1);
-                ImGui::InputFloat("##contract_torque_reg", &mContractureLambdaTorqueReg, 0.0f, 0.0f, "%.3f");
+                ImGui::InputFloat("##contract_torque_reg", &mContractureLambdaTorqueReg, 0.0f, 0.0f, "%.7f");
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Penalize passive torque magnitude\n0 = disabled");
                 }

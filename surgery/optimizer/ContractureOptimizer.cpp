@@ -203,9 +203,9 @@ struct RatioRegCost {
     }
 };
 
-// Torque regularization: penalizes passive torque magnitude
-// This functor computes group passive torque at a specific trial pose
-struct TorqueRegCost {
+// Co-contraction regularization: penalizes each muscle's passive force individually
+// One residual per muscle in the group, each = sqrt(lambda) * f_p
+struct TorqueRegCost : public ceres::CostFunction {
     Character* character;
     PoseData pose;
     int group_id;
@@ -218,18 +218,33 @@ struct TorqueRegCost {
                   const std::vector<int>& m_ids,
                   const std::map<int, double>& base_lm,
                   double sl,
+                  int num_groups,
                   ContractureOptimizer::OptParam pt = ContractureOptimizer::OptParam::LM_CONTRACT)
         : character(c), pose(p), group_id(g), muscle_indices(m_ids),
-          base_param(base_lm), sqrt_lambda(sl), param_type(pt) {}
+          base_param(base_lm), sqrt_lambda(sl), param_type(pt) {
+        mutable_parameter_block_sizes()->push_back(num_groups);
+        set_num_residuals(static_cast<int>(m_ids.size()));
+    }
 
-    bool operator()(const double* const* parameters, double* residual) const {
+    bool Evaluate(double const* const* parameters,
+                  double* residuals,
+                  double** jacobians) const override {
         if (!character) {
-            residual[0] = 0.0;
+            for (size_t i = 0; i < muscle_indices.size(); ++i)
+                residuals[i] = 0.0;
+            if (jacobians && jacobians[0]) {
+                int num_groups = static_cast<int>(parameter_block_sizes()[0]);
+                for (size_t i = 0; i < muscle_indices.size(); ++i)
+                    for (int g = 0; g < num_groups; ++g)
+                        jacobians[0][i * num_groups + g] = 0.0;
+            }
             return true;
         }
 
         auto skeleton = character->getSkeleton();
         auto& muscles = character->getMuscles();
+        int num_groups = static_cast<int>(parameter_block_sizes()[0]);
+        int num_muscles = static_cast<int>(muscle_indices.size());
 
         // Apply ratio to this group's muscles
         double ratio = parameters[0][group_id];
@@ -247,56 +262,58 @@ struct TorqueRegCost {
             m->UpdateGeometry();
         }
 
-        // Compute group passive torque at target DOF (or composite axis)
-        auto* joint = skeleton->getJoint(pose.joint_idx);
-        int first_dof = static_cast<int>(joint->getIndexInSkeleton(0));
-        int num_dofs = static_cast<int>(joint->getNumDofs());
+        // Co-contraction penalty: penalize each muscle's passive force individually
+        for (int i = 0; i < num_muscles; ++i) {
+            int m_idx = muscle_indices[i];
+            double f_p = muscles[m_idx]->Getf_p();
+            residuals[i] = sqrt_lambda * f_p;
+        }
 
-        double group_torque = 0.0;
+        // Compute Jacobian: only group_id column is non-zero
+        if (jacobians != nullptr && jacobians[0] != nullptr) {
+            // Zero out entire Jacobian
+            for (int i = 0; i < num_muscles; ++i)
+                for (int g = 0; g < num_groups; ++g)
+                    jacobians[0][i * num_groups + g] = 0.0;
 
-        if (pose.use_composite_axis) {
-            // Composite mode: project 3D torque onto axis
-            for (int m_idx : muscle_indices) {
-                auto* muscle = muscles[m_idx];
-                Eigen::VectorXd jtp = muscle->GetRelatedJtp();
-                const auto& related_indices = muscle->related_dof_indices;
+            // Perturb group_id ratio and recompute
+            const double h = 1e-6;
+            double ratio_plus = ratio + h;
 
-                Eigen::Vector3d torque_vec = Eigen::Vector3d::Zero();
-                for (size_t i = 0; i < related_indices.size(); ++i) {
-                    int global_dof = related_indices[i];
-                    int local_dof = global_dof - first_dof;
-                    if (local_dof >= 0 && local_dof < num_dofs && local_dof < 3) {
-                        torque_vec[local_dof] = jtp[i];
-                    }
-                }
-                group_torque += torque_vec.dot(pose.composite_axis);
+            // Save current params, apply perturbed ratio
+            std::vector<double> saved_param(muscle_indices.size());
+            for (size_t i = 0; i < muscle_indices.size(); ++i) {
+                int m_idx = muscle_indices[i];
+                saved_param[i] = ContractureOptimizer::getParam(muscles[m_idx], param_type);
+                auto it = base_param.find(m_idx);
+                double base = (it != base_param.end()) ? it->second : old_param[m_idx];
+                ContractureOptimizer::setParam(muscles[m_idx], param_type, base * ratio_plus);
+                muscles[m_idx]->UpdateGeometry();
             }
-        } else {
-            // Single-DOF mode: existing logic
-            int target_dof = first_dof + pose.joint_dof;
-            for (int m_idx : muscle_indices) {
-                auto* muscle = muscles[m_idx];
-                Eigen::VectorXd jtp = muscle->GetRelatedJtp();
-                const auto& related_indices = muscle->related_dof_indices;
 
-                for (size_t i = 0; i < related_indices.size(); ++i) {
-                    if (related_indices[i] == target_dof) {
-                        group_torque += jtp[i];
-                        break;
-                    }
-                }
+            // Compute perturbed f_p and fill Jacobian column
+            for (int i = 0; i < num_muscles; ++i) {
+                int m_idx = muscle_indices[i];
+                double f_p_plus = muscles[m_idx]->Getf_p();
+                jacobians[0][i * num_groups + group_id] =
+                    sqrt_lambda * (f_p_plus - residuals[i] / sqrt_lambda) / h;
+            }
+
+            // Restore perturbed params
+            for (size_t i = 0; i < muscle_indices.size(); ++i) {
+                ContractureOptimizer::setParam(muscles[muscle_indices[i]], param_type, saved_param[i]);
+                muscles[muscle_indices[i]]->UpdateGeometry();
             }
         }
 
-        // Restore original param
+        // Restore original params
         for (int m_idx : muscle_indices) {
             ContractureOptimizer::setParam(muscles[m_idx], param_type, old_param[m_idx]);
         }
 
-        residual[0] = sqrt_lambda * group_torque;
         return true;
     }
-};
+};;;
 
 // Penalize ratio variance among fibers of the same base muscle
 struct LineConsistencyRegCost {
@@ -1976,7 +1993,7 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runCeresOnOptGroups(
         }
     }
 
-    // Torque regularization
+    // Co-contraction regularization: penalizes each muscle's passive force individually
     if (config.lambdaTorqueReg > 0.0) {
         double sqrt_lambda = std::sqrt(config.lambdaTorqueReg);
         for (int g = 0; g < num_groups; ++g) {
@@ -1984,11 +2001,8 @@ std::vector<MuscleGroupResult> ContractureOptimizer::runCeresOnOptGroups(
             if (grp_it == mMuscleGroups.end()) continue;
 
             for (size_t t = 0; t < pose_data.size(); ++t) {
-                auto* reg_cost = new ceres::DynamicNumericDiffCostFunction<TorqueRegCost>(
-                    new TorqueRegCost(character, pose_data[t], g,
-                                      grp_it->second, base_lm_contract, sqrt_lambda, pt));
-                reg_cost->AddParameterBlock(num_groups);
-                reg_cost->SetNumResiduals(1);
+                auto* reg_cost = new TorqueRegCost(character, pose_data[t], g,
+                    grp_it->second, base_lm_contract, sqrt_lambda, num_groups, pt);
                 problem.AddResidualBlock(reg_cost, nullptr, x.data());
             }
         }

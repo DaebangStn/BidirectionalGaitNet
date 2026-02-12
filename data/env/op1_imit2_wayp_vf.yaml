@@ -1,0 +1,69 @@
+args:
+  checkpoint_interval: 1000
+  total_timesteps: 500000000
+
+environment:
+  pid: "29792292/op1"
+  # Skeleton and Character
+  skeleton:
+    file: "@pid:/skeleton/dynamic.yaml"
+    actuator: "mass_lower"  # pd, torque, muscle, mass, mass_lower
+
+  # Motion Reference
+  motion:
+    file: "@pid:/motion/walk_single_cyc.h5"
+
+  # Muscle System
+  muscle:
+    file: "@pid:/muscle/wayp_0211_0956.yaml"
+    mesh_lbs_weight: false
+    use_velocity_force: false
+    use_joint_state: true
+    clip_lm_norm: 1.28 # to disable, remove or set to -1
+
+  # Simulation Timing
+  simulation:
+    sim_hz: 180
+    control_hz: 30
+
+  # Action and Control
+  action:
+    scale: 0.04
+    time_warping: -1
+    gait_phase_mode: "contact"  # "contact" or "phase"
+    contact_debounce_alpha: 0.4
+    step_min_ratio: 0.25
+
+  # Reward System
+  reward:
+    type: "scadiver"  # deepmimic, gaitnet, scadiver
+    num_ref_in_state: 2
+    include_ref_velocity: false
+    ignore_toe_imit: true
+    clip:
+      step: 50
+      value: 0.1
+
+    # Imitation reward coefficients (deepmimic/scadiver)
+    ee_weight: 100.0
+    pos_weight: 0.5
+    vel_weight: 0.005
+    com_weight: 10.0
+
+    # Metabolic configuration
+    metabolic:
+      type: "A"  # A, A2, MA, MA2
+      weight: 0.02
+      scale: 1.0
+      multiplicative: true  # if true, multiplies with main reward term
+      torque:
+        coeff: 0.1
+        separate: true
+
+train: 
+  curriculum:
+    virtual_force:
+      kp_init: 1000.0
+      kp_ignore_cutoff: 1.0
+      discount_rate: 0.8 # on the rollout, x_start @ t=0, x_end (=x_start * discount_rate^2) @ t=Horizon
+      discount_ep_ratio: 0.7
