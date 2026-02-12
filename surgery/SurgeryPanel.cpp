@@ -11,7 +11,7 @@ using namespace PMuscle;
 
 SurgeryPanel::SurgeryPanel(Character* character, ShapeRenderer* renderer)
     : SurgeryExecutor()
-    , mCharacter(character)
+    , mExpCharacter(character)
     , mShapeRenderer(renderer)
     , mRecordingSurgery(false)
     , mRecordingScriptPath("data/recorded_surgery.yaml")
@@ -19,7 +19,7 @@ SurgeryPanel::SurgeryPanel(Character* character, ShapeRenderer* renderer)
     , mShowScriptPreview(false)
     , mSavingMuscle(false)
 {
-    SurgeryExecutor::mCharacter = character;
+    SurgeryExecutor::mExpCharacter = character;
 
     strncpy(mRecordingPathBuffer, mRecordingScriptPath.c_str(), sizeof(mRecordingPathBuffer) - 1);
     mRecordingPathBuffer[sizeof(mRecordingPathBuffer) - 1] = '\0';
@@ -54,8 +54,8 @@ SurgeryPanel::SurgeryPanel(Character* character, ShapeRenderer* renderer)
 }
 
 void SurgeryPanel::setCharacter(Character* character) {
-    mCharacter = character;
-    SurgeryExecutor::mCharacter = character;
+    mExpCharacter = character;
+    SurgeryExecutor::mExpCharacter = character;
 }
 
 void SurgeryPanel::onPIDChanged(const std::string& pid, const std::string& visit) {
@@ -142,8 +142,8 @@ void SurgeryPanel::onPIDChanged(const std::string& pid, const std::string& visit
 }
 
 void SurgeryPanel::invalidateMuscleCache(const std::string& muscleName) {
-    if (!mCharacter || !mShapeRenderer) return;
-    auto muscles = mCharacter->getMuscles();
+    if (!mExpCharacter || !mShapeRenderer) return;
+    auto muscles = mExpCharacter->getMuscles();
     for (auto m : muscles) {
         if (m->name == muscleName) {
             mShapeRenderer->invalidateMuscleCache(m);
@@ -207,8 +207,8 @@ bool SurgeryPanel::rotateAnchorPoints(const std::string& muscle_name, int ref_an
                                      const Eigen::Vector3d& rotation_axis, double angle) {
     bool success = SurgeryExecutor::rotateAnchorPoints(muscle_name, ref_anchor_index,
                                                        search_direction, rotation_axis, angle);
-    if (success && mCharacter && mShapeRenderer) {
-        for (auto m : mCharacter->getMuscles())
+    if (success && mExpCharacter && mShapeRenderer) {
+        for (auto m : mExpCharacter->getMuscles())
             mShapeRenderer->invalidateMuscleCache(m);
     }
     return success;
@@ -223,8 +223,8 @@ bool SurgeryPanel::executeFDO(const std::string& ref_muscle, int ref_anchor_inde
                              double angle) {
     bool success = SurgeryExecutor::executeFDO(ref_muscle, ref_anchor_index,
                                                 search_dir, rot_axis, angle);
-    if (success && mCharacter && mShapeRenderer) {
-        for (auto m : mCharacter->getMuscles())
+    if (success && mExpCharacter && mShapeRenderer) {
+        for (auto m : mExpCharacter->getMuscles())
             mShapeRenderer->invalidateMuscleCache(m);
     }
     return success;
@@ -232,8 +232,8 @@ bool SurgeryPanel::executeFDO(const std::string& ref_muscle, int ref_anchor_inde
 
 void SurgeryPanel::resetSkeleton() {
     LOG_WARN("[SurgeryPanel] resetSkeleton called - requires parent application to reload character.");
-    if (mCharacter) {
-        auto skel = mCharacter->getSkeleton();
+    if (mExpCharacter) {
+        auto skel = mExpCharacter->getSkeleton();
         if (skel) {
             LOG_INFO("[SurgeryPanel] Skeleton '" << skel->getName() << "' needs reset by parent application");
         }
@@ -734,12 +734,12 @@ void SurgeryPanel::drawFDOTab() {
     mDrawFDOAnchors = true;
     mHighlightedAnchors.clear();
     auto collectAnchors = [this](FDOConfig& cfg) {
-        if (!mCharacter || cfg.ref_muscle.empty()) return;
+        if (!mExpCharacter || cfg.ref_muscle.empty()) return;
         Eigen::Vector3d search_dir(cfg.search_direction[0], cfg.search_direction[1], cfg.search_direction[2]);
         if (search_dir.norm() < 1e-6) return;
 
         // Reference anchor
-        Muscle* refM = mCharacter->getMuscleByName(cfg.ref_muscle);
+        Muscle* refM = mExpCharacter->getMuscleByName(cfg.ref_muscle);
         if (!refM) return;
         auto refAnchors = refM->GetAnchors();
         if (cfg.ref_anchor < (int)refAnchors.size()) {
@@ -751,7 +751,7 @@ void SurgeryPanel::drawFDOTab() {
             AnchorReference ref(cfg.ref_muscle, cfg.ref_anchor, 0);
             auto affected = computeAffectedAnchors(ref, search_dir);
             for (const auto& ar : affected) {
-                Muscle* m = mCharacter->getMuscleByName(ar.muscle_name);
+                Muscle* m = mExpCharacter->getMuscleByName(ar.muscle_name);
                 if (!m) continue;
                 auto anchors = m->GetAnchors();
                 if (ar.anchor_index < (int)anchors.size()) {
@@ -884,7 +884,7 @@ ContractureOptResult SurgeryPanel::runContractureOpt(
     { std::ofstream ofs(tmp_path); ofs << emitter.c_str(); }
 
     ContractureOptimizer optimizer;
-    optimizer.loadMuscleGroups(tmp_path, mCharacter);
+    optimizer.loadMuscleGroups(tmp_path, mExpCharacter);
 
     YAML::Node tmp_config = YAML::LoadFile(tmp_path);
     if (tmp_config["grid_search_mapping"]) {
@@ -898,7 +898,7 @@ ContractureOptResult SurgeryPanel::runContractureOpt(
         optimizer.setGridSearchMapping(mappings);
     }
 
-    auto result = optimizer.optimize(mCharacter, rom_configs, opt_config);
+    auto result = optimizer.optimize(mExpCharacter, rom_configs, opt_config);
     std::filesystem::remove(tmp_path);
     return result;
 }
@@ -907,7 +907,7 @@ bool SurgeryPanel::executeTAL(bool left) {
     auto& cfg = left ? mSEMLSConfig.tal_left : mSEMLSConfig.tal_right;
     const char* side = left ? "Left" : "Right";
 
-    if (!mCharacter || cfg.rom_trials.empty() || cfg.muscles.empty()) {
+    if (!mExpCharacter || cfg.rom_trials.empty() || cfg.muscles.empty()) {
         LOG_ERROR("[TAL " << side << "] Missing character, ROM trials, or muscles");
         return false;
     }
@@ -918,7 +918,7 @@ bool SurgeryPanel::executeTAL(bool left) {
     // Load ROM configs
     std::vector<ROMTrialConfig> rom_configs;
     std::vector<std::string> trial_names;
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     for (const auto& entry : cfg.rom_trials) {
         std::string path = "data/config/rom/" + entry.trial_name + ".yaml";
         try {
@@ -968,7 +968,7 @@ bool SurgeryPanel::executeDHL(bool left) {
     auto& cfg = left ? mSEMLSConfig.dhl_left : mSEMLSConfig.dhl_right;
     const char* side = left ? "Left" : "Right";
 
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[DHL " << side << "] No character loaded");
         return false;
     }
@@ -999,7 +999,7 @@ bool SurgeryPanel::executeDHL(bool left) {
             auto op = std::make_unique<CopyAnchorOp>(cfg.donor_muscle, cfg.donor_anchor, cfg.target_muscle);
             recordOperation(std::move(op));
         }
-        Muscle* dhlTarget = mCharacter->getMuscleByName(cfg.target_muscle);
+        Muscle* dhlTarget = mExpCharacter->getMuscleByName(cfg.target_muscle);
         LOG_INFO("[DHL " << side << "] " << cfg.target_muscle << ": removed "
                  << cfg.remove_anchors.size() << " anchors, copied #" << cfg.donor_anchor
                  << " from " << cfg.donor_muscle << " (" << (dhlTarget ? (int)dhlTarget->GetAnchors().size() : -1) << " anchors)");
@@ -1008,7 +1008,7 @@ bool SurgeryPanel::executeDHL(bool left) {
     // Step 2: Contracture optimization (lm_contract)
     if (cfg.do_contracture_opt && !cfg.rom_trials.empty() && !cfg.muscles.empty()) {
         std::vector<ROMTrialConfig> rom_configs;
-        auto skel = mCharacter->getSkeleton();
+        auto skel = mExpCharacter->getSkeleton();
         for (const auto& trial_name : cfg.rom_trials) {
             std::string path = "data/config/rom/" + trial_name + ".yaml";
             try {
@@ -1055,7 +1055,7 @@ bool SurgeryPanel::executeRFT(bool left) {
     auto& cfg = left ? mSEMLSConfig.rft_left : mSEMLSConfig.rft_right;
     const char* side = left ? "Left" : "Right";
 
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[RFT " << side << "] No character loaded");
         return false;
     }
@@ -1092,7 +1092,7 @@ bool SurgeryPanel::executeRFT(bool left) {
                 recordOperation(std::move(op));
             }
         }
-        Muscle* rftTarget = mCharacter->getMuscleByName(target);
+        Muscle* rftTarget = mExpCharacter->getMuscleByName(target);
         LOG_INFO("[RFT " << side << "] " << target << ": removed "
                  << cfg.remove_anchors.size() << " anchors, copied "
                  << cfg.copy_donor_anchors.size() << " from " << cfg.donor_muscle
@@ -1372,7 +1372,7 @@ void SurgeryPanel::drawResetMusclesSection() {
 }
 
 void SurgeryPanel::drawSaveMuscleConfigSection() {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         ImGui::TextDisabled("No character loaded");
         return;
     }
@@ -1423,7 +1423,7 @@ void SurgeryPanel::drawSaveMuscleConfigSection() {
 void SurgeryPanel::drawResetSkeletonSection() {
     ImGui::TextWrapped("Reset skeleton to original configuration.");
     ImGui::Spacing();
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         ImGui::TextDisabled("No character loaded");
         return;
     }
@@ -1437,7 +1437,7 @@ void SurgeryPanel::drawResetSkeletonSection() {
 }
 
 void SurgeryPanel::drawSaveSkeletonConfigSection() {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         ImGui::TextDisabled("No character loaded");
         return;
     }
@@ -1534,7 +1534,7 @@ void SurgeryPanel::loadSurgeryScript(const std::string& filepath) {
 }
 
 void SurgeryPanel::executeSurgeryScript(std::vector<std::unique_ptr<SurgeryOperation>>& ops) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery Script] Error: No character loaded!");
         return;
     }

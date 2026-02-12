@@ -322,6 +322,34 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
         // Get per-bone color (may highlight Talus during contact)
         Eigen::Vector4d boneColor = isPreview ? color : getRenderColor(bn, color);
 
+        // Check ROM violation for this body node at current frame
+        bool romViolated = false;
+        if (!isPreview && !mROMViolations.empty()) {
+            int frameIdx = mMotionState.manualFrameIndex;
+            auto* parentJoint = bn->getParentJoint();
+            if (parentJoint) {
+                std::string jname = parentJoint->getName();
+                for (const auto& v : mROMViolations) {
+                    if (v.jointName == jname &&
+                        frameIdx >= v.startFrame && frameIdx <= v.endFrame) {
+                        romViolated = true;
+                        boneColor = Eigen::Vector4d(1.0, 0.1, 0.1, 1.0);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Set emissive material for ROM-violated nodes (red glow)
+        if (romViolated) {
+            GLfloat emissive[] = {0.6f, 0.0f, 0.0f, 1.0f};
+            GLfloat specular[] = {1.0f, 0.4f, 0.4f, 1.0f};
+            GLfloat shininess[] = {80.0f};
+            glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, emissive);
+            glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, specular);
+            glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, shininess);
+        }
+
         glPushMatrix();
         glMultMatrixd(bn->getTransform().data());
 
@@ -366,6 +394,16 @@ void MotionEditorApp::drawSkeleton(bool isPreview)
         });
 
         glPopMatrix();
+
+        // Reset material after ROM-highlighted node
+        if (romViolated) {
+            GLfloat noEmission[] = {0.0f, 0.0f, 0.0f, 1.0f};
+            GLfloat defaultSpec[] = {0.0f, 0.0f, 0.0f, 1.0f};
+            GLfloat defaultShin[] = {0.0f};
+            glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, noEmission);
+            glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, defaultSpec);
+            glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, defaultShin);
+        }
     }
 
     // Disable blending after preview

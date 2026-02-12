@@ -51,8 +51,8 @@ public:
     void loadCharacter(const std::string& skel_path, const std::string& muscle_path);
     
     // Character accessor
-    Character* getCharacter() { return mCharacter; }
-    const Character* getCharacter() const { return mCharacter; }
+    Character* getCharacter() { return mExpCharacter; }
+    const Character* getCharacter() const { return mExpCharacter; }
     
     // Pose preset application
     void applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles);
@@ -168,9 +168,9 @@ private:
     std::string formatVectorXdYAML(const Eigen::VectorXd& vec);
 
 protected:
-    Character* mCharacter;
-    std::string mSubjectSkeletonPath;  // Subject skeleton being operated on
-    std::string mSubjectMusclePath;    // Subject muscle being operated on
+    Character* mExpCharacter;
+    std::string mExpSkeletonPath;  // Subject skeleton being operated on
+    std::string mExpMusclePath;    // Subject muscle being operated on
     std::string mGeneratorContext;     // "physical_exam" or "surgery-tool: script.yaml"
 };
 

@@ -18,11 +18,11 @@
 namespace PMuscle {
 
 SurgeryExecutor::SurgeryExecutor(const std::string& generator_context)
-    : mCharacter(nullptr), mGeneratorContext(generator_context) {
+    : mExpCharacter(nullptr), mGeneratorContext(generator_context) {
 }
 
 SurgeryExecutor::~SurgeryExecutor() {
-    // Note: mCharacter is not deleted here to avoid linker issues
+    // Note: mExpCharacter is not deleted here to avoid linker issues
     // Derived classes should manage Character lifetime if they own it
 }
 
@@ -32,32 +32,32 @@ void SurgeryExecutor::setModificationRecord(const MuscleModificationRecord& reco
 
 void SurgeryExecutor::loadCharacter(const std::string& skel_path, const std::string& muscle_path) {
     // Store subject skeleton/muscle paths
-    mSubjectSkeletonPath = skel_path;
-    mSubjectMusclePath = muscle_path;
+    mExpSkeletonPath = skel_path;
+    mExpMusclePath = muscle_path;
 
     // Resolve URIs
     std::string resolved_skel = rm::resolve(skel_path);
     std::string resolved_muscle = rm::resolve(muscle_path);
 
     // Create character
-    mCharacter = new Character(resolved_skel, true);
+    mExpCharacter = new Character(resolved_skel, true);
 
     // Load muscles
-    mCharacter->setMuscles(resolved_muscle);
+    mExpCharacter->setMuscles(resolved_muscle);
 
     // Zero muscle activations
-    if (mCharacter->getMuscles().size() > 0) {
-        mCharacter->setActivations(mCharacter->getActivations().setZero());
+    if (mExpCharacter->getMuscles().size() > 0) {
+        mExpCharacter->setActivations(mExpCharacter->getActivations().setZero());
     }
 }
 
 void SurgeryExecutor::applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("No character loaded");
         return;
     }
 
-    auto skeleton = mCharacter->getSkeleton();
+    auto skeleton = mExpCharacter->getSkeleton();
 
     for (const auto& [joint_name, angles] : joint_angles) {
         auto joint = skeleton->getJoint(joint_name);
@@ -78,12 +78,12 @@ void SurgeryExecutor::applyPosePreset(const std::map<std::string, Eigen::VectorX
 }
 
 bool SurgeryExecutor::applyPosePresetByName(const std::string& preset_name) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] No character loaded");
         return false;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     if (preset_name == "supine") {
         // Supine pose: laying on back, face up
@@ -131,7 +131,7 @@ bool SurgeryExecutor::applyPosePresetByName(const std::string& preset_name) {
 }
 
 void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {
-    if (!mCharacter) return;
+    if (!mExpCharacter) return;
 
     // If XML path provided, reload muscles from file (resets anchors + parameters)
     if (!muscle_xml_path.empty()) {
@@ -145,19 +145,19 @@ void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {
         // to zero pose while loading so that global->local coordinate conversion is correct.
 
         // 1. Save current skeleton state
-        auto skeleton = mCharacter->getSkeleton();
+        auto skeleton = mExpCharacter->getSkeleton();
         Eigen::VectorXd saved_positions = skeleton->getPositions();
         Eigen::VectorXd saved_velocities = skeleton->getVelocities();
 
         // 2. Clear existing muscles
-        mCharacter->clearMuscles();
+        mExpCharacter->clearMuscles();
 
         // 3. Set skeleton to zero pose (the pose muscles were authored in)
         skeleton->setPositions(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
         skeleton->setVelocities(Eigen::VectorXd::Zero(skeleton->getNumDofs()));
 
         // 4. Load muscles (global positions will be correctly converted to local)
-        mCharacter->setMuscles(resolved_path);
+        mExpCharacter->setMuscles(resolved_path);
 
         // 5. Restore original skeleton state
         skeleton->setPositions(saved_positions);
@@ -170,7 +170,7 @@ void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {
     // Otherwise, just reset parameters (existing behavior - anchors unchanged)
     LOG_INFO("[Surgery] Resetting muscle parameters only...");
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     int resetCount = 0;
     for (auto muscle : muscles) {
         muscle->change_f(1.0);
@@ -185,7 +185,7 @@ void SurgeryExecutor::resetMuscles(const std::string& muscle_xml_path) {
 bool SurgeryExecutor::distributePassiveForce(const std::vector<std::string>& muscles,
                                             const std::string& reference,
                                             const std::map<std::string, Eigen::VectorXd>& joint_angles) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
@@ -196,7 +196,7 @@ bool SurgeryExecutor::distributePassiveForce(const std::vector<std::string>& mus
         LOG_INFO("[Surgery] Applied " << joint_angles.size() << " joint angle(s)");
     }
     
-    auto all_muscles = mCharacter->getMuscles();
+    auto all_muscles = mExpCharacter->getMuscles();
     
     // Find reference muscle
     Muscle* refMuscle = nullptr;
@@ -230,7 +230,7 @@ bool SurgeryExecutor::distributePassiveForce(const std::vector<std::string>& mus
 
 bool SurgeryExecutor::relaxPassiveForce(const std::vector<std::string>& muscles,
                                        const std::map<std::string, Eigen::VectorXd>& joint_angles) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
@@ -241,7 +241,7 @@ bool SurgeryExecutor::relaxPassiveForce(const std::vector<std::string>& muscles,
         LOG_INFO("[Surgery] Applied " << joint_angles.size() << " joint angle(s)");
     }
 
-    auto all_muscles = mCharacter->getMuscles();
+    auto all_muscles = mExpCharacter->getMuscles();
     int relaxedCount = 0;
     
     // Apply relaxation to selected muscles
@@ -258,12 +258,12 @@ bool SurgeryExecutor::relaxPassiveForce(const std::vector<std::string>& muscles,
 }
 
 bool SurgeryExecutor::removeAnchorFromMuscle(const std::string& muscleName, int anchorIndex) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
     
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
         if (m->name == muscleName) {
@@ -296,8 +296,8 @@ bool SurgeryExecutor::removeAnchorFromMuscle(const std::string& muscleName, int 
 }
 
 bool SurgeryExecutor::validateAnchorCount(const std::string& muscleName, int expectedCount) {
-    if (!mCharacter) return false;
-    Muscle* m = mCharacter->getMuscleByName(muscleName);
+    if (!mExpCharacter) return false;
+    Muscle* m = mExpCharacter->getMuscleByName(muscleName);
     if (!m) {
         LOG_ERROR("[Surgery] Muscle '" << muscleName << "' not found");
         return false;
@@ -313,12 +313,12 @@ bool SurgeryExecutor::validateAnchorCount(const std::string& muscleName, int exp
 }
 
 bool SurgeryExecutor::copyAnchorToMuscle(const std::string& fromMuscle, int fromIndex, const std::string& toMuscle) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
     
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     Muscle* sourceMuscle = nullptr;
     Muscle* targetMuscle = nullptr;
     
@@ -369,12 +369,12 @@ bool SurgeryExecutor::copyAnchorToMuscle(const std::string& fromMuscle, int from
 
 bool SurgeryExecutor::editAnchorPosition(const std::string& muscle, int anchor_index, 
                                         const Eigen::Vector3d& position) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
     
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
         if (m->name == muscle) {
@@ -410,12 +410,12 @@ bool SurgeryExecutor::editAnchorPosition(const std::string& muscle, int anchor_i
 
 bool SurgeryExecutor::editAnchorWeights(const std::string& muscle, int anchor_index,
                                        const std::vector<double>& weights) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
         if (m->name == muscle) {
@@ -457,12 +457,12 @@ bool SurgeryExecutor::editAnchorWeights(const std::string& muscle, int anchor_in
 
 bool SurgeryExecutor::addBodyNodeToAnchor(const std::string& muscle, int anchor_index,
                                          const std::string& bodynode_name, double weight) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
         if (m->name == muscle) {
@@ -476,7 +476,7 @@ bool SurgeryExecutor::addBodyNodeToAnchor(const std::string& muscle, int anchor_
         return false;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     auto newBodyNode = skel->getBodyNode(bodynode_name);
     if (!newBodyNode) {
         LOG_ERROR("[Surgery] Error: Body node '" << bodynode_name << "' not found!");
@@ -519,12 +519,12 @@ bool SurgeryExecutor::addBodyNodeToAnchor(const std::string& muscle, int anchor_
 
 bool SurgeryExecutor::removeBodyNodeFromAnchor(const std::string& muscle, int anchor_index,
                                               int bodynode_index) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     Muscle* targetMuscle = nullptr;
     for (auto m : muscles) {
         if (m->name == muscle) {
@@ -613,11 +613,11 @@ Eigen::Isometry3d SurgeryExecutor::getBodyNodeZeroPoseTransform(dart::dynamics::
 }
 
 void SurgeryExecutor::exportMuscles(const std::string& path) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         throw std::runtime_error("No character loaded");
     }
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     if (muscles.empty()) {
         throw std::runtime_error("No muscles found in character");
     }
@@ -654,16 +654,16 @@ void SurgeryExecutor::exportMuscles(const std::string& path) {
     }
 
     // Update subject muscle path to the exported file (use original URI path, not resolved)
-    mSubjectMusclePath = path;
-    LOG_INFO("[Surgery] Updated subject muscle path to: " << mSubjectMusclePath);
+    mExpMusclePath = path;
+    LOG_INFO("[Surgery] Updated subject muscle path to: " << mExpMusclePath);
 }
 
 void SurgeryExecutor::exportMusclesXML(const std::string& path) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         throw std::runtime_error("No character loaded");
     }
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     if (muscles.empty()) {
         throw std::runtime_error("No muscles found in character");
     }
@@ -676,7 +676,7 @@ void SurgeryExecutor::exportMusclesXML(const std::string& path) {
     LOG_INFO("[Surgery] Saving muscle configuration to: " << path);
 
     // Save current skeleton state
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     Eigen::VectorXd saved_positions = skel->getPositions();
 
     // Move to zero pose (all joint angles = 0)
@@ -780,11 +780,11 @@ static Eigen::Vector3d getBodyNodeSize(dart::dynamics::BodyNode* body_node) {
 }
 
 void SurgeryExecutor::exportMusclesYAML(const std::string& path) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         throw std::runtime_error("No character loaded");
     }
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     if (muscles.empty()) {
         throw std::runtime_error("No muscles found in character");
     }
@@ -1130,11 +1130,11 @@ std::string SurgeryExecutor::formatJointParams(dart::dynamics::Joint* joint, con
 
     size_t numDofs = joint->getNumDofs();
     const Eigen::VectorXd* gains = nullptr;
-    if (mCharacter) {
+    if (mExpCharacter) {
         if (param == "kp") {
-            gains = &mCharacter->getKpVector();
+            gains = &mExpCharacter->getKpVector();
         } else if (param == "kv") {
-            gains = &mCharacter->getKvVector();
+            gains = &mExpCharacter->getKvVector();
         }
     }
     Eigen::Index baseIndex =
@@ -1162,11 +1162,11 @@ std::string SurgeryExecutor::formatJointParamsYAML(dart::dynamics::Joint* joint,
 
     size_t numDofs = joint->getNumDofs();
     const Eigen::VectorXd* gains = nullptr;
-    if (mCharacter) {
+    if (mExpCharacter) {
         if (param == "kp") {
-            gains = &mCharacter->getKpVector();
+            gains = &mExpCharacter->getKpVector();
         } else if (param == "kv") {
-            gains = &mCharacter->getKvVector();
+            gains = &mExpCharacter->getKvVector();
         }
     }
     Eigen::Index baseIndex =
@@ -1230,11 +1230,11 @@ std::string SurgeryExecutor::formatVectorXdYAML(const Eigen::VectorXd& vec) {
 
 
 void SurgeryExecutor::exportSkeleton(const std::string& path) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         throw std::runtime_error("No character loaded");
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     if (!skel) {
         throw std::runtime_error("No skeleton found in character");
     }
@@ -1273,12 +1273,12 @@ void SurgeryExecutor::exportSkeleton(const std::string& path) {
     }
 
     // Update subject skeleton path to the exported file (use original URI path, not resolved)
-    mSubjectSkeletonPath = path;
-    LOG_INFO("[Surgery] Updated subject skeleton path to: " << mSubjectSkeletonPath);
+    mExpSkeletonPath = path;
+    LOG_INFO("[Surgery] Updated subject skeleton path to: " << mExpSkeletonPath);
 }
 
 void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     std::ofstream ofs(path);
     if (!ofs.is_open()) {
@@ -1293,10 +1293,10 @@ void SurgeryExecutor::exportSkeletonXML(const std::string& path) {
     skel->setPositions(zero_positions);
 
     // Get metadata from Character instance (parsed during construction)
-    const auto& contactFlags = mCharacter->getContactFlags();
-    const auto& objFileLabels = mCharacter->getObjFileLabels();
-    const auto& bvhMap = mCharacter->getBVHMap();
-    const auto& endEffectors = mCharacter->getEndEffectors();
+    const auto& contactFlags = mExpCharacter->getContactFlags();
+    const auto& objFileLabels = mExpCharacter->getObjFileLabels();
+    const auto& bvhMap = mExpCharacter->getBVHMap();
+    const auto& endEffectors = mExpCharacter->getEndEffectors();
 
     // Write XML header
     ofs << "<!-- Exported skeleton configuration -->" << std::endl;
@@ -1458,7 +1458,7 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
     // - Body R/t: relative to parent joint frame
     // - Joint R/t: relative to parent body frame
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     std::ofstream ofs(path);
     if (!ofs.is_open()) {
@@ -1473,10 +1473,10 @@ void SurgeryExecutor::exportSkeletonYAML(const std::string& path) {
     skel->setPositions(zero_positions);
 
     // Get metadata from Character instance (parsed during construction)
-    const auto& contactFlags = mCharacter->getContactFlags();
-    const auto& objFileLabels = mCharacter->getObjFileLabels();
-    const auto& bvhMap = mCharacter->getBVHMap();
-    const auto& endEffectors = mCharacter->getEndEffectors();
+    const auto& contactFlags = mExpCharacter->getContactFlags();
+    const auto& objFileLabels = mExpCharacter->getObjFileLabels();
+    const auto& bvhMap = mExpCharacter->getBVHMap();
+    const auto& endEffectors = mExpCharacter->getEndEffectors();
 
     // Write metadata section
     auto [git_hash, git_message] = getGitInfo();
@@ -1649,7 +1649,7 @@ bool SurgeryExecutor::validateSkeletonExport(const std::string& exported_path) {
         pos++;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     size_t expectedNodes = skel->getBodyNodes().size();
 
     if (nodeCount != expectedNodes) {
@@ -1669,12 +1669,12 @@ bool SurgeryExecutor::rotateJointOffset(const std::string& joint_name,
                                         const Eigen::Vector3d& axis,
                                         double angle,
                                         bool preserve_position) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded");
         return false;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_name);
 
     if (!joint) {
@@ -1709,7 +1709,7 @@ bool SurgeryExecutor::rotateJointOffset(const std::string& joint_name,
     joint->setTransformFromParentBodyNode(T_new);
 
     // Update all muscles to reflect new skeleton geometry
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     for (auto muscle : muscles) {
         muscle->SetMuscle();
     }
@@ -1726,14 +1726,14 @@ std::vector<AnchorReference> SurgeryExecutor::computeAffectedAnchors(
 
     std::vector<AnchorReference> affected;
 
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         return affected;
     }
 
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
 
     // Find reference muscle using fast cache lookup
-    Muscle* ref_muscle = mCharacter->getMuscleByName(ref_anchor.muscle_name);
+    Muscle* ref_muscle = mExpCharacter->getMuscleByName(ref_anchor.muscle_name);
     if (!ref_muscle) {
         LOG_ERROR("[Surgery] Reference muscle not found: " << ref_anchor.muscle_name);
         return affected;
@@ -1809,7 +1809,7 @@ bool SurgeryExecutor::rotateAnchorPoints(const std::string& muscle_name,
                                          const Eigen::Vector3d& search_direction,
                                          const Eigen::Vector3d& rotation_axis,
                                          double angle) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded");
         return false;
     }
@@ -1839,7 +1839,7 @@ bool SurgeryExecutor::rotateAnchorPoints(const std::string& muscle_name,
     }
 
     // Get reference muscle and anchor for rotation center
-    Muscle* ref_muscle = mCharacter->getMuscleByName(muscle_name);
+    Muscle* ref_muscle = mExpCharacter->getMuscleByName(muscle_name);
     if (!ref_muscle) {
         LOG_ERROR("[Surgery] Reference muscle not found: " << muscle_name);
         return false;
@@ -1857,7 +1857,7 @@ bool SurgeryExecutor::rotateAnchorPoints(const std::string& muscle_name,
     std::set<Muscle*> modified_muscles;
 
     for (const auto& anchor_ref : affected_anchors) {
-        Muscle* muscle = mCharacter->getMuscleByName(anchor_ref.muscle_name);
+        Muscle* muscle = mExpCharacter->getMuscleByName(anchor_ref.muscle_name);
         if (!muscle) {
             LOG_WARN("[Surgery] Muscle not found: " << anchor_ref.muscle_name);
             continue;
@@ -1897,14 +1897,14 @@ bool SurgeryExecutor::rotateAnchorPoints(const std::string& muscle_name,
 bool SurgeryExecutor::validateAnchorReferencesBodynode(const std::string& muscle_name,
                                                         int anchor_index,
                                                         const std::string& bodynode_name) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded");
         return false;
     }
 
     // Find muscle
     Muscle* muscle = nullptr;
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     for (auto m : muscles) {
         if (m->name == muscle_name) {
             muscle = m;
@@ -1999,13 +1999,13 @@ bool SurgeryExecutor::executeFDO(const std::string& ref_muscle,
                                  const Eigen::Vector3d& search_direction,
                                  const Eigen::Vector3d& rotation_axis,
                                  double angle) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded");
         return false;
     }
 
     // Get reference muscle and anchor
-    Muscle* muscle = mCharacter->getMuscleByName(ref_muscle);
+    Muscle* muscle = mExpCharacter->getMuscleByName(ref_muscle);
     if (!muscle) {
         LOG_ERROR("[Surgery] Reference muscle not found: " << ref_muscle);
         return false;
@@ -2072,7 +2072,7 @@ bool SurgeryExecutor::executeFDO(const std::string& ref_muscle,
 }
 
 bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, double strength_ratio) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
@@ -2082,7 +2082,7 @@ bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, dou
         return false;
     }
 
-    auto all_muscles = mCharacter->getMuscles();
+    auto all_muscles = mExpCharacter->getMuscles();
     int modifiedCount = 0;
 
     for (auto m : all_muscles) {
@@ -2105,12 +2105,12 @@ bool SurgeryExecutor::weakenMuscles(const std::vector<std::string>& muscles, dou
 }
 
 bool SurgeryExecutor::mirrorAnchorPositions(const std::vector<std::string>& muscleBaseNames) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] No character loaded!");
         return false;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     // Get pelvis X as symmetry plane
     auto* pelvis = skel->getBodyNode("Pelvis");
@@ -2120,7 +2120,7 @@ bool SurgeryExecutor::mirrorAnchorPositions(const std::vector<std::string>& musc
     }
     double symmetryX = pelvis->getTransform().translation().x();
 
-    auto& muscles = mCharacter->getMuscles();
+    auto& muscles = mExpCharacter->getMuscles();
 
     // Build L/R muscle map
     std::map<std::string, Muscle*> leftMuscles, rightMuscles;
@@ -2200,7 +2200,7 @@ bool SurgeryExecutor::optimizeWaypoints(const std::vector<std::string>& muscle_n
                                         const WaypointOptimizer::Config& config,
                                         Character* reference_character,
                                         WaypointProgressCallback progressCallback) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return false;
     }
@@ -2211,7 +2211,7 @@ bool SurgeryExecutor::optimizeWaypoints(const std::vector<std::string>& muscle_n
     }
 
     // Get skeletons
-    auto subject_skeleton = mCharacter->getSkeleton();
+    auto subject_skeleton = mExpCharacter->getSkeleton();
     auto reference_skeleton = reference_character->getSkeleton();
     if (!subject_skeleton || !reference_skeleton) {
         LOG_ERROR("[Surgery] Error: No skeleton available!");
@@ -2237,7 +2237,7 @@ bool SurgeryExecutor::optimizeWaypoints(const std::vector<std::string>& muscle_n
         }
 
         // Find subject muscle
-        Muscle* subject_muscle = mCharacter->getMuscleByName(muscle_name);
+        Muscle* subject_muscle = mExpCharacter->getMuscleByName(muscle_name);
         if (!subject_muscle) {
             LOG_WARN("[Surgery] Warning: Subject muscle '" << muscle_name << "' not found, skipping");
             muscleIndex++;
@@ -2296,7 +2296,7 @@ std::vector<WaypointOptResult> SurgeryExecutor::optimizeWaypointsWithResults(
                                         WaypointResultCallback resultCallback) {
     std::vector<WaypointOptResult> results;
 
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[Surgery] Error: No character loaded!");
         return results;
     }
@@ -2307,7 +2307,7 @@ std::vector<WaypointOptResult> SurgeryExecutor::optimizeWaypointsWithResults(
     }
 
     // Get skeletons
-    auto subject_skeleton = mCharacter->getSkeleton();
+    auto subject_skeleton = mExpCharacter->getSkeleton();
     auto reference_skeleton = reference_character->getSkeleton();
     if (!subject_skeleton || !reference_skeleton) {
         LOG_ERROR("[Surgery] Error: No skeleton available!");
@@ -2381,7 +2381,7 @@ std::vector<WaypointOptResult> SurgeryExecutor::optimizeWaypointsWithResults(
         {
             std::lock_guard<std::mutex> lock(cloneMutex);
             for (const auto& name : muscle_names) {
-                Muscle* orig_subj = mCharacter->getMuscleByName(name);
+                Muscle* orig_subj = mExpCharacter->getMuscleByName(name);
                 Muscle* orig_ref = reference_character->getMuscleByName(name);
                 if (orig_subj && orig_ref) {
                     worker_subject_muscles[name] = orig_subj->clone(worker_subject_skel);
@@ -2458,7 +2458,7 @@ std::vector<WaypointOptResult> SurgeryExecutor::optimizeWaypointsWithResults(
         std::lock_guard<std::mutex> lock(*characterMutex);
         for (size_t i = 0; i < results.size(); ++i) {
             if (results[i].success && !results[i].optimized_anchor_positions.empty()) {
-                Muscle* orig = mCharacter->getMuscleByName(results[i].muscle_name);
+                Muscle* orig = mExpCharacter->getMuscleByName(results[i].muscle_name);
                 if (orig) {
                     auto& anchors = orig->GetAnchors();
                     for (size_t a = 0; a < anchors.size(); ++a) {
@@ -2474,7 +2474,7 @@ std::vector<WaypointOptResult> SurgeryExecutor::optimizeWaypointsWithResults(
         // No mutex provided, still do the sync
         for (size_t i = 0; i < results.size(); ++i) {
             if (results[i].success && !results[i].optimized_anchor_positions.empty()) {
-                Muscle* orig = mCharacter->getMuscleByName(results[i].muscle_name);
+                Muscle* orig = mExpCharacter->getMuscleByName(results[i].muscle_name);
                 if (orig) {
                     auto& anchors = orig->GetAnchors();
                     for (size_t a = 0; a < anchors.size(); ++a) {
@@ -2547,31 +2547,31 @@ std::string SurgeryExecutor::getCurrentTimestamp() const {
 }
 
 std::string SurgeryExecutor::getSkeletonName() const {
-    if (mSubjectSkeletonPath.empty()) {
+    if (mExpSkeletonPath.empty()) {
         return "unknown";
     }
 
     // Extract filename from path (handle both / and \ separators)
-    size_t lastSlash = mSubjectSkeletonPath.find_last_of("/\\");
+    size_t lastSlash = mExpSkeletonPath.find_last_of("/\\");
     if (lastSlash != std::string::npos) {
-        return mSubjectSkeletonPath.substr(lastSlash + 1);
+        return mExpSkeletonPath.substr(lastSlash + 1);
     }
 
-    return mSubjectSkeletonPath;
+    return mExpSkeletonPath;
 }
 
 std::string SurgeryExecutor::getMuscleName() const {
-    if (mSubjectMusclePath.empty()) {
+    if (mExpMusclePath.empty()) {
         return "unknown";
     }
 
     // Extract filename from path (handle both / and \ separators)
-    size_t lastSlash = mSubjectMusclePath.find_last_of("/\\");
+    size_t lastSlash = mExpMusclePath.find_last_of("/\\");
     if (lastSlash != std::string::npos) {
-        return mSubjectMusclePath.substr(lastSlash + 1);
+        return mExpMusclePath.substr(lastSlash + 1);
     }
 
-    return mSubjectMusclePath;
+    return mExpMusclePath;
 }
 
 std::string SurgeryExecutor::getSkeletonBaseName() const {

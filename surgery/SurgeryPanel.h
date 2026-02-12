@@ -168,7 +168,7 @@ private:
         const ContractureOptimizer::Config& opt_config);
 
 private:
-    Character* mCharacter;
+    Character* mExpCharacter;
     ShapeRenderer* mShapeRenderer;
 
     // Script recording

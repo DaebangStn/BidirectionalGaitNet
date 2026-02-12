@@ -144,14 +144,15 @@ struct TrialDataBuffer {
     bool neg = false;   // Negate ROM value for display
     std::chrono::system_clock::time_point timestamp;
     std::vector<AngleSweepDataPoint> angle_sweep_data;
-    std::vector<AngleSweepDataPoint> std_angle_sweep_data;
+    std::vector<AngleSweepDataPoint> control_angle_sweep_data;
     std::vector<std::string> tracked_muscles;
-    std::vector<std::string> std_tracked_muscles;
+    std::vector<std::string> control_tracked_muscles;
     AngleSweepTrialConfig config;
     double torque_cutoff = 15.0;  // Cutoff torque for ROM limit (Nm)
     std::vector<double> cutoff_angles;  // Angles where torque crosses cutoff (degrees)
+    std::vector<double> control_cutoff_angles;  // Control character ROM cutoffs
     ROMMetrics rom_metrics;
-    ROMMetrics std_rom_metrics;
+    ROMMetrics control_rom_metrics;
     Eigen::VectorXd base_pose;  // Full skeleton pose for character positioning
     Eigen::VectorXd normative_pose;  // Full skeleton pose at normative angle
 
@@ -290,10 +291,16 @@ public:
     void drawJointControlSection();
     void drawJointAngleSweepSection();
 
-    // Character loading helpers
-    void scanSkeletonFilesForBrowse();
-    void scanMuscleFilesForBrowse();
-    void reloadCharacterFromBrowse();
+    // Experimental character loading helpers
+    void scanExpSkeletonFilesForBrowse();
+    void scanExpMuscleFilesForBrowse();
+    void reloadExpCharacterFromBrowse();
+
+    // Control character loading helpers
+    void scanControlSkeletonFilesForBrowse();
+    void scanControlMuscleFilesForBrowse();
+    void reloadControlCharacterFromBrowse();
+    void loadControlCharacter(const std::string& skel_path, const std::string& muscle_path);
 
     // Visualization Panel Sections
     void drawTrialManagementSection();
@@ -306,6 +313,8 @@ public:
     void drawSweepTabContent();
     void drawEtcTabContent();
     void drawROMSummaryTable();
+
+    void drawROMComparisonTable();
     void drawSkeleton();
     void drawMuscles();
     void drawForceArrow();
@@ -327,7 +336,8 @@ public:
     void initializeCameraPresets();
 
     // Utility
-    std::string characterConfig() const;  // Returns "pid:XXX skeleton | muscle" string
+    std::string characterConfig() const;         // Exp character label
+    std::string controlCharacterConfig() const;  // Control character label
 
 private:
     // DART simulation
@@ -339,21 +349,23 @@ private:
     std::string mMusclePath;
 
     // Standard character for comparison
-    Character* mStdCharacter;
-    std::string mStdSkeletonPath;
-    std::string mStdMusclePath;
+    Character* mControlCharacter;
+    std::string mControlSkeletonPath;
+    std::string mControlMusclePath;
 
     // Standard character sweep data
-    std::vector<AngleSweepDataPoint> mStdAngleSweepData;
-    std::vector<std::string> mStdAngleSweepTrackedMuscles;
+    std::vector<AngleSweepDataPoint> mControlAngleSweepData;
+    std::vector<std::string> mControlAngleSweepTrackedMuscles;
 
     // Rendering control
-    bool mRenderMainCharacter;
-    bool mRenderStdCharacter;
-    bool mShowStdCharacterInPlots;  // Toggle for plot overlay
+    bool mRenderExpCharacter;
+    bool mRenderControlCharacter;
+    bool mShowExpCharacterInPlots = true;      // Toggle for exp plot lines
+    bool mShowControlCharacterInPlots;  // Toggle for ctrl plot lines
     bool mPlotWhiteBackground;  // Toggle for white plot background
     bool mShowTrialNameInPlots;  // Toggle for showing trial name in plot titles
     bool mShowCharacterInTitles;  // Toggle for showing character info in plot titles
+    int mLegendLabelMode = 0;    // 0 = exp/ctrl, 1 = muscle file names
     std::string mCurrentSweepName;  // Current sweep name (trial name or "GUI Sweep")
 
     // Camera state (mCamera inherited from ViewerAppBase)
@@ -524,21 +536,30 @@ private:
     std::unique_ptr<SurgeryPanel> mSurgeryPanel;
 
     // ============================================================
-    // PID Navigator and Character Loading (Browse & Rebuild)
+    // PID Navigators and Character Loading (Browse & Rebuild)
     // ============================================================
-    std::unique_ptr<PIDNav::PIDNavigator> mPIDNavigator;
 
-    // Independent source selection for skeleton and muscle
-    CharacterDataSource mBrowseSkeletonDataSource = CharacterDataSource::DefaultData;
-    CharacterDataSource mBrowseMuscleDataSource = CharacterDataSource::DefaultData;
-    std::string mBrowseCharacterPID;    // PID from navigator (shared)
+    // --- Experimental character ---
+    std::unique_ptr<PIDNav::PIDNavigator> mExpPIDNavigator;
+    CharacterDataSource mExpBrowseSkeletonDataSource = CharacterDataSource::DefaultData;
+    CharacterDataSource mExpBrowseMuscleDataSource = CharacterDataSource::DefaultData;
+    std::string mExpBrowsePID;
+    std::vector<std::string> mExpBrowseSkeletonCandidates;
+    std::vector<std::string> mExpBrowseMuscleCandidates;
+    std::string mExpBrowseSkeletonPath;
+    std::string mExpBrowseMusclePath;
 
-    std::vector<std::string> mBrowseSkeletonCandidates;
-    std::vector<std::string> mBrowseMuscleCandidates;
-    std::string mBrowseSkeletonPath;    // Selected skeleton path
-    std::string mBrowseMusclePath;      // Selected muscle path
+    // --- Control character ---
+    std::unique_ptr<PIDNav::PIDNavigator> mControlPIDNavigator;
+    CharacterDataSource mControlBrowseSkeletonDataSource = CharacterDataSource::DefaultData;
+    CharacterDataSource mControlBrowseMuscleDataSource = CharacterDataSource::DefaultData;
+    std::string mControlBrowsePID;
+    std::vector<std::string> mControlBrowseSkeletonCandidates;
+    std::vector<std::string> mControlBrowseMuscleCandidates;
+    std::string mControlBrowseSkeletonPath;
+    std::string mControlBrowseMusclePath;
 
-    // Clinical weight data
+    // Clinical weight data (experimental)
     float mClinicalWeight = 0.0f;       // kg (from clinical data)
     bool mClinicalWeightAvailable = false;
 
@@ -549,9 +570,18 @@ private:
     std::string mClinicalROMPID;    // Track loaded PID for cache invalidation
     std::string mClinicalROMVisit;  // Track loaded visit for cache invalidation
 
-    // Helper function to load clinical ROM data
+    // Control clinical data
+    std::map<std::string, std::optional<float>> mControlClinicalROM;
+    std::string mControlClinicalROMPID;
+    std::string mControlClinicalROMVisit;
+    float mControlClinicalWeight = 0.0f;
+    bool mControlClinicalWeightAvailable = false;
+
+    // Helper functions
     void loadClinicalROM(const std::string& pid, const std::string& visit);
-    void onPIDChanged(const std::string& pid);  // Callback for PID selection changes
+    void loadControlClinicalROM(const std::string& pid, const std::string& visit);
+    void onExpPIDChanged(const std::string& pid);
+    void onControlPIDChanged(const std::string& pid);
     void onVisitChanged(const std::string& pid, const std::string& visit);  // Callback for visit changes
 };
 

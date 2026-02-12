@@ -85,10 +85,10 @@ PhysicalExam::PhysicalExam(int width, int height)
     , mInterpolationThreshold(0.01)   // 0.01 radians threshold
     , mSweepRestorePosition(false)   // Restore position after sweep by default
     // mRenderMode inherited from ViewerAppBase (defaults to Wireframe)
-    , mStdCharacter(nullptr)  // Initialize to nullptr
-    , mRenderMainCharacter(true)  // Default to rendering main character
-    , mRenderStdCharacter(false)  // Default to not rendering std character
-    , mShowStdCharacterInPlots(true)  // Default to showing std character in plots
+    , mControlCharacter(nullptr)  // Initialize to nullptr
+    , mRenderExpCharacter(true)  // Default to rendering main character
+    , mRenderControlCharacter(false)  // Default to not rendering std character
+    , mShowControlCharacterInPlots(true)  // Default to showing std character in plots
     , mPlotWhiteBackground(false)  // Default to dark plot background
     , mShowTrialNameInPlots(true)  // Default to showing trial name
     , mShowCharacterInTitles(true)  // Default to not showing character info in titles
@@ -136,9 +136,9 @@ PhysicalExam::~PhysicalExam() {
     // It will be cleaned up when the program exits
     
     // Clean up standard character
-    if (mStdCharacter) {
-        delete mStdCharacter;
-        mStdCharacter = nullptr;
+    if (mControlCharacter) {
+        delete mControlCharacter;
+        mControlCharacter = nullptr;
     }
 
     if (mGraphData) {
@@ -218,9 +218,9 @@ void PhysicalExam::loadClinicalROM(const std::string& pid, const std::string& vi
     }
 }
 
-void PhysicalExam::onPIDChanged(const std::string& pid)
+void PhysicalExam::onExpPIDChanged(const std::string& pid)
 {
-    mBrowseCharacterPID = pid;
+    mExpBrowsePID = pid;
 
     if (pid.empty()) {
         mClinicalWeightAvailable = false;
@@ -231,29 +231,29 @@ void PhysicalExam::onPIDChanged(const std::string& pid)
     }
 
     // Get visit from navigator state
-    const auto& pidState = mPIDNavigator->getState();
+    const auto& pidState = mExpPIDNavigator->getState();
     std::string visit = pidState.getVisitDir();
 
     // Auto-select patient skeleton
-    mBrowseSkeletonDataSource = CharacterDataSource::PatientData;
-    scanSkeletonFilesForBrowse();
+    mExpBrowseSkeletonDataSource = CharacterDataSource::PatientData;
+    scanExpSkeletonFilesForBrowse();
 
-    mBrowseMuscleDataSource = CharacterDataSource::PatientData;
-    scanMuscleFilesForBrowse();
+    mExpBrowseMuscleDataSource = CharacterDataSource::PatientData;
+    scanExpMuscleFilesForBrowse();
 
     // Select skeleton file: prefer trimmed_unified.yaml, otherwise first available
-    if (!mBrowseSkeletonCandidates.empty()) {
+    if (!mExpBrowseSkeletonCandidates.empty()) {
         std::string skelPrefix = "@pid:" + pid + "/" + visit + "/skeleton/";
-        auto it = std::find(mBrowseSkeletonCandidates.begin(), mBrowseSkeletonCandidates.end(), "trimmed_unified.yaml");
-        if (it != mBrowseSkeletonCandidates.end()) {
-            mBrowseSkeletonPath = skelPrefix + "trimmed_unified.yaml";
+        auto it = std::find(mExpBrowseSkeletonCandidates.begin(), mExpBrowseSkeletonCandidates.end(), "trimmed_unified.yaml");
+        if (it != mExpBrowseSkeletonCandidates.end()) {
+            mExpBrowseSkeletonPath = skelPrefix + "trimmed_unified.yaml";
         } else {
-            mBrowseSkeletonPath = skelPrefix + mBrowseSkeletonCandidates[0];
+            mExpBrowseSkeletonPath = skelPrefix + mExpBrowseSkeletonCandidates[0];
         }
     }
 
-    if (!mBrowseSkeletonCandidates.empty() || !mBrowseMuscleCandidates.empty()) {
-        reloadCharacterFromBrowse();
+    if (!mExpBrowseSkeletonCandidates.empty() || !mExpBrowseMuscleCandidates.empty()) {
+        reloadExpCharacterFromBrowse();
     }
 
     // Load clinical ROM data for the new PID
@@ -265,16 +265,58 @@ void PhysicalExam::onPIDChanged(const std::string& pid)
     }
 }
 
+void PhysicalExam::onControlPIDChanged(const std::string& pid)
+{
+    mControlBrowsePID = pid;
+
+    if (pid.empty()) {
+        mControlClinicalWeightAvailable = false;
+        mControlClinicalROM.clear();
+        mControlClinicalROMPID.clear();
+        mControlClinicalROMVisit.clear();
+        return;
+    }
+
+    // Get visit from navigator state
+    const auto& pidState = mControlPIDNavigator->getState();
+    std::string visit = pidState.getVisitDir();
+
+    // Auto-select patient skeleton
+    mControlBrowseSkeletonDataSource = CharacterDataSource::PatientData;
+    scanControlSkeletonFilesForBrowse();
+
+    mControlBrowseMuscleDataSource = CharacterDataSource::PatientData;
+    scanControlMuscleFilesForBrowse();
+
+    // Select skeleton file: prefer trimmed_unified.yaml, otherwise first available
+    if (!mControlBrowseSkeletonCandidates.empty()) {
+        std::string skelPrefix = "@pid:" + pid + "/" + visit + "/skeleton/";
+        auto it = std::find(mControlBrowseSkeletonCandidates.begin(), mControlBrowseSkeletonCandidates.end(), "trimmed_unified.yaml");
+        if (it != mControlBrowseSkeletonCandidates.end()) {
+            mControlBrowseSkeletonPath = skelPrefix + "trimmed_unified.yaml";
+        } else {
+            mControlBrowseSkeletonPath = skelPrefix + mControlBrowseSkeletonCandidates[0];
+        }
+    }
+
+    if (!mControlBrowseSkeletonCandidates.empty() || !mControlBrowseMuscleCandidates.empty()) {
+        reloadControlCharacterFromBrowse();
+    }
+
+    // Load clinical ROM data for the control PID
+    loadControlClinicalROM(pid, visit);
+}
+
 void PhysicalExam::onVisitChanged(const std::string& pid, const std::string& visit)
 {
     if (pid.empty() || visit.empty()) return;
 
     // Rescan files when visit changes (if using patient data)
-    if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
-        scanSkeletonFilesForBrowse();
+    if (mExpBrowseSkeletonDataSource == CharacterDataSource::PatientData) {
+        scanExpSkeletonFilesForBrowse();
     }
-    if (mBrowseMuscleDataSource == CharacterDataSource::PatientData) {
-        scanMuscleFilesForBrowse();
+    if (mExpBrowseMuscleDataSource == CharacterDataSource::PatientData) {
+        scanExpMuscleFilesForBrowse();
     }
 
     // Reload clinical ROM data for the new visit
@@ -400,31 +442,42 @@ void PhysicalExam::onInitialize() {
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, mat_specular);
     glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, mat_shininess);
 
-    // Initialize PIDNavigator for patient data browsing
+    // Initialize PIDNavigators for patient data browsing
     rm::ResourceManager* resourceManager = &rm::getManager();
     if (resourceManager) {
-        mPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
+        // Experimental character PID navigator
+        mExpPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
             resourceManager,
             nullptr  // No file filter - just for PID selection
         );
-        mPIDNavigator->setPIDChangeCallback([this](const std::string& pid) {
-            onPIDChanged(pid);
+        mExpPIDNavigator->setPIDChangeCallback([this](const std::string& pid) {
+            onExpPIDChanged(pid);
         });
-        mPIDNavigator->setVisitChangeCallback([this](const std::string& pid, const std::string& visit) {
+        mExpPIDNavigator->setVisitChangeCallback([this](const std::string& pid, const std::string& visit) {
             onVisitChanged(pid, visit);
         });
-        mPIDNavigator->scanPIDs();
+        mExpPIDNavigator->scanPIDs();
+
+        // Control character PID navigator
+        mControlPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
+            resourceManager,
+            nullptr
+        );
+        mControlPIDNavigator->setPIDChangeCallback([this](const std::string& pid) {
+            onControlPIDChanged(pid);
+        });
+        mControlPIDNavigator->scanPIDs();
     }
 
     // Initialize skeleton/muscle browse lists
-    scanSkeletonFilesForBrowse();
-    scanMuscleFilesForBrowse();
+    scanExpSkeletonFilesForBrowse();
+    scanExpMuscleFilesForBrowse();
 }
 
 void PhysicalExam::onFrameStart() {
     // Execute one sweep step if sweep is running
-    if (mSweepRunning && mCharacter) {
-        auto skel = mCharacter->getSkeleton();
+    if (mSweepRunning && mExpCharacter) {
+        auto skel = mExpCharacter->getSkeleton();
         auto joint = skel->getJoint(mSweepConfig.joint_index);
 
         if (mSweepCurrentStep <= mSweepConfig.num_steps) {
@@ -436,11 +489,11 @@ void PhysicalExam::onFrameStart() {
             pos[mSweepConfig.dof_index] = angle;
             setCharacterPose(joint->getName(), pos);
 
-            if (!mCharacter->getMuscles().empty()) {
-                mCharacter->getMuscleTuple();
+            if (!mExpCharacter->getMuscles().empty()) {
+                mExpCharacter->getMuscleTuple();
             }
-            if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
-                mStdCharacter->getMuscleTuple();
+            if (mControlCharacter && !mControlCharacter->getMuscles().empty()) {
+                mControlCharacter->getMuscleTuple();
             }
 
             collectAngleSweepData(angle, mSweepConfig.joint_index);
@@ -459,9 +512,9 @@ void PhysicalExam::onFrameStart() {
                 buffer.trial_description = "Manual GUI sweep";
                 buffer.timestamp = std::chrono::system_clock::now();
                 buffer.angle_sweep_data = mAngleSweepData;
-                buffer.std_angle_sweep_data = mStdAngleSweepData;
+                buffer.control_angle_sweep_data = mControlAngleSweepData;
                 buffer.tracked_muscles = mAngleSweepTrackedMuscles;
-                buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+                buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
                 // Convert JointSweepConfig to AngleSweepTrialConfig
                 buffer.config.joint_name = joint->getName();
                 buffer.config.dof_index = mSweepConfig.dof_index;
@@ -471,10 +524,11 @@ void PhysicalExam::onFrameStart() {
                 // torque_cutoff uses default (15.0) for GUI sweep
                 buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, buffer.torque_cutoff);
                 buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
-                if (!mStdAngleSweepData.empty()) {
-                    buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+                if (!mControlAngleSweepData.empty()) {
+                    buffer.control_cutoff_angles = computeCutoffAngles(mControlAngleSweepData, buffer.torque_cutoff);
+                    buffer.control_rom_metrics = computeROMMetrics(mControlAngleSweepData);
                 }
-                buffer.base_pose = mCharacter->getSkeleton()->getPositions();  // Store full skeleton pose
+                buffer.base_pose = mExpCharacter->getSkeleton()->getPositions();  // Store full skeleton pose
                 addTrialToBuffer(buffer);
                 // Select the newly added buffer
                 mSelectedBufferIndex = static_cast<int>(mTrialBuffers.size()) - 1;
@@ -492,12 +546,12 @@ void PhysicalExam::onFrameStart() {
 
     // Simulation stepping
     for (int step = 0; step < 5; step++) {
-        if (mCharacter) mCharacter->step();
+        if (mExpCharacter) mExpCharacter->step();
 
         bool shouldStep = !mSimulationPaused || mSingleStep;
         if (shouldStep) {
-            if (mEnableInterpolation && mCharacter) {
-                auto skel = mCharacter->getSkeleton();
+            if (mEnableInterpolation && mExpCharacter) {
+                auto skel = mExpCharacter->getSkeleton();
                 Eigen::VectorXd currentPos = skel->getPositions();
                 Eigen::VectorXd currentForces = skel->getForces();
                 double dt = mWorld->getTimeStep();
@@ -530,7 +584,7 @@ void PhysicalExam::onFrameStart() {
             mWorld->step();
             mSingleStep = false;
         }
-        if (mCharacter) mCharacter->setZeroForces();
+        if (mExpCharacter) mExpCharacter->setZeroForces();
     }
 }
 
@@ -565,20 +619,16 @@ void PhysicalExam::createGround() {
 }
 
 void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string& muscle_path) {
-    // Clean up previous character if exists
-    if (mCharacter) {
-        auto skel = mCharacter->getSkeleton();
+    // Clean up previous experimental character if exists
+    if (mExpCharacter) {
+        auto skel = mExpCharacter->getSkeleton();
         glFinish();
         mShapeRenderer.clearCache();
         if (mWorld && skel) {
             mWorld->removeSkeleton(skel);
         }
-        delete mCharacter;
-        mCharacter = nullptr;
-    }
-    if (mStdCharacter) {
-        delete mStdCharacter;
-        mStdCharacter = nullptr;
+        delete mExpCharacter;
+        mExpCharacter = nullptr;
     }
 
     // Store file paths for UI display
@@ -589,41 +639,27 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     std::string resolved_skel = rm::resolve(skel_path);
 
     // Create character
-    mCharacter = new Character(resolved_skel, SKEL_COLLIDE_ALL);
+    mExpCharacter = new Character(resolved_skel, SKEL_COLLIDE_ALL);
 
     // Load muscles if path is provided
     if (!muscle_path.empty()) {
         std::string resolved_muscle = rm::resolve(muscle_path);
-        mCharacter->setMuscles(resolved_muscle);
+        mExpCharacter->setMuscles(resolved_muscle);
 
         // Zero muscle activations
-        if (mCharacter->getMuscles().size() > 0) {
-            mCharacter->setActivations(mCharacter->getActivations().setZero());
+        if (mExpCharacter->getMuscles().size() > 0) {
+            mExpCharacter->setActivations(mExpCharacter->getActivations().setZero());
         }
     } else {
         LOG_INFO("Skipping muscle loading (no muscle path provided)");
     }
 
     // Add to world
-    mWorld->addSkeleton(mCharacter->getSkeleton());
+    mWorld->addSkeleton(mExpCharacter->getSkeleton());
 
-    // Load standard character if paths are set
-    if (!mStdSkeletonPath.empty()) {
-        std::string resolved_std_skel = rm::resolve(mStdSkeletonPath);
-        
-        mStdCharacter = new Character(resolved_std_skel, SKEL_COLLIDE_ALL);
-        mStdCharacter->getSkeleton()->setName("Human_std");  // Avoid duplicate name warning
-
-        if (!mStdMusclePath.empty()) {
-            std::string resolved_std_muscle = rm::resolve(mStdMusclePath);
-            mStdCharacter->setMuscles(resolved_std_muscle);
-            
-            if (mStdCharacter->getMuscles().size() > 0) {
-                mStdCharacter->setActivations(mStdCharacter->getActivations().setZero());
-            }
-        }
-        
-        LOG_VERBOSE("Standard character loaded successfully");
+    // Load control character if paths are set (for backward compatibility with YAML config)
+    if (!mControlSkeletonPath.empty() && !mControlCharacter) {
+        loadControlCharacter(mControlSkeletonPath, mControlMusclePath);
     }
 
     // Set initial pose to supine (laying on back on examination bed)
@@ -633,13 +669,13 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
     // setupPostureTargets();
 
     // Initialize marked joint targets and PI controller state (all unmarked initially)
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     mMarkedJointTargets.resize(skel->getNumDofs(), std::nullopt);
     mJointIntegralError.resize(skel->getNumDofs(), 0.0);
     LOG_VERBOSE("Initialized joint PI controller system (" << skel->getNumDofs() << " DOFs)");
 
     // Initialize muscle selection states
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     mMuscleSelectionStates.clear();
     if (muscles.size() > 0) {
         mMuscleSelectionStates.resize(muscles.size(), true);  // All muscles selected by default
@@ -649,17 +685,54 @@ void PhysicalExam::loadCharacter(const std::string& skel_path, const std::string
 
     // Update SurgeryPanel with the new character
     if (mSurgeryPanel) {
-        mSurgeryPanel->setCharacter(mCharacter);
+        mSurgeryPanel->setCharacter(mExpCharacter);
     }
 }
 
+void PhysicalExam::loadControlCharacter(const std::string& skel_path, const std::string& muscle_path) {
+    // Clean up previous control character if exists
+    if (mControlCharacter) {
+        delete mControlCharacter;
+        mControlCharacter = nullptr;
+    }
+
+    if (skel_path.empty()) return;
+
+    std::string resolved_skel = rm::resolve(skel_path);
+    mControlCharacter = new Character(resolved_skel, SKEL_COLLIDE_ALL);
+    mControlCharacter->getSkeleton()->setName("Human_control");
+
+    if (!muscle_path.empty()) {
+        std::string resolved_muscle = rm::resolve(muscle_path);
+        mControlCharacter->setMuscles(resolved_muscle);
+
+        if (mControlCharacter->getMuscles().size() > 0) {
+            mControlCharacter->setActivations(mControlCharacter->getActivations().setZero());
+        }
+    }
+
+    mControlSkeletonPath = skel_path;
+    mControlMusclePath = muscle_path;
+
+    // Sync pose with experimental character
+    if (mExpCharacter) {
+        auto expSkel = mExpCharacter->getSkeleton();
+        auto ctrlSkel = mControlCharacter->getSkeleton();
+        for (int i = 0; i < std::min(expSkel->getNumDofs(), ctrlSkel->getNumDofs()); ++i) {
+            ctrlSkel->setPosition(i, expSkel->getPosition(i));
+        }
+    }
+
+    LOG_INFO("Control character loaded: " << skel_path);
+}
+
 void PhysicalExam::applyPosePreset(const std::map<std::string, Eigen::VectorXd>& joint_angles) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("No character loaded");
         return;
     }
 
-    auto skeleton = mCharacter->getSkeleton();
+    auto skeleton = mExpCharacter->getSkeleton();
 
     for (const auto& [joint_name, angles] : joint_angles) {
         auto joint = skeleton->getJoint(joint_name);
@@ -687,12 +760,12 @@ void PhysicalExam::applyForce(const std::string& body_node,
                              const Eigen::Vector3d& offset,
                              const Eigen::Vector3d& direction,
                              double magnitude) {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("No character loaded");
         return;
     }
 
-    auto bn = mCharacter->getSkeleton()->getBodyNode(body_node);
+    auto bn = mExpCharacter->getSkeleton()->getBodyNode(body_node);
     if (!bn) {
         LOG_ERROR("Body node not found: " << body_node);
         return;
@@ -704,14 +777,14 @@ void PhysicalExam::applyForce(const std::string& body_node,
 }
 
 void PhysicalExam::applyConfinementForces(double magnitude) {
-    if (!mCharacter) return;
+    if (!mExpCharacter) return;
 
     const char* confinementBodies[] = {"Pelvis", "Torso", "ShoulderR", "ShoulderL"};
     Eigen::Vector3d downwardForce(0.0, -magnitude, 0.0);  // Downward force
     Eigen::Vector3d zeroOffset(0.0, 0.0, 0.0);
 
     for (const char* bodyName : confinementBodies) {
-        auto bn = mCharacter->getSkeleton()->getBodyNode(bodyName);
+        auto bn = mExpCharacter->getSkeleton()->getBodyNode(bodyName);
         if (bn) {
             bn->addExtForce(downwardForce, zeroOffset, false, true);
         }
@@ -720,7 +793,7 @@ void PhysicalExam::applyConfinementForces(double magnitude) {
 
 void PhysicalExam::stepSimulation(int steps) {
     for (int i = 0; i < steps; ++i) {
-        mCharacter->step();
+        mExpCharacter->step();
         mWorld->step();
     }
 }
@@ -732,8 +805,8 @@ void PhysicalExam::setPaused(bool paused) {
     LOG_INFO("Simulation " << (mSimulationPaused ? "PAUSED" : "RESUMED"));
 
     // When pausing with PI controller enabled, update marked targets and reset integral errors
-    if (mSimulationPaused && mEnableInterpolation && mCharacter) {
-        auto skel = mCharacter->getSkeleton();
+    if (mSimulationPaused && mEnableInterpolation && mExpCharacter) {
+        auto skel = mExpCharacter->getSkeleton();
         Eigen::VectorXd currentPos = skel->getPositions();
         for (int i = 0; i < mMarkedJointTargets.size(); ++i) {
             if (mMarkedJointTargets[i].has_value()) {
@@ -750,9 +823,9 @@ std::map<std::string, Eigen::VectorXd> PhysicalExam::recordJointAngles(
 
     std::map<std::string, Eigen::VectorXd> angles;
 
-    if (!mCharacter) return angles;
+    if (!mExpCharacter) return angles;
 
-    auto skeleton = mCharacter->getSkeleton();
+    auto skeleton = mExpCharacter->getSkeleton();
 
     for (const auto& joint_name : joint_names) {
         auto joint = skeleton->getJoint(joint_name);
@@ -793,10 +866,10 @@ double PhysicalExam::getPassiveTorqueJoint_forCharacter(Character* character, da
 }
 
 double PhysicalExam::getPassiveTorqueJoint(int joint_idx) {
-    if (!mCharacter) return 0.0;
-    if (mCharacter->getMuscles().empty()) return 0.0;
+    if (!mExpCharacter) return 0.0;
+    if (mExpCharacter->getMuscles().empty()) return 0.0;
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_idx);
     if (!joint) return 0.0;
 
@@ -805,7 +878,7 @@ double PhysicalExam::getPassiveTorqueJoint(int joint_idx) {
     int num_dofs = static_cast<int>(joint->getNumDofs());
 
     double total_torque = 0.0;
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
 
     for (auto& muscle : muscles) {
         // GetRelatedJtp() returns a reduced vector indexed by related_dof_indices
@@ -902,44 +975,44 @@ double PhysicalExam::getPassiveTorqueJointDof(
 
 // Pose synchronization methods
 void PhysicalExam::setCharacterPose(const Eigen::VectorXd& positions) {
-    if (mCharacter) {
-        mCharacter->getSkeleton()->setPositions(positions);
-        mCharacter->invalidateMuscleTuple();
+    if (mExpCharacter) {
+        mExpCharacter->getSkeleton()->setPositions(positions);
+        mExpCharacter->invalidateMuscleTuple();
     } else {
         LOG_WARN("No main character loaded");
     }
 
-    if (mStdCharacter) {
-        auto std_skel = mStdCharacter->getSkeleton();
+    if (mControlCharacter) {
+        auto std_skel = mControlCharacter->getSkeleton();
         // Only set if the DOF counts match
         if (std_skel->getNumDofs() == positions.size()) {
             std_skel->setPositions(positions);
-            mStdCharacter->invalidateMuscleTuple();
+            mControlCharacter->invalidateMuscleTuple();
         }
     } else {
-        LOG_WARN("No standard character loaded");
+        LOG_WARN("No control character loaded");
     }
 }
 
 void PhysicalExam::setCharacterPose(const std::string& joint_name, const Eigen::VectorXd& positions) {
-    if (mCharacter) {
-        auto joint = mCharacter->getSkeleton()->getJoint(joint_name);
+    if (mExpCharacter) {
+        auto joint = mExpCharacter->getSkeleton()->getJoint(joint_name);
         if (joint) {
             joint->setPositions(positions);
-            mCharacter->invalidateMuscleTuple();
+            mExpCharacter->invalidateMuscleTuple();
         }
     } else {
         LOG_WARN("No main character loaded: " << joint_name);
     }
 
-    if (mStdCharacter) {
-        auto std_joint = mStdCharacter->getSkeleton()->getJoint(joint_name);
+    if (mControlCharacter) {
+        auto std_joint = mControlCharacter->getSkeleton()->getJoint(joint_name);
         if (std_joint && std_joint->getNumDofs() == positions.size()) {
             std_joint->setPositions(positions);
-            mStdCharacter->invalidateMuscleTuple();
+            mControlCharacter->invalidateMuscleTuple();
         }
     } else {
-        LOG_WARN("No standard character loaded: " << joint_name);
+        LOG_WARN("No control character loaded: " << joint_name);
     }
 }
 
@@ -958,27 +1031,28 @@ void PhysicalExam::loadExamSetting(const std::string& config_path) {
     mExamName = config["name"].as<std::string>();
     mExamDescription = config["description"] ? config["description"].as<std::string>() : "";
     
-    std::string skeleton_path = config["character"]["skeleton"].as<std::string>();
-    std::string muscle_path = config["character"]["muscle"] ? config["character"]["muscle"].as<std::string>() : "";
+    std::string char_key = config["exp_character"] ? "exp_character" : "character";
+    std::string skeleton_path = config[char_key]["skeleton"].as<std::string>();
+    std::string muscle_path = config[char_key]["muscle"] ? config[char_key]["muscle"].as<std::string>() : "";
 
-    // Set standard character paths from config before loading main character
-    if (config["std_character"]) {
-        mStdSkeletonPath = config["std_character"]["skeleton"].as<std::string>();
-        mStdMusclePath = config["std_character"]["muscle"]
-            ? config["std_character"]["muscle"].as<std::string>()
+    // Set control character paths from config before loading main character
+    if (config["control_character"]) {
+        mControlSkeletonPath = config["control_character"]["skeleton"].as<std::string>();
+        mControlMusclePath = config["control_character"]["muscle"]
+            ? config["control_character"]["muscle"].as<std::string>()
             : "";
     } else {
-        mStdSkeletonPath = "";
-        mStdMusclePath = "";
-        mStdCharacter = nullptr;
+        mControlSkeletonPath = "";
+        mControlMusclePath = "";
+        mControlCharacter = nullptr;
     }
 
     loadCharacter(skeleton_path, muscle_path);
     
     // Initialize rendering flags
-    mRenderMainCharacter = true;
-    mRenderStdCharacter = false;  // Default to only showing main
-    mShowStdCharacterInPlots = true;  // Default to showing overlay in plots
+    mRenderExpCharacter = true;
+    mRenderControlCharacter = false;  // Default to only showing main
+    mShowControlCharacterInPlots = true;  // Default to showing overlay in plots
     
     mExamSettingLoaded = true;
     mCurrentTrialIndex = -1;
@@ -1202,7 +1276,7 @@ TrialConfig PhysicalExam::parseTrialConfig(const YAML::Node& trial_node) {
 }
 
 void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
-    if (!mExamSettingLoaded || !mCharacter) {
+    if (!mExamSettingLoaded || !mExpCharacter) {
         LOG_ERROR("Cannot run trial: exam setting not loaded or character not available");
         return;
     }
@@ -1243,9 +1317,9 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
-            buffer.std_angle_sweep_data = mStdAngleSweepData;
+            buffer.control_angle_sweep_data = mControlAngleSweepData;
             buffer.tracked_muscles = mAngleSweepTrackedMuscles;
-            buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+            buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
             // Copy clinical data reference for ROM table rendering
@@ -1261,8 +1335,11 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             }
             buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, effective_cutoff);
             buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
-            buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
-            buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+            if (!mControlAngleSweepData.empty()) {
+                buffer.control_cutoff_angles = computeCutoffAngles(mControlAngleSweepData, effective_cutoff);
+            }
+            buffer.control_rom_metrics = computeROMMetrics(mControlAngleSweepData);
+            buffer.base_pose = mExpCharacter->getSkeleton()->getPositions();
 
             // Capture normative pose: set skeleton to normative angle and capture
             // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
@@ -1284,7 +1361,7 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
                     LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
                 }
 
-                auto skel = mCharacter->getSkeleton();
+                auto skel = mExpCharacter->getSkeleton();
                 auto joint = skel->getJoint(trial.angle_sweep.joint_name);
                 if (joint) {
                     int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
@@ -1352,9 +1429,9 @@ void PhysicalExam::startNextTrial() {
         buffer.alias = trial.angle_sweep.alias;
         buffer.timestamp = std::chrono::system_clock::now();
         buffer.angle_sweep_data = mAngleSweepData;
-        buffer.std_angle_sweep_data = mStdAngleSweepData;
+        buffer.control_angle_sweep_data = mControlAngleSweepData;
         buffer.tracked_muscles = mAngleSweepTrackedMuscles;
-        buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+        buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
         buffer.config = trial.angle_sweep;
         // Copy clinical data reference for ROM table rendering
         buffer.cd_side = trial.angle_sweep.cd_side;
@@ -1362,8 +1439,8 @@ void PhysicalExam::startNextTrial() {
         buffer.cd_field = trial.angle_sweep.cd_field;
         buffer.cd_neg = trial.angle_sweep.cd_neg;
         buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
-        buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
-        buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+        buffer.control_rom_metrics = computeROMMetrics(mControlAngleSweepData);
+        buffer.base_pose = mExpCharacter->getSkeleton()->getPositions();
 
         // Capture normative pose: set skeleton to normative angle and capture
         // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
@@ -1385,7 +1462,7 @@ void PhysicalExam::startNextTrial() {
                 LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
             }
 
-            auto skel = mCharacter->getSkeleton();
+            auto skel = mExpCharacter->getSkeleton();
             auto joint = skel->getJoint(trial.angle_sweep.joint_name);
             if (joint) {
                 int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
@@ -1473,8 +1550,9 @@ void PhysicalExam::runExamination(const std::string& config_path) {
     mCurrentExamName = config["name"].as<std::string>();
     LOG_INFO("Running examination: " << mCurrentExamName);
 
-    std::string skeleton_path = config["character"]["skeleton"].as<std::string>();
-    std::string muscle_path = config["character"]["muscle"].as<std::string>();
+    std::string char_key2 = config["exp_character"] ? "exp_character" : "character";
+    std::string skeleton_path = config[char_key2]["skeleton"].as<std::string>();
+    std::string muscle_path = config[char_key2]["muscle"].as<std::string>();
 
     // Load character
     loadCharacter(skeleton_path, muscle_path);
@@ -1599,9 +1677,9 @@ void PhysicalExam::saveToCSV(const std::string& output_path) {
 void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_name) {
     mAngleSweepTrackedMuscles.clear();
 
-    if (!mCharacter || mCharacter->getMuscles().empty()) return;
+    if (!mExpCharacter || mExpCharacter->getMuscles().empty()) return;
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_name);
     if (!joint) {
         LOG_ERROR("Joint not found for angle sweep tracking: " << joint_name);
@@ -1609,7 +1687,7 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
     }
 
     // Find all muscles that cross this joint
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
     for (auto* muscle : muscles) {
         auto related_joints = muscle->GetRelatedJoints();
         for (auto* rj : related_joints) {
@@ -1621,10 +1699,10 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
     }
 
     // Setup standard character muscles
-    if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
-        mStdAngleSweepTrackedMuscles.clear();
-        auto std_muscles = mStdCharacter->getMuscles();
-        auto std_skel = mStdCharacter->getSkeleton();
+    if (mControlCharacter && !mControlCharacter->getMuscles().empty()) {
+        mControlAngleSweepTrackedMuscles.clear();
+        auto std_muscles = mControlCharacter->getMuscles();
+        auto std_skel = mControlCharacter->getSkeleton();
         auto std_joint = std_skel->getJoint(joint_name);
 
         if (std_joint) {
@@ -1632,7 +1710,7 @@ void PhysicalExam::setupTrackedMusclesForAngleSweep(const std::string& joint_nam
                 auto related_joints = muscle->GetRelatedJoints();
                 if (std::find(related_joints.begin(), related_joints.end(), std_joint)
                     != related_joints.end()) {
-                    mStdAngleSweepTrackedMuscles.push_back(muscle->GetName());
+                    mControlAngleSweepTrackedMuscles.push_back(muscle->GetName());
                 }
             }
         }
@@ -1643,7 +1721,7 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
     AngleSweepDataPoint data;
     data.joint_angle = angle;
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     auto joint = skel->getJoint(joint_index);
 
     // Debug: verify joint name
@@ -1654,8 +1732,8 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
 
     // Use DOF-specific torque for simple sweeps (symmetric), global Y for composite DOFs
     data.passive_torque_total = use_global_y
-        ? getPassiveTorqueJointGlobalY(mCharacter, joint)
-        : getPassiveTorqueJointDof(mCharacter, joint, mSweepConfig.dof_index);
+        ? getPassiveTorqueJointGlobalY(mExpCharacter, joint)
+        : getPassiveTorqueJointDof(mExpCharacter, joint, mSweepConfig.dof_index);
 
     // Debug: check for NaN
     if (std::isnan(data.passive_torque_total)) {
@@ -1666,7 +1744,7 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
     if (mVerboseTorque) {
         int skel_dof = joint->getIndexInSkeleton(mSweepConfig.dof_index);
         double jtp_sum = 0.0;
-        for (auto& muscle : mCharacter->getMuscles()) {
+        for (auto& muscle : mExpCharacter->getMuscles()) {
             Eigen::VectorXd jtp = muscle->GetRelatedJtp();
             const auto& related_indices = muscle->related_dof_indices;
             for (size_t i = 0; i < related_indices.size(); ++i) {
@@ -1699,7 +1777,7 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
 
     // Collect per-muscle data (only muscles crossing the swept joint)
     for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
-        Muscle* muscle = mCharacter->getMuscleByName(muscle_name);
+        Muscle* muscle = mExpCharacter->getMuscleByName(muscle_name);
         if (!muscle) {
             LOG_WARN("Muscle not found during data collection: " << muscle_name);
             continue;
@@ -1734,26 +1812,26 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
     }
 
     // Collect standard character data if available
-    if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
+    if (mControlCharacter && !mControlCharacter->getMuscles().empty()) {
         AngleSweepDataPoint std_data;
         std_data.joint_angle = angle;
         
         // Note: std character is already in sync with main character via setCharacterPose
-        auto std_skel = mStdCharacter->getSkeleton();
-        auto main_skel = mCharacter->getSkeleton();
+        auto std_skel = mControlCharacter->getSkeleton();
+        auto main_skel = mExpCharacter->getSkeleton();
         auto main_joint = main_skel->getJoint(joint_index);
         auto std_joint = std_skel->getJoint(main_joint->getName());
 
         // Compute passive torque for std character using same method as main character
         std_data.passive_torque_total = use_global_y
-            ? getPassiveTorqueJointGlobalY(mStdCharacter, std_joint)
-            : getPassiveTorqueJointDof(mStdCharacter, std_joint, mSweepConfig.dof_index);
+            ? getPassiveTorqueJointGlobalY(mControlCharacter, std_joint)
+            : getPassiveTorqueJointDof(mControlCharacter, std_joint, mSweepConfig.dof_index);
         
         // Compute stiffness for std
-        size_t N_std = mStdAngleSweepData.size();
+        size_t N_std = mControlAngleSweepData.size();
         if (N_std >= 1) {
-            double angle_prev = mStdAngleSweepData[N_std-1].joint_angle;
-            double torque_prev = mStdAngleSweepData[N_std-1].passive_torque_total;
+            double angle_prev = mControlAngleSweepData[N_std-1].joint_angle;
+            double torque_prev = mControlAngleSweepData[N_std-1].passive_torque_total;
             if (std::abs(angle - angle_prev) > 1e-10) {
                 std_data.passive_torque_stiffness = 
                     (std_data.passive_torque_total - torque_prev) / (angle - angle_prev);
@@ -1765,8 +1843,8 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
         }
         
         // Collect std muscle data
-        for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
-            Muscle* muscle = mStdCharacter->getMuscleByName(muscle_name);
+        for (const auto& muscle_name : mControlAngleSweepTrackedMuscles) {
+            Muscle* muscle = mControlCharacter->getMuscleByName(muscle_name);
             if (!muscle) continue;
 
             std_data.muscle_fp[muscle_name] = muscle->Getf_p();
@@ -1789,11 +1867,11 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
             std_data.muscle_jtp_dof[muscle_name] = jtp_at_swept_dof;
         }
 
-        mStdAngleSweepData.push_back(std_data);
+        mControlAngleSweepData.push_back(std_data);
 
         // Copy second point's stiffness to first point for std character
-        if (mStdAngleSweepData.size() == 2) {
-            mStdAngleSweepData[0].passive_torque_stiffness = mStdAngleSweepData[1].passive_torque_stiffness;
+        if (mControlAngleSweepData.size() == 2) {
+            mControlAngleSweepData[0].passive_torque_stiffness = mControlAngleSweepData[1].passive_torque_stiffness;
         }
     }
 }
@@ -1970,7 +2048,7 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
     applyPosePreset(trial.pose);
 
     // 2. Get target joint
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     auto joint = skel->getJoint(trial.angle_sweep.joint_name);
     if (!joint) {
         LOG_ERROR("Joint not found: " << trial.angle_sweep.joint_name);
@@ -1986,7 +2064,7 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
 
     // 5. Clear previous data (both main and standard character)
     mAngleSweepData.clear();
-    mStdAngleSweepData.clear();
+    mControlAngleSweepData.clear();
 
     // 6. Kinematic sweep loop
     if (trial.angle_sweep.dof_type == "abd_knee") {
@@ -2028,11 +2106,11 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
 
             // Set positions for main character
             skel->setPositions(pos);
-            mCharacter->invalidateMuscleTuple();
+            mExpCharacter->invalidateMuscleTuple();
 
             // Compute IK independently for std character if exists
-            if (mStdCharacter) {
-                auto std_skel = mStdCharacter->getSkeleton();
+            if (mControlCharacter) {
+                auto std_skel = mControlCharacter->getSkeleton();
                 auto std_joint = std_skel->getJoint(trial.angle_sweep.joint_name);
                 auto std_knee = std_skel->getJoint(knee_name);
                 if (std_joint && std_knee) {
@@ -2049,17 +2127,17 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
                         std_pos.segment<3>(std_hip_start) = std_ik_result.hip_positions;
                         std_pos[std_knee_idx] = std_ik_result.knee_angle;
                         std_skel->setPositions(std_pos);
-                        mStdCharacter->invalidateMuscleTuple();
+                        mControlCharacter->invalidateMuscleTuple();
                     }
                 }
             }
 
             // Update muscle geometry
-            if (!mCharacter->getMuscles().empty()) {
-                mCharacter->getMuscleTuple();
+            if (!mExpCharacter->getMuscles().empty()) {
+                mExpCharacter->getMuscleTuple();
             }
-            if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
-                mStdCharacter->getMuscleTuple();
+            if (mControlCharacter && !mControlCharacter->getMuscles().empty()) {
+                mControlCharacter->getMuscleTuple();
             }
 
             // Collect data point with global Y torque projection
@@ -2139,11 +2217,11 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
             setCharacterPose(joint->getName(), pos);
 
             // Update muscle geometry (kinematic only - no physics step)
-            if (!mCharacter->getMuscles().empty()) {
-                mCharacter->getMuscleTuple();
+            if (!mExpCharacter->getMuscles().empty()) {
+                mExpCharacter->getMuscleTuple();
             }
-            if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
-                mStdCharacter->getMuscleTuple();
+            if (mControlCharacter && !mControlCharacter->getMuscles().empty()) {
+                mControlCharacter->getMuscleTuple();
             }
 
             // Collect data point
@@ -2407,10 +2485,10 @@ void PhysicalExam::writeAngleSweepData(H5::Group& group, const TrialConfig& tria
         mAngleSweepData, mAngleSweepTrackedMuscles);
     
     // Create /std subgroup if data exists
-    if (!mStdAngleSweepData.empty() && mStdCharacter) {
+    if (!mControlAngleSweepData.empty() && mControlCharacter) {
         H5::Group stdGroup = group.createGroup("std");
         writeAngleSweepDataForCharacter(stdGroup, trial, 
-            mStdAngleSweepData, mStdAngleSweepTrackedMuscles);
+            mControlAngleSweepData, mControlAngleSweepTrackedMuscles);
     }
 }
 
@@ -2590,11 +2668,11 @@ void PhysicalExam::exportTrialBuffersToHDF5() {
                     buffer.angle_sweep_data, buffer.tracked_muscles);
             }
 
-            // Write standard character data
-            if (!buffer.std_angle_sweep_data.empty()) {
-                H5::Group stdGroup = trialGroup.createGroup("std_character");
+            // Write control character data
+            if (!buffer.control_angle_sweep_data.empty()) {
+                H5::Group stdGroup = trialGroup.createGroup("control_character");
                 writeAngleSweepDataForCharacter(stdGroup, trial,
-                    buffer.std_angle_sweep_data, buffer.std_tracked_muscles);
+                    buffer.control_angle_sweep_data, buffer.control_tracked_muscles);
             }
         }
 
@@ -2640,9 +2718,9 @@ void PhysicalExam::runAllTrials() {
             buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
-            buffer.std_angle_sweep_data = mStdAngleSweepData;
+            buffer.control_angle_sweep_data = mControlAngleSweepData;
             buffer.tracked_muscles = mAngleSweepTrackedMuscles;
-            buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+            buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
             // Copy clinical data reference for ROM table rendering
@@ -2658,10 +2736,11 @@ void PhysicalExam::runAllTrials() {
             }
             buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, effective_cutoff);
             buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
-            if (!mStdAngleSweepData.empty()) {
-                buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+            if (!mControlAngleSweepData.empty()) {
+                buffer.control_cutoff_angles = computeCutoffAngles(mControlAngleSweepData, effective_cutoff);
+                buffer.control_rom_metrics = computeROMMetrics(mControlAngleSweepData);
             }
-            buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+            buffer.base_pose = mExpCharacter->getSkeleton()->getPositions();
 
             // Capture normative pose: set skeleton to normative angle and capture
             // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
@@ -2683,7 +2762,7 @@ void PhysicalExam::runAllTrials() {
                     LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
                 }
 
-                auto skel = mCharacter->getSkeleton();
+                auto skel = mExpCharacter->getSkeleton();
                 auto joint = skel->getJoint(trial.angle_sweep.joint_name);
                 if (joint) {
                     int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
@@ -2723,7 +2802,7 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
                                 double torque_threshold,
                                 double length_threshold,
                                 const std::string& sort_by) {
-    if (!mCharacter || mCharacter->getMuscles().empty()) {
+    if (!mExpCharacter || mExpCharacter->getMuscles().empty()) {
         LOG_ERROR("No character or muscles loaded");
         return 1;
     }
@@ -2776,7 +2855,7 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
         std::string joint_name = trial.angle_sweep.joint_name;
         int dof_index = trial.angle_sweep.dof_index;
 
-        auto skel = mCharacter->getSkeleton();
+        auto skel = mExpCharacter->getSkeleton();
         auto joint = skel->getJoint(joint_name);
         if (!joint) {
             LOG_ERROR("Joint not found: " << joint_name);
@@ -2786,7 +2865,7 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
 
         // Find muscles crossing this joint
         std::vector<std::string> tracked_muscles;
-        for (auto* muscle : mCharacter->getMuscles()) {
+        for (auto* muscle : mExpCharacter->getMuscles()) {
             auto related_joints = muscle->GetRelatedJoints();
             for (auto* rj : related_joints) {
                 if (rj == joint) {
@@ -2806,13 +2885,13 @@ int PhysicalExam::runTrialsCLI(const std::vector<std::string>& trial_paths,
         auto collectMuscleData = [&]() -> std::map<std::string, MusclePoseData> {
             // Update muscle geometry for current skeleton state
             // NOTE: Don't call SetMuscle() which recalculates lmt_ref
-            for (auto* m : mCharacter->getMuscles()) {
+            for (auto* m : mExpCharacter->getMuscles()) {
                 m->UpdateGeometry();
             }
 
             std::map<std::string, MusclePoseData> data;
             for (const auto& muscle_name : tracked_muscles) {
-                Muscle* muscle = mCharacter->getMuscleByName(muscle_name);
+                Muscle* muscle = mExpCharacter->getMuscleByName(muscle_name);
                 if (!muscle) continue;
 
                 MusclePoseData md;
@@ -3105,18 +3184,18 @@ void PhysicalExam::drawBasicTabContent() {
         ImGui::Separator();
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Reference Character:");
 
-        if (!mStdSkeletonPath.empty()) {
+        if (!mControlSkeletonPath.empty()) {
             ImGui::TextColored(ImVec4(0.4f, 0.6f, 0.8f, 1.0f), "Skeleton:");
             ImGui::SameLine(0.0f, 4.0f);
-            ImGui::Text("%s", mStdSkeletonPath.c_str());
+            ImGui::Text("%s", mControlSkeletonPath.c_str());
         } else {
             ImGui::TextDisabled("Skeleton: Not loaded");
         }
 
-        if (!mStdMusclePath.empty()) {
+        if (!mControlMusclePath.empty()) {
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "Muscle:");
             ImGui::SameLine(0.0f, 4.0f);
-            ImGui::Text("%s", mStdMusclePath.c_str());
+            ImGui::Text("%s", mControlMusclePath.c_str());
         } else {
             ImGui::TextDisabled("Muscle: Not loaded");
         }
@@ -3222,12 +3301,12 @@ void PhysicalExam::drawSweepTabContent() {
                 if (!selected.trial_description.empty()) {
                     ImGui::TextWrapped("Description: %s", selected.trial_description.c_str());
                 }
-                ImGui::Text("Data Points: %zu (main) / %zu (std)",
+                ImGui::Text("Data Points: %zu (exp) / %zu (control)",
                            selected.angle_sweep_data.size(),
-                           selected.std_angle_sweep_data.size());
-                ImGui::Text("Muscles: %zu (main) / %zu (std)",
+                           selected.control_angle_sweep_data.size());
+                ImGui::Text("Muscles: %zu (exp) / %zu (control)",
                            selected.tracked_muscles.size(),
-                           selected.std_tracked_muscles.size());
+                           selected.control_tracked_muscles.size());
                 ImGui::Text("Torque Cutoff: %.1f Nm", selected.torque_cutoff);
 
                 // Timestamp formatting
@@ -3276,8 +3355,11 @@ void PhysicalExam::drawSweepTabContent() {
         if (mAngleSweepTrackedMuscles.empty()) {
             ImGui::TextDisabled("No muscles tracked");
         } else {
-            ImGui::Indent();
-            
+            // Exp / Ctrl plot toggles
+            ImGui::Checkbox("Exp", &mShowExpCharacterInPlots);
+            ImGui::SameLine();
+            ImGui::Checkbox("Ctrl", &mShowControlCharacterInPlots);
+
             // Filter textbox
             ImGui::Text("Filter:");
             ImGui::SameLine();
@@ -3287,72 +3369,78 @@ void PhysicalExam::drawSweepTabContent() {
             if (ImGui::SmallButton("Clear")) {
                 mMuscleFilterBuffer[0] = '\0';
             }
-            
+
             // Convert filter to lowercase for case-insensitive matching
             std::string filter_lower(mMuscleFilterBuffer);
             std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
-            
+
             // Build filtered muscle list
             std::vector<std::string> filteredMuscles;
             for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
-                // Case-insensitive substring search
                 std::string muscle_lower = muscle_name;
                 std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
-                
                 if (filter_lower.empty() || muscle_lower.find(filter_lower) != std::string::npos) {
                     filteredMuscles.push_back(muscle_name);
                 }
             }
-            
-            // Count visible muscles (from filtered list)
+
+            // Count visible muscles
             int visibleCount = 0;
             for (const auto& muscle_name : filteredMuscles) {
-                if (mMuscleVisibility[muscle_name]) {
-                    visibleCount++;
-                }
+                if (mMuscleVisibility[muscle_name]) visibleCount++;
             }
 
-            // Display visibility count
             ImGui::Text("Show (%d/%zu)", visibleCount, filteredMuscles.size());
             if (!filter_lower.empty()) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(total %zu)", mAngleSweepTrackedMuscles.size());
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "(total %zu)", mAngleSweepTrackedMuscles.size());
             }
             ImGui::SameLine();
-
-            // Select All / Deselect All buttons (operate on filtered list)
             if (ImGui::SmallButton("Select All")) {
-                for (const auto& muscle_name : filteredMuscles) {
-                    mMuscleVisibility[muscle_name] = true;
-                }
+                for (const auto& m : filteredMuscles) mMuscleVisibility[m] = true;
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Deselect All")) {
-                for (const auto& muscle_name : filteredMuscles) {
-                    mMuscleVisibility[muscle_name] = false;
+                for (const auto& m : filteredMuscles) mMuscleVisibility[m] = false;
+            }
+
+            // Build color map — assign by position in full list so colors are stable
+            std::map<std::string, ImVec4> listColors;
+            {
+                int colorIdx = 0;
+                for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
+                    listColors[muscle_name] = ImPlot::GetColormapColor(colorIdx++);
                 }
             }
 
-            ImGui::Separator();
-
-            // Individual muscle checkboxes (in a scrollable region if many muscles)
-            if (filteredMuscles.size() > 10) {
-                // Scrollable region for many muscles
-                ImGui::BeginChild("MuscleCheckboxes", ImVec2(0, 100), true);
-            }
-
-            for (auto& muscle_name : filteredMuscles) {
+            // Muscle listbox with color swatches
+            ImGui::BeginChild("MuscleList", ImVec2(0, 160), true);
+            for (const auto& muscle_name : filteredMuscles) {
                 bool isVisible = mMuscleVisibility[muscle_name];
-                if (ImGui::Checkbox(muscle_name.c_str(), &isVisible)) {
-                    mMuscleVisibility[muscle_name] = isVisible;
+
+                // Color swatch
+                auto col_it = listColors.find(muscle_name);
+                if (isVisible && col_it != listColors.end()) {
+                    ImVec4 c = col_it->second;
+                    ImVec2 pos = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddRectFilled(
+                        pos, ImVec2(pos.x + 12, pos.y + ImGui::GetTextLineHeight()),
+                        ImGui::ColorConvertFloat4ToU32(c));
+                } else {
+                    ImVec2 pos = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddRectFilled(
+                        pos, ImVec2(pos.x + 12, pos.y + ImGui::GetTextLineHeight()),
+                        ImGui::ColorConvertFloat4ToU32(ImVec4(0.3f, 0.3f, 0.3f, 1.0f)));
+                }
+                ImGui::Dummy(ImVec2(14, 0));
+                ImGui::SameLine();
+
+                // Selectable toggles visibility
+                if (ImGui::Selectable(muscle_name.c_str(), isVisible)) {
+                    mMuscleVisibility[muscle_name] = !isVisible;
                 }
             }
-
-            if (filteredMuscles.size() > 10) {
-                ImGui::EndChild();
-            }
-            
-            ImGui::Unindent();
+            ImGui::EndChild();
         }
     }
     
@@ -3367,6 +3455,9 @@ void PhysicalExam::drawSweepTabContent() {
 void PhysicalExam::drawEtcTabContent() {
     // ROM summary table
     drawROMSummaryTable();
+
+    // ROM comparison table (Exp vs Control)
+    drawROMComparisonTable();
 
     ImGui::Separator();
 
@@ -3647,6 +3738,162 @@ void PhysicalExam::drawROMSummaryTable() {
     ImGui::SetWindowFontScale(1.0f);  // Reset font scale
 }
 
+void PhysicalExam::drawROMComparisonTable() {
+    // Only render when both characters have trial data
+    if (!mControlCharacter) return;
+
+    // Check if any trial has control data
+    bool hasControlData = false;
+    for (const auto& buf : mTrialBuffers) {
+        if (!buf.control_cutoff_angles.empty()) {
+            hasControlData = true;
+            break;
+        }
+    }
+    if (!hasControlData) return;
+
+    // Define expected ROM structure in display order: hip -> knee -> ankle
+    static const std::vector<std::pair<std::string, std::vector<std::string>>> expectedROMs = {
+        {"hip", {"abduction_knee0", "abduction_knee90", "adduction",
+                 "external_rotation", "internal_rotation", "staheli_extension"}},
+        {"knee", {"popliteal", "popliteal_relax"}},
+        {"ankle", {"dorsiflexion_knee0", "dorsiflexion_knee90", "plantarflexion"}}
+    };
+
+    struct CompEntry {
+        std::optional<double> ctrl;   // Control ROM value
+        std::optional<double> exp;    // Experimental ROM value
+    };
+
+    // grouped[joint][measurement] -> { left: CompEntry, right: CompEntry }
+    struct CompPair {
+        CompEntry left, right;
+    };
+    std::map<std::string, std::map<std::string, CompPair>> grouped;
+    for (const auto& [joint, measurements] : expectedROMs) {
+        for (const auto& meas : measurements) {
+            grouped[joint][meas] = CompPair{};
+        }
+    }
+
+    // Fill from trial buffers
+    for (const auto& buf : mTrialBuffers) {
+        if (buf.alias.empty()) continue;
+
+        // Parse alias: "joint/measurement/side"
+        std::vector<std::string> parts;
+        std::istringstream iss(buf.alias);
+        std::string part;
+        while (std::getline(iss, part, '/')) {
+            parts.push_back(part);
+        }
+        if (parts.size() != 3) continue;
+
+        std::string joint = parts[0];
+        std::string measurement = parts[1];
+        std::string side = parts[2];
+
+        // Experimental value
+        double exp_val = buf.cutoff_angles.empty() ? std::numeric_limits<double>::quiet_NaN() : buf.cutoff_angles[0];
+        if (buf.neg && !std::isnan(exp_val)) exp_val = -exp_val;
+
+        // Control value
+        double ctrl_val = buf.control_cutoff_angles.empty() ? std::numeric_limits<double>::quiet_NaN() : buf.control_cutoff_angles[0];
+        if (buf.neg && !std::isnan(ctrl_val)) ctrl_val = -ctrl_val;
+
+        if (side == "left") {
+            grouped[joint][measurement].left.exp = exp_val;
+            grouped[joint][measurement].left.ctrl = ctrl_val;
+        } else if (side == "right") {
+            grouped[joint][measurement].right.exp = exp_val;
+            grouped[joint][measurement].right.ctrl = ctrl_val;
+        }
+    }
+
+    // Color helper: green if improvement (more ROM), red if worse, yellow if similar
+    auto diffColor = [](double diff) -> ImVec4 {
+        if (std::abs(diff) <= 2.0) {
+            return ImVec4(0.9f, 0.9f, 0.3f, 1.0f);  // yellow - similar
+        } else if (diff > 0) {
+            return ImVec4(0.3f, 0.9f, 0.3f, 1.0f);  // green - improvement (more ROM)
+        } else {
+            return ImVec4(0.9f, 0.3f, 0.3f, 1.0f);  // red - worse
+        }
+    };
+
+    auto renderValue = [](const std::optional<double>& val) {
+        if (!val.has_value()) {
+            ImGui::TextDisabled("-");
+        } else if (std::isnan(*val)) {
+            ImGui::TextDisabled("N/A");
+        } else {
+            ImGui::Text("%.1f", *val);
+        }
+    };
+
+    auto renderDiff = [&diffColor](const std::optional<double>& ctrl, const std::optional<double>& exp) {
+        if (!ctrl.has_value() || !exp.has_value() ||
+            std::isnan(*ctrl) || std::isnan(*exp)) {
+            ImGui::TextDisabled("-");
+            return;
+        }
+        double diff = *exp - *ctrl;
+        ImGui::TextColored(diffColor(diff), "%+.1f", diff);
+    };
+
+    ImGui::Spacing();
+    ImGui::SetWindowFontScale(1.3f);
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Exp vs Control Comparison");
+
+    // 7 columns: Measurement | Ctrl L | Exp L | Diff L | Ctrl R | Exp R | Diff R
+    if (ImGui::BeginTable("ROMComparison", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Measurement", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Ctrl L", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+        ImGui::TableSetupColumn("Exp L", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+        ImGui::TableSetupColumn("Diff L", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+        ImGui::TableSetupColumn("Ctrl R", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+        ImGui::TableSetupColumn("Exp R", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+        ImGui::TableSetupColumn("Diff R", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+        ImGui::TableHeadersRow();
+
+        for (const auto& [joint, measurements] : expectedROMs) {
+            // Joint header row
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", joint.c_str());
+            for (int i = 1; i < 7; i++) {
+                ImGui::TableNextColumn();
+            }
+
+            for (const auto& meas : measurements) {
+                const auto& pair = grouped[joint][meas];
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  %s", meas.c_str());
+
+                // Left side: Ctrl L, Exp L, Diff L
+                ImGui::TableNextColumn();
+                renderValue(pair.left.ctrl);
+                ImGui::TableNextColumn();
+                renderValue(pair.left.exp);
+                ImGui::TableNextColumn();
+                renderDiff(pair.left.ctrl, pair.left.exp);
+
+                // Right side: Ctrl R, Exp R, Diff R
+                ImGui::TableNextColumn();
+                renderValue(pair.right.ctrl);
+                ImGui::TableNextColumn();
+                renderValue(pair.right.exp);
+                ImGui::TableNextColumn();
+                renderDiff(pair.right.ctrl, pair.right.exp);
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::SetWindowFontScale(1.0f);
+}
+
 void PhysicalExam::drawContent() {
     glEnable(GL_LIGHTING);
 
@@ -3674,7 +3921,7 @@ void PhysicalExam::drawContent() {
     drawSkeleton();
     drawMuscles();
 
-    if (mCharacter && mRenderMainCharacter) {
+    if (mExpCharacter && mRenderExpCharacter) {
         drawJointPassiveForces();
         drawSelectedAnchors();
         drawReferenceAnchor();
@@ -3693,16 +3940,16 @@ void PhysicalExam::drawContent() {
 
 void PhysicalExam::drawSkeleton() {
     // Render main character (white)
-    if (mCharacter && mRenderMainCharacter) {
-        GUI::DrawSkeleton(mCharacter->getSkeleton(),
+    if (mExpCharacter && mRenderExpCharacter) {
+        GUI::DrawSkeleton(mExpCharacter->getSkeleton(),
                           Eigen::Vector4d(1.0, 1.0, 1.0, 0.9),
                           mRenderMode, &mShapeRenderer);
     }
 
-    // Render standard character (gray, semi-transparent)
-    if (mStdCharacter && mRenderStdCharacter) {
-        GUI::DrawSkeleton(mStdCharacter->getSkeleton(),
-                          Eigen::Vector4d(0.5, 0.5, 0.5, 0.5),
+    // Render control character (blue, near-full opacity)
+    if (mControlCharacter && mRenderControlCharacter) {
+        GUI::DrawSkeleton(mControlCharacter->getSkeleton(),
+                          Eigen::Vector4d(0.3, 0.5, 0.8, 0.9),
                           mRenderMode, &mShapeRenderer);
     }
 }
@@ -3732,8 +3979,8 @@ void PhysicalExam::drawMuscles() {
     };
 
     // Render main character muscles
-    if (mCharacter && mRenderMainCharacter && !mCharacter->getMuscles().empty()) {
-        auto& muscles = mCharacter->getMuscles();
+    if (mExpCharacter && mRenderExpCharacter && !mExpCharacter->getMuscles().empty()) {
+        auto& muscles = mExpCharacter->getMuscles();
 
         if (mShowAnchorPoints) {
             glDisable(GL_LIGHTING);
@@ -3791,15 +4038,15 @@ void PhysicalExam::drawMuscles() {
         }
     }
 
-    // Render standard character muscles (semi-transparent reddish)
-    if (mStdCharacter && mRenderStdCharacter && !mStdCharacter->getMuscles().empty()) {
-        auto& muscles = mStdCharacter->getMuscles();
+    // Render control character muscles (blue, near-full opacity)
+    if (mControlCharacter && mRenderControlCharacter && !mControlCharacter->getMuscles().empty()) {
+        auto& muscles = mControlCharacter->getMuscles();
         glDisable(GL_LIGHTING);
-        glLineWidth(1.5f);
+        glLineWidth(mMuscleLineWidth);
 
         for (auto muscle : muscles) {
             auto& anchors = muscle->GetAnchors();
-            glColor4f(0.6f, 0.4f, 0.4f, 0.4f);
+            glColor4f(0.3f, 0.5f, 0.8f, 0.9f);
             glBegin(GL_LINE_STRIP);
             for (auto& anchor : anchors) {
                 Eigen::Vector3d pos = anchor->GetPoint();
@@ -3814,11 +4061,11 @@ void PhysicalExam::drawMuscles() {
 }
 
 void PhysicalExam::drawForceArrow() {
-    if (!mCharacter || !mApplyingForce) return;
+    if (!mExpCharacter || !mApplyingForce) return;
 
     // Get body node from UI selection
     const char* bodyNodes[] = {"Pelvis", "FemurR", "FemurL", "TibiaR", "TibiaL", "TalusR", "TalusL"};
-    auto bn = mCharacter->getSkeleton()->getBodyNode(bodyNodes[mSelectedBodyNode]);
+    auto bn = mExpCharacter->getSkeleton()->getBodyNode(bodyNodes[mSelectedBodyNode]);
     if (!bn) return;
 
     // Get force parameters directly from UI
@@ -3835,7 +4082,7 @@ void PhysicalExam::drawForceArrow() {
 }
 
 void PhysicalExam::drawConfinementForces() {
-    if (!mCharacter || !mApplyConfinementForce) return;
+    if (!mExpCharacter || !mApplyConfinementForce) return;
 
     const char* confinementBodies[] = {"Pelvis", "Torso", "ShoulderR", "ShoulderL"};
     Eigen::Vector3d forceDirection(0.0, -1.0, 0.0);  // Downward
@@ -3843,7 +4090,7 @@ void PhysicalExam::drawConfinementForces() {
     Eigen::Vector4d purple(0.6, 0.2, 0.8, 1.0);
 
     for (const char* bodyName : confinementBodies) {
-        auto bn = mCharacter->getSkeleton()->getBodyNode(bodyName);
+        auto bn = mExpCharacter->getSkeleton()->getBodyNode(bodyName);
         if (!bn) continue;
 
         Eigen::Vector3d world_pos = bn->getWorldTransform().translation();
@@ -3877,13 +4124,13 @@ void PhysicalExam::drawReferenceAnchor() {
 }
 
 void PhysicalExam::drawJointPassiveForces() {
-    if (!mCharacter || !mShowJointPassiveForces) return;
-    if (mCharacter->getMuscles().empty()) return;
+    if (!mExpCharacter || !mShowJointPassiveForces) return;
+    if (mExpCharacter->getMuscles().empty()) return;
 
     // Get muscle tuple to extract passive joint torques
-    MuscleTuple mt = mCharacter->getMuscleTuple(false);
+    MuscleTuple mt = mExpCharacter->getMuscleTuple(false);
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     int root_dof = skel->getRootJoint()->getNumDofs();
 
     glDisable(GL_LIGHTING);
@@ -4070,21 +4317,21 @@ void PhysicalExam::keyPress(int key, int scancode, int action, int mods) {
     }
     else if (key == GLFW_KEY_C && (mods & GLFW_MOD_CONTROL)) {
         // Ctrl+C: Toggle between main and standard character rendering
-        if (mStdCharacter) {
-            if (mRenderMainCharacter && !mRenderStdCharacter) {
+        if (mControlCharacter) {
+            if (mRenderExpCharacter && !mRenderControlCharacter) {
                 // Currently showing main -> switch to std
-                mRenderMainCharacter = false;
-                mRenderStdCharacter = true;
-                LOG_INFO("Rendering: Standard Character");
-            } else if (!mRenderMainCharacter && mRenderStdCharacter) {
+                mRenderExpCharacter = false;
+                mRenderControlCharacter = true;
+                LOG_INFO("Rendering: Control Character");
+            } else if (!mRenderExpCharacter && mRenderControlCharacter) {
                 // Currently showing std -> switch to main
-                mRenderMainCharacter = true;
-                mRenderStdCharacter = false;
+                mRenderExpCharacter = true;
+                mRenderControlCharacter = false;
                 LOG_INFO("Rendering: Main Character");
             } else {
                 // Currently showing both or neither -> switch to main
-                mRenderMainCharacter = true;
-                mRenderStdCharacter = false;
+                mRenderExpCharacter = true;
+                mRenderControlCharacter = false;
                 LOG_INFO("Rendering: Main Character");
             }
         }
@@ -4156,8 +4403,8 @@ void PhysicalExam::reset() {
     }
 
     // Reset character pose and velocities
-    if (mCharacter) {
-        auto skel = mCharacter->getSkeleton();
+    if (mExpCharacter) {
+        auto skel = mExpCharacter->getSkeleton();
 
         // Zero all velocities (linear and angular)
         skel->setVelocities(Eigen::VectorXd::Zero(skel->getNumDofs()));
@@ -4166,8 +4413,8 @@ void PhysicalExam::reset() {
         setPoseSupine();
 
         // Zero muscle activations
-        if (mCharacter->getMuscles().size() > 0) {
-            mCharacter->setActivations(mCharacter->getActivations().setZero());
+        if (mExpCharacter->getMuscles().size() > 0) {
+            mExpCharacter->setActivations(mExpCharacter->getActivations().setZero());
         }
     }
 
@@ -4186,13 +4433,13 @@ void PhysicalExam::reset() {
 }
 
 void PhysicalExam::resetSkeleton() {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("[PhysicalExam] Cannot reset skeleton: no character loaded");
         return;
     }
 
     // Get the skeleton before deletion
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     // FIRST: Ensure GPU has finished all pending rendering operations
     // This prevents GPU from accessing VBOs after we delete them
@@ -4206,8 +4453,8 @@ void PhysicalExam::resetSkeleton() {
     }
 
     // FOURTH: Delete the character object
-    delete mCharacter;
-    mCharacter = nullptr;
+    delete mExpCharacter;
+    mExpCharacter = nullptr;
 
     // Reload character from stored XML paths
     if (mSkeletonPath.empty() || mMusclePath.empty()) {
@@ -4219,10 +4466,10 @@ void PhysicalExam::resetSkeleton() {
 }
 
 void PhysicalExam::setPoseStanding() {
-    if (!mCharacter) return;
+    if (!mExpCharacter) return;
 
     mCurrentPosePreset = 0;
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     // Reset to default standing pose
     setCharacterPose(Eigen::VectorXd::Zero(skel->getNumDofs()));
@@ -4237,10 +4484,10 @@ void PhysicalExam::setPoseStanding() {
 }
 
 void PhysicalExam::setPoseSupine() {
-    if (!mCharacter) return;
+    if (!mExpCharacter) return;
 
     mCurrentPosePreset = 1;
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     // Reset all joints
     setCharacterPose(Eigen::VectorXd::Zero(skel->getNumDofs()));
@@ -4257,10 +4504,10 @@ void PhysicalExam::setPoseSupine() {
 }
 
 void PhysicalExam::setPoseProne() {
-    if (!mCharacter) return;
+    if (!mExpCharacter) return;
 
     mCurrentPosePreset = 2;
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     // Reset all joints
     setCharacterPose(Eigen::VectorXd::Zero(skel->getNumDofs()));
@@ -4279,10 +4526,10 @@ void PhysicalExam::setPoseProne() {
 }
 
 void PhysicalExam::setPoseSupineKneeFlexed(double knee_angle) {
-    if (!mCharacter) return;
+    if (!mExpCharacter) return;
 
     mCurrentPosePreset = 3;
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
 
     // Start with supine position
     setPoseSupine();
@@ -4337,12 +4584,12 @@ void PhysicalExam::printCameraInfo() {
 }
 
 void PhysicalExam::printBodyNodePositions() {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_INFO("No character loaded");
         return;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     if (!skel) {
         LOG_INFO("No skeleton available");
         return;
@@ -4422,12 +4669,12 @@ void PhysicalExam::parseAndPrintPostureConfig(const std::string& pastedData) {
 void PhysicalExam::setupPostureTargets() {
     LOG_INFO("\n=== setupPostureTargets() called ===");
     
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_INFO("ERROR: No character loaded for posture control");
         return;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     if (!skel) {
         LOG_INFO("ERROR: No skeleton available for posture control");
         return;
@@ -4577,11 +4824,11 @@ HandL                | X: 0.8813   Y: 1.1240   Z: -0.4947
 }
 
 void PhysicalExam::applyPostureControl() {
-    if (!mCharacter || !mApplyPostureControl || mPostureTargets.empty()) {
+    if (!mExpCharacter || !mApplyPostureControl || mPostureTargets.empty()) {
         return;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     if (!skel) return;
 
     double dt = mWorld->getTimeStep();
@@ -4652,11 +4899,11 @@ void PhysicalExam::applyPostureControl() {
 }
 
 void PhysicalExam::drawPostureForces() {
-    if (!mCharacter || !mApplyPostureControl || mPostureTargets.empty()) {
+    if (!mExpCharacter || !mApplyPostureControl || mPostureTargets.empty()) {
         return;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     if (!skel) return;
 
     glDisable(GL_LIGHTING);
@@ -4856,14 +5103,43 @@ void PhysicalExam::initializeCameraPresets() {
     }
 }
 
-std::string PhysicalExam::characterConfig() const {
+static std::string formatCharacterLabel(const std::string& musclePath, const std::string& skeletonPath) {
+    // Format muscle path: "@pid:PID/visit/muscle/name.yaml" -> "PID/visit/name"
+    //                      "@data/muscle/name.yaml" -> "name"
     namespace fs = std::filesystem;
-    std::string skel_stem = mSkeletonPath.empty() ? "" : fs::path(mSkeletonPath).stem().string();
-    std::string musc_stem = mMusclePath.empty() ? "" : fs::path(mMusclePath).stem().string();
-    std::string result = skel_stem;
-    if (!musc_stem.empty()) result += " | " + musc_stem;
-    if (!mBrowseCharacterPID.empty()) result = "pid:" + mBrowseCharacterPID + " " + result;
-    return result;
+    auto formatPath = [](const std::string& path) -> std::string {
+        if (path.empty()) return "";
+        if (path.rfind("@pid:", 0) == 0) {
+            // "@pid:PID/visit/muscle/name.yaml" or "@pid:PID/visit/skeleton/name.yaml"
+            std::string rest = path.substr(5);  // strip "@pid:"
+            // rest = "PID/visit/category/name.yaml"
+            auto lastSlash = rest.rfind('/');
+            std::string stem = (lastSlash != std::string::npos)
+                ? fs::path(rest.substr(lastSlash + 1)).stem().string()
+                : fs::path(rest).stem().string();
+            // Extract PID/visit (everything before the category dir)
+            // Pattern: PID/visit/category/file -> we want PID/visit/stem
+            size_t firstSlash = rest.find('/');
+            size_t secondSlash = (firstSlash != std::string::npos) ? rest.find('/', firstSlash + 1) : std::string::npos;
+            if (secondSlash != std::string::npos) {
+                return rest.substr(0, secondSlash) + "/" + stem;
+            }
+            return stem;
+        }
+        // "@data/muscle/name.yaml" -> "name"
+        return fs::path(path).stem().string();
+    };
+    std::string musc = formatPath(musclePath);
+    if (!musc.empty()) return musc;
+    return formatPath(skeletonPath);
+}
+
+std::string PhysicalExam::characterConfig() const {
+    return formatCharacterLabel(mMusclePath, mSkeletonPath);
+}
+
+std::string PhysicalExam::controlCharacterConfig() const {
+    return formatCharacterLabel(mControlMusclePath, mControlSkeletonPath);
 }
 
 void PhysicalExam::selectCameraPresetInteractive() {
@@ -4920,17 +5196,17 @@ void PhysicalExam::setupSweepMuscles() {
     }
 
     mAngleSweepTrackedMuscles.clear();
-    if (!mCharacter) return;
-    if (mCharacter->getMuscles().empty()) return;
+    if (!mExpCharacter) return;
+    if (mExpCharacter->getMuscles().empty()) return;
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     if (mSweepConfig.joint_index >= skel->getNumJoints()) {
         LOG_ERROR("Invalid joint index: " << mSweepConfig.joint_index);
         return;
     }
 
     auto joint = skel->getJoint(mSweepConfig.joint_index);
-    auto muscles = mCharacter->getMuscles();
+    auto muscles = mExpCharacter->getMuscles();
 
     int root_dofs = skel->getRootJoint()->getNumDofs();
     int total_dofs = skel->getNumDofs() - root_dofs;
@@ -4968,10 +5244,10 @@ void PhysicalExam::setupSweepMuscles() {
               << joint->getName());
     
     // Setup standard character muscles
-    if (mStdCharacter && !mStdCharacter->getMuscles().empty()) {
-        mStdAngleSweepTrackedMuscles.clear();
-        auto std_muscles = mStdCharacter->getMuscles();
-        auto std_skel = mStdCharacter->getSkeleton();
+    if (mControlCharacter && !mControlCharacter->getMuscles().empty()) {
+        mControlAngleSweepTrackedMuscles.clear();
+        auto std_muscles = mControlCharacter->getMuscles();
+        auto std_skel = mControlCharacter->getSkeleton();
         auto std_joint = std_skel->getJoint(joint->getName());
         
         if (std_joint) {
@@ -4979,17 +5255,17 @@ void PhysicalExam::setupSweepMuscles() {
                 auto related_joints = muscle->GetRelatedJoints();
                 if (std::find(related_joints.begin(), related_joints.end(), std_joint)
                     != related_joints.end()) {
-                    mStdAngleSweepTrackedMuscles.push_back(muscle->GetName());
+                    mControlAngleSweepTrackedMuscles.push_back(muscle->GetName());
                 }
             }
-            LOG_INFO("Standard character: " << mStdAngleSweepTrackedMuscles.size()
+            LOG_INFO("Control character: " << mControlAngleSweepTrackedMuscles.size()
                       << " muscles crossing joint");
         }
     }
 }
 
 void PhysicalExam::runSweep() {
-    if (!mCharacter) {
+    if (!mExpCharacter) {
         LOG_ERROR("No character loaded");
         return;
     }
@@ -5003,7 +5279,7 @@ void PhysicalExam::runSweep() {
         return;
     }
 
-    auto skel = mCharacter->getSkeleton();
+    auto skel = mExpCharacter->getSkeleton();
     auto joint = skel->getJoint(mSweepConfig.joint_index);
 
     // Set current sweep name for plot titles (with joint name and DOF index)
@@ -5016,7 +5292,7 @@ void PhysicalExam::runSweep() {
 
     // Clear previous sweep data
     mAngleSweepData.clear();
-    mStdAngleSweepData.clear();
+    mControlAngleSweepData.clear();
     
     // Set joint index for passive torque calculation
     mAngleSweepJointIdx = mSweepConfig.joint_index;
@@ -5051,9 +5327,7 @@ void PhysicalExam::renderMusclePlots() {
     ImGui::Checkbox("Title (character)", &mShowCharacterInTitles);
 
     // NEW: Checkbox to toggle standard character overlay
-    if (mStdCharacter && !mStdAngleSweepData.empty()) {
-        ImGui::SameLine();
-        ImGui::Checkbox("Show Standard Character", &mShowStdCharacterInPlots);
+    if (mControlCharacter && !mControlAngleSweepData.empty()) {
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
@@ -5091,11 +5365,11 @@ void PhysicalExam::renderMusclePlots() {
     }
 
     // Compute ROM metrics for both characters (needed for normalization)
-    ROMMetrics main_rom_metrics = computeROMMetrics(mAngleSweepData);
-    ROMMetrics std_rom_metrics;
-    bool has_std_for_plots = mShowStdCharacterInPlots && !mStdAngleSweepData.empty();
-    if (has_std_for_plots) {
-        std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+    ROMMetrics exp_rom_metrics = computeROMMetrics(mAngleSweepData);
+    ROMMetrics control_rom_metrics;
+    bool has_control_for_plots = mShowControlCharacterInPlots && !mControlAngleSweepData.empty();
+    if (has_control_for_plots) {
+        control_rom_metrics = computeROMMetrics(mControlAngleSweepData);
     }
 
     // Build x_data_raw (convert from radians to degrees)
@@ -5107,22 +5381,22 @@ void PhysicalExam::renderMusclePlots() {
 
     // Apply normalization using main character's ROM range
     std::vector<double> x_data = normalizeXAxis(x_data_raw,
-                                                 main_rom_metrics.rom_min_angle,
-                                                 main_rom_metrics.rom_max_angle);
+                                                 exp_rom_metrics.rom_min_angle,
+                                                 exp_rom_metrics.rom_max_angle);
 
     // Build std character x_data_raw
-    std::vector<double> std_x_data_raw;
-    if (has_std_for_plots) {
-        std_x_data_raw.reserve(mStdAngleSweepData.size());
-        for (const auto& pt : mStdAngleSweepData) {
-            std_x_data_raw.push_back(pt.joint_angle * 180.0 / M_PI);
+    std::vector<double> control_x_data_raw;
+    if (has_control_for_plots) {
+        control_x_data_raw.reserve(mControlAngleSweepData.size());
+        for (const auto& pt : mControlAngleSweepData) {
+            control_x_data_raw.push_back(pt.joint_angle * 180.0 / M_PI);
         }
     }
 
     // Apply normalization to std character using its own ROM range
-    std::vector<double> std_x_data = normalizeXAxis(std_x_data_raw,
-                                                     std_rom_metrics.rom_min_angle,
-                                                     std_rom_metrics.rom_max_angle);
+    std::vector<double> control_x_data = normalizeXAxis(control_x_data_raw,
+                                                     control_rom_metrics.rom_min_angle,
+                                                     control_rom_metrics.rom_max_angle);
 
     // Update x-axis label and limits based on mode
     const char* x_axis_label;
@@ -5140,10 +5414,20 @@ void PhysicalExam::renderMusclePlots() {
 
     ImPlotFlags plot_flags = sShowSweepLegend ? 0 : ImPlotFlags_NoLegend;
 
-    // Build character info prefix if enabled: [skeleton | muscle | sweep] or pid:(pid) [...]
+    // Build exp/control legend labels from muscle file paths
+    std::string exp_file_label = characterConfig();
+    std::string ctrl_file_label = controlCharacterConfig();
+    // Legend label for non-per-muscle plots (Total Torque): depends on mode
+    std::string exp_legend = (mLegendLabelMode == 0) ? "exp" : (exp_file_label.empty() ? "exp" : exp_file_label);
+    std::string ctrl_legend = (mLegendLabelMode == 0) ? "ctrl" : (ctrl_file_label.empty() ? "ctrl" : ctrl_file_label);
+    // Info text shown above plots
+    std::string exp_info = "exp: " + (exp_file_label.empty() ? "?" : exp_file_label);
+    std::string ctrl_info = "ctrl: " + (ctrl_file_label.empty() ? "?" : ctrl_file_label);
+
+    // Build character info prefix if enabled
     std::string char_prefix;
     if (mShowCharacterInTitles) {
-        char_prefix = characterConfig() + " | " + mCurrentSweepName;
+        char_prefix = exp_file_label + " | " + mCurrentSweepName;
     }
 
     // Use trial name for plot titles if enabled, with ## suffixes for uniqueness
@@ -5155,6 +5439,22 @@ void PhysicalExam::renderMusclePlots() {
                                     (mShowTrialNameInPlots ? (mCurrentSweepName + "##torque") : "Total Passive Torque vs Joint Angle");
     std::string stiffness_plot_title = mShowCharacterInTitles ? (char_prefix + "##stiffness") :
                                        (mShowTrialNameInPlots ? (mCurrentSweepName + "##stiffness") : "Passive Stiffness (dtau/dtheta) vs Joint Angle");
+
+    // Show character info text
+    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", exp_info.c_str());
+    if (mControlCharacter) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), " / %s", ctrl_info.c_str());
+    }
+
+    // Assign consistent colormap colors to all muscles (stable across visibility toggles)
+    std::map<std::string, ImVec4> muscleColors;
+    {
+        int colorIdx = 0;
+        for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
+            muscleColors[muscle_name] = ImPlot::GetColormapColor(colorIdx++);
+        }
+    }
 
     // ====================================================================
     // RANGE OF MOTION ANALYSIS
@@ -5198,20 +5498,20 @@ void PhysicalExam::renderMusclePlots() {
             ImGui::PopItemWidth();
 
             // Use already-computed ROM metrics
-            const ROMMetrics& main_metrics = main_rom_metrics;
-            const ROMMetrics& std_metrics = std_rom_metrics;
-            bool has_std = !mStdAngleSweepData.empty() && mStdCharacter;
+            const ROMMetrics& exp_metrics = exp_rom_metrics;
+            const ROMMetrics& control_metrics = control_rom_metrics;
+            bool has_control = !mControlAngleSweepData.empty() && mControlCharacter;
 
             // Display table
             ImGui::SeparatorText("ROM Metrics");
-            if (ImGui::BeginTable("ROM_Table", has_std ? 4 : 2,
+            if (ImGui::BeginTable("ROM_Table", has_control ? 4 : 2,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
 
                 // Header
                 ImGui::TableSetupColumn("Metric");
-                ImGui::TableSetupColumn("Main Character");
-                if (has_std) {
-                    ImGui::TableSetupColumn("Standard Character");
+                ImGui::TableSetupColumn("Experimental");
+                if (has_control) {
+                    ImGui::TableSetupColumn("Control");
                     ImGui::TableSetupColumn("Difference");
                 }
                 ImGui::TableHeadersRow();
@@ -5222,7 +5522,7 @@ void PhysicalExam::renderMusclePlots() {
                 ImGui::Text("Sweep Range");
                 ImGui::TableNextColumn();
                 ImGui::Text("%.1f° to %.1f°", angle_min * 180.0 / M_PI, angle_max * 180.0 / M_PI);
-                if (has_std) {
+                if (has_control) {
                     ImGui::TableNextColumn();
                     ImGui::Text("(same)");
                     ImGui::TableNextColumn();
@@ -5234,14 +5534,14 @@ void PhysicalExam::renderMusclePlots() {
                 ImGui::TableNextColumn();
                 ImGui::Text("Joint ROM");
                 ImGui::TableNextColumn();
-                ImGui::Text("%.2f° [%.1f° to %.1f°]", main_metrics.rom_deg,
-                    main_metrics.rom_min_angle, main_metrics.rom_max_angle);
-                if (has_std) {
+                ImGui::Text("%.2f° [%.1f° to %.1f°]", exp_metrics.rom_deg,
+                    exp_metrics.rom_min_angle, exp_metrics.rom_max_angle);
+                if (has_control) {
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f° [%.1f° to %.1f°]", std_metrics.rom_deg,
-                        std_metrics.rom_min_angle, std_metrics.rom_max_angle);
+                    ImGui::Text("%.2f° [%.1f° to %.1f°]", control_metrics.rom_deg,
+                        control_metrics.rom_min_angle, control_metrics.rom_max_angle);
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f°", main_metrics.rom_deg - std_metrics.rom_deg);
+                    ImGui::Text("%.2f°", exp_metrics.rom_deg - control_metrics.rom_deg);
                 }
 
                 // Peak Stiffness row
@@ -5249,17 +5549,17 @@ void PhysicalExam::renderMusclePlots() {
                 ImGui::TableNextColumn();
                 ImGui::Text("Peak Stiffness");
                 ImGui::TableNextColumn();
-                bool stiff_flag = main_metrics.peak_stiffness > mROMThresholds.max_stiffness;
+                bool stiff_flag = exp_metrics.peak_stiffness > mROMThresholds.max_stiffness;
                 if (stiff_flag) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-                ImGui::Text("%.2f Nm/rad @ %.1f°", main_metrics.peak_stiffness,
-                    main_metrics.angle_at_peak_stiffness);
+                ImGui::Text("%.2f Nm/rad @ %.1f°", exp_metrics.peak_stiffness,
+                    exp_metrics.angle_at_peak_stiffness);
                 if (stiff_flag) ImGui::PopStyleColor();
-                if (has_std) {
+                if (has_control) {
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f Nm/rad @ %.1f°", std_metrics.peak_stiffness,
-                        std_metrics.angle_at_peak_stiffness);
+                    ImGui::Text("%.2f Nm/rad @ %.1f°", control_metrics.peak_stiffness,
+                        control_metrics.angle_at_peak_stiffness);
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f Nm/rad", main_metrics.peak_stiffness - std_metrics.peak_stiffness);
+                    ImGui::Text("%.2f Nm/rad", exp_metrics.peak_stiffness - control_metrics.peak_stiffness);
                 }
 
                 // Peak Torque row
@@ -5267,17 +5567,17 @@ void PhysicalExam::renderMusclePlots() {
                 ImGui::TableNextColumn();
                 ImGui::Text("Peak Torque");
                 ImGui::TableNextColumn();
-                bool torque_flag = main_metrics.peak_torque > mROMThresholds.max_torque;
+                bool torque_flag = exp_metrics.peak_torque > mROMThresholds.max_torque;
                 if (torque_flag) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-                ImGui::Text("%.2f Nm @ %.1f°", main_metrics.peak_torque,
-                    main_metrics.angle_at_peak_torque);
+                ImGui::Text("%.2f Nm @ %.1f°", exp_metrics.peak_torque,
+                    exp_metrics.angle_at_peak_torque);
                 if (torque_flag) ImGui::PopStyleColor();
-                if (has_std) {
+                if (has_control) {
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f Nm @ %.1f°", std_metrics.peak_torque,
-                        std_metrics.angle_at_peak_torque);
+                    ImGui::Text("%.2f Nm @ %.1f°", control_metrics.peak_torque,
+                        control_metrics.angle_at_peak_torque);
                     ImGui::TableNextColumn();
-                    ImGui::Text("%.2f Nm", main_metrics.peak_torque - std_metrics.peak_torque);
+                    ImGui::Text("%.2f Nm", exp_metrics.peak_torque - control_metrics.peak_torque);
                 }
 
                 ImGui::EndTable();
@@ -5304,21 +5604,23 @@ void PhysicalExam::renderMusclePlots() {
                 ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImGuiCond_Always);
                 ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
                 ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
-                ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
-                ImPlot::PlotLine("Total Torque", x_data.data(), torque_data.data(), torque_data.size());
+                if (mShowExpCharacterInPlots) {
+                    ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
+                    ImPlot::PlotLine(exp_legend.c_str(), x_data.data(), torque_data.data(), torque_data.size());
+                }
 
-                // Plot standard character data
-                if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-                    std::vector<double> std_torque_data;
-                    std_torque_data.reserve(mStdAngleSweepData.size());
-                    for (const auto& pt : mStdAngleSweepData) {
-                        std_torque_data.push_back(pt.passive_torque_total);
+                // Plot control character data
+                if (mShowControlCharacterInPlots && !mControlAngleSweepData.empty() && mControlCharacter) {
+                    std::vector<double> control_torque_data;
+                    control_torque_data.reserve(mControlAngleSweepData.size());
+                    for (const auto& pt : mControlAngleSweepData) {
+                        control_torque_data.push_back(pt.passive_torque_total);
                     }
-                    if (!std_torque_data.empty() && std_torque_data.size() == std_x_data.size()) {
-                        ImPlot::SetNextLineStyle(ImVec4(0.0, 0.8, 0.0, 1.0), 4.0f);
+                    if (!control_torque_data.empty() && control_torque_data.size() == control_x_data.size()) {
+                        ImPlot::SetNextLineStyle(ImVec4(0.0, 0.8, 0.0, 0.5f), 4.0f);
                         ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-                        ImPlot::PlotLine("Total Torque (std)", std_x_data.data(),
-                            std_torque_data.data(), std_torque_data.size());
+                        ImPlot::PlotLine(ctrl_legend.c_str(), control_x_data.data(),
+                            control_torque_data.data(), control_torque_data.size());
                     }
                 }
 
@@ -5334,17 +5636,17 @@ void PhysicalExam::renderMusclePlots() {
             //         ImPlot::PlotLine("Stiffness", x_data.data(), stiffness_data.data(), stiffness_data.size());
 
             //         // Plot standard character data
-            //         if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-            //             std::vector<double> std_stiffness_data;
-            //             std_stiffness_data.reserve(mStdAngleSweepData.size());
-            //             for (const auto& pt : mStdAngleSweepData) {
-            //                 std_stiffness_data.push_back(pt.passive_torque_stiffness);
+            //         if (mShowControlCharacterInPlots && !mControlAngleSweepData.empty() && mControlCharacter) {
+            //             std::vector<double> control_stiffness_data;
+            //             control_stiffness_data.reserve(mControlAngleSweepData.size());
+            //             for (const auto& pt : mControlAngleSweepData) {
+            //                 control_stiffness_data.push_back(pt.passive_torque_stiffness);
             //             }
-            //             if (!std_stiffness_data.empty() && std_stiffness_data.size() == std_x_data.size()) {
+            //             if (!control_stiffness_data.empty() && control_stiffness_data.size() == control_x_data.size()) {
             //                 ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 0.5, 1.0), 1.0f);
             //                 ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-            //                 ImPlot::PlotLine("Stiffness (std)", std_x_data.data(),
-            //                     std_stiffness_data.data(), std_stiffness_data.size());
+            //                 ImPlot::PlotLine("Stiffness (control)", control_x_data.data(),
+            //                     control_stiffness_data.data(), control_stiffness_data.size());
             //             }
             //         }
 
@@ -5361,67 +5663,55 @@ void PhysicalExam::renderMusclePlots() {
             ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
             ImPlot::SetupAxis(ImAxis_Y1, "lm_norm");
 
-            for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
-                auto vis_it = mMuscleVisibility.find(muscle_name);
-                if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                    continue;
-                }
+            if (mShowExpCharacterInPlots) {
+                for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
+                    auto col_it = muscleColors.find(muscle_name);
+                    if (col_it == muscleColors.end()) continue;
 
-                // Build y_data for this muscle
-                std::vector<double> lm_norm_data;
-                lm_norm_data.reserve(mAngleSweepData.size());
-                for (const auto& pt : mAngleSweepData) {
-                    auto it = pt.muscle_lm_norm.find(muscle_name);
-                    if (it != pt.muscle_lm_norm.end()) {
-                        lm_norm_data.push_back(it->second);
+                    std::vector<double> lm_norm_data;
+                    lm_norm_data.reserve(mAngleSweepData.size());
+                    for (const auto& pt : mAngleSweepData) {
+                        auto it = pt.muscle_lm_norm.find(muscle_name);
+                        if (it != pt.muscle_lm_norm.end()) {
+                            lm_norm_data.push_back(it->second);
+                        }
                     }
-                }
 
-                if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
-                    ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
-                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
-                        lm_norm_data.data(), lm_norm_data.size());
+                    if (!lm_norm_data.empty() && lm_norm_data.size() == x_data.size()) {
+                        ImPlot::SetNextLineStyle(col_it->second, 4.0f);
+                        ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                            lm_norm_data.data(), lm_norm_data.size());
+                    }
                 }
             }
 
-            // Plot standard character data (dashed lines) - only if checkbox enabled
-            if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-                // Prepare filter for case-insensitive matching
-                std::string filter_lower(mMuscleFilterBuffer);
-                std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
-
-                for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
-                    // Apply text filter (case-insensitive)
-                    if (!filter_lower.empty()) {
-                        std::string muscle_lower = muscle_name;
-                        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
-                        if (muscle_lower.find(filter_lower) == std::string::npos) {
-                            continue;
-                        }
-                    }
-
-                    // Check visibility - same logic as main muscles (hide if not in map or unchecked)
+            // Control character data: same color but faint, hidden from legend
+            if (mShowControlCharacterInPlots && !mControlAngleSweepData.empty() && mControlCharacter) {
+                for (const auto& muscle_name : mControlAngleSweepTrackedMuscles) {
                     auto vis_it = mMuscleVisibility.find(muscle_name);
-                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                        continue;
-                    }
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
+                    auto col_it = muscleColors.find(muscle_name);
+                    if (col_it == muscleColors.end()) continue;
 
-                    // Build y_data for this muscle
-                    std::vector<double> std_lm_norm_data;
-                    std_lm_norm_data.reserve(mStdAngleSweepData.size());
-                    for (const auto& pt : mStdAngleSweepData) {
+                    std::vector<double> control_lm_norm_data;
+                    control_lm_norm_data.reserve(mControlAngleSweepData.size());
+                    for (const auto& pt : mControlAngleSweepData) {
                         auto it = pt.muscle_lm_norm.find(muscle_name);
                         if (it != pt.muscle_lm_norm.end()) {
-                            std_lm_norm_data.push_back(it->second);
+                            control_lm_norm_data.push_back(it->second);
                         }
                     }
 
-                    if (!std_lm_norm_data.empty() && std_lm_norm_data.size() == std_x_data.size()) {
-                        std::string label = muscle_name + " (std)";
-                        ImPlot::SetNextLineStyle(ImVec4(0.0, 0.8, 0.0, 1.0), 4.0f);
+                    if (!control_lm_norm_data.empty() && control_lm_norm_data.size() == control_x_data.size()) {
+                        ImVec4 faint = col_it->second;
+                        faint.w = 0.35f;
+                        std::string label = "##ctrl_lm_" + muscle_name;
+                        ImPlot::SetNextLineStyle(faint, 4.0f);
                         ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-                        ImPlot::PlotLine(label.c_str(), std_x_data.data(),
-                            std_lm_norm_data.data(), std_lm_norm_data.size());
+                        ImPlot::PlotLine(label.c_str(), control_x_data.data(),
+                            control_lm_norm_data.data(), control_lm_norm_data.size());
                     }
                 }
             }
@@ -5437,67 +5727,55 @@ void PhysicalExam::renderMusclePlots() {
             ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
             ImPlot::SetupAxis(ImAxis_Y1, "Passive Force (N)");
 
-            for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
-                auto vis_it = mMuscleVisibility.find(muscle_name);
-                if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                    continue;
-                }
+            if (mShowExpCharacterInPlots) {
+                for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
+                    auto vis_it = mMuscleVisibility.find(muscle_name);
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
+                    auto col_it = muscleColors.find(muscle_name);
+                    if (col_it == muscleColors.end()) continue;
 
-                // Build y_data for this muscle
-                std::vector<double> fp_data;
-                fp_data.reserve(mAngleSweepData.size());
-                for (const auto& pt : mAngleSweepData) {
-                    auto it = pt.muscle_fp.find(muscle_name);
-                    if (it != pt.muscle_fp.end()) {
-                        fp_data.push_back(it->second);
+                    std::vector<double> fp_data;
+                    fp_data.reserve(mAngleSweepData.size());
+                    for (const auto& pt : mAngleSweepData) {
+                        auto it = pt.muscle_fp.find(muscle_name);
+                        if (it != pt.muscle_fp.end()) {
+                            fp_data.push_back(it->second);
+                        }
                     }
-                }
 
-                if (!fp_data.empty() && fp_data.size() == x_data.size()) {
-                    ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
-                    ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
-                        fp_data.data(), fp_data.size());
+                    if (!fp_data.empty() && fp_data.size() == x_data.size()) {
+                        ImPlot::SetNextLineStyle(col_it->second, 4.0f);
+                        ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
+                            fp_data.data(), fp_data.size());
+                    }
                 }
             }
 
-            // Plot standard character data (dashed lines) - only if checkbox enabled
-            if (mShowStdCharacterInPlots && !mStdAngleSweepData.empty() && mStdCharacter) {
-                // Prepare filter for case-insensitive matching
-                std::string filter_lower(mMuscleFilterBuffer);
-                std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
-
-                for (const auto& muscle_name : mStdAngleSweepTrackedMuscles) {
-                    // Apply text filter (case-insensitive)
-                    if (!filter_lower.empty()) {
-                        std::string muscle_lower = muscle_name;
-                        std::transform(muscle_lower.begin(), muscle_lower.end(), muscle_lower.begin(), ::tolower);
-                        if (muscle_lower.find(filter_lower) == std::string::npos) {
-                            continue;
-                        }
-                    }
-
-                    // Check visibility - same logic as main muscles (hide if not in map or unchecked)
+            // Control character data: same color but faint, hidden from legend
+            if (mShowControlCharacterInPlots && !mControlAngleSweepData.empty() && mControlCharacter) {
+                for (const auto& muscle_name : mControlAngleSweepTrackedMuscles) {
                     auto vis_it = mMuscleVisibility.find(muscle_name);
-                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) {
-                        continue;
-                    }
+                    if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
+                    auto col_it = muscleColors.find(muscle_name);
+                    if (col_it == muscleColors.end()) continue;
 
-                    // Build y_data for this muscle
-                    std::vector<double> std_fp_data;
-                    std_fp_data.reserve(mStdAngleSweepData.size());
-                    for (const auto& pt : mStdAngleSweepData) {
+                    std::vector<double> control_fp_data;
+                    control_fp_data.reserve(mControlAngleSweepData.size());
+                    for (const auto& pt : mControlAngleSweepData) {
                         auto it = pt.muscle_fp.find(muscle_name);
                         if (it != pt.muscle_fp.end()) {
-                            std_fp_data.push_back(it->second);
+                            control_fp_data.push_back(it->second);
                         }
                     }
 
-                    if (!std_fp_data.empty() && std_fp_data.size() == std_x_data.size()) {
-                        std::string label = muscle_name + " (std)";
-                        ImPlot::SetNextLineStyle(ImVec4(0.0, 0.8, 0.0, 1.0), 4.0f);
+                    if (!control_fp_data.empty() && control_fp_data.size() == control_x_data.size()) {
+                        ImVec4 faint = col_it->second;
+                        faint.w = 0.35f;
+                        std::string label = "##ctrl_fp_" + muscle_name;
+                        ImPlot::SetNextLineStyle(faint, 4.0f);
                         ImPlot::SetNextMarkerStyle(ImPlotMarker_None);
-                        ImPlot::PlotLine(label.c_str(), std_x_data.data(),
-                            std_fp_data.data(), std_fp_data.size());
+                        ImPlot::PlotLine(label.c_str(), control_x_data.data(),
+                            control_fp_data.data(), control_fp_data.size());
                     }
                 }
             }
@@ -5508,10 +5786,10 @@ void PhysicalExam::renderMusclePlots() {
 
     // Per-Muscle Joint Torque Plot with joint selection
     if (collapsingHeaderWithControls("Per-Muscle Joint Torque")) {
-        if (!mCharacter) {
+        if (!mExpCharacter) {
             ImGui::TextDisabled("No character loaded");
         } else {
-            auto skel = mCharacter->getSkeleton();
+            auto skel = mExpCharacter->getSkeleton();
             int root_dofs = skel->getRootJoint()->getNumDofs();
 
             // Joint selection listbox
@@ -5541,12 +5819,13 @@ void PhysicalExam::renderMusclePlots() {
                 ImPlot::SetupAxis(ImAxis_X1, x_axis_label);
                 ImPlot::SetupAxis(ImAxis_Y1, "Passive Torque (Nm)");
 
+                if (mShowExpCharacterInPlots)
                 for (const auto& muscle_name : mAngleSweepTrackedMuscles) {
                     auto vis_it = mMuscleVisibility.find(muscle_name);
                     if (vis_it == mMuscleVisibility.end() || !vis_it->second) continue;
 
                     // Get muscle to access its DOF mapping
-                    Muscle* muscle = mCharacter->getMuscleByName(muscle_name);
+                    Muscle* muscle = mExpCharacter->getMuscleByName(muscle_name);
                     if (!muscle) continue;
                     const std::vector<int>& related_dof_indices = muscle->related_dof_indices;
 
@@ -5574,7 +5853,9 @@ void PhysicalExam::renderMusclePlots() {
                     }
 
                     if (!magnitude_data.empty() && magnitude_data.size() == x_data.size()) {
-                        ImPlot::SetNextLineStyle(ImVec4(1.0, 0.0, 0.0, 1.0), 4.0f);
+                        auto col_it = muscleColors.find(muscle_name);
+                        ImVec4 color = (col_it != muscleColors.end()) ? col_it->second : ImVec4(1,1,1,1);
+                        ImPlot::SetNextLineStyle(color, 4.0f);
                         ImPlot::PlotLine(muscle_name.c_str(), x_data.data(),
                             magnitude_data.data(), magnitude_data.size());
                     }
@@ -5588,8 +5869,8 @@ void PhysicalExam::renderMusclePlots() {
 void PhysicalExam::clearSweepData() {
     mAngleSweepData.clear();
     mAngleSweepTrackedMuscles.clear();
-    mStdAngleSweepData.clear();
-    mStdAngleSweepTrackedMuscles.clear();
+    mControlAngleSweepData.clear();
+    mControlAngleSweepTrackedMuscles.clear();
     // DON'T clear mMuscleVisibility - preserve user selections across sweeps
     // Note: mGraphData is now only used for posture control, not sweep data
     LOG_INFO("Sweep data cleared");
@@ -5629,20 +5910,20 @@ void PhysicalExam::loadBufferForVisualization(int buffer_index) {
 
     // Load buffer data into current working data for plotting
     mAngleSweepData = buffer.angle_sweep_data;
-    mStdAngleSweepData = buffer.std_angle_sweep_data;
+    mControlAngleSweepData = buffer.control_angle_sweep_data;
     mAngleSweepTrackedMuscles = buffer.tracked_muscles;
-    mStdAngleSweepTrackedMuscles = buffer.std_tracked_muscles;
+    mControlAngleSweepTrackedMuscles = buffer.control_tracked_muscles;
     mCurrentSweepName = buffer.trial_name;
 
     // Apply normative pose to character and std character (only if DOF count matches)
     // Falls back to base_pose if normative_pose is not available
     const Eigen::VectorXd& pose_to_apply = (buffer.normative_pose.size() > 0) ? buffer.normative_pose : buffer.base_pose;
-    if (pose_to_apply.size() > 0 && mCharacter) {
-        auto skel = mCharacter->getSkeleton();
+    if (pose_to_apply.size() > 0 && mExpCharacter) {
+        auto skel = mExpCharacter->getSkeleton();
         if (pose_to_apply.size() == skel->getNumDofs()) {
             skel->setPositions(pose_to_apply);
-            if (mStdCharacter) {
-                auto stdSkel = mStdCharacter->getSkeleton();
+            if (mControlCharacter) {
+                auto stdSkel = mControlCharacter->getSkeleton();
                 if (pose_to_apply.size() == stdSkel->getNumDofs()) {
                     stdSkel->setPositions(pose_to_apply);
                 }
@@ -5682,7 +5963,7 @@ void PhysicalExam::removeTrialBuffer(int buffer_index) {
         loadBufferForVisualization(mSelectedBufferIndex);
     } else {
         mAngleSweepData.clear();
-        mStdAngleSweepData.clear();
+        mControlAngleSweepData.clear();
     }
 
     LOG_INFO("Removed trial buffer: " << name);
@@ -5692,14 +5973,14 @@ void PhysicalExam::clearTrialBuffers() {
     mTrialBuffers.clear();
     mSelectedBufferIndex = -1;
     mAngleSweepData.clear();
-    mStdAngleSweepData.clear();
+    mControlAngleSweepData.clear();
     mAngleSweepTrackedMuscles.clear();
-    mStdAngleSweepTrackedMuscles.clear();
+    mControlAngleSweepTrackedMuscles.clear();
     LOG_INFO("All trial buffers cleared");
 }
 
 void PhysicalExam::runSelectedTrials() {
-    if (!mExamSettingLoaded || !mCharacter) {
+    if (!mExamSettingLoaded || !mExpCharacter) {
         LOG_ERROR("Cannot run trials: exam setting not loaded or character not available");
         return;
     }
@@ -5737,7 +6018,7 @@ void PhysicalExam::runSelectedTrials() {
             mCurrentTrialIndex = 0;
             mRecordedData.clear();
 
-            // Run the trial (populates mAngleSweepData, mStdAngleSweepData)
+            // Run the trial (populates mAngleSweepData, mControlAngleSweepData)
             runCurrentTrial();
 
             // Create buffer from completed trial
@@ -5749,9 +6030,9 @@ void PhysicalExam::runSelectedTrials() {
             buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
-            buffer.std_angle_sweep_data = mStdAngleSweepData;
+            buffer.control_angle_sweep_data = mControlAngleSweepData;
             buffer.tracked_muscles = mAngleSweepTrackedMuscles;
-            buffer.std_tracked_muscles = mStdAngleSweepTrackedMuscles;
+            buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
             buffer.config = trial.angle_sweep;
             buffer.torque_cutoff = trial.torque_cutoff;
             // Copy clinical data reference for ROM table rendering
@@ -5767,10 +6048,11 @@ void PhysicalExam::runSelectedTrials() {
             }
             buffer.cutoff_angles = computeCutoffAngles(mAngleSweepData, effective_cutoff);
             buffer.rom_metrics = computeROMMetrics(mAngleSweepData);
-            if (!mStdAngleSweepData.empty()) {
-                buffer.std_rom_metrics = computeROMMetrics(mStdAngleSweepData);
+            if (!mControlAngleSweepData.empty()) {
+                buffer.control_cutoff_angles = computeCutoffAngles(mControlAngleSweepData, effective_cutoff);
+                buffer.control_rom_metrics = computeROMMetrics(mControlAngleSweepData);
             }
-            buffer.base_pose = mCharacter->getSkeleton()->getPositions();
+            buffer.base_pose = mExpCharacter->getSkeleton()->getPositions();
 
             // Capture normative pose: set skeleton to normative angle and capture
             // Strip side suffix ("/left" or "/right") to match mNormativeROM key format
@@ -5792,7 +6074,7 @@ void PhysicalExam::runSelectedTrials() {
                     LOG_VERBOSE("[NormativePose] After neg applied: " << (normative_rad * 180.0 / M_PI) << " deg");
                 }
 
-                auto skel = mCharacter->getSkeleton();
+                auto skel = mExpCharacter->getSkeleton();
                 auto joint = skel->getJoint(trial.angle_sweep.joint_name);
                 if (joint) {
                     int dof_idx = joint->getIndexInSkeleton(trial.angle_sweep.dof_index);
@@ -5877,19 +6159,19 @@ void PhysicalExam::runSelectedTrials() {
 
 void PhysicalExam::drawClinicalDataSection() {
     if (collapsingHeaderWithControls("Clinical Data")) {
-        if (!mPIDNavigator) {
+        if (!mExpPIDNavigator) {
             ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "PID Navigator not available");
             return;
         }
 
         // PID Navigator selector (PID list only, no file sections)
         // PID changes are handled by onBrowsePIDChanged callback
-        mPIDNavigator->renderUI(nullptr, 120, 0);
+        mExpPIDNavigator->renderUI(nullptr, 120, 0);
 
         // Handle deselection (e.g., after PID list refresh)
-        const auto& pidState = mPIDNavigator->getState();
-        if (pidState.selectedPID < 0 && !mBrowseCharacterPID.empty()) {
-            mBrowseCharacterPID.clear();
+        const auto& pidState = mExpPIDNavigator->getState();
+        if (pidState.selectedPID < 0 && !mExpBrowsePID.empty()) {
+            mExpBrowsePID.clear();
             mClinicalWeightAvailable = false;
             mClinicalROM.clear();
             mClinicalROMPID.clear();
@@ -5900,53 +6182,74 @@ void PhysicalExam::drawClinicalDataSection() {
 
 void PhysicalExam::drawCharacterLoadSection() {
     if (collapsingHeaderWithControls("Character Loading")) {
-        // Display current skeleton and muscle paths
-        if (!mBrowseSkeletonPath.empty()) {
-            ImGui::Text("Skeleton: %s", mBrowseSkeletonPath.c_str());
+        // Show current bindings
+        if (mExpCharacter) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Exp: %s",
+                mExpSkeletonPath.empty() ? "(none)" : mExpSkeletonPath.c_str());
         }
-        if (!mBrowseMusclePath.empty()) {
-            ImGui::Text("Muscle: %s", mBrowseMusclePath.c_str());
+        if (mControlCharacter) {
+            ImGui::TextColored(ImVec4(0.3f, 0.5f, 0.8f, 1.0f), "Ctrl: %s",
+                mControlSkeletonPath.empty() ? "(none)" : mControlSkeletonPath.c_str());
         }
 
-        // Update PID from navigator
-        if (mPIDNavigator) {
-            const auto& pidState = mPIDNavigator->getState();
+        // Single PID navigator
+        if (mExpPIDNavigator) {
+            const auto& pidState = mExpPIDNavigator->getState();
             if (pidState.selectedPID >= 0) {
-                mBrowseCharacterPID = pidState.pidList[pidState.selectedPID];
+                mExpBrowsePID = pidState.pidList[pidState.selectedPID];
             }
         }
 
-        ImGui::Separator();
+        // Single skeleton + muscle file selectors
+        {
+            PIDNav::CharacterFileRef skelRef{mExpBrowseSkeletonDataSource, mExpBrowseSkeletonPath, mExpBrowseSkeletonCandidates,
+                [this]() { scanExpSkeletonFilesForBrowse(); }};
+            PIDNav::CharacterFileRef muscleRef{mExpBrowseMuscleDataSource, mExpBrowseMusclePath, mExpBrowseMuscleCandidates,
+                [this]() { scanExpMuscleFilesForBrowse(); }};
+            PIDNav::CharacterLoadOptions opts;
+            opts.showPatientInfo = true;
+            opts.showDeleteButtons = false;
+            opts.showRebuildButton = false;  // We draw our own buttons below
 
-        PIDNav::CharacterFileRef skelRef{mBrowseSkeletonDataSource, mBrowseSkeletonPath, mBrowseSkeletonCandidates,
-            [this]() { scanSkeletonFilesForBrowse(); }};
-        PIDNav::CharacterFileRef muscleRef{mBrowseMuscleDataSource, mBrowseMusclePath, mBrowseMuscleCandidates,
-            [this]() { scanMuscleFilesForBrowse(); }};
-        PIDNav::CharacterLoadOptions opts;
-        opts.showPatientInfo = true;
-        opts.showDeleteButtons = false;
-        opts.requireBothForRebuild = true;
+            PIDNav::drawCharacterLoadContent(
+                mExpPIDNavigator.get(), nullptr, mExpBrowsePID,
+                skelRef, muscleRef,
+                nullptr,
+                opts);
+        }
 
-        PIDNav::drawCharacterLoadContent(
-            mPIDNavigator.get(), nullptr, mBrowseCharacterPID,
-            skelRef, muscleRef,
-            [this]() { reloadCharacterFromBrowse(); },
-            opts);
+        // Two build buttons side by side
+        bool canBuild = !mExpBrowseSkeletonPath.empty() && !mExpBrowseMusclePath.empty();
+
+        if (!canBuild) ImGui::BeginDisabled();
+        float buttonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        if (ImGui::Button("Build Exp", ImVec2(buttonWidth, 0))) {
+            reloadExpCharacterFromBrowse();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Build Control", ImVec2(buttonWidth, 0))) {
+            // Copy current browse state to control and load
+            mControlBrowseSkeletonPath = mExpBrowseSkeletonPath;
+            mControlBrowseMusclePath = mExpBrowseMusclePath;
+            mControlBrowsePID = mExpBrowsePID;
+            reloadControlCharacterFromBrowse();
+        }
+        if (!canBuild) ImGui::EndDisabled();
     }
 }
 
-void PhysicalExam::scanSkeletonFilesForBrowse() {
+void PhysicalExam::scanExpSkeletonFilesForBrowse() {
     namespace fs = std::filesystem;
-    mBrowseSkeletonCandidates.clear();
+    mExpBrowseSkeletonCandidates.clear();
 
     try {
         fs::path skelDir;
-        if (mBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
+        if (mExpBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mExpBrowsePID.empty()) {
             // Use patient data directory: {pid_root}/{pid}/{visit}/skeleton/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string visit = mPIDNavigator->getState().getVisitDir();
-                skelDir = pidRoot / mBrowseCharacterPID / visit / "skeleton";
+                std::string visit = mExpPIDNavigator->getState().getVisitDir();
+                skelDir = pidRoot / mExpBrowsePID / visit / "skeleton";
 
                 // Create directory if it doesn't exist
                 if (!fs::exists(skelDir)) {
@@ -5966,28 +6269,28 @@ void PhysicalExam::scanSkeletonFilesForBrowse() {
         for (const auto& entry : fs::directory_iterator(skelDir)) {
             auto ext = entry.path().extension().string();
             if (ext == ".yaml" || ext == ".xml") {
-                mBrowseSkeletonCandidates.push_back(entry.path().filename().string());
+                mExpBrowseSkeletonCandidates.push_back(entry.path().filename().string());
             }
         }
-        std::sort(mBrowseSkeletonCandidates.begin(), mBrowseSkeletonCandidates.end());
+        std::sort(mExpBrowseSkeletonCandidates.begin(), mExpBrowseSkeletonCandidates.end());
     }
     catch (const std::exception& e) {
         LOG_WARN("[PhysicalExam] Error scanning skeleton files: " << e.what());
     }
 }
 
-void PhysicalExam::scanMuscleFilesForBrowse() {
+void PhysicalExam::scanExpMuscleFilesForBrowse() {
     namespace fs = std::filesystem;
-    mBrowseMuscleCandidates.clear();
+    mExpBrowseMuscleCandidates.clear();
 
     try {
         fs::path muscleDir;
-        if (mBrowseMuscleDataSource == CharacterDataSource::PatientData && !mBrowseCharacterPID.empty()) {
+        if (mExpBrowseMuscleDataSource == CharacterDataSource::PatientData && !mExpBrowsePID.empty()) {
             // Use patient data directory: {pid_root}/{pid}/{visit}/muscle/
             fs::path pidRoot = rm::getManager().getPidRoot();
             if (!pidRoot.empty()) {
-                std::string visit = mPIDNavigator->getState().getVisitDir();
-                muscleDir = pidRoot / mBrowseCharacterPID / visit / "muscle";
+                std::string visit = mExpPIDNavigator->getState().getVisitDir();
+                muscleDir = pidRoot / mExpBrowsePID / visit / "muscle";
 
                 // Create directory if it doesn't exist
                 if (!fs::exists(muscleDir)) {
@@ -6007,33 +6310,172 @@ void PhysicalExam::scanMuscleFilesForBrowse() {
         for (const auto& entry : fs::directory_iterator(muscleDir)) {
             auto ext = entry.path().extension().string();
             if (ext == ".yaml" || ext == ".xml") {
-                mBrowseMuscleCandidates.push_back(entry.path().filename().string());
+                mExpBrowseMuscleCandidates.push_back(entry.path().filename().string());
             }
         }
-        std::sort(mBrowseMuscleCandidates.begin(), mBrowseMuscleCandidates.end());
+        std::sort(mExpBrowseMuscleCandidates.begin(), mExpBrowseMuscleCandidates.end());
     }
     catch (const std::exception& e) {
         LOG_WARN("[PhysicalExam] Error scanning muscle files: " << e.what());
     }
 }
 
-void PhysicalExam::reloadCharacterFromBrowse() {
-    if (mBrowseSkeletonPath.empty() || mBrowseMusclePath.empty()) {
+void PhysicalExam::reloadExpCharacterFromBrowse() {
+    if (mExpBrowseSkeletonPath.empty() || mExpBrowseMusclePath.empty()) {
         LOG_WARN("[PhysicalExam] Cannot reload: skeleton or muscle path not selected");
         return;
     }
 
     LOG_INFO("[PhysicalExam] Reloading character:");
-    LOG_INFO("  Skeleton: " << mBrowseSkeletonPath);
-    LOG_INFO("  Muscle: " << mBrowseMusclePath);
+    LOG_INFO("  Skeleton: " << mExpBrowseSkeletonPath);
+    LOG_INFO("  Muscle: " << mExpBrowseMusclePath);
 
     // Call the existing loadCharacter method
-    loadCharacter(mBrowseSkeletonPath, mBrowseMusclePath);
+    loadCharacter(mExpBrowseSkeletonPath, mExpBrowseMusclePath);
 
     // Reinitialize sweep muscles for the new character
     setupSweepMuscles();
 
-    LOG_INFO("[PhysicalExam] Character reloaded successfully");
+    LOG_INFO("[PhysicalExam] Experimental character reloaded successfully");
+}
+
+void PhysicalExam::scanControlSkeletonFilesForBrowse() {
+    namespace fs = std::filesystem;
+    mControlBrowseSkeletonCandidates.clear();
+
+    try {
+        fs::path skelDir;
+        if (mControlBrowseSkeletonDataSource == CharacterDataSource::PatientData && !mControlBrowsePID.empty()) {
+            fs::path pidRoot = rm::getManager().getPidRoot();
+            if (!pidRoot.empty()) {
+                std::string visit = mControlPIDNavigator->getState().getVisitDir();
+                skelDir = pidRoot / mControlBrowsePID / visit / "skeleton";
+                if (!fs::exists(skelDir)) {
+                    fs::create_directories(skelDir);
+                }
+            } else {
+                return;
+            }
+        } else {
+            skelDir = rm::getManager().resolveDir("@data/skeleton");
+            if (!fs::exists(skelDir)) return;
+        }
+
+        for (const auto& entry : fs::directory_iterator(skelDir)) {
+            auto ext = entry.path().extension().string();
+            if (ext == ".yaml" || ext == ".xml") {
+                mControlBrowseSkeletonCandidates.push_back(entry.path().filename().string());
+            }
+        }
+        std::sort(mControlBrowseSkeletonCandidates.begin(), mControlBrowseSkeletonCandidates.end());
+    }
+    catch (const std::exception& e) {
+        LOG_WARN("[PhysicalExam] Error scanning control skeleton files: " << e.what());
+    }
+}
+
+void PhysicalExam::scanControlMuscleFilesForBrowse() {
+    namespace fs = std::filesystem;
+    mControlBrowseMuscleCandidates.clear();
+
+    try {
+        fs::path muscleDir;
+        if (mControlBrowseMuscleDataSource == CharacterDataSource::PatientData && !mControlBrowsePID.empty()) {
+            fs::path pidRoot = rm::getManager().getPidRoot();
+            if (!pidRoot.empty()) {
+                std::string visit = mControlPIDNavigator->getState().getVisitDir();
+                muscleDir = pidRoot / mControlBrowsePID / visit / "muscle";
+                if (!fs::exists(muscleDir)) {
+                    fs::create_directories(muscleDir);
+                }
+            } else {
+                return;
+            }
+        } else {
+            muscleDir = rm::getManager().resolveDir("@data/muscle");
+            if (!fs::exists(muscleDir)) return;
+        }
+
+        for (const auto& entry : fs::directory_iterator(muscleDir)) {
+            auto ext = entry.path().extension().string();
+            if (ext == ".yaml" || ext == ".xml") {
+                mControlBrowseMuscleCandidates.push_back(entry.path().filename().string());
+            }
+        }
+        std::sort(mControlBrowseMuscleCandidates.begin(), mControlBrowseMuscleCandidates.end());
+    }
+    catch (const std::exception& e) {
+        LOG_WARN("[PhysicalExam] Error scanning control muscle files: " << e.what());
+    }
+}
+
+void PhysicalExam::reloadControlCharacterFromBrowse() {
+    if (mControlBrowseSkeletonPath.empty() || mControlBrowseMusclePath.empty()) {
+        LOG_WARN("[PhysicalExam] Cannot reload control: skeleton or muscle path not selected");
+        return;
+    }
+
+    LOG_INFO("[PhysicalExam] Reloading control character:");
+    LOG_INFO("  Skeleton: " << mControlBrowseSkeletonPath);
+    LOG_INFO("  Muscle: " << mControlBrowseMusclePath);
+
+    loadControlCharacter(mControlBrowseSkeletonPath, mControlBrowseMusclePath);
+
+    LOG_INFO("[PhysicalExam] Control character reloaded successfully");
+}
+
+void PhysicalExam::loadControlClinicalROM(const std::string& pid, const std::string& visit) {
+    mControlClinicalROM.clear();
+    mControlClinicalROMPID = pid;
+    mControlClinicalROMVisit = visit;
+
+    if (pid.empty() || visit.empty()) return;
+
+    namespace fs = std::filesystem;
+    fs::path pidRoot = rm::getManager().getPidRoot();
+    if (pidRoot.empty()) return;
+
+    fs::path romPath = pidRoot / pid / visit / "rom.yaml";
+    if (!fs::exists(romPath)) return;
+
+    try {
+        YAML::Node romConfig = YAML::LoadFile(romPath.string());
+        if (romConfig["rom"]) {
+            YAML::Node romData = romConfig["rom"];
+            for (auto sideIt = romData.begin(); sideIt != romData.end(); ++sideIt) {
+                std::string side = sideIt->first.as<std::string>();
+                YAML::Node sideData = sideIt->second;
+                for (auto jointIt = sideData.begin(); jointIt != sideData.end(); ++jointIt) {
+                    std::string joint = jointIt->first.as<std::string>();
+                    YAML::Node jointData = jointIt->second;
+                    for (auto fieldIt = jointData.begin(); fieldIt != jointData.end(); ++fieldIt) {
+                        std::string field = fieldIt->first.as<std::string>();
+                        if (fieldIt->second.IsScalar()) {
+                            try {
+                                float value = fieldIt->second.as<float>();
+                                std::string key = side + "." + joint + "." + field;
+                                mControlClinicalROM[key] = value;
+                            } catch (const YAML::BadConversion&) {}
+                        }
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN("[PhysicalExam] Error loading control clinical ROM: " << e.what());
+    }
+
+    // Load weight
+    fs::path metaPath = pidRoot / pid / visit / "metadata.yaml";
+    if (fs::exists(metaPath)) {
+        try {
+            YAML::Node meta = YAML::LoadFile(metaPath.string());
+            if (meta["weight"]) {
+                mControlClinicalWeight = meta["weight"].as<float>();
+                mControlClinicalWeightAvailable = true;
+            }
+        } catch (...) {}
+    }
 }
 
 // ============================================================================
@@ -6042,7 +6484,7 @@ void PhysicalExam::reloadCharacterFromBrowse() {
 
 void PhysicalExam::drawPosePresetsSection() {
     if (collapsingHeaderWithControls("Pose Presets")) {
-        if (!mCharacter) {
+        if (!mExpCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
             ImGui::Text("Select pose:");
@@ -6063,7 +6505,7 @@ void PhysicalExam::drawPosePresetsSection() {
 
 void PhysicalExam::drawForceApplicationSection() {
     if (collapsingHeaderWithControls("Force Application")) {
-        if (!mCharacter) {
+        if (!mExpCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
             // Body node selection
@@ -6139,7 +6581,7 @@ void PhysicalExam::drawForceApplicationSection() {
 
 void PhysicalExam::drawPrintInfoSection() {
     if (collapsingHeaderWithControls("Print Info")) {
-        if (!mCharacter) {
+        if (!mExpCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
             if (ImGui::Button("Capture Positions", ImVec2(180, 30))) {
@@ -6168,7 +6610,7 @@ void PhysicalExam::drawRecordingSection() {
         ImGui::Text("Recorded Data Points: %zu", mRecordedData.size());
 
         if (ImGui::Button("Record Current State")) {
-            if (mCharacter) {
+            if (mExpCharacter) {
                 ROMDataPoint data;
                 data.force_magnitude = mForceMagnitude;
                 std::vector<std::string> joints = {"FemurR", "TibiaR", "TalusR"};
@@ -6202,25 +6644,25 @@ void PhysicalExam::drawRenderOptionsSection() {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Render");
     ImGui::Separator();
     // Character rendering selection
-        if (mStdCharacter) {
+        if (mControlCharacter) {
             ImGui::Text("Character Display:");
             int render_option = 0;
-            if (mRenderMainCharacter && mRenderStdCharacter) render_option = 2;
-            else if (mRenderStdCharacter) render_option = 1;
+            if (mRenderExpCharacter && mRenderControlCharacter) render_option = 2;
+            else if (mRenderControlCharacter) render_option = 1;
             else render_option = 0;
             
-            if (ImGui::RadioButton("Main##Render", &render_option, 0)) {
-                mRenderMainCharacter = true;
-                mRenderStdCharacter = false;
+            if (ImGui::RadioButton("Exp##Render", &render_option, 0)) {
+                mRenderExpCharacter = true;
+                mRenderControlCharacter = false;
             }
             ImGui::SameLine();
-            if (ImGui::RadioButton("Std##Render", &render_option, 1)) {
-                mRenderMainCharacter = false;
-                mRenderStdCharacter = true;
+            if (ImGui::RadioButton("Control##Render", &render_option, 1)) {
+                mRenderExpCharacter = false;
+                mRenderControlCharacter = true;
             }
         } else {
-            // No standard character loaded - just show status
-            ImGui::Text("Rendering: Main Character");
+            // No control character loaded - just show status
+            ImGui::Text("Rendering: Experimental Character");
         }
         
         ImGui::Separator();
@@ -6229,6 +6671,13 @@ void PhysicalExam::drawRenderOptionsSection() {
         ImGui::Checkbox("White Plot", &mPlotWhiteBackground);
         ImGui::SameLine(200);
         ImGui::Checkbox("Show Trial Name", &mShowTrialNameInPlots);
+
+        // Legend label mode
+        ImGui::Text("Legend Label:");
+        ImGui::SameLine();
+        ImGui::RadioButton("exp/ctrl", &mLegendLabelMode, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("file name", &mLegendLabelMode, 1);
 
         ImGui::Separator();
         
@@ -6331,10 +6780,10 @@ void PhysicalExam::drawRenderOptionsSection() {
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Muscle Filter");
         ImGui::Separator();
         ImGui::Indent();
-        if (!mCharacter) {
+        if (!mExpCharacter) {
                 ImGui::TextDisabled("Load character first");
             } else {
-                auto allMuscles = mCharacter->getMuscles();
+                auto allMuscles = mExpCharacter->getMuscles();
 
                 // Initialize selection states if needed
                 if (mMuscleSelectionStates.size() != allMuscles.size()) {
@@ -6404,10 +6853,10 @@ void PhysicalExam::drawRenderOptionsSection() {
 
 void PhysicalExam::drawJointControlSection() {
     if (collapsingHeaderWithControls("Joint Angle")) {
-        if (!mCharacter) {
+        if (!mExpCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
-            auto skel = mCharacter->getSkeleton();
+            auto skel = mExpCharacter->getSkeleton();
 
             // PI Controller mode toggle
             ImGui::Checkbox("Enable PI Controller", &mEnableInterpolation);
@@ -6499,8 +6948,8 @@ void PhysicalExam::drawJointControlSection() {
                             skel->setPositions(pos);
 
                             // Update muscle geometry
-                            if (!mCharacter->getMuscles().empty()) {
-                                mCharacter->getMuscleTuple();
+                            if (!mExpCharacter->getMuscles().empty()) {
+                                mExpCharacter->getMuscleTuple();
                             }
                         } else {
                             LOG_WARN("abd_knee IK failed at angle " << abd_knee_angle << "°");
@@ -6658,10 +7107,10 @@ void PhysicalExam::drawJointControlSection() {
 
 void PhysicalExam::drawJointAngleSweepSection() {
     if (collapsingHeaderWithControls("Joint Angle Sweep")) {
-        if (!mCharacter) {
+        if (!mExpCharacter) {
             ImGui::TextDisabled("Load character first");
         } else {
-            auto skel = mCharacter->getSkeleton();
+            auto skel = mExpCharacter->getSkeleton();
 
             // Joint selection
             ImGui::Text("Sweep Joint:");
@@ -6902,12 +7351,12 @@ void PhysicalExam::drawTrialManagementSection() {
 
 void PhysicalExam::drawCurrentStateSection() {
     if (collapsingHeaderWithControls("State")) {
-        if (mCharacter) {
+        if (mExpCharacter) {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Character Loaded");
-            ImGui::Text("Skeleton DOFs: %zu", mCharacter->getSkeleton()->getNumDofs());
-            ImGui::Text("Body Nodes: %zu", mCharacter->getSkeleton()->getNumBodyNodes());
-            if (!mCharacter->getMuscles().empty()) {
-                ImGui::Text("Muscles: %zu", mCharacter->getMuscles().size());
+            ImGui::Text("Skeleton DOFs: %zu", mExpCharacter->getSkeleton()->getNumDofs());
+            ImGui::Text("Body Nodes: %zu", mExpCharacter->getSkeleton()->getNumBodyNodes());
+            if (!mExpCharacter->getMuscles().empty()) {
+                ImGui::Text("Muscles: %zu", mExpCharacter->getMuscles().size());
             } else {
                 ImGui::TextDisabled("Muscles: Not loaded");
             }
@@ -6928,12 +7377,12 @@ void PhysicalExam::drawCurrentStateSection() {
             ImGui::Separator();
 
             // Muscle passive forces (only if muscles loaded)
-            if (!mCharacter->getMuscles().empty()) {
+            if (!mExpCharacter->getMuscles().empty()) {
                 ImGui::Text("Muscle Forces:");
                 double total_passive = 0.0;
                 std::vector<std::pair<double, std::string>> muscle_forces;
 
-                auto muscles = mCharacter->getMuscles();
+                auto muscles = mExpCharacter->getMuscles();
                 for (auto& muscle : muscles) {
                     double f_p = muscle->Getf_p();
                     total_passive += f_p;
@@ -6964,7 +7413,7 @@ void PhysicalExam::drawCurrentStateSection() {
                 // JTP listbox for debugging - click DOF to print JTP
                 ImGui::Text("JTP Debug (click to print):");
                 {
-                    auto skel = mCharacter->getSkeleton();
+                    auto skel = mExpCharacter->getSkeleton();
                     ImGui::BeginChild("JTPList", ImVec2(0, 150), true);
 
                     // Femur Y-axis projection entries (for abd_knee composite DOF)
@@ -6991,7 +7440,7 @@ void PhysicalExam::drawCurrentStateSection() {
                                 std::cout << "\n[JTP Y-axis] " << femur_name
                                           << " joint_center=[" << joint_center.transpose() << "]"
                                           << " descendant_bodies=" << descendant_bodies.size() << std::endl;
-                                for (auto& muscle : mCharacter->getMuscles()) {
+                                for (auto& muscle : mExpCharacter->getMuscles()) {
                                     Eigen::Vector3d torque_world = muscle->GetPassiveTorqueAboutPoint(
                                         joint_center, &descendant_bodies);
                                     double contribution = torque_world.y();
@@ -7096,12 +7545,12 @@ void PhysicalExam::drawCameraStatusSection() {
 
 void PhysicalExam::drawMuscleInfoSection() {
     if (collapsingHeaderWithControls("Muscle Information")) {
-        if (!mCharacter) {
+        if (!mExpCharacter) {
             ImGui::TextDisabled("No character loaded");
             return;
         }
 
-        auto muscles = mCharacter->getMuscles();
+        auto muscles = mExpCharacter->getMuscles();
         if (muscles.empty()) {
             ImGui::TextDisabled("No muscles available");
             return;
