@@ -1,7 +1,7 @@
 name: "exam"
 description: "Physical examination"
 
-character:
+exp_character:
   skeleton: "@data/skeleton/base.yaml"
   # skeleton: "@pid:29792292/pre/skeleton/dynamic.yaml"
   # muscle: "@data/muscle/gaitnet_lower_only.xml"
@@ -11,7 +11,7 @@ character:
   # muscle: "@pid:30157774/gait/pre/muscle/personalized.yaml"
   actuator: "mass_lower"
 
-std_character:
+control_character:
   skeleton: "@data/skeleton/base.yaml"
   muscle: "@data/muscle/base.yaml"
 

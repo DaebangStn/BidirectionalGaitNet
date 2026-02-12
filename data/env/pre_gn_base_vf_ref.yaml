@@ -13,7 +13,7 @@ environment:
   # Motion Reference
   motion:
     get_stride_from_motion: true
-    file: "@data/motion/walk_50dof.h5"
+    file: "@data/motion/walk_29792292.h5"
 
   # Muscle System
   muscle:

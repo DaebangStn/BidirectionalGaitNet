@@ -3325,36 +3325,7 @@ void RenderCkpt::drawCaptureSection() {
         int regionWidth = mCaptureX1 - mCaptureX0;
         int regionHeight = mCaptureY1 - mCaptureY0;
         ImGui::Text("Size: %d x %d", regionWidth, regionHeight);
-
-        // Preset combo (if presets exist)
-        if (!mCapturePresets.empty()) {
-            static int selectedPreset = 0;
-            if (ImGui::BeginCombo("Preset##capture", mCapturePresets[selectedPreset].name.c_str())) {
-                for (int i = 0; i < (int)mCapturePresets.size(); i++) {
-                    if (ImGui::Selectable(mCapturePresets[i].name.c_str(), selectedPreset == i)) {
-                        selectedPreset = i;
-                        mCaptureX0 = mCapturePresets[i].x0;
-                        mCaptureY0 = mCapturePresets[i].y0;
-                        mCaptureX1 = mCapturePresets[i].x1;
-                        mCaptureY1 = mCapturePresets[i].y1;
-                    }
-                }
-                ImGui::EndCombo();
-            }
-        }
-
-        // Manual region input
-        const int step = 5;
-        ImGui::PushItemWidth(80);
-        ImGui::InputInt("x0##capture", &mCaptureX0, step);
         ImGui::SameLine();
-        ImGui::InputInt("y0##capture", &mCaptureY0, step);
-        ImGui::InputInt("x1##capture", &mCaptureX1, step);
-        ImGui::SameLine();
-        ImGui::InputInt("y1##capture", &mCaptureY1, step);
-        ImGui::PopItemWidth();
-
-        ImGui::Separator();
 
         // Screenshot button with timestamped filename
         if (ImGui::Button("Capture PNG")) {
@@ -3383,13 +3354,42 @@ void RenderCkpt::drawCaptureSection() {
             }
         }
 
+        // Preset combo (if presets exist)
+        if (!mCapturePresets.empty()) {
+            static int selectedPreset = 0;
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::BeginCombo("Preset##capture", mCapturePresets[selectedPreset].name.c_str())) {
+                for (int i = 0; i < (int)mCapturePresets.size(); i++) {
+                    if (ImGui::Selectable(mCapturePresets[i].name.c_str(), selectedPreset == i)) {
+                        selectedPreset = i;
+                        mCaptureX0 = mCapturePresets[i].x0;
+                        mCaptureY0 = mCapturePresets[i].y0;
+                        mCaptureX1 = mCapturePresets[i].x1;
+                        mCaptureY1 = mCapturePresets[i].y1;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+
+        // Manual region input
+        const int step = 5;
+        ImGui::PushItemWidth(80);
+        ImGui::InputInt("x0##capture", &mCaptureX0, step);
+        ImGui::SameLine();
+        ImGui::InputInt("y0##capture", &mCaptureY0, step);
+        ImGui::InputInt("x1##capture", &mCaptureX1, step);
+        ImGui::SameLine();
+        ImGui::InputInt("y1##capture", &mCaptureY1, step);
+        ImGui::PopItemWidth();
+
         ImGui::Separator();
 
         // Video Recording Section
-        ImGui::Text("Video Recording (30fps)");
+        ImGui::Text("Recording");
         ImGui::SameLine();
         if (mVideoRecording) {
-            if (ImGui::Button("Stop Recording")) {
+            if (ImGui::Button("Stop")) {
                 stopVideoRecording();
                 mRolloutStatus.pause = true;  // Pause simulation
                 // Restore camera mode
@@ -3404,7 +3404,7 @@ void RenderCkpt::drawCaptureSection() {
             ImGui::SameLine();
             ImGui::Text("%.1fs  Frames: %d", mVideoElapsedTime, mVideoFrameCounter);
         } else {
-            if (ImGui::Button("Start Recording")) {
+            if (ImGui::Button("Start")) {
                 // Save current focus mode and switch to orbit if enabled
                 if (mVideoOrbitEnabled) {
                     mPreRecordingFocusMode = mCamera.focus;
@@ -3436,15 +3436,11 @@ void RenderCkpt::drawCaptureSection() {
             ImGui::SameLine();
             ImGui::Checkbox("GIF##video", &mVideoConvertGif);
             ImGui::SameLine();
-            ImGui::PushItemWidth(30);
+            ImGui::SetNextItemWidth(30);
             ImGui::InputDouble("Max(s)##video", &mVideoMaxTime, 0, 0, "%.0f");
-            ImGui::PopItemWidth();
-            // Orbit speed (only show when orbit enabled)
-            if (mVideoOrbitEnabled) {
-                ImGui::PushItemWidth(80);
-                ImGui::InputFloat("deg/s##videoorbit", &mVideoOrbitSpeed, 1.0f, 10.0f, "%.1f");
-                ImGui::PopItemWidth();
-            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            ImGui::InputFloat("deg/s##videoorbit", &mVideoOrbitSpeed, 5.0f, 10.0f, "%.1f");
         }
 }
 

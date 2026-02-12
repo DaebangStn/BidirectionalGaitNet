@@ -92,8 +92,7 @@ struct GaitCycleSummary {
  * Inherits from ViewerAppBase for common window/camera/input handling.
  *
  * Features:
- * - Load H5 motion files via PID browser or direct path
- * - Auto-detect skeleton from PID folder
+ * - Load skeleton and motion files via unified PID browser with Default/Patient radio buttons
  * - Visualize skeleton with motion playback
  * - Trim motion by setting start/end frames
  * - Export trimmed motion to new H5 file
@@ -138,15 +137,19 @@ private:
     double mCycleDuration = 1.0;
     double mLastRealTime = 0.0;
 
-    // === Skeleton ===
-    std::string mAutoDetectedSkeletonPath;
-    bool mUseAutoSkeleton = true;
-    char mManualSkeletonPath[512] = {0};
+    // === Unified Character Loading ===
+    using CharacterDataSource = PIDNav::CharacterDataSource;
+
+    CharacterDataSource mSkeletonDataSource = CharacterDataSource::DefaultData;
+    std::string mSkeletonBrowsePath;
+    std::vector<std::string> mSkeletonCandidates;
+
+    CharacterDataSource mMotionDataSource = CharacterDataSource::DefaultData;
+    std::string mMotionBrowsePath;
+    std::vector<std::string> mMotionCandidates;
+
+    std::string mBrowsePID;
     std::string mCurrentSkeletonPath;
-    std::vector<std::string> mSkeletonFiles;      // List of skeleton files in directory
-    std::vector<std::string> mSkeletonFileNames;  // Display names (filename only)
-    int mSelectedSkeletonFile = -1;               // Selected skeleton index
-    std::string mSkeletonDirectory;               // Current skeleton directory
 
     // === Trim State ===
     int mTrimStart = 0;
@@ -219,8 +222,7 @@ private:
     // === UI Panels ===
     void drawLeftPanel();
     void drawRightPanel();
-    void drawPIDBrowserTab();  // Updated to use PIDNavigator
-    void drawDirectPathTab();
+    void drawPIDBrowserTab();
     void drawRootInfoTab();
     void drawSkeletonSection();
     void drawPlaybackSection();
@@ -249,9 +251,10 @@ private:
     // isPanelDefaultOpen() inherited from ViewerAppBase
 
     // === Data Loading ===
-    void scanSkeletonDirectory();
+    void scanSkeletonCandidates();
+    void scanMotionCandidates();
+    void loadSelectedFiles();
     void loadH5Motion(const std::string& path);
-    void autoDetectSkeleton();
     void loadSkeleton(const std::string& path);
 
     // === Playback ===

@@ -38,7 +38,17 @@ struct CharacterLoadOptions {
     bool showPatientInfo = true;
     bool showDeleteButtons = true;
     bool requireBothForRebuild = false;
+    bool showRebuildButton = true;
 };
+
+/**
+ * Draws a single file source section with Default/Patient radio buttons and file list.
+ */
+void drawFileSourceSection(
+    const char* label, const char* dataDir,
+    CharacterFileRef& ref, PIDNavigator* navigator,
+    rm::ResourceManager* rm, const std::string& pid,
+    const CharacterLoadOptions& options = {});
 
 /**
  * Draws the character file selection UI (skeleton + muscle sections + rebuild button).

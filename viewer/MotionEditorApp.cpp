@@ -27,24 +27,22 @@ MotionEditorApp::MotionEditorApp(const std::string& configPath)
     try {
         mResourceManager = &rm::getManager();
 
-        // Initialize PID Navigator with HDF file filter
-        mPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(
-            mResourceManager,
-            std::make_unique<PIDNav::HDFFileFilter>()
-        );
-
-        // Register callback for when user selects an H5 file
-        mPIDNavigator->setFileSelectionCallback(
-            [this](const std::string& path, const std::string& filename) {
-                loadH5Motion(path);
-            }
-        );
+        // Initialize PID Navigator (no file filter — file sections handled by radio buttons)
+        mPIDNavigator = std::make_unique<PIDNav::PIDNavigator>(mResourceManager);
 
         // Register callback for when PID selection changes
         mPIDNavigator->setPIDChangeCallback(
             [this](const std::string& pid) {
-                scanSkeletonDirectory();
-                autoDetectSkeleton();
+                scanSkeletonCandidates();
+                scanMotionCandidates();
+            }
+        );
+
+        // Register callback for when visit changes
+        mPIDNavigator->setVisitChangeCallback(
+            [this](const std::string&, const std::string&) {
+                scanSkeletonCandidates();
+                scanMotionCandidates();
             }
         );
 
@@ -399,14 +397,10 @@ void MotionEditorApp::drawLeftPanel()
     ImGui::SetNextWindowSize(ImVec2(mControlPanelWidth, mHeight - timelineHeight), ImGuiCond_Once);
     ImGui::Begin("Data Loader", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
-    // Tab bar for PID Browser / Direct Path / Root Info
+    // Tab bar for PID Browser / Root Info
     if (ImGui::BeginTabBar("DataLoaderTabs")) {
         if (ImGui::BeginTabItem("PID Browser")) {
             drawPIDBrowserTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Direct Path")) {
-            drawDirectPathTab();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Root Info")) {
@@ -461,146 +455,61 @@ void MotionEditorApp::drawPIDBrowserTab()
         return;
     }
 
-    // Use the shared PIDNavigator component (no collapsing header)
-    mPIDNavigator->renderUI(nullptr, 120, 120);
-}
+    // PID selection only (fileSectionHeight=0 hides file listing)
+    mPIDNavigator->renderUI(nullptr, 120, 0);
 
-void MotionEditorApp::drawDirectPathTab()
-{
-    static char h5Name[256] = {0};
-    static char skelName[256] = {0};
-
-    // Build full paths
-    std::string h5Full = std::string("data/motion/") + h5Name + ".h5";
-    std::string skelFull = std::string("data/skeleton/") + skelName + ".yaml";
-    bool h5Exists = (strlen(h5Name) > 0) && fs::exists(h5Full);
-    bool skelExists = (strlen(skelName) > 0) && fs::exists(skelFull);
-
-    // H5 Motion: prefix label + filename input + .h5 suffix
-    ImGui::Text("H5 Motion:");
-    ImGui::Text("data/motion/");
-    ImGui::SameLine(0, 0);
-    ImGui::SetNextItemWidth(-80);
-    ImGui::InputText("##DirectH5Path", h5Name, sizeof(h5Name));
-    ImGui::SameLine(0, 0);
-    ImGui::Text(".h5");
-    ImGui::SameLine();
-    if (strlen(h5Name) > 0) {
-        if (h5Exists)
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "OK");
-        else
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "!!");
+    // Cache current PID
+    const auto& pidState = mPIDNavigator->getState();
+    if (pidState.selectedPID >= 0 && pidState.selectedPID < static_cast<int>(pidState.pidList.size())) {
+        mBrowsePID = pidState.pidList[pidState.selectedPID];
     }
 
     ImGui::Separator();
 
-    // Skeleton: prefix label + filename input + .yaml suffix
-    ImGui::Text("Skeleton:");
-    ImGui::Text("data/skeleton/");
-    ImGui::SameLine(0, 0);
-    ImGui::SetNextItemWidth(-80);
-    ImGui::InputText("##DirectSkelPath", skelName, sizeof(skelName));
-    ImGui::SameLine(0, 0);
-    ImGui::Text(".yaml");
-    ImGui::SameLine();
-    if (strlen(skelName) > 0) {
-        if (skelExists)
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "OK");
-        else
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "!!");
-    }
+    // Skeleton source section
+    PIDNav::CharacterFileRef skelRef{mSkeletonDataSource, mSkeletonBrowsePath, mSkeletonCandidates,
+        [this]() { scanSkeletonCandidates(); }};
+    PIDNav::CharacterLoadOptions opts;
+    opts.showPatientInfo = true;
+    opts.showDeleteButtons = false;
+    opts.showRebuildButton = false;
+    PIDNav::drawFileSourceSection("Skeleton", "skeleton", skelRef, mPIDNavigator.get(),
+        mResourceManager, mBrowsePID, opts);
+
+    ImGui::Spacing();
+
+    // Motion source section
+    PIDNav::CharacterFileRef motionRef{mMotionDataSource, mMotionBrowsePath, mMotionCandidates,
+        [this]() { scanMotionCandidates(); }};
+    PIDNav::drawFileSourceSection("Motion", "motion", motionRef, mPIDNavigator.get(),
+        mResourceManager, mBrowsePID, opts);
 
     ImGui::Separator();
 
-    // Single load button: skeleton first, then motion (so mCharacter is set for refreshMotion)
-    if (ImGui::Button("Load Both")) {
-        if (skelExists) {
-            loadSkeleton(skelFull);
-        }
-        if (h5Exists) {
-            loadH5Motion(h5Full);
-        }
+    // Load button
+    bool canLoad = !mSkeletonBrowsePath.empty() || !mMotionBrowsePath.empty();
+    if (!canLoad) ImGui::BeginDisabled();
+    if (ImGui::Button("Load", ImVec2(-1, 0))) {
+        loadSelectedFiles();
     }
-    if (!h5Exists || !skelExists) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
-            "%s%s%s",
-            !h5Exists && strlen(h5Name) > 0 ? "motion not found" : "",
-            (!h5Exists && strlen(h5Name) > 0 && !skelExists && strlen(skelName) > 0) ? ", " : "",
-            !skelExists && strlen(skelName) > 0 ? "skeleton not found" : "");
-    }
+    if (!canLoad) ImGui::EndDisabled();
 }
 
 void MotionEditorApp::drawSkeletonSection()
 {
     if (collapsingHeaderWithControls("Skeleton Config")) {
-        ImGui::Checkbox("Auto-detect (PID)", &mUseAutoSkeleton);
-
-        if (mUseAutoSkeleton) {
-            if (mAutoDetectedSkeletonPath.empty()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "No skeleton detected");
-            } else {
-                ImGui::TextWrapped("Path: %s", mAutoDetectedSkeletonPath.c_str());
-            }
-        } else {
-            // PID skeleton directory browser
-            bool hasPIDSelected = mPIDNavigator && mPIDNavigator->getState().selectedPID >= 0;
-            if (hasPIDSelected) {
-                ImGui::Text("PID Skeleton Files:");
-                ImGui::SameLine();
-                if (ImGui::Button("Refresh##Skel")) {
-                    scanSkeletonDirectory();
-                }
-
-                // Listbox for skeleton files
-                if (!mSkeletonFiles.empty()) {
-                    ImGui::SetNextItemWidth(-1);
-                    if (ImGui::BeginListBox("##SkeletonList", ImVec2(-1, 100))) {
-                        for (size_t i = 0; i < mSkeletonFileNames.size(); ++i) {
-                            bool isSelected = (mSelectedSkeletonFile == static_cast<int>(i));
-                            if (ImGui::Selectable(mSkeletonFileNames[i].c_str(), isSelected)) {
-                                mSelectedSkeletonFile = static_cast<int>(i);
-                                // Copy path to manual path buffer and load
-                                strncpy(mManualSkeletonPath, mSkeletonFiles[i].c_str(), sizeof(mManualSkeletonPath) - 1);
-                                mManualSkeletonPath[sizeof(mManualSkeletonPath) - 1] = '\0';
-                                loadSkeleton(mSkeletonFiles[i]);
-                            }
-                            if (isSelected) {
-                                ImGui::SetItemDefaultFocus();
-                            }
-                        }
-                        ImGui::EndListBox();
-                    }
-                    ImGui::TextWrapped("%s", mSkeletonDirectory.c_str());
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "No skeleton files in PID folder");
-                }
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Select a PID first");
-            }
-
-            // Manual path input as fallback
-            ImGui::Separator();
-            ImGui::Text("Or enter path:");
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputText("##ManualSkel", mManualSkeletonPath, sizeof(mManualSkeletonPath));
-        }
-
-        if (ImGui::Button("Reload Skeleton")) {
-            std::string path = mUseAutoSkeleton ? mAutoDetectedSkeletonPath : std::string(mManualSkeletonPath);
-            if (!path.empty()) {
-                loadSkeleton(path);
-            }
-        }
-
         // Show current loaded skeleton
         if (mCharacter) {
-            ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Loaded");
+            if (!mCurrentSkeletonPath.empty()) {
+                ImGui::SameLine();
+                ImGui::TextWrapped("(%s)", fs::path(mCurrentSkeletonPath).filename().string().c_str());
+            }
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "No skeleton loaded");
         }
 
         // Render mode
-        ImGui::Separator();
         ImGui::Text("Render Mode:");
         int renderModeInt = static_cast<int>(mAppRenderMode);
         if (ImGui::RadioButton("Primitive", renderModeInt == 0)) mAppRenderMode = MotionEditorRenderMode::Primitive;
@@ -1115,52 +1024,64 @@ void MotionEditorApp::drawHeightSection()
         return;
     }
 
-    // Check if direction intervals exist
-    if (mDirectionIntervals.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Run Direction detection first");
-        return;
+    // --- Global ground offset ---
+    if (ImGui::Button("Compute Ground Offset", ImVec2(-1, 0))) {
+        computeGroundLevel();
     }
 
-    // Calculate button - computes per-interval offsets
-    if (ImGui::Button("Calculate Per-Interval", ImVec2(-1, 0))) {
-        mIntervalHeightOffsets.clear();
-        for (const auto& interval : mDirectionIntervals) {
-            double offset = computeGroundLevelForRange(interval.startFrame, interval.endFrame);
-            mIntervalHeightOffsets.push_back(offset);
+    if (mHeightOffsetComputed) {
+        ImGui::Text("Offset: %.4f m", mComputedHeightOffset);
+
+        if (ImGui::Button("Apply##GlobalHeight", ImVec2(-1, 0))) {
+            applyHeightOffset();
+            refreshMotion();
         }
-        mHeightOffsetComputed = !mIntervalHeightOffsets.empty();
+        if (ImGui::Button("Reset##GlobalHeight")) {
+            mComputedHeightOffset = 0.0;
+            mHeightOffsetComputed = false;
+        }
     }
 
-    // Show per-interval offsets
-    if (mHeightOffsetComputed && mIntervalHeightOffsets.size() == mDirectionIntervals.size()) {
-        ImGui::Text("Per-interval offsets:");
-        for (size_t i = 0; i < mDirectionIntervals.size(); ++i) {
-            const auto& interval = mDirectionIntervals[i];
-            const char* dirStr = (interval.direction == Timeline::GaitDirection::Forward) ? "Fwd" : "Bwd";
-            ImGui::Text("  %s %d-%d: %.4f m", dirStr,
-                        interval.startFrame, interval.endFrame,
-                        mIntervalHeightOffsets[i]);
-        }
+    // --- Per-interval (requires direction intervals) ---
+    if (!mDirectionIntervals.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Per-Interval");
 
-        // Apply button
-        if (ImGui::Button("Apply All Offsets", ImVec2(-1, 0))) {
-            HDF* hdf = dynamic_cast<HDF*>(mMotion);
-            if (hdf) {
-                for (size_t i = 0; i < mDirectionIntervals.size(); ++i) {
-                    const auto& interval = mDirectionIntervals[i];
-                    hdf->applyHeightOffsetToRange(
-                        interval.startFrame, interval.endFrame,
-                        mIntervalHeightOffsets[i]);
-                }
-                mIntervalHeightOffsets.clear();
-                mHeightOffsetComputed = false;
+        if (ImGui::Button("Calculate Per-Interval", ImVec2(-1, 0))) {
+            mIntervalHeightOffsets.clear();
+            for (const auto& interval : mDirectionIntervals) {
+                double offset = computeGroundLevelForRange(interval.startFrame, interval.endFrame);
+                mIntervalHeightOffsets.push_back(offset);
             }
         }
 
-        // Reset button
-        if (ImGui::Button("Reset##Height")) {
-            mIntervalHeightOffsets.clear();
-            mHeightOffsetComputed = false;
+        if (mIntervalHeightOffsets.size() == mDirectionIntervals.size()) {
+            ImGui::Text("Per-interval offsets:");
+            for (size_t i = 0; i < mDirectionIntervals.size(); ++i) {
+                const auto& interval = mDirectionIntervals[i];
+                const char* dirStr = (interval.direction == Timeline::GaitDirection::Forward) ? "Fwd" : "Bwd";
+                ImGui::Text("  %s %d-%d: %.4f m", dirStr,
+                            interval.startFrame, interval.endFrame,
+                            mIntervalHeightOffsets[i]);
+            }
+
+            if (ImGui::Button("Apply All Offsets", ImVec2(-1, 0))) {
+                HDF* hdf = dynamic_cast<HDF*>(mMotion);
+                if (hdf) {
+                    for (size_t i = 0; i < mDirectionIntervals.size(); ++i) {
+                        const auto& interval = mDirectionIntervals[i];
+                        hdf->applyHeightOffsetToRange(
+                            interval.startFrame, interval.endFrame,
+                            mIntervalHeightOffsets[i]);
+                    }
+                    mIntervalHeightOffsets.clear();
+                    refreshMotion();
+                }
+            }
+
+            if (ImGui::Button("Reset##PerInterval")) {
+                mIntervalHeightOffsets.clear();
+            }
         }
     }
 }
@@ -1910,63 +1831,96 @@ void MotionEditorApp::drawROMViolationSection()
 // Data Loading
 // =============================================================================
 
-void MotionEditorApp::scanSkeletonDirectory()
+void MotionEditorApp::scanSkeletonCandidates()
 {
-    mSkeletonFiles.clear();
-    mSkeletonFileNames.clear();
-    mSelectedSkeletonFile = -1;
-
-    if (!mResourceManager || !mPIDNavigator) {
-        return;
-    }
-
-    const auto& state = mPIDNavigator->getState();
-    if (state.selectedPID < 0 || state.selectedPID >= static_cast<int>(state.pidList.size())) {
-        return;
-    }
-
-    const std::string& pid = state.pidList[state.selectedPID];
-    std::string visit = state.preOp ? "pre" : "op1";
-    std::string pattern = "@pid:" + pid + "/" + visit + "/skeleton";
-    mSkeletonDirectory = pattern;
+    mSkeletonCandidates.clear();
 
     try {
-        auto files = mResourceManager->list(pattern);
-        for (const auto& file : files) {
-            // Only include .yaml and .xml skeleton files
-            size_t len = file.size();
-            bool isYaml = len > 5 && file.substr(len - 5) == ".yaml";
-            bool isXml = len > 4 && file.substr(len - 4) == ".xml";
-            if (isYaml || isXml) {
-                // Resolve full path
-                std::string uri = pattern + "/" + file;
-                try {
-                    auto resolved = mResourceManager->resolve(uri);
-                    if (!resolved.empty() && fs::exists(resolved)) {
-                        mSkeletonFiles.push_back(resolved.string());
-                        mSkeletonFileNames.push_back(file);
-                    }
-                } catch (const rm::RMError&) {}
+        fs::path skelDir;
+        if (mSkeletonDataSource == CharacterDataSource::PatientData && !mBrowsePID.empty() && mPIDNavigator) {
+            fs::path pidRoot = rm::getManager().getPidRoot();
+            if (!pidRoot.empty()) {
+                std::string visit = mPIDNavigator->getState().getVisitDir();
+                skelDir = pidRoot / mBrowsePID / visit / "skeleton";
+            } else {
+                return;
+            }
+        } else {
+            skelDir = rm::getManager().resolveDir("@data/skeleton");
+        }
+
+        if (!fs::exists(skelDir)) return;
+
+        for (const auto& entry : fs::directory_iterator(skelDir)) {
+            auto ext = entry.path().extension().string();
+            if (ext == ".yaml" || ext == ".xml") {
+                mSkeletonCandidates.push_back(entry.path().filename().string());
             }
         }
-        std::sort(mSkeletonFileNames.begin(), mSkeletonFileNames.end());
-        // Sort files to match names
-        std::vector<size_t> indices(mSkeletonFiles.size());
-        std::iota(indices.begin(), indices.end(), 0);
-        std::sort(indices.begin(), indices.end(), [this](size_t a, size_t b) {
-            return mSkeletonFileNames[a] < mSkeletonFileNames[b];
-        });
-        std::vector<std::string> sortedFiles, sortedNames;
-        for (size_t i : indices) {
-            sortedFiles.push_back(mSkeletonFiles[i]);
-            sortedNames.push_back(mSkeletonFileNames[i]);
-        }
-        mSkeletonFiles = std::move(sortedFiles);
-        mSkeletonFileNames = std::move(sortedNames);
+        std::sort(mSkeletonCandidates.begin(), mSkeletonCandidates.end());
+        LOG_INFO("[MotionEditor] Found " << mSkeletonCandidates.size() << " skeleton files");
+    } catch (const std::exception& e) {
+        LOG_WARN("[MotionEditor] Error scanning skeleton files: " << e.what());
+    }
+}
 
-        LOG_INFO("[MotionEditor] Found " << mSkeletonFiles.size() << " skeleton files in " << pattern);
-    } catch (const rm::RMError& e) {
-        LOG_WARN("[MotionEditor] Failed to scan skeleton directory: " << e.what());
+void MotionEditorApp::scanMotionCandidates()
+{
+    mMotionCandidates.clear();
+
+    try {
+        fs::path motionDir;
+        if (mMotionDataSource == CharacterDataSource::PatientData && !mBrowsePID.empty() && mPIDNavigator) {
+            fs::path pidRoot = rm::getManager().getPidRoot();
+            if (!pidRoot.empty()) {
+                std::string visit = mPIDNavigator->getState().getVisitDir();
+                motionDir = pidRoot / mBrowsePID / visit / "motion";
+            } else {
+                return;
+            }
+        } else {
+            motionDir = rm::getManager().resolveDir("@data/motion");
+        }
+
+        if (!fs::exists(motionDir)) return;
+
+        for (const auto& entry : fs::directory_iterator(motionDir)) {
+            auto ext = entry.path().extension().string();
+            if (ext == ".h5" || ext == ".hdf5") {
+                mMotionCandidates.push_back(entry.path().filename().string());
+            }
+        }
+        std::sort(mMotionCandidates.begin(), mMotionCandidates.end());
+        LOG_INFO("[MotionEditor] Found " << mMotionCandidates.size() << " motion files");
+    } catch (const std::exception& e) {
+        LOG_WARN("[MotionEditor] Error scanning motion files: " << e.what());
+    }
+}
+
+void MotionEditorApp::loadSelectedFiles()
+{
+    // Load skeleton first (needed for refreshMotion inside loadH5Motion)
+    if (!mSkeletonBrowsePath.empty() && mResourceManager) {
+        try {
+            std::string resolved = mResourceManager->resolve(mSkeletonBrowsePath).string();
+            if (!resolved.empty()) {
+                loadSkeleton(resolved);
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("[MotionEditor] Failed to resolve skeleton path: " << e.what());
+        }
+    }
+
+    // Then load motion
+    if (!mMotionBrowsePath.empty() && mResourceManager) {
+        try {
+            std::string resolved = mResourceManager->resolve(mMotionBrowsePath).string();
+            if (!resolved.empty()) {
+                loadH5Motion(resolved);
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("[MotionEditor] Failed to resolve motion path: " << e.what());
+        }
     }
 }
 
@@ -1986,12 +1940,6 @@ void MotionEditorApp::loadH5Motion(const std::string& path)
         std::string stem = fs::path(path).stem().string();
         strncpy(mExportFilename, stem.c_str(), sizeof(mExportFilename) - 1);
         mExportFilename[sizeof(mExportFilename) - 1] = '\0';
-
-        // Load skeleton if we have one auto-detected or manually set
-        std::string skelPath = mUseAutoSkeleton ? mAutoDetectedSkeletonPath : std::string(mManualSkeletonPath);
-        if (!skelPath.empty() && !mCharacter) {
-            loadSkeleton(skelPath);
-        }
 
         // Refresh motion state (trim, playback, foot contacts, ROM)
         refreshMotion();
@@ -2046,39 +1994,6 @@ void MotionEditorApp::refreshMotion()
         detectFootContacts();
         detectDirectionIntervals();
         detectROMViolations();
-    }
-}
-
-void MotionEditorApp::autoDetectSkeleton()
-{
-    mAutoDetectedSkeletonPath.clear();
-
-    if (!mResourceManager || !mPIDNavigator) {
-        return;
-    }
-
-    const auto& state = mPIDNavigator->getState();
-    if (state.selectedPID < 0 || state.selectedPID >= static_cast<int>(state.pidList.size())) {
-        return;
-    }
-
-    const std::string& pid = state.pidList[state.selectedPID];
-    std::string visit = state.preOp ? "pre" : "op1";
-    std::string uri = "@pid:" + pid + "/" + visit + "/skeleton/dynamic.yaml";
-
-    try {
-        auto resolved = mResourceManager->resolve(uri);
-        if (!resolved.empty() && fs::exists(resolved)) {
-            mAutoDetectedSkeletonPath = resolved.string();
-            LOG_INFO("[MotionEditor] Auto-detected skeleton: " << mAutoDetectedSkeletonPath);
-
-            // Load if using auto-detect
-            if (mUseAutoSkeleton) {
-                loadSkeleton(mAutoDetectedSkeletonPath);
-            }
-        }
-    } catch (const rm::RMError&) {
-        LOG_VERBOSE("[MotionEditor] No skeleton found at " << uri);
     }
 }
 

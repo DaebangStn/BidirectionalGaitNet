@@ -567,7 +567,7 @@ void PIDNavigator::renderUI(const char* title,
 // Character Load Content (shared between MusclePersonalizerApp & PhysicalExam)
 // ============================================================================
 
-static void drawFileSourceSection(
+void drawFileSourceSection(
     const char* label,
     const char* dataDir,
     CharacterFileRef& ref,
@@ -670,15 +670,17 @@ void drawCharacterLoadContent(
     ImGui::Separator();
 
     // Rebuild button
-    bool canRebuild = true;
-    if (options.requireBothForRebuild) {
-        canRebuild = !skeleton.path.empty() && !muscle.path.empty();
+    if (options.showRebuildButton) {
+        bool canRebuild = true;
+        if (options.requireBothForRebuild) {
+            canRebuild = !skeleton.path.empty() && !muscle.path.empty();
+        }
+        if (!canRebuild) ImGui::BeginDisabled();
+        if (ImGui::Button("Rebuild", ImVec2(-1, 0))) {
+            if (onRebuild) onRebuild();
+        }
+        if (!canRebuild) ImGui::EndDisabled();
     }
-    if (!canRebuild) ImGui::BeginDisabled();
-    if (ImGui::Button("Rebuild", ImVec2(-1, 0))) {
-        if (onRebuild) onRebuild();
-    }
-    if (!canRebuild) ImGui::EndDisabled();
 }
 
 } // namespace PIDNav
