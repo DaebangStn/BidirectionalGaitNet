@@ -39,3 +39,9 @@ target_include_directories(c3d_inspect PRIVATE
     ${CMAKE_SOURCE_DIR}/rm/include
     ${CURSES_INCLUDE_DIR}
 )
+
+# YAML Diff Viewer
+find_package(yaml-cpp REQUIRED)
+add_executable(yaml_diff yaml_diff.cpp)
+target_link_libraries(yaml_diff yaml-cpp ${CURSES_LIBRARY})
+target_include_directories(yaml_diff PRIVATE ${CURSES_INCLUDE_DIR})

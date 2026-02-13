@@ -12,11 +12,12 @@ environment:
 
   # Motion Reference
   motion:
+    get_stride_from_motion: true
     file: "@pid:29792292/pre/motion/walk_single_cyc.h5"
 
   # Muscle System
   muscle:
-    file: "@pid:/muscle/clinic_0211_1604.yaml"
+    file: "@pid:/muscle/clinic_0211_0956.yaml"
     mesh_lbs_weight: false
     use_velocity_force: false
     use_joint_state: true
@@ -38,19 +39,27 @@ environment:
 
   # Reward System
   reward:
-    type: "scadiver"  # deepmimic, gaitnet, scadiver
-    num_ref_in_state: 2
-    include_ref_velocity: false
-    ignore_toe_imit: true
+    type: "gaitnet"  # deepmimic, gaitnet, scadiver
     clip:
       step: 50
       value: 0.1
 
-    # Imitation reward coefficients (deepmimic/scadiver)
-    ee_weight: 100.0
-    pos_weight: 0.5
-    vel_weight: 0.005
-    com_weight: 10.0
+    # Locomotion rewards (for gaitnet)
+    locomotion:
+      head_linear_acc_weight: 4.0
+      head_rot_weight: 2.0
+      step:
+        weight: 2.0
+        clip: 0.05  # Z-axis clipping value (forward progression tolerance)
+      avg_vel:
+        weight: 4.0
+        window_mult: 1.0
+        clip: 0.2  # clip velocity difference magnitude
+        consider_x: false
+      dragX:
+        use: true
+        weight: 1.0
+        threshold: 0.2
 
     # Metabolic configuration
     metabolic:

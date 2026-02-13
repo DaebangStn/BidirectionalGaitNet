@@ -6,4 +6,4 @@ cd "$PROJECT_ROOT"
 export DISPLAY=:0
 
 # Call the render_ckpt binary directly using current shell environment
-exec build/release/viewer/render_ckpt "$@"
+exec build/release/viewer/render_ckpt "runs/$1" "${@:2}"
