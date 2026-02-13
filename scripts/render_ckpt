@@ -5,5 +5,10 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 export DISPLAY=:0
 
-# Call the render_ckpt binary directly using current shell environment
-exec build/release/viewer/render_ckpt "runs/$1" "${@:2}"
+# Resolve checkpoint path: use as-is if it exists, otherwise prepend runs/
+CKPT_PATH="$1"
+if [ ! -d "$CKPT_PATH" ]; then
+    CKPT_PATH="runs/$1"
+fi
+
+exec build/release/viewer/render_ckpt "$CKPT_PATH" "${@:2}"

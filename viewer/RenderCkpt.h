@@ -578,6 +578,7 @@ private:
 
     // Plot title control
     bool mPlotTitle, mPlotTitleResizablePlotPane;
+    bool mFixActivationYlim;
     std::string mCheckpointName;
 
     // Plot legend control

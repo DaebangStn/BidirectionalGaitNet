@@ -66,6 +66,7 @@ RenderCkpt::RenderCkpt(int argc, char **argv)
     mYminResizablePlotPane = 0.0;
     mYmaxResizablePlotPane = 1.0;
     mPlotTitle = false;
+    mFixActivationYlim = false;
     mPlotHideLegend = false;
     mProgressForward = true;
 
@@ -3185,6 +3186,8 @@ void RenderCkpt::drawMuscleTabContent()
     if (mMuscleMetricMode == 0) {
         ImGui::SameLine();
         ImGui::Checkbox("Plot NI", &mPlotActivationNoise);
+        ImGui::SameLine();
+        ImGui::Checkbox("Fix Y[0,1]", &mFixActivationYlim);
     }
     
     // Use FilterableChecklist for muscle selection
@@ -3282,7 +3285,11 @@ void RenderCkpt::drawMuscleTabContent()
             if (ImPlot::BeginPlot((title_activations + "##MusclePlots").c_str(), ImVec2(-1, getPlotHeight("Muscle Plots"))))
             {
                 ImPlot::SetupAxes("Time (s)", yAxisLabel.c_str(), 0, ImPlotAxisFlags_AutoFit);
+                if (mMuscleMetricMode == 0 && mFixActivationYlim)
+                    ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.0, ImPlotCond_Always);
                 plotGraphData(keysToPlot, ImAxis_Y1);
+                ImPlotRect limits = ImPlot::GetPlotLimits();
+                plotPhaseBar(limits.X.Min, limits.X.Max, limits.Y.Min, limits.Y.Max);
                 ImPlot::EndPlot();
             }
         } else {

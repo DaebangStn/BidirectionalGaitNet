@@ -1,7 +1,6 @@
 args:
   checkpoint_interval: 1000
   total_timesteps: 500000000
-  init_log_std: 0.2
 
 environment:
   pid: "29792292/op1"
