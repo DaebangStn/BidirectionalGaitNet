@@ -13,3 +13,6 @@
 [submodule "libs/tinycolormap"]
 	path = libs/tinycolormap
 	url = https://github.com/yuki-koyama/tinycolormap.git
+[submodule "libs/dart"]
+	path = libs/dart
+	url = https://github.com/dartsim/dart

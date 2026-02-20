@@ -68,3 +68,7 @@ runs/
 benchmark_results/
 prev/
 capture/
+
+libs/dart/build/
+libs/ceres-solver/build/
+libs/install/
