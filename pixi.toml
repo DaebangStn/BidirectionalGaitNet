@@ -82,3 +82,11 @@ ray = {version = "==2.12.0", extras = ["rllib", "client"]}
 setup-machine = { cmd = "bash -c 'echo \"Presets: release  debug  a6000  gait\"; printf \"Enter preset name: \"; read p; printf \"%s\" \"$p\" > .machine; echo \"Wrote .machine = $p\"'" }
 configure     = "bash -c '[ -f .machine ] || { echo \"Run: pixi run setup-machine\"; exit 1; }; cmake --preset $(cat .machine)'"
 build         = "bash -c '[ -f .machine ] || { echo \"Run: pixi run setup-machine\"; exit 1; }; [ -f build/$(cat .machine)/CMakeCache.txt ] || cmake --preset $(cat .machine); cmake --build build/$(cat .machine)/ -j$(nproc) --'"
+render-ckpt         = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); CKPT=$1; [ -d \"$CKPT\" ] || CKPT=\"runs/$CKPT\"; shift; export DISPLAY=:0; exec build/${PRESET}/viewer/render_ckpt \"$CKPT\" \"$@\"' _"
+surgery             = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); export DISPLAY=:0; exec build/${PRESET}/surgery/surgery_tool \"$@\"' _"
+motion-editor       = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); export DISPLAY=:0; exec build/${PRESET}/viewer/motion_editor \"$@\"' _"
+marker-editor       = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); export DISPLAY=:0; exec build/${PRESET}/viewer/marker_editor \"$@\"' _"
+muscle-personalizer = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); export DISPLAY=:0; exec build/${PRESET}/viewer/muscle_personalizer \"$@\"' _"
+physical-exam       = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); export DISPLAY=:0; exec build/${PRESET}/surgery/physical_exam \"$@\"' _"
+c3d-inspect         = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); export DISPLAY=:0; exec build/${PRESET}/tools/c3d_inspect \"$@\"' _"
+c3d-processor       = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); export DISPLAY=:0; exec build/${PRESET}/viewer/c3d_processor \"$@\"' _"
