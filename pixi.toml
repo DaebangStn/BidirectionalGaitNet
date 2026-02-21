@@ -77,3 +77,8 @@ dm-tree = "*"
 scikit-image = "==0.23.0"
 pyarrow = "==14.0.2"
 ray = {version = "==2.12.0", extras = ["rllib", "client"]}
+
+[tasks]
+setup-machine = { cmd = "bash -c 'echo \"Presets: release  debug  a6000  gait\"; printf \"Enter preset name: \"; read p; printf \"%s\" \"$p\" > .machine; echo \"Wrote .machine = $p\"'" }
+configure     = "bash -c '[ -f .machine ] || { echo \"Run: pixi run setup-machine\"; exit 1; }; cmake --preset $(cat .machine)'"
+build         = "bash -c '[ -f .machine ] || { echo \"Run: pixi run setup-machine\"; exit 1; }; [ -f build/$(cat .machine)/CMakeCache.txt ] || cmake --preset $(cat .machine); cmake --build build/$(cat .machine)/ -j$(nproc) --'"
