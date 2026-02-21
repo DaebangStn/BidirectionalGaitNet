@@ -37,7 +37,7 @@ echo "Killing previous MuscleSim viewer instances..."
 pkill -f "MuscleSim" 2>/dev/null || true
 wmctrl -c "MuscleSim" 2>/dev/null || true
 # Also kill by executable name as fallback
-pkill -f "./build/release/viewer/render_ckpt" 2>/dev/null || true
+pkill -f "render_ckpt" 2>/dev/null || true
 sleep 0.5
 
 if [ -n "$FILTER" ]; then
@@ -70,7 +70,7 @@ for CKPT_PATH in "${CHECKPOINT_DIR}"/*; do
         # Execute the 'scripts/render_ckpt' command with the checkpoint relative path.
         # The '&' symbol at the end sends the command to the background,
         # allowing the script to continue without waiting for render_ckpt to finish.
-        scripts/render_ckpt "${CKPT_PATH}" &
+        pixi run render-ckpt -- "${CKPT_PATH}" &
     fi
 done
 
