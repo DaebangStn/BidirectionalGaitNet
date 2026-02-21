@@ -79,6 +79,7 @@ pyarrow = "==14.0.2"
 ray = {version = "==2.12.0", extras = ["rllib", "client"]}
 
 [tasks]
+install-deps  = "bash -c 'set -euo pipefail; P=$(pwd); I=$P/libs/install; export CC=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-gcc CXX=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-g++; mkdir -p $I; echo \"==== Building DART ====\"; cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$I -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE -DCMAKE_INSTALL_RPATH=$I -DCMAKE_PREFIX_PATH=$CONDA_PREFIX -DDART_BUILD_DARTPY=false -DBUILD_SHARED_LIBS=true -DDART_BUILD_GUI_OSG=false -DDART_ENABLE_SIMD=true -S $P/libs/dart -B $P/libs/dart/build && ninja -C $P/libs/dart/build install; echo \"==== Building Ceres ====\"; cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$I -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_SHARED_LIBS=OFF -DUSE_CUDA=OFF -S $P/libs/ceres-solver -B $P/libs/ceres-solver/build && ninja -C $P/libs/ceres-solver/build install; echo \"==== Done ====\"'"
 setup-machine = { cmd = "bash -c 'echo \"Presets: release  debug  a6000  gait\"; printf \"Enter preset name: \"; read p; printf \"%s\" \"$p\" > .machine; echo \"Wrote .machine = $p\"'" }
 configure     = "bash -c '[ -f .machine ] || { echo \"Run: pixi run setup-machine\"; exit 1; }; cmake --preset $(cat .machine)'"
 build         = "bash -c '[ -f .machine ] || { echo \"Run: pixi run setup-machine\"; exit 1; }; [ -f build/$(cat .machine)/CMakeCache.txt ] || cmake --preset $(cat .machine); cmake --build build/$(cat .machine)/ -j$(nproc) --'"

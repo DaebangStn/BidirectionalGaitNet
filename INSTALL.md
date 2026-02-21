@@ -32,21 +32,18 @@ pixi install
 
 ## 4. Build DART and Ceres
 
-Run inside the pixi environment so the conda compiler is on PATH:
-
 ```bash
-pixi run bash scripts/install.sh
+pixi run install-deps
 ```
 
-This builds DART (v6.13.2) and Ceres from source into `libs/install/`.
-Subsequent runs are skipped if the build directory already exists — delete
-`libs/dart/build/` or `libs/ceres-solver/build/` to force a rebuild.
+Builds DART (v6.13.2) and Ceres from source into `libs/install/`.
+To force a rebuild, delete `libs/dart/build/` or `libs/ceres-solver/build/` first.
 
 ## 5. Configure and build the project
 
 ```bash
-cmake --preset release
-ninja -C build/release -j16 -l12
+pixi run setup-machine   # first time only — choose preset (release/debug/a6000/gait)
+pixi run build
 ```
 
 Available presets: `release`, `debug`, `a6000` (server, local CUDA), `gait` (HPC cluster).
@@ -54,4 +51,4 @@ Available presets: `release`, `debug`, `a6000` (server, local CUDA), `gait` (HPC
 ## Notes
 
 - `libs/install/` is generated — do not commit it.
-- To update DART or Ceres, update the submodule ref and re-run `scripts/install.sh`.
+- To update DART or Ceres, update the submodule ref and re-run `pixi run install-deps`.
