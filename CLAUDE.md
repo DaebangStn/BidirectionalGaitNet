@@ -1,4 +1,5 @@
-- You can build the release mode with 'ninja -C build/release -j 16 -l 12'
+- Build with 'pixi run build' (reads preset from .machine; run 'pixi run setup-machine' to create it)
+- For direct ninja: 'ninja -C build/$(cat .machine) -j 16 -l 12'
 - you must rebuild the executable after you made the change
 - If you test ray_rollout.py, you must launch tmux window like debugging since rollout takes quite long time.
 - If you should check the ppo output, run "python ppo/learn.py debug" it also takes much time.
