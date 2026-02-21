@@ -72,3 +72,4 @@ capture/
 libs/dart/build/
 libs/ceres-solver/build/
 libs/install/
+.machine
