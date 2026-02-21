@@ -7,6 +7,7 @@ include_directories(../libs/imgui)
 include_directories(../libs/ascii)
 
 find_package(GLUT REQUIRED)
+find_package(glfw3 REQUIRED)
 find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS gui)
 find_package(ezc3d CONFIG REQUIRED)
@@ -36,9 +37,9 @@ target_link_libraries(viewer_common PUBLIC
     imgui
     glad
     glfw
-    GL
-    GLU
-    glut
+    /usr/lib/x86_64-linux-gnu/libGL.so
+    /usr/lib/x86_64-linux-gnu/libGLU.so
+    /usr/lib/x86_64-linux-gnu/libglut.so
 )
 target_include_directories(viewer_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -78,7 +79,10 @@ target_include_directories(render_ckpt PRIVATE
 
 target_link_libraries(render_ckpt
         tinyxml2::tinyxml2
-        GL GLU glut glad glfw imgui
+        /usr/lib/x86_64-linux-gnu/libGL.so
+        /usr/lib/x86_64-linux-gnu/libGLU.so
+        /usr/lib/x86_64-linux-gnu/libglut.so
+        glad glfw imgui
         sim
         dart-gui
         ${HDF5_CXX_LIBRARIES}
@@ -122,7 +126,10 @@ add_executable(c3d_processor ${C3D_PROCESSOR_SOURCES})
 
 target_link_libraries(c3d_processor
     tinyxml2::tinyxml2
-    GL GLU glut glad glfw imgui
+    /usr/lib/x86_64-linux-gnu/libGL.so
+    /usr/lib/x86_64-linux-gnu/libGLU.so
+    /usr/lib/x86_64-linux-gnu/libglut.so
+    glad glfw imgui
     sim
     dart-gui
     ezc3d

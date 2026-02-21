@@ -1,5 +1,6 @@
 add_compile_options(-fvisibility=hidden)
 
+find_package(glfw3 REQUIRED)
 find_package(TinyXML2 REQUIRED)
 find_package(DART REQUIRED COMPONENTS gui)
 find_package(Boost REQUIRED COMPONENTS program_options)
@@ -81,7 +82,10 @@ target_include_directories(physical_exam PRIVATE
 
 target_link_libraries(physical_exam
     tinyxml2::tinyxml2
-    GL GLU glut glad glfw imgui
+    /usr/lib/x86_64-linux-gnu/libGL.so
+    /usr/lib/x86_64-linux-gnu/libGLU.so
+    /usr/lib/x86_64-linux-gnu/libglut.so
+    glad glfw imgui
     sim
     surgery_optimizer
     dart-gui

@@ -5,7 +5,7 @@
 Install system GL and dev tools (Ubuntu/Debian):
 
 ```bash
-sudo apt install libgl-dev libglfw3-dev libglew-dev build-essential ninja-build
+sudo apt install libgl-dev libglu1-mesa-dev freeglut3-dev libglfw3-dev libglew-dev libc6-dev build-essential ninja-build
 ```
 
 CUDA driver ≥ 12.4 must be installed separately (see [NVIDIA docs](https://docs.nvidia.com/cuda/)).

@@ -73,6 +73,16 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
 endif()
 
 find_package(CUDAToolkit REQUIRED)
+
+# Preload Ceres-bundled abseil before Torch, since it is a superset of conda's absl.
+# This prevents "Some (but not all) targets already defined" errors when Torch later
+# loads protobuf which calls find_dependency(absl) and finds the conda version.
+set(_ceres_absl_dir "${CMAKE_SOURCE_DIR}/libs/install/lib/cmake/absl")
+if(EXISTS "${_ceres_absl_dir}/abslConfig.cmake" AND NOT TARGET absl::base)
+    find_package(absl REQUIRED HINTS "${_ceres_absl_dir}" NO_DEFAULT_PATH)
+endif()
+unset(_ceres_absl_dir)
+
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 message(STATUS "Torch found: ${TORCH_LIBRARIES}")
