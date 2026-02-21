@@ -68,7 +68,9 @@ if(NOT DEFINED CMAKE_CUDA_COMPILER)
     set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
 endif()
 
-set(CMAKE_CUDA_ARCHITECTURES "native")  # Auto-detect GPU architecture
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES "native")  # Auto-detect; override via preset
+endif()
 
 find_package(CUDAToolkit REQUIRED)
 find_package(Torch REQUIRED)
