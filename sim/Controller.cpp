@@ -2,6 +2,37 @@
 #include "Character.h"
 #include "Log.h"
 #include <random>
+#include <cstdlib>
+#include <H5Cpp.h>
+
+// ---------- tau_des HDF5 logging (enabled via LOG_SPD_HDF env var) ----------
+namespace {
+    static std::vector<std::vector<double>> s_tau_log;
+    static bool s_log_spd = (std::getenv("LOG_SPD_HDF") != nullptr);
+
+    void DumpTauLogHDF5(const std::string& path) {
+        if (s_tau_log.empty()) return;
+        int T = static_cast<int>(s_tau_log.size());
+        int D = static_cast<int>(s_tau_log[0].size());
+        std::vector<double> flat(T * D);
+        for (int t = 0; t < T; ++t)
+            std::copy(s_tau_log[t].begin(), s_tau_log[t].end(), flat.data() + t * D);
+        H5::H5File f(path, H5F_ACC_TRUNC);
+        hsize_t dims[2] = {static_cast<hsize_t>(T), static_cast<hsize_t>(D)};
+        f.createDataSet("tau_des", H5::PredType::NATIVE_DOUBLE,
+                        H5::DataSpace(2, dims)).write(flat.data(), H5::PredType::NATIVE_DOUBLE);
+        std::cout << "[tau_log] Saved " << T << "x" << D << " to " << path << std::endl;
+    }
+
+    struct TauLogFlusher {
+        ~TauLogFlusher() {
+            if (s_log_spd && !s_tau_log.empty())
+                DumpTauLogHDF5("/tmp/dart_tau_des.h5");
+        }
+    };
+    static TauLogFlusher s_flusher;  // destructor runs at program exit
+}
+// --------------------------------------------------------------------------
 
 // Thread-safe random number generation
 namespace {
@@ -186,6 +217,13 @@ Eigen::VectorXd Controller::computeSPDForces(const Eigen::VectorXd& pdTarget,
 
     tau.head<3>().setZero();
     tau.segment<3>(3) = computeRootVirtualSPD();
+
+    // Log joint-space tau_des (skip root 6 DOFs)
+    if (s_log_spd && tau.size() > 6) {
+        std::vector<double> row(tau.data() + 6, tau.data() + tau.size());
+        s_tau_log.push_back(std::move(row));
+    }
+
     return tau;
 }
 

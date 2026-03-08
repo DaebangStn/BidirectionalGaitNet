@@ -18,7 +18,7 @@ MarkerEditorApp::MarkerEditorApp(int argc, char** argv)
     : ViewerAppBase("Marker Editor", 1280, 720)
 {
     // Default paths
-    mSkeletonPath = "@data/skeleton/base.xml";
+    mSkeletonPath = "@data/skeleton/base.yaml";
     mMarkerPath = "@data/marker/default.xml";
     mExportPath = "test";
 

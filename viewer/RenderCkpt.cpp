@@ -3010,6 +3010,48 @@ void RenderCkpt::drawKinematicsTabContent()
 // ============================================================
 void RenderCkpt::drawKineticsTabContent()
 {
+    // Export SPD tau_des to HDF5
+    if (mRenderEnv) {
+        static char exportStatus[128] = "";
+        if (ImGui::Button("Export tau_des (1000 steps)##spdexport")) {
+            exportStatus[0] = '\0';
+            auto skel = mRenderEnv->getCharacter()->getSkeleton();
+            int numDofs = static_cast<int>(skel->getNumDofs());
+            int rootDof = static_cast<int>(skel->getRootJoint()->getNumDofs());
+            int jointDofs = numDofs - rootDof;
+
+            std::vector<float> flat;
+            flat.reserve(1000 * jointDofs);
+
+            for (int s = 0; s < 1000; ++s) {
+                update();
+                const Eigen::VectorXd& tau = mRenderEnv->getCachedSPDTorque();
+                for (int d = 0; d < jointDofs; ++d)
+                    flat.push_back(static_cast<float>(tau[rootDof + d]));
+            }
+
+            try {
+                const std::string path = "/tmp/dart_tau_des.h5";
+                H5::H5File f(path, H5F_ACC_TRUNC);
+                hsize_t dims[2] = {1000, (hsize_t)jointDofs};
+                f.createDataSet("tau_des", H5::PredType::NATIVE_FLOAT,
+                                H5::DataSpace(2, dims))
+                    .write(flat.data(), H5::PredType::NATIVE_FLOAT);
+                float absSum = 0.f;
+                for (float v : flat) absSum += std::abs(v);
+                float mean = absSum / (float)flat.size();
+                snprintf(exportStatus, sizeof(exportStatus),
+                         "Saved! mean=%.1f Nm", mean);
+                printf("[RenderCkpt] SPD tau_des saved to %s  mean|tau|=%.2f Nm\n",
+                       path.c_str(), mean);
+            } catch (const std::exception& e) {
+                snprintf(exportStatus, sizeof(exportStatus), "HDF error: %s", e.what());
+            }
+        }
+        if (exportStatus[0]) { ImGui::SameLine(); ImGui::TextUnformatted(exportStatus); }
+        ImGui::Separator();
+    }
+
     // Use FilterableChecklist for joint DOF selection
     ImGuiCommon::FilterableChecklist("##PlotJointList", mPlotJointDofNames,
                                         mPlotJointSelected, mPlotJointFilterText,
