@@ -331,6 +331,7 @@ private:
     // Rendering Options
     DrawFlags mDrawFlags;
     bool mStochasticPolicy;
+    bool mUseFullTauForNN = false;  ///< Jan24 compat: full non-root tau to muscle NN
     float mInitLogStd;
 
     MuscleRenderingType mMuscleRenderType;
@@ -562,6 +563,9 @@ private:
     double mRealDeltaTimeAvg;        // Moving average of real frame delta time
     bool mIsPlaybackTooFast;         // Warning: playback faster than simulation can handle
     bool mProgressForward = false;   // Whether character progresses forward with cycle distance
+    bool mExportTauDes = false;      // Collecting tau_des frames
+    std::vector<std::vector<float>> mTauDesCollected;
+    char mTauDesExportStatus[128] = "";
     bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
     bool mShowTitlePanel;            // Toggle for title panel (Ctrl+T)
 

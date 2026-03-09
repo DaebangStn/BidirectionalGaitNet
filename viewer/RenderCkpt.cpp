@@ -1711,6 +1711,74 @@ void RenderCkpt::onFrameStart()
         if (shouldStepSimulation)
         {
             update();
+
+            // Collect tau_des frame-by-frame when export is active
+            if (mExportTauDes && mRenderEnv) {
+                const Eigen::VectorXd& tau = mRenderEnv->getCachedSPDTorque();
+                auto skel = mRenderEnv->getCharacter()->getSkeleton();
+                int rootDof = static_cast<int>(skel->getRootJoint()->getNumDofs());
+                int jointDofs = static_cast<int>(tau.size()) - rootDof;
+                if (jointDofs > 0) {
+                    std::vector<float> row(jointDofs);
+                    for (int d = 0; d < jointDofs; ++d)
+                        row[d] = static_cast<float>(tau[rootDof + d]);
+                    mTauDesCollected.push_back(std::move(row));
+                }
+
+                if ((int)mTauDesCollected.size() >= 1000) {
+                    mExportTauDes = false;
+                    // Write HDF5
+                    try {
+                        int T = 1000, D = (int)mTauDesCollected[0].size();
+                        std::vector<float> flat;
+                        flat.reserve(T * D);
+                        for (auto& r : mTauDesCollected)
+                            flat.insert(flat.end(), r.begin(), r.end());
+                        mTauDesCollected.clear();
+                        const std::string path = "/tmp/dart_tau_des.h5";
+                        H5::H5File f(path, H5F_ACC_TRUNC);
+                        hsize_t dims[2] = {(hsize_t)T, (hsize_t)D};
+                        f.createDataSet("tau_des", H5::PredType::NATIVE_FLOAT,
+                                        H5::DataSpace(2, dims))
+                            .write(flat.data(), H5::PredType::NATIVE_FLOAT);
+                        // Write dof_names attribute (skip root joint)
+                        {
+                            std::vector<std::string> dofNames;
+                            for (size_t ji = 0; ji < skel->getNumJoints(); ++ji) {
+                                auto* joint = skel->getJoint(ji);
+                                if (joint == skel->getRootJoint()) continue;
+                                for (size_t d = 0; d < joint->getNumDofs(); ++d)
+                                    dofNames.push_back(joint->getName() + "_dof" + std::to_string(d));
+                            }
+                            auto writeStrAttr = [&](const std::string& key, const std::string& val) {
+                                H5::StrType st(H5::PredType::C_S1, val.size() + 1);
+                                H5::DataSpace sc(H5S_SCALAR);
+                                f.createAttribute(key, st, sc).write(st, val.c_str());
+                            };
+                            if (!dofNames.empty()) {
+                                std::string joined;
+                                for (size_t j = 0; j < dofNames.size(); ++j) {
+                                    if (j) joined += ",";
+                                    joined += dofNames[j];
+                                }
+                                writeStrAttr("dof_names", joined);
+                            }
+                            writeStrAttr("actuator_type", "implicit_spd");
+                        }
+                        float absSum = 0.f;
+                        for (float v : flat) absSum += std::abs(v);
+                        float mean = absSum / (float)flat.size();
+                        snprintf(mTauDesExportStatus, sizeof(mTauDesExportStatus),
+                                 "Saved %dx%d  mean=%.1f Nm", T, D, mean);
+                        printf("[RenderCkpt] tau_des saved to %s  mean|tau|=%.2f Nm\n",
+                               path.c_str(), mean);
+                    } catch (const std::exception& e) {
+                        snprintf(mTauDesExportStatus, sizeof(mTauDesExportStatus),
+                                 "HDF error: %s", e.what());
+                        mTauDesCollected.clear();
+                    }
+                }
+            }
         }
         // else: idle rendering - render current state without stepping simulation
 
@@ -3010,45 +3078,25 @@ void RenderCkpt::drawKinematicsTabContent()
 // ============================================================
 void RenderCkpt::drawKineticsTabContent()
 {
-    // Export SPD tau_des to HDF5
+    // Export SPD tau_des to HDF5 — collects while rendering
     if (mRenderEnv) {
-        static char exportStatus[128] = "";
-        if (ImGui::Button("Export tau_des (1000 steps)##spdexport")) {
-            exportStatus[0] = '\0';
-            auto skel = mRenderEnv->getCharacter()->getSkeleton();
-            int numDofs = static_cast<int>(skel->getNumDofs());
-            int rootDof = static_cast<int>(skel->getRootJoint()->getNumDofs());
-            int jointDofs = numDofs - rootDof;
-
-            std::vector<float> flat;
-            flat.reserve(1000 * jointDofs);
-
-            for (int s = 0; s < 1000; ++s) {
-                update();
-                const Eigen::VectorXd& tau = mRenderEnv->getCachedSPDTorque();
-                for (int d = 0; d < jointDofs; ++d)
-                    flat.push_back(static_cast<float>(tau[rootDof + d]));
+        if (mExportTauDes) {
+            // Show progress while collecting
+            int collected = (int)mTauDesCollected.size();
+            ImGui::TextColored({0.3f, 1.f, 0.3f, 1.f},
+                               "Collecting... %d / 1000", collected);
+        } else {
+            if (ImGui::Checkbox("Export tau_des (1000 steps)##spdexport", &mExportTauDes)) {
+                if (mExportTauDes) {
+                    // Start: unpause and reset buffer
+                    mTauDesCollected.clear();
+                    mTauDesExportStatus[0] = '\0';
+                    mRolloutStatus.pause = false;
+                }
             }
-
-            try {
-                const std::string path = "/tmp/dart_tau_des.h5";
-                H5::H5File f(path, H5F_ACC_TRUNC);
-                hsize_t dims[2] = {1000, (hsize_t)jointDofs};
-                f.createDataSet("tau_des", H5::PredType::NATIVE_FLOAT,
-                                H5::DataSpace(2, dims))
-                    .write(flat.data(), H5::PredType::NATIVE_FLOAT);
-                float absSum = 0.f;
-                for (float v : flat) absSum += std::abs(v);
-                float mean = absSum / (float)flat.size();
-                snprintf(exportStatus, sizeof(exportStatus),
-                         "Saved! mean=%.1f Nm", mean);
-                printf("[RenderCkpt] SPD tau_des saved to %s  mean|tau|=%.2f Nm\n",
-                       path.c_str(), mean);
-            } catch (const std::exception& e) {
-                snprintf(exportStatus, sizeof(exportStatus), "HDF error: %s", e.what());
-            }
+            if (mTauDesExportStatus[0])
+                ImGui::TextUnformatted(mTauDesExportStatus);
         }
-        if (exportStatus[0]) { ImGui::SameLine(); ImGui::TextUnformatted(exportStatus); }
         ImGui::Separator();
     }
 
@@ -3916,6 +3964,10 @@ void RenderCkpt::drawSimControlPanelContent()
     if (ImGui::Button("Set Mass")) mRenderEnv->getCharacter()->setBodyMass(static_cast<double>(targetMass));
 
     ImGui::Checkbox("Stochastic Policy", &mStochasticPolicy);
+    if (mRenderEnv && mRenderEnv->getController()) {
+        if (ImGui::Checkbox("Full Tau for Muscle NN (Jan24)", &mUseFullTauForNN))
+            mRenderEnv->getController()->setUseFullTauForNN(mUseFullTauForNN);
+    }
 
     ImGui::SetNextItemWidth(100);
     if (ImGui::InputFloat("Init Log Std", &mInitLogStd, 0.1f, 0.5f, "%.2f")) {

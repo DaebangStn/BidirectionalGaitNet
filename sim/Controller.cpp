@@ -168,7 +168,12 @@ ControllerOutput Controller::step(const ControllerInput& input)
 
         // Mirror tau for muscle NN (NN uses mirrored MuscleTuple when isMirror)
         Eigen::VectorXd tauForNN = Eigen::VectorXd::Zero(mNumDofs);
-        tauForNN.segment(mRootDof, mNumMuscleDof) = mCachedSPDTorque.segment(mRootDof, mNumMuscleDof);
+        if (mUseFullTauForNN) {
+            // Jan24 compat: pass full non-root tau (lower + upper body) to muscle NN
+            tauForNN.tail(mNumDofs - mRootDof) = mCachedSPDTorque.tail(mNumDofs - mRootDof);
+        } else {
+            tauForNN.segment(mRootDof, mNumMuscleDof) = mCachedSPDTorque.segment(mRootDof, mNumMuscleDof);
+        }
         if (input.isMirror && mMirrorCharacter) {
             tauForNN = mMirrorCharacter->getMirrorPosition(tauForNN);
         }

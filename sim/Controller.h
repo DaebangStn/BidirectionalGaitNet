@@ -259,6 +259,7 @@ public:
 
     /** Set using cascading mode */
     void setUseCascading(bool useCascading) { mUseCascading = useCascading; }
+    void setUseFullTauForNN(bool useFullTau) { mUseFullTauForNN = useFullTau; }
 
     /** Check if using cascading */
     bool getUseCascading() const { return mUseCascading; }
@@ -271,6 +272,7 @@ private:
     int mNumDofs = 0;
     int mRootDof = 0;
     int mNumMuscleDof = 0;
+    bool mUseFullTauForNN = false;  ///< Jan24 compat: pass full non-root tau to muscle NN
 
     // === Control configuration ===
     ActuatorType mActuatorType = mass;
