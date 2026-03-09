@@ -54,7 +54,7 @@ pybullet = "3.25.*"
 pytest = "*"
 pyyaml = "*"
 scipy = "*"
-setuptools = "*"
+setuptools = "<=74"
 tqdm = "*"
 umap-learn = "0.5.6.*"
 xarray = "*"
@@ -78,6 +78,7 @@ dm-tree = "*"
 scikit-image = "==0.23.0"
 pyarrow = "==14.0.2"
 ray = {version = "==2.12.0", extras = ["rllib", "client"]}
+tensorboard = "*"
 
 [activation]
 env = { DISPLAY = ":0" }
@@ -95,6 +96,7 @@ muscle-personalizer = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo releas
 physical-exam       = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); exec build/${PRESET}/surgery/physical_exam \"$@\"' _"
 c3d-inspect         = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); exec build/${PRESET}/tools/c3d_inspect \"$@\"' _"
 c3d-processor       = "bash -c 'PRESET=$(cat .machine 2>/dev/null || echo release); exec build/${PRESET}/viewer/c3d_processor \"$@\"' _"
+train          = "bash -c 'python -m ppo.learn --env_file data/env/${1}.yaml' _"
 train-bgn      = "python -c 'from python.scripts import train_bgn; train_bgn()'"
 train-fgn      = "python -c 'from python.scripts import train_fgn; train_fgn()'"
 train-main     = "python -m python.train"

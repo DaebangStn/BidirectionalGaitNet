@@ -1,11 +1,3 @@
-## Environment (first time only)
-```bash
-micromamba create -f data/environment.yml -y
-CONDA_PREFIX=$HOME/micromamba/envs/bidir
-ln -sf "$CONDA_PREFIX/lib/libnvToolsExt.so.1" "$CONDA_PREFIX/lib/libnvToolsExt.so"
-ln -sf "$CONDA_PREFIX/lib/libGL.so.1"          "$CONDA_PREFIX/lib/libGL.so"
-```
-
 ## Build
 ```bash
 pixi run install-deps  # first time only — builds DART + Ceres into libs/install/
@@ -26,11 +18,13 @@ pixi run surgery                   # Surgery tool
 ```
 
 ## Python scripts (ray / PPO)
-Use the micromamba `bidir` env (NOT pixi):
+Use pixi for all Python scripts:
 ```bash
-micromamba run -n bidir python python/ray_rollout.py --checkpoint <ckpt> --config <cfg> --workers 1
+pixi run train <config_name>       # PPO training, e.g. pixi run train base_imit
+pixi run rollout                   # rollout CLI
 ```
 
 ## Agent rules
+- Use pixi for everything. Do NOT use micromamba.
 - Rebuild after any C++ source change before running: `pixi run build`
 - Never sleep > 3 seconds. Use background tmux for long-running jobs.
