@@ -639,7 +639,8 @@ if __name__ == "__main__":
         # Do NOT load optimizer, training_state, or muscle
 
     # Initialize C++ policy weights
-    agent_state_cpu = {k: v.cpu() for k, v in agent.state_dict().items()}
+    # .clone() needed: PyTorch 2.10+ forbids set_stride on detached-view tensors
+    agent_state_cpu = {k: v.cpu().clone() for k, v in agent.state_dict().items()}
     envs.update_policy_weights(agent_state_cpu)
     if muscle_learner:
         envs.update_muscle_weights(muscle_learner.get_state_dict())
@@ -944,7 +945,8 @@ if __name__ == "__main__":
         # ===== SYNCHRONIZE WEIGHTS TO C++ =====
         sync_start = time.perf_counter()
         # Move all tensors to CPU before passing to C++
-        agent_state_cpu = {k: v.cpu() for k, v in agent.state_dict().items()}
+        # .clone() needed: PyTorch 2.10+ forbids set_stride on detached-view tensors
+        agent_state_cpu = {k: v.cpu().clone() for k, v in agent.state_dict().items()}
         envs.update_policy_weights(agent_state_cpu)
         sync_time = (time.perf_counter() - sync_start) * 1000
 
