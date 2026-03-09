@@ -1,2 +1,7 @@
+CompileFlags:
+  Remove:
+    - -flto=*
+    - -fno-fat-lto-objects
+
 Index:
   Background: false
