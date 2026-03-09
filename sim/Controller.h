@@ -17,6 +17,7 @@ enum ActuatorType
 {
     tor,        // Direct torque control
     pd,         // PD (SPD) control
+    pd_px,      // PhysX-style implicit SPD (diagonal mass, no gravity/constraint)
     mass,       // Muscle simulation with full-body SPD reference
     mass_lower  // Muscle simulation for lower body, PD for upper body
 };
@@ -114,6 +115,14 @@ public:
      */
     Eigen::VectorXd computeSPDForces(const Eigen::VectorXd& pdTarget,
                                       const Eigen::VectorXd& ext = Eigen::VectorXd());
+
+    /**
+     * Compute PhysX-style implicit SPD forces.
+     * Diagonal mass only, no gravity/Coriolis/constraint forces.
+     * @param pdTarget Target pose
+     * @return Computed torque vector
+     */
+    Eigen::VectorXd computePxSPDForces(const Eigen::VectorXd& pdTarget);
 
     /**
      * Compute muscle activations from desired torque and muscle tuple.

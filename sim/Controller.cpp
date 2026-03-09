@@ -48,6 +48,7 @@ namespace {
 ActuatorType getActuatorType(std::string type) {
     if (type == "torque") return tor;
     if (type == "pd") return pd;
+    if (type == "pd_px") return pd_px;
     if (type == "muscle") return mass;  // "muscle" now maps to "mass"
     if (type == "mass") return mass;
     if (type == "mass_lower") return mass_lower;
@@ -144,6 +145,11 @@ ControllerOutput Controller::step(const ControllerInput& input)
         mCachedSPDTorque = output.torque;
         break;
 
+    case pd_px:
+        output.torque = computePxSPDForces(input.pdTarget);
+        mCachedSPDTorque = output.torque;
+        break;
+
     case mass:
     case mass_lower:
     {
@@ -228,6 +234,40 @@ Eigen::VectorXd Controller::computeSPDForces(const Eigen::VectorXd& pdTarget,
         std::vector<double> row(tau.data() + 6, tau.data() + tau.size());
         s_tau_log.push_back(std::move(row));
     }
+
+    return tau;
+}
+
+Eigen::VectorXd Controller::computePxSPDForces(const Eigen::VectorXd& pdTarget)
+{
+    Eigen::VectorXd q  = mSkeleton->getPositions();
+    Eigen::VectorXd dq = mSkeleton->getVelocities();
+    double dt = mSkeleton->getTimeStep() * mInferencePerSim;
+
+    // Diagonal mass matrix only (no full inverse)
+    Eigen::VectorXd M_diag = mSkeleton->getMassMatrix().diagonal();
+
+    // Velocity clamping [-30, 30] (applied elementwise via Eigen)
+    Eigen::VectorXd dq_c = dq.cwiseMax(-30.0).cwiseMin(30.0);
+
+    // Lookahead position error
+    Eigen::VectorXd pos_err = pdTarget - (q + dt * dq_c);
+
+    // Explicit PD torque
+    Eigen::VectorXd tau_exp = mKp.cwiseProduct(pos_err) - mKv.cwiseProduct(dq_c);
+
+    // Effective denominator: M_ii + kv*dt + kp*dt^2
+    Eigen::VectorXd denom = M_diag + mKv * dt + mKp * (dt * dt);
+
+    // Scale = M_ii / denom, fallback to 1.0 where denom <= 1e-6
+    Eigen::ArrayXd scale = (denom.array() > 1e-6)
+        .select(M_diag.array() / denom.array(), 1.0);
+
+    Eigen::VectorXd tau = tau_exp.cwiseProduct(scale.matrix());
+
+    // Root DOFs: orientation zeros, translation uses virtual root SPD
+    tau.head<3>().setZero();
+    tau.segment<3>(3) = computeRootVirtualSPD();
 
     return tau;
 }
