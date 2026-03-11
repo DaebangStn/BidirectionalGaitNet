@@ -260,7 +260,9 @@ class MuscleLearner:
         Note: Converts GPU tensors to CPU for distribution to C++ simulation environments.
         Training happens on GPU, but C++ environments require CPU tensors.
         """
-        return {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+        # C++ update_muscle_weights expects numpy (cast<py::array_t<float>>),
+        # not PyTorch tensors — return numpy to avoid set_stride error in PyTorch 2.10+
+        return {k: v.detach().cpu().numpy() for k, v in self.model.state_dict().items()}
 
     def set_weights(self, weights: Dict) -> None:
         """Load model weights from numpy arrays."""

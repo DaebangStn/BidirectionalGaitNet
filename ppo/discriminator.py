@@ -420,7 +420,9 @@ class DiscriminatorLearner:
 
     def get_state_dict(self) -> Dict:
         """Get model state dict with CPU tensors for C++ environment update."""
-        return {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+        # C++ update_discriminator_weights expects numpy (cast<py::array_t<float>>),
+        # not PyTorch tensors — return numpy to avoid set_stride error in PyTorch 2.10+
+        return {k: v.detach().cpu().numpy() for k, v in self.model.state_dict().items()}
 
     def set_weights(self, weights: Dict) -> None:
         """Load model weights from numpy arrays."""
