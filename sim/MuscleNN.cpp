@@ -187,8 +187,10 @@ void MuscleNNImpl::load_state_dict(const std::unordered_map<std::string, torch::
         else if (name == "fc.6.bias") target_param = &fc4->bias;
 
         if (target_param != nullptr) {
-            // Copy parameter values
-            target_param->data().copy_(param.to(device_));
+            // Copy parameter values — use NoGradGuard instead of .data()
+            // to avoid PyTorch 2.10 set_stride restriction on .data-derived tensors
+            torch::NoGradGuard no_grad;
+            target_param->copy_(param.to(device_));
         }
     }
 }
