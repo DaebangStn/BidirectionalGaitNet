@@ -189,8 +189,28 @@ py::dict BatchRolloutEnv::collect_rollout() {
 }
 
 void BatchRolloutEnv::update_policy_weights(py::dict state_dict) {
-    // Load weights into policy network
-    policy_->load_state_dict(state_dict);
+    // Convert numpy arrays to tensors (same pattern as update_muscle_weights).
+    // Avoids pybind11 cast<torch::Tensor> which calls make_variable→set_stride
+    // and triggers the PyTorch 2.10 restriction on .data/.detach()-derived tensors.
+    std::unordered_map<std::string, torch::Tensor> cpp_state_dict;
+
+    for (auto item : state_dict) {
+        std::string key = item.first.cast<std::string>();
+        py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
+
+        auto buf = np_array.request();
+        std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
+
+        torch::Tensor tensor = torch::empty(
+            shape,
+            torch::TensorOptions().dtype(torch::kFloat32)
+        );
+        std::memcpy(tensor.data_ptr<float>(), buf.ptr, tensor.nbytes());
+
+        cpp_state_dict[key] = tensor;
+    }
+
+    policy_->load_state_dict(cpp_state_dict);
 }
 
 void BatchRolloutEnv::update_muscle_weights(py::dict state_dict) {
