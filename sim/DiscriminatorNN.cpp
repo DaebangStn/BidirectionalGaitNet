@@ -92,8 +92,9 @@ float DiscriminatorNNImpl::compute_reward(const Eigen::VectorXf& activations) {
 }
 
 void DiscriminatorNNImpl::load_state_dict(const std::unordered_map<std::string, torch::Tensor>& state_dict) {
-    // Load each parameter by name
+    // Load each parameter by name — NoGradGuard at function scope, direct member copy
     // Python Sequential uses indices: fc.0, fc.2, fc.4 (skipping activation layers)
+    torch::NoGradGuard no_grad;
     for (const auto& pair : state_dict) {
         const std::string& name = pair.first;
         const torch::Tensor& param = pair.second;
@@ -109,10 +110,8 @@ void DiscriminatorNNImpl::load_state_dict(const std::unordered_map<std::string, 
         else if (name == "fc.4.bias") target_param = &fc_out->bias;
 
         if (target_param != nullptr) {
-            // Copy parameter values — use NoGradGuard instead of .data()
-            // to avoid PyTorch 2.10 set_stride restriction on .data-derived tensors
-            torch::NoGradGuard no_grad;
-            target_param->copy_(param.to(device_));
+            // copy_() handles cross-device transfer; NoGradGuard is set at function scope
+            target_param->copy_(param);
         }
     }
 }

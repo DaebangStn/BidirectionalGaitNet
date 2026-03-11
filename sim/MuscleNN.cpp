@@ -169,28 +169,23 @@ Eigen::VectorXf MuscleNNImpl::forward_filter(const Eigen::VectorXf& unnormalized
 }
 
 void MuscleNNImpl::load_state_dict(const std::unordered_map<std::string, torch::Tensor>& state_dict) {
-    // Load each parameter by name
+    // Load each parameter by name, matching PolicyNet's working pattern:
+    // NoGradGuard at function scope, direct member copy without intermediate .to(device_).
+    // copy_() handles cross-device transfers internally without triggering the
+    // PyTorch 2.10 set_stride restriction on .data/.detach()-derived tensors.
+    torch::NoGradGuard no_grad;
+
     for (const auto& pair : state_dict) {
         const std::string& name = pair.first;
         const torch::Tensor& param = pair.second;
 
-        // Map Python parameter names to C++ module names
-        torch::Tensor* target_param = nullptr;
-
-        if (name == "fc.0.weight") target_param = &fc1->weight;
-        else if (name == "fc.0.bias") target_param = &fc1->bias;
-        else if (name == "fc.2.weight") target_param = &fc2->weight;
-        else if (name == "fc.2.bias") target_param = &fc2->bias;
-        else if (name == "fc.4.weight") target_param = &fc3->weight;
-        else if (name == "fc.4.bias") target_param = &fc3->bias;
-        else if (name == "fc.6.weight") target_param = &fc4->weight;
-        else if (name == "fc.6.bias") target_param = &fc4->bias;
-
-        if (target_param != nullptr) {
-            // Copy parameter values — use NoGradGuard instead of .data()
-            // to avoid PyTorch 2.10 set_stride restriction on .data-derived tensors
-            torch::NoGradGuard no_grad;
-            target_param->copy_(param.to(device_));
-        }
+        if (name == "fc.0.weight") fc1->weight.copy_(param);
+        else if (name == "fc.0.bias") fc1->bias.copy_(param);
+        else if (name == "fc.2.weight") fc2->weight.copy_(param);
+        else if (name == "fc.2.bias") fc2->bias.copy_(param);
+        else if (name == "fc.4.weight") fc3->weight.copy_(param);
+        else if (name == "fc.4.bias") fc3->bias.copy_(param);
+        else if (name == "fc.6.weight") fc4->weight.copy_(param);
+        else if (name == "fc.6.bias") fc4->bias.copy_(param);
     }
 }

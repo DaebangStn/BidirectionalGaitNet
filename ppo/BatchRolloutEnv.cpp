@@ -204,15 +204,16 @@ void BatchRolloutEnv::update_muscle_weights(py::dict state_dict) {
         std::string key = item.first.cast<std::string>();
         py::array_t<float> np_array = item.second.cast<py::array_t<float>>();
 
-        // Convert numpy array to torch::Tensor
+        // Convert numpy array to torch::Tensor via empty+memcpy to avoid
+        // from_blob's PyTorch 2.10 set_stride restriction on external-memory tensors
         auto buf = np_array.request();
         std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
 
-        torch::Tensor tensor = torch::from_blob(
-            buf.ptr,
+        torch::Tensor tensor = torch::empty(
             shape,
             torch::TensorOptions().dtype(torch::kFloat32)
-        ).clone();  // Clone to own the memory
+        );
+        std::memcpy(tensor.data_ptr<float>(), buf.ptr, tensor.nbytes());
 
         cpp_state_dict[key] = tensor;
     }
@@ -246,11 +247,11 @@ void BatchRolloutEnv::update_discriminator_weights(py::dict state_dict) {
         auto buf = np_array.request();
         std::vector<int64_t> shape(buf.shape.begin(), buf.shape.end());
 
-        torch::Tensor tensor = torch::from_blob(
-            buf.ptr,
+        torch::Tensor tensor = torch::empty(
             shape,
             torch::TensorOptions().dtype(torch::kFloat32)
-        ).clone();
+        );
+        std::memcpy(tensor.data_ptr<float>(), buf.ptr, tensor.nbytes());
 
         cpp_state_dict[key] = tensor;
     }
