@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=108
 #SBATCH --nodes=1
-#SBATCH --exclusive
+#SBATCH --gres=gpu:A6000:1
 #SBATCH --output=%x-%j.out
 #SBATCH --error=%x-%j.err
 
