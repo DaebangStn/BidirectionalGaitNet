@@ -260,7 +260,7 @@ class MuscleLearner:
         Note: Converts GPU tensors to CPU for distribution to C++ simulation environments.
         Training happens on GPU, but C++ environments require CPU tensors.
         """
-        return {k: v.cpu() for k, v in self.model.state_dict().items()}
+        return {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
 
     def set_weights(self, weights: Dict) -> None:
         """Load model weights from numpy arrays."""

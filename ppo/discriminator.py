@@ -420,7 +420,7 @@ class DiscriminatorLearner:
 
     def get_state_dict(self) -> Dict:
         """Get model state dict with CPU tensors for C++ environment update."""
-        return {k: v.cpu() for k, v in self.model.state_dict().items()}
+        return {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
 
     def set_weights(self, weights: Dict) -> None:
         """Load model weights from numpy arrays."""
