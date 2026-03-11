@@ -306,9 +306,7 @@ void PolicyNetImpl::load_state_dict(const py::dict& state_dict) {
         }
         // Ignore unknown keys
     }
-
-    // Ensure all parameters are on correct device
-    this->to(device_);
+    // Note: do NOT call this->to(device_) — see unordered_map overload comment.
 }
 
 void PolicyNetImpl::load_state_dict(const std::unordered_map<std::string, torch::Tensor>& state_dict) {
@@ -353,9 +351,9 @@ void PolicyNetImpl::load_state_dict(const std::unordered_map<std::string, torch:
         }
         // Ignore unknown keys
     }
-
-    // Ensure all parameters are on correct device
-    this->to(device_);
+    // Note: do NOT call this->to(device_) here — parameters are already on the
+    // correct device from initialization, and Module::to() triggers set_stride
+    // on .data-derived tensors which is restricted in PyTorch 2.10.
 }
 
 std::unordered_map<std::string, torch::Tensor>
