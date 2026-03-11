@@ -9,5 +9,5 @@ ulimit -u 65535
 ulimit -n 65536
 
 cd ~/BidirectionalGaitNet
-pixi run python -m ppo.learn --env_file "data/env/${SLURM_JOB_NAME}.yaml"
+PYTHONUNBUFFERED=1 pixi run python -m ppo.learn --env_file "data/env/${SLURM_JOB_NAME}.yaml"
 echo "Training finished"
