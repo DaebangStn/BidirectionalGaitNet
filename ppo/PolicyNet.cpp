@@ -176,12 +176,13 @@ std::tuple<Eigen::VectorXf, float, float>
 PolicyNetImpl::sample_action(const Eigen::VectorXf& obs, bool stochastic) {
     torch::NoGradGuard no_grad;  // Inference mode (thread-local flag)
 
-    // Convert Eigen → Torch
-    auto obs_tensor = torch::from_blob(
-        (void*)obs.data(),
-        {1, obs.size()},
-        torch::kFloat32
-    ).clone().to(device_);  // Clone to avoid aliasing, move to device
+    // Convert Eigen → Torch via empty+memcpy to avoid PyTorch 2.10 set_stride restriction
+    // on from_blob tensors backed by external (Eigen) memory.
+    auto obs_tensor = torch::empty(
+        {1, obs.size()}, torch::TensorOptions().dtype(torch::kFloat32)
+    );
+    std::memcpy(obs_tensor.data_ptr<float>(), obs.data(), obs.size() * sizeof(float));
+    obs_tensor = obs_tensor.to(device_);
 
     // Actor forward pass
     auto h = torch::relu(actor_fc1->forward(obs_tensor));
@@ -261,11 +262,8 @@ void PolicyNetImpl::load_state_dict(const py::dict& state_dict) {
                 shape.push_back(np_info.shape[i]);
             }
 
-            value = torch::from_blob(
-                np_info.ptr,
-                shape,
-                torch::kFloat32
-            ).clone();
+            value = torch::empty(shape, torch::TensorOptions().dtype(torch::kFloat32));
+            std::memcpy(value.data_ptr<float>(), np_info.ptr, value.nbytes());
         }
 
         // Load weights based on key

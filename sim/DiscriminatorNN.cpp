@@ -50,12 +50,13 @@ torch::Tensor DiscriminatorNNImpl::forward(torch::Tensor activations) {
 float DiscriminatorNNImpl::forward_no_grad(const Eigen::VectorXf& activations) {
     torch::NoGradGuard no_grad;  // Disable gradient computation
 
-    // Convert Eigen (float) → torch::Tensor
-    auto act_tensor = torch::from_blob(
-        const_cast<float*>(activations.data()),
-        {activations.size()},
-        torch::kFloat32
-    ).clone().to(device_);
+    // Convert Eigen (float) → torch::Tensor via empty+memcpy to avoid PyTorch 2.10 set_stride
+    auto act_tensor = torch::empty(
+        {activations.size()}, torch::TensorOptions().dtype(torch::kFloat32)
+    );
+    std::memcpy(act_tensor.data_ptr<float>(), activations.data(),
+                activations.size() * sizeof(float));
+    act_tensor = act_tensor.to(device_);
 
     // Forward pass
     auto logit = forward(act_tensor);
@@ -117,16 +118,12 @@ void DiscriminatorNNImpl::load_state_dict(const std::unordered_map<std::string, 
 }
 
 void DiscriminatorNNImpl::setNormalizer(const Eigen::VectorXf& mean, const Eigen::VectorXf& std) {
-    // Convert Eigen vectors to torch tensors
-    norm_mean_ = torch::from_blob(
-        const_cast<float*>(mean.data()),
-        {mean.size()},
-        torch::kFloat32
-    ).clone().to(device_);
+    // Convert Eigen vectors to torch tensors via empty+memcpy
+    norm_mean_ = torch::empty({mean.size()}, torch::TensorOptions().dtype(torch::kFloat32));
+    std::memcpy(norm_mean_.data_ptr<float>(), mean.data(), mean.size() * sizeof(float));
+    norm_mean_ = norm_mean_.to(device_);
 
-    norm_std_ = torch::from_blob(
-        const_cast<float*>(std.data()),
-        {std.size()},
-        torch::kFloat32
-    ).clone().to(device_);
+    norm_std_ = torch::empty({std.size()}, torch::TensorOptions().dtype(torch::kFloat32));
+    std::memcpy(norm_std_.data_ptr<float>(), std.data(), std.size() * sizeof(float));
+    norm_std_ = norm_std_.to(device_);
 }

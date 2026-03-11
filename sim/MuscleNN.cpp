@@ -111,18 +111,22 @@ Eigen::VectorXf MuscleNNImpl::unnormalized_no_grad_forward(
 
     torch::NoGradGuard no_grad;  // Disable gradient computation
 
-    // Convert Eigen (double) → torch::Tensor (float32)
-    auto muscle_tau_tensor = torch::from_blob(
-        const_cast<double*>(muscle_tau.data()),
-        {muscle_tau.size()},
-        torch::kFloat64
-    ).to(torch::kFloat32).to(device_);
+    // Convert Eigen (double) → torch::Tensor (float32) via empty+memcpy (cast to float first).
+    // Avoids torch::from_blob on external memory which triggers PyTorch 2.10 set_stride restriction.
+    auto muscle_tau_f = muscle_tau.cast<float>().eval();
+    auto muscle_tau_tensor = torch::empty(
+        {(long)muscle_tau_f.size()}, torch::TensorOptions().dtype(torch::kFloat32)
+    );
+    std::memcpy(muscle_tau_tensor.data_ptr<float>(), muscle_tau_f.data(),
+                muscle_tau_f.size() * sizeof(float));
+    muscle_tau_tensor = muscle_tau_tensor.to(device_);
 
-    auto tau_tensor = torch::from_blob(
-        const_cast<double*>(tau.data()),
-        {tau.size()},
-        torch::kFloat64
-    ).to(torch::kFloat32).to(device_);
+    auto tau_f = tau.cast<float>().eval();
+    auto tau_tensor = torch::empty(
+        {(long)tau_f.size()}, torch::TensorOptions().dtype(torch::kFloat32)
+    );
+    std::memcpy(tau_tensor.data_ptr<float>(), tau_f.data(), tau_f.size() * sizeof(float));
+    tau_tensor = tau_tensor.to(device_);
 
     torch::Tensor out;
 
@@ -131,11 +135,12 @@ Eigen::VectorXf MuscleNNImpl::unnormalized_no_grad_forward(
         out = forward_wo_relu(muscle_tau_tensor, tau_tensor);
     } else {
         // Cascading mode with previous output
-        auto prev_out_tensor = torch::from_blob(
-            const_cast<float*>(prev_out->data()),
-            {prev_out->size()},
-            torch::kFloat32
-        ).to(device_);
+        auto prev_out_tensor = torch::empty(
+            {(long)prev_out->size()}, torch::TensorOptions().dtype(torch::kFloat32)
+        );
+        std::memcpy(prev_out_tensor.data_ptr<float>(), prev_out->data(),
+                    prev_out->size() * sizeof(float));
+        prev_out_tensor = prev_out_tensor.to(device_);
 
         out = forward_with_prev_out_wo_relu(muscle_tau_tensor, tau_tensor, prev_out_tensor, weight);
     }
@@ -151,12 +156,12 @@ Eigen::VectorXf MuscleNNImpl::unnormalized_no_grad_forward(
 Eigen::VectorXf MuscleNNImpl::forward_filter(const Eigen::VectorXf& unnormalized) {
     torch::NoGradGuard no_grad;
 
-    // Convert Eigen → torch::Tensor
-    auto tensor = torch::from_blob(
-        const_cast<float*>(unnormalized.data()),
-        {unnormalized.size()},
-        torch::kFloat32
-    ).clone();  // Clone to avoid modifying original
+    // Convert Eigen → torch::Tensor via empty+memcpy to avoid PyTorch 2.10 set_stride
+    auto tensor = torch::empty(
+        {unnormalized.size()}, torch::TensorOptions().dtype(torch::kFloat32)
+    );
+    std::memcpy(tensor.data_ptr<float>(), unnormalized.data(),
+                unnormalized.size() * sizeof(float));
 
     // Apply activation: relu(tanh(x))
     auto filtered = torch::relu(torch::tanh(tensor));
