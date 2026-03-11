@@ -1725,17 +1725,18 @@ void RenderCkpt::onFrameStart()
                     mTauDesCollected.push_back(std::move(row));
                 }
 
-                if ((int)mTauDesCollected.size() >= 1000) {
+                if ((int)mTauDesCollected.size() >= mTauDesExportSteps) {
                     mExportTauDes = false;
                     // Write HDF5
                     try {
-                        int T = 1000, D = (int)mTauDesCollected[0].size();
+                        int T = mTauDesExportSteps, D = (int)mTauDesCollected[0].size();
                         std::vector<float> flat;
                         flat.reserve(T * D);
                         for (auto& r : mTauDesCollected)
                             flat.insert(flat.end(), r.begin(), r.end());
                         mTauDesCollected.clear();
-                        const std::string path = "/tmp/dart_tau_des.h5";
+                        std::filesystem::create_directories("/tmp/dart_tau");
+                        const std::string path = "/tmp/dart_tau/" + std::string(mTauDesExportName) + ".h5";
                         H5::H5File f(path, H5F_ACC_TRUNC);
                         hsize_t dims[2] = {(hsize_t)T, (hsize_t)D};
                         f.createDataSet("tau_des", H5::PredType::NATIVE_FLOAT,
@@ -3084,16 +3085,23 @@ void RenderCkpt::drawKineticsTabContent()
             // Show progress while collecting
             int collected = (int)mTauDesCollected.size();
             ImGui::TextColored({0.3f, 1.f, 0.3f, 1.f},
-                               "Collecting... %d / 1000", collected);
+                               "Collecting... %d / %d", collected, mTauDesExportSteps);
         } else {
-            if (ImGui::Checkbox("Export tau_des (1000 steps)##spdexport", &mExportTauDes)) {
-                if (mExportTauDes) {
-                    // Start: unpause and reset buffer
-                    mTauDesCollected.clear();
-                    mTauDesExportStatus[0] = '\0';
-                    mRolloutStatus.pause = false;
-                }
+            ImGui::SetNextItemWidth(120.f);
+            ImGui::InputText("##taudesname", mTauDesExportName, sizeof(mTauDesExportName));
+            ImGui::SameLine();
+            if (ImGui::Button("Export tau_des")) {
+                // Start: unpause and reset buffer
+                mTauDesCollected.clear();
+                mTauDesExportStatus[0] = '\0';
+                mRolloutStatus.pause = false;
+                mExportTauDes = true;
             }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("/tmp/dart_tau/%s.h5", mTauDesExportName);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60.f);
+            ImGui::InputInt("steps##taudessteps", &mTauDesExportSteps, 0);
             if (mTauDesExportStatus[0])
                 ImGui::TextUnformatted(mTauDesExportStatus);
         }

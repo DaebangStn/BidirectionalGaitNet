@@ -250,8 +250,9 @@ Eigen::VectorXd Controller::computePxSPDForces(const Eigen::VectorXd& pdTarget)
     // Velocity clamping [-30, 30] (applied elementwise via Eigen)
     Eigen::VectorXd dq_c = dq.cwiseMax(-30.0).cwiseMin(30.0);
 
-    // Lookahead position error
-    Eigen::VectorXd pos_err = pdTarget - (q + dt * dq_c);
+    // Lookahead position error — use getPositionDifferences for non-Euclidean joints (BallJoint etc.)
+    Eigen::VectorXd qdqdt = q + dt * dq_c;
+    Eigen::VectorXd pos_err = -mSkeleton->getPositionDifferences(qdqdt, pdTarget);
 
     // Explicit PD torque
     Eigen::VectorXd tau_exp = mKp.cwiseProduct(pos_err) - mKv.cwiseProduct(dq_c);

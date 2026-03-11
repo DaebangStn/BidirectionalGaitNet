@@ -566,6 +566,8 @@ private:
     bool mExportTauDes = false;      // Collecting tau_des frames
     std::vector<std::vector<float>> mTauDesCollected;
     char mTauDesExportStatus[128] = "";
+    int  mTauDesExportSteps = 300;
+    char mTauDesExportName[64] = "dart_tau_des";
     bool mShowResizablePlotPane;     // Toggle for the new resizable plot pane
     bool mShowTitlePanel;            // Toggle for title panel (Ctrl+T)
 

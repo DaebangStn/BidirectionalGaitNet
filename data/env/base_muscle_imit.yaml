@@ -6,26 +6,24 @@ environment:
   # Skeleton and Character
   skeleton:
     file: "@data/skeleton/base.yaml"
-    actuator: pd_px  # pd, torque, muscle, mass, mass_lower
-    kp_scale: 0.1
-    kv_scale: 0.0
+    actuator: "muscle"  # pd, torque, muscle, mass, mass_lower
 
   # Motion Reference
   motion:
     file: "@data/motion/walk_50dof.h5"
 
   # Muscle System
-  # muscle:
-  #   file: "@data/muscle/base.yaml"
-  #   mesh_lbs_weight: false
-  #   use_velocity_force: false
-  #   use_joint_state: true
-  #   clip_lm_norm: 1.25 # to disable, remove or set to -1
+  muscle:
+    file: "@data/muscle/base.yaml"
+    mesh_lbs_weight: false
+    use_velocity_force: false
+    use_joint_state: true
+    clip_lm_norm: 1.25 # to disable, remove or set to -1
 
   # Simulation Timing
   simulation:
     sim_hz: 180
-    control_hz: 90
+    control_hz: 30
 
   # Action and Control
   action:

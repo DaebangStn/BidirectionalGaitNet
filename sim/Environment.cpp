@@ -108,8 +108,8 @@ Environment::Environment(const std::string& filepath)
 
         ControllerConfig ctrlConfig;
         ctrlConfig.skeleton = mCharacter->getSkeleton();
-        ctrlConfig.kp = mCharacter->getKpVector();
-        ctrlConfig.kv = mCharacter->getKvVector();
+        ctrlConfig.kp = mCharacter->getKpVector() * skel["kp_scale"].as<double>(1.0);
+        ctrlConfig.kv = mCharacter->getKvVector() * skel["kv_scale"].as<double>(1.0);
         ctrlConfig.actuatorType = actuatorType;
         ctrlConfig.inferencePerSim = mInferencePerSim;
         ctrlConfig.numMuscleDof = numMuscleDof;
@@ -763,7 +763,7 @@ void Environment::setAction(Eigen::VectorXd _action)
     }
 
     ActuatorType actType = mController->getActuatorType();
-    if (actType == pd || actType == mass || actType == mass_lower)
+    if (actType == pd || actType == pd_px || actType == mass || actType == mass_lower)
     {
         Eigen::VectorXd action = Eigen::VectorXd::Zero(mCharacter->getSkeleton()->getNumDofs());
         action.tail(actuatorAction.rows()) = actuatorAction;
@@ -1393,7 +1393,7 @@ void Environment::muscleStep()
         output = mController->step(input);
         mCharacter->applyTorque(output.torque);
 
-    } else if (actType == pd) {
+    } else if (actType == pd || actType == pd_px) {
         output = mController->step(input);
         mCharacter->applyTorque(output.torque);
     }
