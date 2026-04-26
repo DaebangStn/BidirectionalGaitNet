@@ -6,7 +6,15 @@
 #include <memory>
 #include <functional>
 #include <cfloat>  // For FLT_MAX
+#include <cmath>
 #include "imgui.h"
+
+#ifndef SC_SCALE_DEFINED
+#define SC_SCALE_DEFINED
+inline float Sc(float px) {
+    return std::round(px * ImGui::GetFontSize() / 12.0f);
+}
+#endif
 
 class Muscle;
 

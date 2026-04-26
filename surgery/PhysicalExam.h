@@ -161,6 +161,16 @@ struct TrialDataBuffer {
     std::string cd_joint;   // "hip", "knee", "ankle"
     std::string cd_field;   // field name in rom.yaml
     bool cd_neg = false;    // Negate clinical value for comparison
+
+    // Debug FK data for cross-system validation
+    struct DebugFK {
+        std::vector<std::string> link_names;  // [L]
+        int num_links = 0;
+        std::vector<double> transforms;       // [N * L * 16] row-major 4x4
+        std::string muscle_name;
+        int num_anchors = 0;
+        std::vector<double> anchor_positions; // [N * A * 3]
+    } debug_fk;
 };
 
 class PhysicalExam : public ViewerAppBase, public SurgeryExecutor {
@@ -462,6 +472,7 @@ private:
     std::vector<AngleSweepDataPoint> mAngleSweepData;
     std::vector<std::string> mAngleSweepTrackedMuscles;
     int mAngleSweepJointIdx;  // Joint index for current angle sweep
+    TrialDataBuffer::DebugFK mDebugFK;  // Accumulated per-step during sweep
 
     // ROM analysis state
     ROMThresholds mROMThresholds;              // User-configurable thresholds

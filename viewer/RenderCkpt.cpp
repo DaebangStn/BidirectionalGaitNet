@@ -2321,7 +2321,7 @@ void RenderCkpt::drawRightPanel()
     ImGui::SameLine();
     mPlotHideLegend = ImGui::Button("Hide"); ImGui::SameLine();
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(30);
+    ImGui::SetNextItemWidth(Sc(30));
     ImGui::InputDouble("X(min)", &mXmin);
 
     // Reference kinematics source selector and overlay toggle
@@ -2329,7 +2329,7 @@ void RenderCkpt::drawRightPanel()
     if (hasAnyKinematics) {
         ImGui::Checkbox("Ref Overlay", &mShowReferenceKinematics);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(Sc(80));
         const char* comboPreview = "Aggregated";
         if (mKinematicsSource == KinematicsSource::FromNormative) comboPreview = "Normative";
         else if (mKinematicsSource == KinematicsSource::FromTrained) comboPreview = "Trained";
@@ -2453,11 +2453,11 @@ void RenderCkpt::drawGaitTabContent()
 
     ImGui::Text("Stance Ratio R  : %.3f", stanceRatioR);
     ImGui::SameLine();
-    ImGui::ProgressBar(stanceRatioR, ImVec2(100, 0));
+    ImGui::ProgressBar(stanceRatioR, ImVec2(Sc(100), 0));
 
     ImGui::Text("Stance Ratio L  : %.3f", stanceRatioL);
     ImGui::SameLine();
-    ImGui::ProgressBar(stanceRatioL, ImVec2(100, 0));
+    ImGui::ProgressBar(stanceRatioL, ImVec2(Sc(100), 0));
 
     ImGui::Separator();
 
@@ -2668,10 +2668,10 @@ void RenderCkpt::drawKinematicsTabContent()
 
         // Width and height controls (only for trajectory plot)
         if (plotSelection == 0) {
-            ImGui::SetNextItemWidth(70);
+            ImGui::SetNextItemWidth(Sc(70));
             ImGui::InputDouble("Width", &comPlotWidth, 0.1, 1.0, "%.2f");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(70);
+            ImGui::SetNextItemWidth(Sc(70));
             ImGui::InputDouble("Height", &comPlotHeight, 0.1, 1.0, "%.2f");
 
             // Minimum values
@@ -3087,7 +3087,7 @@ void RenderCkpt::drawKineticsTabContent()
             ImGui::TextColored({0.3f, 1.f, 0.3f, 1.f},
                                "Collecting... %d / %d", collected, mTauDesExportSteps);
         } else {
-            ImGui::SetNextItemWidth(120.f);
+            ImGui::SetNextItemWidth(Sc(120.f));
             ImGui::InputText("##taudesname", mTauDesExportName, sizeof(mTauDesExportName));
             ImGui::SameLine();
             if (ImGui::Button("Export tau_des")) {
@@ -3100,7 +3100,7 @@ void RenderCkpt::drawKineticsTabContent()
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("/tmp/dart_tau/%s.h5", mTauDesExportName);
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(60.f);
+            ImGui::SetNextItemWidth(Sc(60.f));
             ImGui::InputInt("steps##taudessteps", &mTauDesExportSteps, 0);
             if (mTauDesExportStatus[0])
                 ImGui::TextUnformatted(mTauDesExportStatus);
@@ -3209,7 +3209,7 @@ void RenderCkpt::drawKineticsTabContent()
 
         ImGui::Text("Select Joint:");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(Sc(100));
         ImGui::Combo("##JointSelector", &selected_joint, joint_names, IM_ARRAYSIZE(joint_names));
 
         static bool plot_component = false;
@@ -3410,7 +3410,7 @@ void RenderCkpt::drawMuscleTabContent()
             x_act[i] = i;
             y_act[i] = activation[i];
         }
-        if (ImPlot::BeginPlot("activation##bars", ImVec2(-1, 150)))
+        if (ImPlot::BeginPlot("activation##bars", ImVec2(-1, Sc(150))))
         {
             ImPlot::PlotBars("activation_level", x_act.data(), y_act.data(), activation.rows(), 1.0);
             ImPlot::EndPlot();
@@ -3462,7 +3462,7 @@ void RenderCkpt::drawCaptureSection() {
         // Preset combo (if presets exist)
         if (!mCapturePresets.empty()) {
             static int selectedPreset = 0;
-            ImGui::SetNextItemWidth(150);
+            ImGui::SetNextItemWidth(Sc(150));
             if (ImGui::BeginCombo("Preset##capture", mCapturePresets[selectedPreset].name.c_str())) {
                 for (int i = 0; i < (int)mCapturePresets.size(); i++) {
                     if (ImGui::Selectable(mCapturePresets[i].name.c_str(), selectedPreset == i)) {
@@ -3479,7 +3479,7 @@ void RenderCkpt::drawCaptureSection() {
 
         // Manual region input
         const int step = 5;
-        ImGui::PushItemWidth(80);
+        ImGui::PushItemWidth(Sc(80));
         ImGui::InputInt("x0##capture", &mCaptureX0, step);
         ImGui::SameLine();
         ImGui::InputInt("y0##capture", &mCaptureY0, step);
@@ -3541,10 +3541,10 @@ void RenderCkpt::drawCaptureSection() {
             ImGui::SameLine();
             ImGui::Checkbox("GIF##video", &mVideoConvertGif);
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(30);
+            ImGui::SetNextItemWidth(Sc(30));
             ImGui::InputDouble("Max(s)##video", &mVideoMaxTime, 0, 0, "%.0f");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(80);
+            ImGui::SetNextItemWidth(Sc(80));
             ImGui::InputFloat("deg/s##videoorbit", &mVideoOrbitSpeed, 5.0f, 10.0f, "%.1f");
         }
 }
@@ -3717,7 +3717,7 @@ void RenderCkpt::drawJointControlSection() {
                         display_value = pos_rad[dof_idx];
 
                         std::string drag_label = label + "##drag_" + joint_name + std::to_string(d);
-                        ImGui::SetNextItemWidth(200);
+                        ImGui::SetNextItemWidth(Sc(200));
                         ImGui::InputFloat(drag_label.c_str(), &display_value, 0.0f, 0.0f, "%.3fm");
                     } else {
                         // Non-root joints: always rotation, convert to degrees
@@ -3729,7 +3729,7 @@ void RenderCkpt::drawJointControlSection() {
                         float prev_value = display_value;
 
                         std::string drag_label = label + "##drag_" + joint_name + std::to_string(d);
-                        ImGui::SetNextItemWidth(200);
+                        ImGui::SetNextItemWidth(Sc(200));
                         const char* format = is_translation ? "%.3fm" : "%.1f°";
 
                         // Check if limits are valid for SliderFloat (must be finite and within ImGui's range)
@@ -3750,7 +3750,7 @@ void RenderCkpt::drawJointControlSection() {
                             // InputFloat on same line
                             ImGui::SameLine();
                             std::string input_label = "##input_" + joint_name + std::to_string(d);
-                            ImGui::SetNextItemWidth(50);
+                            ImGui::SetNextItemWidth(Sc(50));
                             const char* input_format = is_translation ? "%.3f" : "%.1f";
                             ImGui::InputFloat(input_label.c_str(), &display_value, 0.0f, 0.0f, input_format);
 
@@ -3940,7 +3940,7 @@ void RenderCkpt::drawSimControlPanelContent()
     
     // Rollout Control
     if (mRolloutCycles == -1) mRolloutCycles = mDefaultRolloutCount;
-    ImGui::SetNextItemWidth(35);
+    ImGui::SetNextItemWidth(Sc(35));
     ImGui::InputScalar("##Cycles", ImGuiDataType_S32, &mRolloutCycles, nullptr, nullptr);
     if (mRolloutCycles < 1) mRolloutCycles = 1;
     ImGui::SameLine();
@@ -3966,7 +3966,7 @@ void RenderCkpt::drawSimControlPanelContent()
     static float targetMass = 0.0f;
     if (targetMass == 0.0f) targetMass = static_cast<float>(currentMass);
 
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     ImGui::InputFloat("Target Mass (kg)", &targetMass, 1.0f, 5.0f, "%.1f");
     ImGui::SameLine();
     if (ImGui::Button("Set Mass")) mRenderEnv->getCharacter()->setBodyMass(static_cast<double>(targetMass));
@@ -3977,7 +3977,7 @@ void RenderCkpt::drawSimControlPanelContent()
             mRenderEnv->getController()->setUseFullTauForNN(mUseFullTauForNN);
     }
 
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     if (ImGui::InputFloat("Init Log Std", &mInitLogStd, 0.1f, 0.5f, "%.2f")) {
         if (!mViewerNetworks.empty() && mViewerNetworks[0].policy) {
             mViewerNetworks[0].policy->setLogStd(mInitLogStd);
@@ -4004,7 +4004,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             // Dropdown for metabolic type selection (legacy is read-only in combo)
-            ImGui::SetNextItemWidth(50);
+            ImGui::SetNextItemWidth(Sc(50));
             if (ImGui::Combo("Type", &currentTypeInt, metabolicTypes, IM_ARRAYSIZE(metabolicTypes)))
             {
                 // Clamp index and convert back to enum before applying
@@ -4038,7 +4038,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // Metabolic weight slider
             float metabolicWeight = static_cast<float>(mRenderEnv->getMetabolicWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Weight", &metabolicWeight, 0.0f, 0.0f, "%.3f"))
             {
                 mRenderEnv->setMetabolicWeight(static_cast<double>(metabolicWeight));
@@ -4046,7 +4046,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // Torque energy coefficient input
             float torqueCoeff = static_cast<float>(mRenderEnv->getCharacter()->getTorqueEnergyCoeff());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Torque Coeff", &torqueCoeff, 0.0f, 0.0f, "%.3f"))
             {
                 mRenderEnv->getCharacter()->setTorqueEnergyCoeff(static_cast<double>(torqueCoeff));
@@ -4083,7 +4083,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // End-effector weight
             float eeWeight = static_cast<float>(mRenderEnv->getEEWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("EE Weight", &eeWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setEEWeight(static_cast<double>(eeWeight));
@@ -4091,7 +4091,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // Position weight
             float posWeight = static_cast<float>(mRenderEnv->getPosWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Pos Weight", &posWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setPosWeight(static_cast<double>(posWeight));
@@ -4099,7 +4099,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // Velocity weight
             float velWeight = static_cast<float>(mRenderEnv->getVelWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Vel Weight", &velWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setVelWeight(static_cast<double>(velWeight));
@@ -4107,7 +4107,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // COM weight
             float comWeight = static_cast<float>(mRenderEnv->getCOMWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("COM Weight", &comWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setCOMWeight(static_cast<double>(comWeight));
@@ -4115,7 +4115,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // Ankle weight (TalusR/TalusL)
             float ankleWeight = static_cast<float>(mRenderEnv->getAnkleWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Ankle Weight", &ankleWeight, 0.0f, 0.0f, "%.4f"))
             {
                 mRenderEnv->setAnkleWeight(static_cast<double>(ankleWeight));
@@ -4149,7 +4149,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // Knee pain weight slider
             float kneePainWeight = static_cast<float>(mRenderEnv->getKneePainWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Knee Weight", &kneePainWeight, 0.0f, 0.0f, "%.3f"))
             {
                 mRenderEnv->setKneePainWeight(static_cast<double>(kneePainWeight));
@@ -4157,7 +4157,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
             // Scale knee pain slider
             float scaleKneePain = static_cast<float>(mRenderEnv->getScaleKneePain());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Knee Scale", &scaleKneePain, 0.0f, 0.0f, "%.3f"))
             {
                 mRenderEnv->setScaleKneePain(static_cast<double>(scaleKneePain));
@@ -4184,7 +4184,7 @@ void RenderCkpt::drawSimControlPanelContent()
             ImGui::Indent();
 
             float stepWeight = static_cast<float>(mRenderEnv->getStepWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Step Weight", &stepWeight, 0.0f, 0.0f, "%.3f"))
             {
                 stepWeight = std::max(0.0f, stepWeight);
@@ -4192,7 +4192,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             float stepClip = static_cast<float>(mRenderEnv->getStepClip());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Step Clip", &stepClip, 0.0f, 0.0f, "%.3f"))
             {
                 stepClip = std::max(0.0f, stepClip);
@@ -4204,7 +4204,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             float avgVelWeight = static_cast<float>(mRenderEnv->getAvgVelWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Avg Vel Weight", &avgVelWeight, 0.0f, 0.0f, "%.3f"))
             {
                 avgVelWeight = std::max(0.0f, avgVelWeight);
@@ -4212,7 +4212,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             float avgVelClip = static_cast<float>(mRenderEnv->getAvgVelClip());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Avg Vel Clip", &avgVelClip, 0.0f, 0.0f, "%.3f"))
             {
                 mRenderEnv->setAvgVelClip(static_cast<double>(avgVelClip));
@@ -4223,7 +4223,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             float avgWindowMult = static_cast<float>(mRenderEnv->getAvgVelWindowMult());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Avg Vel Window Mult", &avgWindowMult, 0.0f, 0.0f, "%.3f"))
             {
                 avgWindowMult = std::max(0.0f, avgWindowMult);
@@ -4251,7 +4251,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             float dragWeight = static_cast<float>(mRenderEnv->getDragWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Drag Weight", &dragWeight, 0.0f, 0.0f, "%.3f"))
             {
                 dragWeight = std::max(0.0f, dragWeight);
@@ -4259,7 +4259,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             float dragThreshold = static_cast<float>(mRenderEnv->getDragXThreshold());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Drag Threshold", &dragThreshold, 0.0f, 0.0f, "%.3f"))
             {
                 dragThreshold = std::max(0.0f, dragThreshold);
@@ -4287,7 +4287,7 @@ void RenderCkpt::drawSimControlPanelContent()
             }
 
             float phaseWeight = static_cast<float>(mRenderEnv->getPhaseWeight());
-            ImGui::SetNextItemWidth(100);
+            ImGui::SetNextItemWidth(Sc(100));
             if (ImGui::InputFloat("Phase Weight", &phaseWeight, 0.0f, 0.0f, "%.3f"))
             {
                 phaseWeight = std::max(0.0f, phaseWeight);
@@ -4366,7 +4366,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
         // Step Min Ratio control
         static float stepMinRatio = 0.25f;
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(Sc(100));
         if (ImGui::InputFloat("Step Min Ratio", &stepMinRatio, 0.0f, 0.0f, "%.2f")) {
             stepMinRatio = std::max(0.1f, std::min(stepMinRatio, 1.0f));
             gaitPhase->setStepMinRatio(stepMinRatio);
@@ -4377,7 +4377,7 @@ void RenderCkpt::drawSimControlPanelContent()
 
         // GRF Threshold control
         static float grfThreshold = 0.2f;
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(Sc(100));
         if (ImGui::SliderFloat("GRF Threshold", &grfThreshold, 0.05f, 0.5f, "%.2f")) {
             gaitPhase->setGRFThreshold(grfThreshold);
         }
@@ -4488,18 +4488,18 @@ void RenderCkpt::drawResizablePlotPane()
     if (ImGui::Button("HS")) mXminResizablePlotPane = getHeelStrikeTime();
     ImGui::SameLine();
     if (ImGui::Button("1.1")) mXminResizablePlotPane = -1.1;
-    ImGui::SetNextItemWidth(30);
+    ImGui::SetNextItemWidth(Sc(30));
     ImGui::SameLine();
     if (ImGui::InputDouble("X(min)", &mXminResizablePlotPane)) {
         mSetResizablePlotPane = true;
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(30);
+    ImGui::SetNextItemWidth(Sc(30));
     if (ImGui::InputDouble("Y(min)", &mYminResizablePlotPane)) {
         mSetResizablePlotPane = true;
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(30);
+    ImGui::SetNextItemWidth(Sc(30));
     if (ImGui::InputDouble("Y(max)", &mYmaxResizablePlotPane)) {
         mSetResizablePlotPane = true;
     }
@@ -4717,7 +4717,7 @@ void RenderCkpt::drawRenderingContent()
     // Skeleton Render Mode (matches RenderMode enum: Primitive, Mesh, Wireframe)
     const char* renderModes[] = {"Solid", "Mesh", "Wireframe"};
     int currentMode = static_cast<int>(mDrawFlags.skeletonRenderMode);
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     if (ImGui::Combo("Render Mode", &currentMode, renderModes, IM_ARRAYSIZE(renderModes)))
     {
         mDrawFlags.skeletonRenderMode = static_cast<RenderMode>(currentMode);
@@ -4736,15 +4736,15 @@ void RenderCkpt::drawRenderingContent()
 
     // If no muscles are manually selected, show none (empty list)
     // The rendering code will use mSelectedMuscles if it has content
-    ImGui::SetNextItemWidth(125);
+    ImGui::SetNextItemWidth(Sc(125));
     ImGui::SliderFloat("Resolution", &mMuscleResolution, 0.0, 10.0);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(50);
+    ImGui::SetNextItemWidth(Sc(50));
     ImGui::InputFloat("##MuscleResInput", &mMuscleResolution, 0.0f, 0.0f, "%.2f");
-    ImGui::SetNextItemWidth(125);
+    ImGui::SetNextItemWidth(Sc(125));
     ImGui::SliderFloat("Transparency", &mMuscleTransparency, 0.1, 1.0);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(50);
+    ImGui::SetNextItemWidth(Sc(50));
     ImGui::InputFloat("##MuscleTransInput", &mMuscleTransparency, 0.0f, 0.0f, "%.2f");
 
     ImGui::Separator();
@@ -4767,7 +4767,7 @@ void RenderCkpt::drawRenderingContent()
 
     // Viewer Timing
     if (ImGui::BeginTable("ViewerTable", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
         ImGui::TableNextRow();
@@ -4788,7 +4788,7 @@ void RenderCkpt::drawRenderingContent()
     // Simulation Timing
     ImGui::Spacing();
     if (ImGui::BeginTable("SimTable", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
         ImGui::TableNextRow();
@@ -4821,7 +4821,7 @@ void RenderCkpt::drawRenderingContent()
     // Playback Controls
     ImGui::Spacing();
     ImGui::TextColored(labelColor, "Cycle Duration");
-    ImGui::SetNextItemWidth(120);
+    ImGui::SetNextItemWidth(Sc(120));
     ImGui::InputDouble("##CycleDuration", &mViewerCycleDuration, 0.1, 0.5, "%.3f s");
     if (mViewerCycleDuration < 0.1) mViewerCycleDuration = 0.1;
 
@@ -4832,13 +4832,13 @@ void RenderCkpt::drawRenderingContent()
     ImGui::SameLine();
     if(ImGui::SmallButton("2.0x")) mViewerPlaybackSpeed = 2.0;
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     ImGui::SliderFloat("##PlaybackSpeed", &mViewerPlaybackSpeed, 0.1f, 2.5f, "%.2fx");
 
     // Performance Metrics
     ImGui::Spacing();
     if (ImGui::BeginTable("PerfTable", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
         ImGui::TableNextRow();
@@ -4922,7 +4922,7 @@ void RenderCkpt::drawTimingPaneContent()
     ImGui::Spacing();
 
     if (ImGui::BeginTable("ViewerTable", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
         ImGui::TableNextRow();
@@ -4952,7 +4952,7 @@ void RenderCkpt::drawTimingPaneContent()
         ImGui::Spacing();
 
         if (ImGui::BeginTable("SimTable", 2, ImGuiTableFlags_SizingFixedFit)) {
-            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
             ImGui::TableNextRow();
@@ -4994,7 +4994,7 @@ void RenderCkpt::drawTimingPaneContent()
     ImGui::Spacing();
 
     ImGui::TextColored(labelColor, "Cycle Duration");
-    ImGui::SetNextItemWidth(120);
+    ImGui::SetNextItemWidth(Sc(120));
     ImGui::InputDouble("##CycleDuration", &mViewerCycleDuration, 0.1, 0.5, "%.3f s");
     if (mViewerCycleDuration < 0.1) mViewerCycleDuration = 0.1;
 
@@ -5006,16 +5006,16 @@ void RenderCkpt::drawTimingPaneContent()
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.5f, 0.7f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.3f, 0.5f, 1.0f));
 
-    if(ImGui::Button("0.5x", ImVec2(50, 0))) mViewerPlaybackSpeed = 0.5;
+    if(ImGui::Button("0.5x", ImVec2(Sc(50), 0))) mViewerPlaybackSpeed = 0.5;
     ImGui::SameLine();
-    if(ImGui::Button("1.0x", ImVec2(50, 0))) mViewerPlaybackSpeed = 1.0;
+    if(ImGui::Button("1.0x", ImVec2(Sc(50), 0))) mViewerPlaybackSpeed = 1.0;
     ImGui::SameLine();
-    if(ImGui::Button("2.0x", ImVec2(50, 0))) mViewerPlaybackSpeed = 2.0;
+    if(ImGui::Button("2.0x", ImVec2(Sc(50), 0))) mViewerPlaybackSpeed = 2.0;
 
     ImGui::PopStyleColor(3);
 
     ImGui::Spacing();
-    ImGui::SetNextItemWidth(180);
+    ImGui::SetNextItemWidth(Sc(180));
     ImGui::SliderFloat("##PlaybackSpeed", &mViewerPlaybackSpeed, 0.1, 2.5, "%.2fx");
 
     // Performance Metrics Section
@@ -5031,7 +5031,7 @@ void RenderCkpt::drawTimingPaneContent()
         ImGui::Spacing();
 
         if (ImGui::BeginTable("PerfTable", 2, ImGuiTableFlags_SizingFixedFit)) {
-            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
             ImGui::TableNextRow();
@@ -5079,8 +5079,8 @@ void RenderCkpt::drawTitlePanel()
     if (!mShowTitlePanel) return;
 
     // Create a compact floating window
-    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 50), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(Sc(400), 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(Sc(10), Sc(50)), ImGuiCond_FirstUseEver);
     ImGui::Begin("Title Panel (Ctrl+T to toggle)", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::SetWindowFontScale(1.5f);
     ImGui::Text("%s", mCheckpointName.c_str());
@@ -6020,23 +6020,23 @@ void RenderCkpt::drawNoiseControlPanel()
         // Position Noise Controls
         if (ImGui::TreeNode("Position Noise")) {
             float pos_amp = static_cast<float>(ni->getPositionAmplitude());
-            ImGui::SetNextItemWidth(170);
+            ImGui::SetNextItemWidth(Sc(170));
             if (ImGui::SliderFloat("Amp##PosAmp", &pos_amp, 0.0f, 0.015f, "%.4f")) {
                 ni->setPositionAmplitude(pos_amp);
             }
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(60);
+            ImGui::SetNextItemWidth(Sc(60));
             if (ImGui::InputFloat("##PosAmpInput", &pos_amp, 0.0f, 0.0f, "%.4f")) {
                 ni->setPositionAmplitude(pos_amp);
             }
 
             float pos_freq = static_cast<float>(ni->getPositionFrequency());
-            ImGui::SetNextItemWidth(170);
+            ImGui::SetNextItemWidth(Sc(170));
             if (ImGui::SliderFloat("Freq##PosFreq", &pos_freq, 0.1f, 1.0f, "%.2f")) {
                 ni->setPositionFrequency(pos_freq);
             }
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(60);
+            ImGui::SetNextItemWidth(Sc(60));
             if (ImGui::InputFloat("##PosFreqInput", &pos_freq, 0.0f, 0.0f, "%.2f")) {
                 ni->setPositionFrequency(pos_freq);
             }
@@ -6071,7 +6071,7 @@ void RenderCkpt::drawNoiseControlPanel()
             // Add new node with search
             ImGui::Spacing();
             static char posSearchBuffer[64] = "";
-            ImGui::SetNextItemWidth(150);
+            ImGui::SetNextItemWidth(Sc(150));
             bool posEnterPressed = ImGui::InputText("##PosSearch", posSearchBuffer, sizeof(posSearchBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
             ImGui::Text("(Search, Enter to add all)");
@@ -6109,7 +6109,7 @@ void RenderCkpt::drawNoiseControlPanel()
                     posSearchBuffer[0] = '\0';  // Clear search
                 } else {
                     // Show selectable list
-                    ImGui::BeginChild("##PosNodeList", ImVec2(0, 150), true);
+                    ImGui::BeginChild("##PosNodeList", ImVec2(0, Sc(150)), true);
                     for (const auto& nodeName : matchingNodes) {
                         if (ImGui::Selectable(nodeName.c_str())) {
                             // Add to target nodes if not already present
@@ -6132,23 +6132,23 @@ void RenderCkpt::drawNoiseControlPanel()
         // Force Noise Controls
         if (ImGui::TreeNode("Force Noise")) {
             float force_amp = static_cast<float>(ni->getForceAmplitude());
-            ImGui::SetNextItemWidth(170);
+            ImGui::SetNextItemWidth(Sc(170));
             if (ImGui::SliderFloat("Amp##ForceAmp", &force_amp, 0.0f, 100.0f, "%.1f")) {
                 ni->setForceAmplitude(force_amp);
             }
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(60);
+            ImGui::SetNextItemWidth(Sc(60));
             if (ImGui::InputFloat("##ForceAmpInput", &force_amp, 0.0f, 0.0f, "%.1f")) {
                 ni->setForceAmplitude(force_amp);
             }
 
             float force_freq = static_cast<float>(ni->getForceFrequency());
-            ImGui::SetNextItemWidth(170);
+            ImGui::SetNextItemWidth(Sc(170));
             if (ImGui::SliderFloat("Freq##ForceFreq", &force_freq, 0.1f, 5.0f, "%.2f")) {
                 ni->setForceFrequency(force_freq);
             }
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(60);
+            ImGui::SetNextItemWidth(Sc(60));
             if (ImGui::InputFloat("##ForceFreqInput", &force_freq, 0.0f, 0.0f, "%.2f")) {
                 ni->setForceFrequency(force_freq);
             }
@@ -6183,7 +6183,7 @@ void RenderCkpt::drawNoiseControlPanel()
             // Add new node with search
             ImGui::Spacing();
             static char forceSearchBuffer[64] = "";
-            ImGui::SetNextItemWidth(150);
+            ImGui::SetNextItemWidth(Sc(150));
             bool forceEnterPressed = ImGui::InputText("##ForceSearch", forceSearchBuffer, sizeof(forceSearchBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
             ImGui::Text("(Search, Enter to add all)");
@@ -6221,7 +6221,7 @@ void RenderCkpt::drawNoiseControlPanel()
                     forceSearchBuffer[0] = '\0';  // Clear search
                 } else {
                     // Show selectable list
-                    ImGui::BeginChild("##ForceNodeList", ImVec2(0, 150), true);
+                    ImGui::BeginChild("##ForceNodeList", ImVec2(0, Sc(150)), true);
                     for (const auto& nodeName : matchingNodes) {
                         if (ImGui::Selectable(nodeName.c_str())) {
                             // Add to target nodes if not already present
@@ -6244,23 +6244,23 @@ void RenderCkpt::drawNoiseControlPanel()
         // Activation Noise Controls
         if (ImGui::TreeNode("Activation Noise")) {
             float act_amp = static_cast<float>(ni->getActivationAmplitude());
-            ImGui::SetNextItemWidth(170);
+            ImGui::SetNextItemWidth(Sc(170));
             if (ImGui::SliderFloat("Amp##ActAmp", &act_amp, 0.0f, 0.2f, "%.3f")) {
                 ni->setActivationAmplitude(act_amp);
             }
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(60);
+            ImGui::SetNextItemWidth(Sc(60));
             if (ImGui::InputFloat("##ActAmpInput", &act_amp, 0.0f, 0.0f, "%.3f")) {
                 ni->setActivationAmplitude(act_amp);
             }
 
             float act_freq = static_cast<float>(ni->getActivationFrequency());
-            ImGui::SetNextItemWidth(170);
+            ImGui::SetNextItemWidth(Sc(170));
             if (ImGui::SliderFloat("Freq##ActFreq", &act_freq, 0.0f, 1.0f, "%.2f")) {
                 ni->setActivationFrequency(act_freq);
             }
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(60);
+            ImGui::SetNextItemWidth(Sc(60));
             if (ImGui::InputFloat("##ActFreqInput", &act_freq, 0.0f, 0.0f, "%.2f")) {
                 ni->setActivationFrequency(act_freq);
             }
@@ -6440,23 +6440,23 @@ void RenderCkpt::drawVirtualForceControl()
         ImGui::Separator();
 
         // Kp Start slider with input
-        ImGui::SetNextItemWidth(150);
+        ImGui::SetNextItemWidth(Sc(150));
         if (ImGui::SliderFloat("Kp Start", &mVfKpStart, 0.0f, 500.0f, "%.1f")) {
             mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
         }
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
+        ImGui::SetNextItemWidth(Sc(60));
         if (ImGui::InputFloat("##VfKpInput", &mVfKpStart, 0.0f, 0.0f, "%.1f")) {
             mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
         }
 
         // Discount Rate slider with input
-        ImGui::SetNextItemWidth(150);
+        ImGui::SetNextItemWidth(Sc(150));
         if (ImGui::SliderFloat("Discount Rate", &mVfDiscountRate, 0.0f, 1.0f, "%.2f")) {
             mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
         }
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
+        ImGui::SetNextItemWidth(Sc(60));
         if (ImGui::InputFloat("##VfDiscountInput", &mVfDiscountRate, 0.0f, 0.0f, "%.2f")) {
             mRenderEnv->setVirtualForceKp(mVfKpStart, mVfDiscountRate);
         }
@@ -6502,7 +6502,7 @@ void RenderCkpt::drawVirtualForceControl()
         }
 
         if (mVfOverrideEnabled) {
-            ImGui::SetNextItemWidth(200);
+            ImGui::SetNextItemWidth(Sc(200));
             if (ImGui::InputFloat3("Force (x,y,z)", mVfOverrideForce, "%.1f")) {
                 mRenderEnv->getCharacter()->setVirtualRootForceOverride(
                     true, Eigen::Vector3d(mVfOverrideForce[0], mVfOverrideForce[1], mVfOverrideForce[2]));
@@ -6536,7 +6536,7 @@ void RenderCkpt::drawVirtualForceControl()
         }
 
         if (mVfRefOverrideEnabled) {
-            ImGui::SetNextItemWidth(200);
+            ImGui::SetNextItemWidth(Sc(200));
             if (ImGui::InputFloat3("Ref Pos (x,y,z)", mVfOverrideRefPos, "%.3f")) {
                 mRenderEnv->getController()->setVirtualRootRefOverride(
                     true, Eigen::Vector3d(mVfOverrideRefPos[0], mVfOverrideRefPos[1], mVfOverrideRefPos[2]));

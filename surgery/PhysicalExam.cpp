@@ -512,6 +512,7 @@ void PhysicalExam::onFrameStart() {
                 buffer.trial_description = "Manual GUI sweep";
                 buffer.timestamp = std::chrono::system_clock::now();
                 buffer.angle_sweep_data = mAngleSweepData;
+                buffer.debug_fk = mDebugFK;
                 buffer.control_angle_sweep_data = mControlAngleSweepData;
                 buffer.tracked_muscles = mAngleSweepTrackedMuscles;
                 buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
@@ -1317,6 +1318,7 @@ void PhysicalExam::loadAndRunTrial(const std::string& trial_file_path) {
             buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
+            buffer.debug_fk = mDebugFK;
             buffer.control_angle_sweep_data = mControlAngleSweepData;
             buffer.tracked_muscles = mAngleSweepTrackedMuscles;
             buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
@@ -1429,6 +1431,7 @@ void PhysicalExam::startNextTrial() {
         buffer.alias = trial.angle_sweep.alias;
         buffer.timestamp = std::chrono::system_clock::now();
         buffer.angle_sweep_data = mAngleSweepData;
+        buffer.debug_fk = mDebugFK;
         buffer.control_angle_sweep_data = mControlAngleSweepData;
         buffer.tracked_muscles = mAngleSweepTrackedMuscles;
         buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
@@ -1874,6 +1877,46 @@ void PhysicalExam::collectAngleSweepData(double angle, int joint_index, bool use
             mControlAngleSweepData[0].passive_torque_stiffness = mControlAngleSweepData[1].passive_torque_stiffness;
         }
     }
+
+    // Debug FK: collect link transforms and Quadratus_Femoris anchors
+    {
+        auto& dbg = mDebugFK;
+        if (dbg.link_names.empty()) {
+            dbg.num_links = static_cast<int>(skel->getNumBodyNodes());
+            for (size_t i = 0; i < skel->getNumBodyNodes(); ++i)
+                dbg.link_names.push_back(skel->getBodyNode(i)->getName());
+            for (const char* prefix : {"L_Quadratus_Femoris", "R_Quadratus_Femoris"}) {
+                for (auto* m : mExpCharacter->getMuscles()) {
+                    if (m->GetName() == prefix) {
+                        dbg.muscle_name = m->GetName();
+                        dbg.num_anchors = static_cast<int>(m->GetAnchors().size());
+                        break;
+                    }
+                }
+                if (dbg.num_anchors > 0) break;
+            }
+        }
+        for (size_t i = 0; i < skel->getNumBodyNodes(); ++i) {
+            Eigen::Matrix4d M = skel->getBodyNode(i)->getTransform().matrix();
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    dbg.transforms.push_back(M(r, c));
+        }
+        if (dbg.num_anchors > 0) {
+            for (auto* m : mExpCharacter->getMuscles()) {
+                if (m->GetName() == dbg.muscle_name) {
+                    m->UpdateGeometry();
+                    for (size_t i = 0; i < m->GetAnchors().size(); ++i) {
+                        Eigen::Vector3d p = m->GetAnchors()[i]->GetPoint();
+                        dbg.anchor_positions.push_back(p.x());
+                        dbg.anchor_positions.push_back(p.y());
+                        dbg.anchor_positions.push_back(p.z());
+                    }
+                    break;
+                }
+            }
+        }
+    }
 }
 
 ROMMetrics PhysicalExam::computeROMMetrics(
@@ -2065,6 +2108,7 @@ void PhysicalExam::runAngleSweepTrial(const TrialConfig& trial) {
     // 5. Clear previous data (both main and standard character)
     mAngleSweepData.clear();
     mControlAngleSweepData.clear();
+    mDebugFK = {};
 
     // 6. Kinematic sweep loop
     if (trial.angle_sweep.dof_type == "abd_knee") {
@@ -2642,6 +2686,16 @@ void PhysicalExam::exportTrialBuffersToHDF5() {
         H5::Attribute numAttr = file.createAttribute("num_trials", H5::PredType::NATIVE_INT, scalar);
         numAttr.write(H5::PredType::NATIVE_INT, &numTrials);
 
+        // Skeleton & muscle paths
+        {
+            H5::Attribute a = file.createAttribute("skeleton_path", strType, scalar);
+            a.write(strType, mSkeletonPath);
+        }
+        {
+            H5::Attribute a = file.createAttribute("muscle_path", strType, scalar);
+            a.write(strType, mMusclePath);
+        }
+
         // Export each buffer
         for (const auto& buffer : mTrialBuffers) {
             // Create trial group
@@ -2673,6 +2727,32 @@ void PhysicalExam::exportTrialBuffersToHDF5() {
                 H5::Group stdGroup = trialGroup.createGroup("control_character");
                 writeAngleSweepDataForCharacter(stdGroup, trial,
                     buffer.control_angle_sweep_data, buffer.control_tracked_muscles);
+            }
+
+            // Debug FK: link transforms [N x L x 16] and anchor positions [N x A x 3]
+            const auto& dbg = buffer.debug_fk;
+            int Nsteps = static_cast<int>(buffer.angle_sweep_data.size());
+            if (dbg.num_links > 0 && !dbg.transforms.empty() && Nsteps > 0) {
+                H5::Group dgrp = trialGroup.createGroup("debug_fk");
+                {
+                    hsize_t ld[1] = { static_cast<hsize_t>(dbg.num_links) };
+                    std::vector<const char*> lp(dbg.num_links);
+                    for (int j = 0; j < dbg.num_links; ++j) lp[j] = dbg.link_names[j].c_str();
+                    dgrp.createDataSet("link_names", strType, H5::DataSpace(1, ld)).write(lp.data(), strType);
+                }
+                {
+                    hsize_t td[3] = { static_cast<hsize_t>(Nsteps),
+                                      static_cast<hsize_t>(dbg.num_links), 16 };
+                    dgrp.createDataSet("link_transforms", H5::PredType::NATIVE_DOUBLE, H5::DataSpace(3, td))
+                        .write(dbg.transforms.data(), H5::PredType::NATIVE_DOUBLE);
+                }
+                if (dbg.num_anchors > 0 && !dbg.anchor_positions.empty()) {
+                    dgrp.createAttribute("muscle_name", strType, scalar).write(strType, dbg.muscle_name);
+                    hsize_t ad[3] = { static_cast<hsize_t>(Nsteps),
+                                      static_cast<hsize_t>(dbg.num_anchors), 3 };
+                    dgrp.createDataSet("anchor_positions", H5::PredType::NATIVE_DOUBLE, H5::DataSpace(3, ad))
+                        .write(dbg.anchor_positions.data(), H5::PredType::NATIVE_DOUBLE);
+                }
             }
         }
 
@@ -2718,6 +2798,7 @@ void PhysicalExam::runAllTrials() {
             buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
+            buffer.debug_fk = mDebugFK;
             buffer.control_angle_sweep_data = mControlAngleSweepData;
             buffer.tracked_muscles = mAngleSweepTrackedMuscles;
             buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;
@@ -5293,6 +5374,7 @@ void PhysicalExam::runSweep() {
     // Clear previous sweep data
     mAngleSweepData.clear();
     mControlAngleSweepData.clear();
+    mDebugFK = {};
     
     // Set joint index for passive torque calculation
     mAngleSweepJointIdx = mSweepConfig.joint_index;
@@ -5974,6 +6056,7 @@ void PhysicalExam::clearTrialBuffers() {
     mSelectedBufferIndex = -1;
     mAngleSweepData.clear();
     mControlAngleSweepData.clear();
+    mDebugFK = {};
     mAngleSweepTrackedMuscles.clear();
     mControlAngleSweepTrackedMuscles.clear();
     LOG_INFO("All trial buffers cleared");
@@ -6030,6 +6113,7 @@ void PhysicalExam::runSelectedTrials() {
             buffer.neg = (trial.angle_sweep.dof_type == "abd_knee") ? false : trial.angle_sweep.neg;
             buffer.timestamp = std::chrono::system_clock::now();
             buffer.angle_sweep_data = mAngleSweepData;
+            buffer.debug_fk = mDebugFK;
             buffer.control_angle_sweep_data = mControlAngleSweepData;
             buffer.tracked_muscles = mAngleSweepTrackedMuscles;
             buffer.control_tracked_muscles = mControlAngleSweepTrackedMuscles;

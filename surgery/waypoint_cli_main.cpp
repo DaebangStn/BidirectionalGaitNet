@@ -236,6 +236,53 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Dump FK for debugging
+    if (verbose) {
+        auto subj_skel = subject_character->getSkeleton();
+        auto ref_skel = reference_character->getSkeleton();
+        subj_skel->setPositions(Eigen::VectorXd::Zero(subj_skel->getNumDofs()));
+        ref_skel->setPositions(Eigen::VectorXd::Zero(ref_skel->getNumDofs()));
+        std::cout << std::fixed << std::setprecision(6);
+        std::cout << "\n=== FK DUMP (zero pose) ===\n";
+        for (size_t i = 0; i < subj_skel->getNumBodyNodes(); ++i) {
+            auto* bn_s = subj_skel->getBodyNode(i);
+            auto* bn_r = (i < ref_skel->getNumBodyNodes()) ? ref_skel->getBodyNode(i) : nullptr;
+            auto ts = bn_s->getWorldTransform().translation();
+            std::cout << "link[" << i << "] " << bn_s->getName()
+                      << " subj=(" << ts.x() << "," << ts.y() << "," << ts.z() << ")";
+            if (bn_r) {
+                auto tr = bn_r->getWorldTransform().translation();
+                std::cout << " ref=(" << tr.x() << "," << tr.y() << "," << tr.z() << ")";
+            }
+            std::cout << "\n";
+        }
+        for (const auto& mname : muscle_names) {
+            auto* sm = subject_character->getMuscleByName(mname);
+            auto* rm2 = reference_character->getMuscleByName(mname);
+            if (sm) {
+                sm->UpdateGeometry();
+                std::cout << "\n=== " << mname << " (subject) ===\n";
+                for (size_t a = 0; a < sm->GetAnchors().size(); ++a) {
+                    auto* ap = sm->GetAnchors()[a];
+                    std::cout << "  [" << a << "] body=" << ap->bodynodes[0]->getName()
+                              << " local=(" << ap->local_positions[0].transpose() << ")"
+                              << " world=(" << ap->GetPoint().transpose() << ")\n";
+                }
+            }
+            if (rm2) {
+                rm2->UpdateGeometry();
+                std::cout << "=== " << mname << " (reference) ===\n";
+                for (size_t a = 0; a < rm2->GetAnchors().size(); ++a) {
+                    auto* ap = rm2->GetAnchors()[a];
+                    std::cout << "  [" << a << "] body=" << ap->bodynodes[0]->getName()
+                              << " local=(" << ap->local_positions[0].transpose() << ")"
+                              << " world=(" << ap->GetPoint().transpose() << ")\n";
+                }
+            }
+        }
+        std::cout << "===========================\n\n";
+    }
+
     // Configure optimizer
     WaypointOptimizer::Config config;
     config.maxIterations = max_iterations;

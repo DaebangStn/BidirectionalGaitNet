@@ -9,6 +9,20 @@
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
+#include <cmath>
+
+// Scale design pixels (defined at 1× / 12pt font) to actual display pixels.
+// Works anywhere after ImGui is initialized; reads the loaded font size as the
+// scale reference (12pt × mContentScale at init time → auto HiDPI scaling).
+//
+// Usage:  ImGui::SetNextItemWidth(Sc(150));
+//         ImGui::PushItemWidth(Sc(120));
+#ifndef SC_SCALE_DEFINED
+#define SC_SCALE_DEFINED
+inline float Sc(float px) {
+    return std::round(px * ImGui::GetFontSize() / 12.0f);
+}
+#endif
 #include <backends/imgui_impl_opengl3.h>
 #include <Eigen/Dense>
 #include <string>

@@ -721,7 +721,7 @@ void C3DProcessorApp::drawMotionListSection()
         ImGui::InputTextWithHint("##C3DFilter", "Filter...", mC3DFilter, sizeof(mC3DFilter));
 
         // File list
-        if (ImGui::BeginListBox("##C3DList", ImVec2(-1, 200))) {
+        if (ImGui::BeginListBox("##C3DList", ImVec2(-1, Sc(200)))) {
             std::string filterLower(mC3DFilter);
             std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
 
@@ -784,7 +784,7 @@ void C3DProcessorApp::drawPlaybackSection()
         if (ImGui::Button("1.0")) mViewerPlaybackSpeed = 1.0;
         ImGui::SameLine();
 
-        ImGui::SetNextItemWidth(150);
+        ImGui::SetNextItemWidth(Sc(150));
         ImGui::SliderFloat("Speed", &mViewerPlaybackSpeed, 0.1f, 1.5f, "%.2fx");
 
         // Frame navigation
@@ -792,7 +792,7 @@ void C3DProcessorApp::drawPlaybackSection()
             int maxFrame = std::max(0, mMotion->getNumFrames() - 1);
             int currentFrame = mMotionState.navigationMode == C3D_MANUAL_FRAME ? mMotionState.manualFrameIndex : mMotionState.lastFrameIdx;
 
-            ImGui::SetNextItemWidth(-100);  // Fill width, reserve space for +/- buttons
+            ImGui::SetNextItemWidth(Sc(-100));  // Fill width, reserve space for +/- buttons
             if (ImGui::SliderInt("Frame", &currentFrame, 0, maxFrame)) {
                 mMotionState.navigationMode = C3D_MANUAL_FRAME;
                 mMotionState.manualFrameIndex = currentFrame;
@@ -966,10 +966,10 @@ void C3DProcessorApp::drawMarkerFittingSection()
 
     // Display table with ROM, Kin Max, Limit for ankle plantarflexion
     if (ImGui::BeginTable("AnkleLimitTable", 4, ImGuiTableFlags_Borders)) {
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 40);
-        ImGui::TableSetupColumn("ROM", ImGuiTableColumnFlags_WidthFixed, 50);
-        ImGui::TableSetupColumn("Kin", ImGuiTableColumnFlags_WidthFixed, 50);
-        ImGui::TableSetupColumn("Limit", ImGuiTableColumnFlags_WidthFixed, 50);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, Sc(40));
+        ImGui::TableSetupColumn("ROM", ImGuiTableColumnFlags_WidthFixed, Sc(50));
+        ImGui::TableSetupColumn("Kin", ImGuiTableColumnFlags_WidthFixed, Sc(50));
+        ImGui::TableSetupColumn("Limit", ImGuiTableColumnFlags_WidthFixed, Sc(50));
         ImGui::TableHeadersRow();
 
         // Left row
@@ -1029,7 +1029,7 @@ void C3DProcessorApp::drawMarkerFittingSection()
     }
     if (!canExportSkeleton) ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(Sc(150));
     ImGui::InputText("##exportCalibName", mExportCalibrationName, sizeof(mExportCalibrationName));
 
     // Check if export file exists - skeleton directory
@@ -1064,7 +1064,7 @@ void C3DProcessorApp::drawMarkerFittingSection()
     }
     if (!canExportHDF) ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     ImGui::InputTextWithHint("##hdfname", "filename", mExportHDFName, sizeof(mExportHDFName));
 
     // Check if destination file exists and show warning
@@ -1200,7 +1200,7 @@ void C3DProcessorApp::drawSkeletonScaleSection()
 
                     // Right value drag
                     ImGui::SameLine();
-                    ImGui::SetNextItemWidth(80);
+                    ImGui::SetNextItemWidth(Sc(80));
                     if (highlighted) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
                     if (ImGui::DragFloat("##R", &valR, 0.01f, minVals[p], maxVals[p], "%.3f")) {
                         modInfoR.value[p] = valR;
@@ -1210,7 +1210,7 @@ void C3DProcessorApp::drawSkeletonScaleSection()
 
                     // Left value drag
                     ImGui::SameLine();
-                    ImGui::SetNextItemWidth(80);
+                    ImGui::SetNextItemWidth(Sc(80));
                     if (highlighted) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.5f, 0.1f, 0.1f, 1.0f));
                     if (ImGui::DragFloat("##L", &valL, 0.01f, minVals[p], maxVals[p], "%.3f")) {
                         modInfoL.value[p] = valL;
@@ -1247,7 +1247,7 @@ void C3DProcessorApp::drawSkeletonScaleSection()
 
                     for (int p = 0; p < 5; ++p) {
                         float val = static_cast<float>(modInfo.value[p]);
-                        ImGui::SetNextItemWidth(120);
+                        ImGui::SetNextItemWidth(Sc(120));
                         if (ImGui::DragFloat(paramNames[p], &val, 0.01f, minVals[p], maxVals[p], "%.3f")) {
                             modInfo.value[p] = val;
                             anyChanged = true;
@@ -1291,7 +1291,7 @@ void C3DProcessorApp::drawSkeletonExportSection()
 
         ImGui::Text("Export to: @pid:%s/%s/skeleton/", pid.c_str(), visit.c_str());
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(150);
+        ImGui::SetNextItemWidth(Sc(150));
         ImGui::InputText("##exportname", mExportSkeletonName, sizeof(mExportSkeletonName));
         ImGui::SameLine();
         ImGui::Text(".yaml");
@@ -1512,7 +1512,7 @@ void C3DProcessorApp::drawRightPanel()
 {
     const float timelineHeight = 60.0f;
     float panelHeight = mHeight - timelineHeight;
-    ImGui::SetNextWindowSize(ImVec2(500, panelHeight), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(Sc(500), panelHeight), ImGuiCond_Always);
     ImGui::Begin("Visualization", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
     ImGui::SetWindowPos(ImVec2(mWidth - ImGui::GetWindowSize().x, 0), ImGuiCond_Always);
 
@@ -1584,7 +1584,7 @@ void C3DProcessorApp::drawViewTabContent()
             static_cast<float>(mMotionCharacterOffset.z())
         };
 
-        ImGui::PushItemWidth(100);
+        ImGui::PushItemWidth(Sc(100));
         if (ImGui::InputFloat("X##MotionOffset", &offset[0], 0.1f, 0.5f, "%.3f")) {
             mMotionCharacterOffset.x() = offset[0];
         }
@@ -1676,7 +1676,7 @@ void C3DProcessorApp::drawViewTabContent()
         std::transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
 
         // Scrollable list
-        if (ImGui::BeginChild("MarkerList", ImVec2(0, 300), true)) {
+        if (ImGui::BeginChild("MarkerList", ImVec2(0, Sc(300)), true)) {
             // C3D Markers
             if (!c3dLabels.empty() && ImGui::TreeNode("C3D Markers")) {
                 for (size_t i = 0; i < c3dLabels.size(); ++i) {
@@ -1766,8 +1766,8 @@ void C3DProcessorApp::drawMarkerCorrespondenceTable()
     auto expectedMarkers = mFreeCharacter->getExpectedMarkerPositions();
     Eigen::Vector3d markerOffset = mMotionState.displayOffset + mMotionState.cycleAccumulation;
 
-    if (ImGui::BeginTable("MarkerTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 300))) {
-        ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, 30);
+    if (ImGui::BeginTable("MarkerTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, Sc(300)))) {
+        ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, Sc(30));
         ImGui::TableSetupColumn("Data", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Skel", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Diff", ImGuiTableColumnFlags_WidthStretch);
@@ -1904,7 +1904,7 @@ void C3DProcessorApp::drawBonePoseSection()
     }
 
     // Joint listbox
-    if (ImGui::BeginListBox("##BonePoseList", ImVec2(-1, 100))) {
+    if (ImGui::BeginListBox("##BonePoseList", ImVec2(-1, Sc(100)))) {
         for (const auto& [idx, name] : filteredJoints) {
             bool isSelected = (mBonePoseSelectedIdx == idx);
             if (ImGui::Selectable(name.c_str(), isSelected)) {
@@ -2053,7 +2053,7 @@ void C3DProcessorApp::drawJointAngleSection()
     }
 
     // Single joint listbox
-    if (ImGui::BeginListBox("##JointAngleList", ImVec2(-1, 100))) {
+    if (ImGui::BeginListBox("##JointAngleList", ImVec2(-1, Sc(100)))) {
         for (const auto& [idx, name] : filteredJoints) {
             bool isSelected = (mJointAngleSelectedIdx == idx);
             if (ImGui::Selectable(name.c_str(), isSelected)) {
@@ -2182,7 +2182,7 @@ void C3DProcessorApp::drawJointOffsetSection()
     }
 
     // Joint listbox
-    if (ImGui::BeginListBox("##JointOffsetList", ImVec2(-1, 120))) {
+    if (ImGui::BeginListBox("##JointOffsetList", ImVec2(-1, Sc(120)))) {
         for (const auto& [idx, name] : filteredJoints) {
             bool isSelected = (mJointOffsetSelectedIdx == idx);
             if (ImGui::Selectable(name.c_str(), isSelected)) {

@@ -5,12 +5,12 @@ args:
 environment:
   # Skeleton and Character
   skeleton:
-    file: "@data/skeleton/base.yaml"
+    file: "@data/skeleton/toe.yaml"
     actuator: "pd"  # pd, torque, muscle, mass, mass_lower
 
   # Motion Reference
   motion:
-    file: "@data/motion/walk_50dof.h5"
+    file: "@data/motion/walk.bvh"
 
   # Muscle System
   # muscle:

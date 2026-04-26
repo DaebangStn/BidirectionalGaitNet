@@ -5,6 +5,8 @@
 #include "Log.h"
 #include <ceres/ceres.h>
 #include <algorithm>
+#include <chrono>
+#include <fstream>
 #include <iomanip>
 #include <memory>
 #include <unordered_map>
@@ -727,6 +729,9 @@ public:
     bool Evaluate(double const* const* parameters,
                   double* residuals,
                   double** jacobians) const override {
+        using Clock = std::chrono::high_resolution_clock;
+        auto t_start = Clock::now();
+
         const double* params = parameters[0];
         auto& anchors = ctx_->subject_muscle->GetAnchors();
 
@@ -735,6 +740,7 @@ public:
         ctx_->subject_muscle->UpdateGeometry();
 
         // Forward evaluation: compute both energies in one pass
+        auto t0 = Clock::now();
         CachedSweepRef cache;
         double E_shape, E_length;
         if (jacobians && jacobians[0]) {
@@ -742,7 +748,9 @@ public:
         } else {
             E_shape = computeShapeEnergy(*ctx_);
         }
+        auto t1 = Clock::now();
         E_length = computeLengthCurveEnergy(*ctx_);
+        auto t2 = Clock::now();
 
         double sqrt_Es = std::sqrt(E_shape + kSqrtEpsilon);
         double sqrt_El = std::sqrt(E_length + kSqrtEpsilon);
@@ -775,8 +783,19 @@ public:
             anchors[anchor_index_]->local_positions[0] = orig;
             ctx_->subject_muscle->UpdateGeometry();
         }
+        auto t3 = Clock::now();
+
+        ++eval_count_;
+        us_fwd_shape_ += std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        us_fwd_length_ += std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+        us_jac_ += std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count();
+        us_total_ += std::chrono::duration_cast<std::chrono::microseconds>(t3 - t_start).count();
         return true;
     }
+
+    // Timing counters (public for outer loop access)
+    mutable int eval_count_ = 0;
+    mutable long long us_fwd_shape_ = 0, us_fwd_length_ = 0, us_jac_ = 0, us_total_ = 0;
 
 private:
     std::shared_ptr<OptimizationContext> ctx_;
@@ -1162,6 +1181,9 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     //    config.maxIterations = max outer passes
     //    Stop when ALL anchors converge in the same pass (parameter displacement check)
     int total_outer_iters = 0;
+    int total_evals = 0;
+    long long total_us_fwd_shape = 0, total_us_fwd_length = 0, total_us_jac = 0, total_us_eval = 0;
+    auto muscle_start = std::chrono::high_resolution_clock::now();
 
     for (int outer = 0; outer < config.maxIterations; ++outer) {
         int num_converged = 0;
@@ -1189,13 +1211,17 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
             }
 
             // Add combined residual (shape + length in one cost function)
-            problem.AddResidualBlock(
-                new PerAnchorCombinedCost(contexts[k], ai,
-                    config.lambdaShape, config.lambdaLengthCurve),
-                nullptr, params);
+            auto* cost = new PerAnchorCombinedCost(contexts[k], ai,
+                    config.lambdaShape, config.lambdaLengthCurve);
+            problem.AddResidualBlock(cost, nullptr, params);
 
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
+            total_evals += cost->eval_count_;
+            total_us_fwd_shape += cost->us_fwd_shape_;
+            total_us_fwd_length += cost->us_fwd_length_;
+            total_us_jac += cost->us_jac_;
+            total_us_eval += cost->us_total_;
 
             // Apply immediately (next anchor sees updated neighbor)
             Eigen::Vector3d new_pos(params[0], params[1], params[2]);
@@ -1220,6 +1246,26 @@ WaypointOptResult WaypointOptimizer::optimizeMuscle(
     }
 
     result.num_iterations = total_outer_iters;
+
+    {
+        auto muscle_end = std::chrono::high_resolution_clock::now();
+        long long muscle_us = std::chrono::duration_cast<std::chrono::microseconds>(muscle_end - muscle_start).count();
+        static std::ofstream timer_file("logs/timer-old.txt", std::ios::app);
+        static bool header_written = false;
+        if (!header_written) {
+            timer_file << "muscle wall_ms iters evals avg_eval_us fwd_shape_ms fwd_length_ms jac_ms\n";
+            header_written = true;
+        }
+        timer_file << subject_muscle->GetName()
+                   << " " << muscle_us / 1000
+                   << " " << total_outer_iters
+                   << " " << total_evals
+                   << " " << (total_evals > 0 ? total_us_eval / total_evals : 0)
+                   << " " << total_us_fwd_shape / 1000
+                   << " " << total_us_fwd_length / 1000
+                   << " " << total_us_jac / 1000 << "\n";
+        timer_file.flush();
+    }
 
     if (config.verbose) {
         LOG_INFO("[WaypointOpt] Final anchor positions:");

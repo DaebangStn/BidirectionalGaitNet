@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <set>
 #include <imgui.h>
+#include "imgui_common.h"
 
 namespace PIDNav {
 
@@ -327,7 +328,7 @@ void PIDNavigator::renderUI(const char* title,
     }
 
     // ========== PID Filter + Refresh ==========
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(Sc(150));
     ImGui::InputText("##PIDFilter", pImpl->pidFilterBuf, sizeof(pImpl->pidFilterBuf));
     ImGui::SameLine();
     if (ImGui::Button("Refresh##PID")) {
@@ -457,7 +458,7 @@ void PIDNavigator::renderUI(const char* title,
             if (ImGui::TreeNodeEx(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
                 // Filter input
                 std::string filterId = "##Filter_" + std::to_string(sectionIdx);
-                ImGui::SetNextItemWidth(100);
+                ImGui::SetNextItemWidth(Sc(100));
                 ImGui::InputText(filterId.c_str(), section.filterBuf, sizeof(section.filterBuf));
                 ImGui::SameLine();
                 std::string clearId = "X##Clear_" + std::to_string(sectionIdx);
@@ -640,7 +641,7 @@ void drawFileSourceSection(
         prefix = "@pid:" + pid + "/" + visit + "/" + dataDir + "/";
     }
 
-    if (ImGui::BeginListBox(listId.c_str(), ImVec2(-1, 180))) {
+    if (ImGui::BeginListBox(listId.c_str(), ImVec2(-1, Sc(180)))) {
         for (size_t i = 0; i < ref.candidates.size(); ++i) {
             const auto& filename = ref.candidates[i];
             bool isSelected = (ref.path.find(filename) != std::string::npos);

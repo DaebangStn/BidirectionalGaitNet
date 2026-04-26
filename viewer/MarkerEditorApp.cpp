@@ -308,8 +308,8 @@ void MarkerEditorApp::drawMarkerLabels()
 
 void MarkerEditorApp::drawEditorPanel()
 {
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(380, mHeight - 20), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(Sc(10), Sc(10)), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(Sc(380), mHeight - 20), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("Marker Editor")) {
         ImGui::End();
@@ -327,7 +327,7 @@ void MarkerEditorApp::drawEditorPanel()
         std::strncpy(exportBuf, mExportPath.c_str(), sizeof(exportBuf) - 1);
         ImGui::Text("data/marker/");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(120);
+        ImGui::SetNextItemWidth(Sc(120));
         if (ImGui::InputText(".xml", exportBuf, sizeof(exportBuf))) {
             mExportPath = exportBuf;
         }
@@ -350,7 +350,7 @@ void MarkerEditorApp::drawEditorPanel()
         ImGui::SameLine();
         ImGui::Checkbox("ZX", &mShowPlaneZX);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(50);
+        ImGui::SetNextItemWidth(Sc(50));
         ImGui::DragFloat("##PlaneOpacity", &mPlaneOpacity, 0.01f, 0.0f, 1.0f, "%.2f");
 
         ImGui::Separator();
@@ -383,7 +383,7 @@ void MarkerEditorApp::drawMarkerListSection()
         auto& markers = mCharacter->getMarkersForEdit();
 
         // Search filter
-        ImGui::SetNextItemWidth(-100);
+        ImGui::SetNextItemWidth(Sc(-100));
         ImGui::InputText("##Search", mSearchFilter, sizeof(mSearchFilter));
         ImGui::SameLine();
         if (ImGui::Button("Clear")) {
@@ -400,12 +400,12 @@ void MarkerEditorApp::drawMarkerListSection()
         // Marker table
         if (ImGui::BeginTable("MarkerTable", 4,
             ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg,
-            ImVec2(0, 350)))
+            ImVec2(0, Sc(350))))
         {
-            ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, 35.0f);
+            ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, Sc(35.0f));
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Bone", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-            ImGui::TableSetupColumn("V", ImGuiTableColumnFlags_WidthFixed, 25.0f);
+            ImGui::TableSetupColumn("Bone", ImGuiTableColumnFlags_WidthFixed, Sc(80.0f));
+            ImGui::TableSetupColumn("V", ImGuiTableColumnFlags_WidthFixed, Sc(25.0f));
             ImGui::TableHeadersRow();
 
             std::string filterLower = mSearchFilter;
@@ -606,13 +606,13 @@ void MarkerEditorApp::drawSelectedMarkerSection()
         float worldY = static_cast<float>(worldPos[1]);
         float worldZ = static_cast<float>(worldPos[2]);
         bool worldChanged = false;
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(Sc(100));
         if (ImGui::DragFloat("WX", &worldX, 0.001f, -FLT_MAX, FLT_MAX, "%.4f")) worldChanged = true;
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(Sc(100));
         if (ImGui::DragFloat("WY", &worldY, 0.001f, -FLT_MAX, FLT_MAX, "%.4f")) worldChanged = true;
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(Sc(100));
         if (ImGui::DragFloat("WZ", &worldZ, 0.001f, -FLT_MAX, FLT_MAX, "%.4f")) worldChanged = true;
 
         if (worldChanged && marker.bodyNode) {
@@ -689,7 +689,7 @@ void MarkerEditorApp::drawBodyNodesSection()
         ImGui::Separator();
 
         // Scrollable list with checkboxes + selection (filtered)
-        ImGui::BeginChild("BodyNodeList", ImVec2(0, 150), true);
+        ImGui::BeginChild("BodyNodeList", ImVec2(0, Sc(150)), true);
         std::string filterLower = mBodyNodeFilter;
         std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
 
@@ -769,7 +769,7 @@ void MarkerEditorApp::drawAddMarkerPopup()
         }
 
         ImGui::Separator();
-        if (ImGui::Button("Add", ImVec2(100, 0))) {
+        if (ImGui::Button("Add", ImVec2(Sc(100), 0))) {
             if (mCharacter && mNewMarkerBoneIndex < static_cast<int>(mBodyNodeNames.size())) {
                 mCharacter->addMarker(mNewMarkerName, mBodyNodeNames[mNewMarkerBoneIndex], Eigen::Vector3d::Zero());
                 mSelectedMarkerIndex = static_cast<int>(mCharacter->getMarkers().size()) - 1;
@@ -777,7 +777,7 @@ void MarkerEditorApp::drawAddMarkerPopup()
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+        if (ImGui::Button("Cancel", ImVec2(Sc(100), 0))) {
             ImGui::CloseCurrentPopup();
         }
 

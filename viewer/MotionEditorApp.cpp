@@ -838,7 +838,7 @@ void MotionEditorApp::drawDirectionCleanupSection()
 
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        if (ImGui::BeginListBox("##ForwardIntervals", ImVec2(-1, 100))) {
+        if (ImGui::BeginListBox("##ForwardIntervals", ImVec2(-1, Sc(100)))) {
             for (int i = 0; i < static_cast<int>(mDirectionIntervals.size()); ++i) {
                 const auto& interval = mDirectionIntervals[i];
                 if (interval.direction != Timeline::GaitDirection::Forward) continue;
@@ -859,7 +859,7 @@ void MotionEditorApp::drawDirectionCleanupSection()
         }
 
         ImGui::TableNextColumn();
-        if (ImGui::BeginListBox("##BackwardIntervals", ImVec2(-1, 100))) {
+        if (ImGui::BeginListBox("##BackwardIntervals", ImVec2(-1, Sc(100)))) {
             for (int i = 0; i < static_cast<int>(mDirectionIntervals.size()); ++i) {
                 const auto& interval = mDirectionIntervals[i];
                 if (interval.direction != Timeline::GaitDirection::Backward) continue;
@@ -943,7 +943,7 @@ void MotionEditorApp::drawExportSection()
     }
 
     // Export button
-    if (ImGui::Button("Export Edited Motion", ImVec2(-1, 30))) {
+    if (ImGui::Button("Export Edited Motion", ImVec2(-1, Sc(30)))) {
         exportMotion();
     }
 
@@ -1171,7 +1171,7 @@ void MotionEditorApp::drawFootContactSection()
         // Listbox row
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        if (ImGui::BeginListBox("##LeftContact", ImVec2(-1, 100))) {
+        if (ImGui::BeginListBox("##LeftContact", ImVec2(-1, Sc(100)))) {
             for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
                 const auto& phase = mDetectedPhases[i];
                 if (!phase.isLeft) continue;
@@ -1193,7 +1193,7 @@ void MotionEditorApp::drawFootContactSection()
         }
 
         ImGui::TableNextColumn();
-        if (ImGui::BeginListBox("##RightContact", ImVec2(-1, 100))) {
+        if (ImGui::BeginListBox("##RightContact", ImVec2(-1, Sc(100)))) {
             for (int i = 0; i < static_cast<int>(mDetectedPhases.size()); ++i) {
                 const auto& phase = mDetectedPhases[i];
                 if (phase.isLeft) continue;
@@ -1234,13 +1234,13 @@ void MotionEditorApp::drawStrideEstimationSection()
     const char* bodyNodes[] = {"TalusR", "TalusL", "Pelvis"};
     ImGui::Text("BodyNode:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(120);
+    ImGui::SetNextItemWidth(Sc(120));
     ImGui::Combo("##StrideBodyNode", &mStrideBodyNodeIdx, bodyNodes, IM_ARRAYSIZE(bodyNodes));
 
     // Divider input (auto-computed from foot contacts, but editable)
     ImGui::Text("Divider:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
+    ImGui::SetNextItemWidth(Sc(80));
     int dividerInput = mStrideDivider;
     if (ImGui::InputInt("##StrideDivider", &dividerInput)) {
         setStrideDivider(dividerInput);
@@ -2550,7 +2550,7 @@ void MotionEditorApp::drawMakeCyclicSection()
     // Interp1 frames input (frames to edit for left stance fix)
     ImGui::Text("Num Frames: interp1 ");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(50);
+    ImGui::SetNextItemWidth(Sc(50));
     ImGui::InputInt("##CyclicInterp1Frames", &mCyclicInterp1Frames, 0, 0);
     mCyclicInterp1Frames = std::max(1, mCyclicInterp1Frames);
     ImGui::SameLine();
@@ -2558,7 +2558,7 @@ void MotionEditorApp::drawMakeCyclicSection()
     // Interp2 frames input (frames to edit for first/last consistency)
     ImGui::Text("interp2 ");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(50);
+    ImGui::SetNextItemWidth(Sc(50));
     ImGui::InputInt("##CyclicInterp2Frames", &mCyclicInterp2Frames, 0, 0);
     mCyclicInterp2Frames = std::max(0, mCyclicInterp2Frames);
 

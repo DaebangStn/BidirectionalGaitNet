@@ -807,14 +807,14 @@ void MusclePersonalizerApp::drawJointAngleSection()
 
                 // Slider
                 std::string slider_label = label + "##slider_" + joint_name + std::to_string(d);
-                ImGui::SetNextItemWidth(200);
+                ImGui::SetNextItemWidth(Sc(200));
                 const char* format = is_translation ? "%.3fm" : "%.1f°";
                 ImGui::SliderFloat(slider_label.c_str(), &display_value, lower_limit, upper_limit, format);
 
                 // InputFloat on same line
                 ImGui::SameLine();
                 std::string input_label = "##input_" + joint_name + std::to_string(d);
-                ImGui::SetNextItemWidth(50);
+                ImGui::SetNextItemWidth(Sc(50));
                 const char* input_format = is_translation ? "%.3f" : "%.1f";
                 ImGui::InputFloat(input_label.c_str(), &display_value, 0.0f, 0.0f, input_format);
 
@@ -880,7 +880,7 @@ void MusclePersonalizerApp::drawWaypointOptimizationSection()
                 }
             }
 
-            if (ImGui::BeginListBox("##MotionList", ImVec2(-1, 80))) {
+            if (ImGui::BeginListBox("##MotionList", ImVec2(-1, Sc(80)))) {
                 for (const auto& filename : mMotionCandidates) {
                     int motionDof = -1;
                     auto it = mMotionDOFMap.find(filename);
@@ -1129,8 +1129,8 @@ void MusclePersonalizerApp::drawTitlePanel()
     if (!mShowTitlePanel) return;
 
     // Create a compact floating window
-    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10, 50), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(Sc(400), 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(Sc(10), Sc(50)), ImGuiCond_FirstUseEver);
     ImGui::Begin("Title Panel (T to toggle)", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::SetWindowFontScale(1.5f);
     ImGui::Text("%s", characterConfig().c_str());
@@ -1323,7 +1323,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         }
 
         // ROM selection list - display "TC name - CD value"
-        ImGui::BeginChild("ROMList", ImVec2(0, 250), true);
+        ImGui::BeginChild("ROMList", ImVec2(0, Sc(250)), true);
         for (size_t i = 0; i < mROMTrials.size(); ++i) {
             auto& trial = mROMTrials[i];
 
@@ -1367,7 +1367,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
             // Show editable input when CD not available (using normative as default)
             if (needsManualInput) {
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(60);
+                ImGui::SetNextItemWidth(Sc(60));
                 char input_id[64];
                 snprintf(input_id, sizeof(input_id), "##manual_rom_%zu", i);
                 if (ImGui::InputFloat(input_id, &mROMTrials[i].manual_rom, 0, 0, "%.1f")) {
@@ -1535,7 +1535,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         ImGuiTableFlags trialTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                           ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
         if (ImGui::BeginTable("##contracture_trials", 2, trialTableFlags)) {
-            ImGui::TableSetupColumn("Trial", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Trial", ImGuiTableColumnFlags_WidthFixed, Sc(140.0f));
             ImGui::TableSetupColumn("Torque (before->after, t:target)", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableHeadersRow();
 
@@ -1562,7 +1562,7 @@ void MusclePersonalizerApp::drawContractureEstimationSection()
         // Per-group ratio table
         if (!mContractureOptResult->group_results.empty()) {
             if (ImGui::BeginTable("##contracture_groups", 2, trialTableFlags)) {
-                ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, Sc(140.0f));
                 ImGui::TableSetupColumn("Ratio", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
 
@@ -1631,7 +1631,7 @@ void MusclePersonalizerApp::drawRenderTab()
     ImGui::Separator();
     ImGui::Checkbox("Show Muscles", &mRenderMuscles);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(Sc(60));
     ImGui::InputFloat("##LineWidth", &mMuscleLineWidth, 0.0f, 0.0f, "%.1f");
     ImGui::SameLine();
     ImGui::TextDisabled("Width");
@@ -1657,10 +1657,10 @@ void MusclePersonalizerApp::drawRenderTab()
     if (mMuscleColorMode == MuscleColorMode::Contracture ||
         mMuscleColorMode == MuscleColorMode::ContractureExt) {
         ImGui::Separator();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(Sc(80));
         ImGui::InputFloat("##MinVal", &mContractureMinValue, 0.0f, 0.0f, "%.2f");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(Sc(80));
         ImGui::InputFloat("##MaxVal", &mContractureMaxValue, 0.0f, 0.0f, "%.2f");
         ImGui::SameLine();
         ImGui::TextDisabled("Min/Max");
@@ -1674,10 +1674,10 @@ void MusclePersonalizerApp::drawRenderTab()
         }
     } else if (mMuscleColorMode == MuscleColorMode::MuscleLength) {
         ImGui::Separator();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(Sc(80));
         ImGui::InputFloat("##LmMinVal", &mMuscleLengthMinValue, 0.0f, 0.0f, "%.2f");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(Sc(80));
         ImGui::InputFloat("##LmMaxVal", &mMuscleLengthMaxValue, 0.0f, 0.0f, "%.2f");
         ImGui::SameLine();
         ImGui::TextDisabled("Min/Max");
@@ -1715,13 +1715,13 @@ void MusclePersonalizerApp::drawRenderTab()
     ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Camera");
     ImGui::Separator();
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(Sc(200));
     float zoom = static_cast<float>(mCamera.zoom);
     if (ImGui::SliderFloat("Zoom", &zoom, 0.1f, 5.0f)) {
         mCamera.zoom = zoom;
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(Sc(200));
     float persp = static_cast<float>(mCamera.persp);
     if (ImGui::SliderFloat("FOV", &persp, 20.0f, 90.0f)) {
         mCamera.persp = persp;
@@ -1765,14 +1765,14 @@ void MusclePersonalizerApp::drawRenderTab()
     ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Plot");
     ImGui::Separator();
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     ImGui::InputFloat("Plot Height", &mPlotHeight, 10.0f, 50.0f, "%.0f");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     ImGui::InputInt("Bars per Chart", &mPlotBarsPerChart);
     mPlotBarsPerChart = std::max(1, std::min(20, mPlotBarsPerChart));
 
-    ImGui::SetNextItemWidth(60);
+    ImGui::SetNextItemWidth(Sc(60));
     ImGui::InputFloat("##CurveWidth", &mPlotCurveWidth, 0.0f, 0.0f, "%.1f");
     ImGui::SameLine();
     ImGui::Text("Curve Width");
@@ -1793,7 +1793,7 @@ void MusclePersonalizerApp::drawRenderTab()
     }
 
     // Table settings
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(Sc(200));
     ImGui::InputFloat("Results Table Height", &mResultsTableHeight, 50.0f, 200.0f, "%.0f");
     mResultsTableHeight = std::max(60.0f, std::min(500.0f, mResultsTableHeight));
 }
@@ -1826,7 +1826,7 @@ void MusclePersonalizerApp::drawExportSection()
     // Muscle export
     ImGui::Text("Muscle:  ");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(-80);
+    ImGui::SetNextItemWidth(Sc(-80));
     ImGui::InputText("##export_muscle_name", mExportMuscleName, sizeof(mExportMuscleName));
     ImGui::SameLine();
 
@@ -1972,7 +1972,7 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
         if (ImGui::RadioButton("Diff", &mWaypointEnergyDisplayMode, 2)) {}
 
         // Filter input
-        ImGui::SetNextItemWidth(150);
+        ImGui::SetNextItemWidth(Sc(150));
         ImGui::InputText("##ResultFilter", mWaypointResultFilter, sizeof(mWaypointResultFilter));
         ImGui::SameLine();
         ImGui::TextDisabled("Filter");
@@ -2067,12 +2067,12 @@ void MusclePersonalizerApp::drawWaypointCurvesTab()
         ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                      ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
         if (ImGui::BeginTable("ResultsTable", 6, tableFlags, ImVec2(0, mResultsTableHeight))) {
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 15.0f);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, Sc(15.0f));
             ImGui::TableSetupColumn("Muscle", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn(colShapeE, ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn(colLengthE, ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableSetupColumn(colCost, ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn(colIters, ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableSetupColumn(colShapeE, ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
+            ImGui::TableSetupColumn(colLengthE, ImGuiTableColumnFlags_WidthFixed, Sc(110.0f));
+            ImGui::TableSetupColumn(colCost, ImGuiTableColumnFlags_WidthFixed, Sc(100.0f));
+            ImGui::TableSetupColumn(colIters, ImGuiTableColumnFlags_WidthFixed, Sc(70.0f));
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
@@ -3383,7 +3383,7 @@ void MusclePersonalizerApp::drawGridSearchSubTab()
     // ===== Search Group Selector =====
     ImGui::Text("Search Groups (%zu)", result.search_group_results.size());
 
-    if (ImGui::BeginListBox("##SearchGroupList", ImVec2(-FLT_MIN, 120))) {
+    if (ImGui::BeginListBox("##SearchGroupList", ImVec2(-FLT_MIN, Sc(120)))) {
         for (size_t i = 0; i < result.search_group_results.size(); ++i) {
             const auto& sr = result.search_group_results[i];
             bool selected = (mGridSearchSelectedGroup == static_cast<int>(i));
@@ -3508,7 +3508,7 @@ void MusclePersonalizerApp::drawOptimizationSubTab()
                 return devA > devB;
             });
 
-        if (ImGui::BeginListBox("##OptGroupList", ImVec2(-FLT_MIN, 100))) {
+        if (ImGui::BeginListBox("##OptGroupList", ImVec2(-FLT_MIN, Sc(100)))) {
             for (size_t idx : sortedIndices) {
                 const auto& grp = result.group_results[idx];
                 if (strlen(mContractureGroupFilter) > 0 &&
@@ -3567,7 +3567,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 return devA > devB;
             });
 
-        if (ImGui::BeginListBox("##GroupList", ImVec2(-FLT_MIN, 100))) {
+        if (ImGui::BeginListBox("##GroupList", ImVec2(-FLT_MIN, Sc(100)))) {
             for (size_t idx : sortedGroupIndices) {
                 const auto& grp = result.group_results[idx];
                 if (strlen(mContractureGroupFilter) > 0 &&
@@ -3591,7 +3591,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
         ImGui::InputTextWithHint("##trialFilter", "Filter...",
             mContractureTrialFilter, sizeof(mContractureTrialFilter));
 
-        if (ImGui::BeginListBox("##TrialList", ImVec2(-FLT_MIN, 150))) {
+        if (ImGui::BeginListBox("##TrialList", ImVec2(-FLT_MIN, Sc(150)))) {
             for (size_t i = 0; i < result.trial_results.size(); ++i) {
                 const auto& trial = result.trial_results[i];
                 if (strlen(mContractureTrialFilter) > 0 &&
@@ -3643,7 +3643,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
     ImGui::Checkbox("Line Consist.", &mShowLineConsistencyChart);
     if (mShowLineConsistencyChart) {
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
+        ImGui::SetNextItemWidth(Sc(60));
         ImGui::InputFloat("##lc_thresh", &mLineConsistencyThreshold, 0.0f, 0.0f, "%.3f");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("MSE threshold (show groups above this)");
     }
@@ -3720,7 +3720,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
             y_min -= y_margin;
             y_max += y_margin;
 
-            if (ImPlot::BeginPlot("##lm_contract_chart", ImVec2(-1, 200), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
+            if (ImPlot::BeginPlot("##lm_contract_chart", ImVec2(-1, Sc(200)), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Muscle", "lm_contract (m)");
                 if (!mPlotHideLegend)
                     ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
@@ -3745,7 +3745,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 for (int i = 0; i < n; ++i) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%.3f", page_before[i]);
-                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, -5));
+                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, Sc(-5)));
                 }
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
@@ -3753,7 +3753,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 for (int i = 0; i < n; ++i) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%.3f", page_after[i]);
-                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, -5));
+                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, Sc(-5)));
                 }
 
                 ImPlot::EndPlot();
@@ -3821,7 +3821,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
             y_min -= y_margin;
             y_max += y_margin;
 
-            if (ImPlot::BeginPlot("##torque_chart", ImVec2(-1, 200), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
+            if (ImPlot::BeginPlot("##torque_chart", ImVec2(-1, Sc(200)), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Muscle", "Passive Torque (Nm)");
                 if (!mPlotHideLegend) ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
 
@@ -3844,7 +3844,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 for (int i = 0; i < n; ++i) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%.1f", page_before[i]);
-                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, -5));
+                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, Sc(-5)));
                 }
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
@@ -3852,7 +3852,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 for (int i = 0; i < n; ++i) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%.1f", page_after[i]);
-                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, -5));
+                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, Sc(-5)));
                 }
 
                 ImPlot::EndPlot();
@@ -3920,7 +3920,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
             y_min -= y_margin;
             y_max += y_margin;
 
-            if (ImPlot::BeginPlot("##force_chart", ImVec2(-1, 200), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
+            if (ImPlot::BeginPlot("##force_chart", ImVec2(-1, Sc(200)), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("Muscle", "Passive Force (N)");
                 if (!mPlotHideLegend)
                     ImPlot::SetupLegend(mPlotLegendEast ? ImPlotLocation_NorthEast : ImPlotLocation_NorthWest);
@@ -3944,7 +3944,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 for (int i = 0; i < n; ++i) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%.1f", page_before[i]);
-                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, -5));
+                    ImPlot::PlotText(buf, x_before[i], page_before[i], ImVec2(0, Sc(-5)));
                 }
 
                 ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.4f, 0.2f, 0.8f));
@@ -3952,7 +3952,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 for (int i = 0; i < n; ++i) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%.1f", page_after[i]);
-                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, -5));
+                    ImPlot::PlotText(buf, x_after[i], page_after[i], ImVec2(0, Sc(-5)));
                 }
 
                 ImPlot::EndPlot();
@@ -3994,7 +3994,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
             const char* bar_labels[] = {"Before", "After"};
             double values[] = {sum_before, sum_after};
 
-            if (ImPlot::BeginPlot("##group_torque", ImVec2(-1, 150), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
+            if (ImPlot::BeginPlot("##group_torque", ImVec2(-1, Sc(150)), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                 ImPlot::SetupAxes("", "Torque (Nm)");
                 ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, 1.5, ImPlotCond_Always);
 
@@ -4105,7 +4105,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                 double y_margin = y_max * 0.25;
                 if (y_margin < 1e-6) y_margin = 1e-4;
 
-                if (ImPlot::BeginPlot("##line_consist_chart", ImVec2(-1, 200),
+                if (ImPlot::BeginPlot("##line_consist_chart", ImVec2(-1, Sc(200)),
                     mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
                     ImPlot::SetupAxes("Base Muscle", "MSE");
                     ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, n - 0.5, ImPlotCond_Always);
@@ -4123,10 +4123,10 @@ void MusclePersonalizerApp::drawLegacyContractureView()
                         int si = startIdx + i;
                         char buf[32];
                         snprintf(buf, sizeof(buf), "%.4f", page_mse[i]);
-                        ImPlot::PlotText(buf, x_pos[i], page_mse[i], ImVec2(0, -5));
+                        ImPlot::PlotText(buf, x_pos[i], page_mse[i], ImVec2(0, Sc(-5)));
                         char buf2[32];
                         snprintf(buf2, sizeof(buf2), "n=%d avg=%.3f", stats[si].n_fibers, stats[si].mean);
-                        ImPlot::PlotText(buf2, x_pos[i], 0.0, ImVec2(0, 10));
+                        ImPlot::PlotText(buf2, x_pos[i], 0.0, ImVec2(0, Sc(10)));
                     }
 
                     ImPlot::EndPlot();
@@ -4154,7 +4154,7 @@ void MusclePersonalizerApp::drawLegacyContractureView()
             trial.computed_torque_after
         };
 
-        if (ImPlot::BeginPlot("##joint_torque", ImVec2(-1, 150), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
+        if (ImPlot::BeginPlot("##joint_torque", ImVec2(-1, Sc(150)), mPlotHideLegend ? ImPlotFlags_NoLegend : 0)) {
             ImPlot::SetupAxes("", "Torque (Nm)");
             ImPlot::SetupAxisLimits(ImAxis_X1, -0.5, 2.5, ImPlotCond_Always);
             // Set Y limits with margin
@@ -4435,7 +4435,7 @@ void MusclePersonalizerApp::drawSkeletonSymmetrySubTab()
     // Threshold controls
     ImGui::Text("Threshold:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     if (ImGui::InputFloat("##SkelSymThreshold", &mSymmetryThreshold, 0.0001f, 0.001f, "%.4f")) {
         mSymmetryThreshold = std::max(0.0001f, mSymmetryThreshold);
         computeSkeletonSymmetryPairs();
@@ -4621,14 +4621,14 @@ void MusclePersonalizerApp::drawMuscleSymmetrySubTab()
     // Filter and threshold controls
     ImGui::Text("Filter:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(Sc(150));
     if (ImGui::InputText("##SymFilter", mSymmetryFilter, sizeof(mSymmetryFilter))) {
         // Filter changed - no action needed, filtering is done during display
     }
     ImGui::SameLine();
     ImGui::Text("Threshold:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    ImGui::SetNextItemWidth(Sc(100));
     if (ImGui::InputFloat("##SymThreshold", &mSymmetryThreshold, 0.0001f, 0.001f, "%.4f")) {
         mSymmetryThreshold = std::max(0.0001f, mSymmetryThreshold);
         computeSymmetryPairs();  // Recompute with new threshold
@@ -4866,7 +4866,7 @@ void MusclePersonalizerApp::drawMuscleParamsSymmetrySubTab()
     // Threshold controls
     ImGui::Text("Threshold:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
+    ImGui::SetNextItemWidth(Sc(80));
     if (ImGui::InputFloat("##ParamSymThreshold", &mMuscleParamSymmetryThreshold, 1.0f, 5.0f, "%.1f%%")) {
         mMuscleParamSymmetryThreshold = std::max(0.1f, mMuscleParamSymmetryThreshold);
         computeMuscleParamsSymmetryPairs();
@@ -4878,7 +4878,7 @@ void MusclePersonalizerApp::drawMuscleParamsSymmetrySubTab()
     ImGui::SameLine();
     ImGui::Text("Filter:");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(Sc(150));
     ImGui::InputText("##ParamSymFilter", mMuscleParamSymmetryFilter, sizeof(mMuscleParamSymmetryFilter));
 
     ImGui::Separator();
@@ -4967,9 +4967,9 @@ void MusclePersonalizerApp::drawMuscleParamsSymmetrySubTab()
         ImGui::SetWindowFontScale(1.2f);
         if (ImGui::BeginTable("ParamCompare", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Parameter", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-            ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-            ImGui::TableSetupColumn("Diff %", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, Sc(80.0f));
+            ImGui::TableSetupColumn("Right", ImGuiTableColumnFlags_WidthFixed, Sc(80.0f));
+            ImGui::TableSetupColumn("Diff %", ImGuiTableColumnFlags_WidthFixed, Sc(60.0f));
             ImGui::TableHeadersRow();
 
             auto drawRow = [&](const char* name, double left, double right, double diff_pct) {
@@ -5064,7 +5064,7 @@ void MusclePersonalizerApp::drawSymmetryOperationsSection()
     }
 
     ImGui::BeginDisabled(!hasSelection);
-    if (ImGui::Button("Mirror Selected Pair", ImVec2(-1, 25))) {
+    if (ImGui::Button("Mirror Selected Pair", ImVec2(-1, Sc(25)))) {
         if (hasSelection) {
             const auto& selectedPair = mSymmetryPairs[mSymmetrySelectedIdx];
             std::vector<std::string> toMirror = {selectedPair.base_name};
@@ -5081,7 +5081,7 @@ void MusclePersonalizerApp::drawSymmetryOperationsSection()
     ImGui::BeginDisabled(asymmetricCount == 0);
     char mirrorAsymLabel[64];
     snprintf(mirrorAsymLabel, sizeof(mirrorAsymLabel), "Mirror All Asymmetric (%d)", asymmetricCount);
-    if (ImGui::Button(mirrorAsymLabel, ImVec2(-1, 25))) {
+    if (ImGui::Button(mirrorAsymLabel, ImVec2(-1, Sc(25)))) {
         if (!asymmetricBaseNames.empty()) {
             if (mExecutor->mirrorAnchorPositions(asymmetricBaseNames)) {
                 computeSymmetryPairs();  // Refresh after mirroring
@@ -5092,7 +5092,7 @@ void MusclePersonalizerApp::drawSymmetryOperationsSection()
 
     // Mirror all pairs
     ImGui::BeginDisabled(totalPairs == 0);
-    if (ImGui::Button("Mirror All Pairs", ImVec2(-1, 25))) {
+    if (ImGui::Button("Mirror All Pairs", ImVec2(-1, Sc(25)))) {
         if (mExecutor->mirrorAnchorPositions({})) {
             computeSymmetryPairs();  // Refresh after mirroring
         }

@@ -1173,18 +1173,27 @@ void GUI::InitImGui(GLFWwindow* window, bool useImPlot)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Query HiDPI content scale from GLFW
+    float xscale = 1.0f, yscale = 1.0f;
+    glfwGetWindowContentScale(window, &xscale, &yscale);
+    float contentScale = std::max(xscale, yscale);
+
+    // Base font size 12pt, scaled for HiDPI
+    float fontSize = std::round(12.0f * contentScale);
+
     // Load font with Korean glyph support
     ImFontConfig fontConfig;
     fontConfig.MergeMode = false;
 
     const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
     if (std::filesystem::exists(fontPath)) {
-        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
+        io.Fonts->AddFontFromFileTTF(fontPath, fontSize, &fontConfig,
             io.Fonts->GetGlyphRangesKorean());
-        LOG_VERBOSE("[GUI] Loaded Korean font: " << fontPath);
+        LOG_VERBOSE("[GUI] Loaded Korean font: " << fontPath << " at " << fontSize << "px");
     } else {
-        io.Fonts->AddFontDefault();
-        LOG_WARN("[GUI] Korean font not found, using default");
+        io.Fonts->AddFontDefault(&fontConfig);
+        io.FontGlobalScale = contentScale;
+        LOG_WARN("[GUI] Korean font not found, using default (scaled " << contentScale << "x)");
     }
 
     ImGui::StyleColorsDark();

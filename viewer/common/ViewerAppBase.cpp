@@ -51,14 +51,31 @@ void ViewerAppBase::initGLFW()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
 
+    // Detect monitor work area and clamp window size/position
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (monitor) {
+        int monX, monY, monW, monH;
+        glfwGetMonitorWorkarea(monitor, &monX, &monY, &monW, &monH);
+        std::cout << "[ViewerAppBase] Monitor work area: " << monW << "x" << monH
+                  << " at (" << monX << "," << monY << ")" << std::endl;
+
+        // Clamp window size to monitor work area
+        mWidth  = std::min(mWidth,  monW);
+        mHeight = std::min(mHeight, monH);
+
+        // Clamp position so the window stays on screen
+        mWindowXPos = std::clamp(mWindowXPos, monX, monX + monW - mWidth);
+        mWindowYPos = std::clamp(mWindowYPos, monY, monY + monH - mHeight);
+    }
+
     // Create window
     mWindow = glfwCreateWindow(mWidth, mHeight, mWindowTitle.c_str(), nullptr, nullptr);
-    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
     if (!mWindow) {
         std::cerr << "[ViewerAppBase] Failed to create GLFW window" << std::endl;
         glfwTerminate();
         exit(EXIT_FAILURE);
     }
+    glfwSetWindowPos(mWindow, mWindowXPos, mWindowYPos);
 
     glfwMakeContextCurrent(mWindow);
     glfwSwapInterval(1);  // Enable vsync
@@ -94,17 +111,29 @@ void ViewerAppBase::initImGui()
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Query HiDPI content scale from GLFW
+    float xscale = 1.0f, yscale = 1.0f;
+    glfwGetWindowContentScale(mWindow, &xscale, &yscale);
+    float contentScale = std::max(xscale, yscale);
+
+    // Base font size 12pt, scaled for HiDPI
+    float fontSize = std::round(12.0f * contentScale);
+
     // Load font with Korean glyph support
     ImFontConfig fontConfig;
     fontConfig.MergeMode = false;
 
     const char* fontPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
     if (std::filesystem::exists(fontPath)) {
-        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig,
+        io.Fonts->AddFontFromFileTTF(fontPath, fontSize, &fontConfig,
             io.Fonts->GetGlyphRangesKorean());
     } else {
-        io.Fonts->AddFontDefault();
+        io.Fonts->AddFontDefault(&fontConfig);
+        io.FontGlobalScale = contentScale;  // fallback: scale the default bitmap font
     }
+
+    std::cout << "[ViewerAppBase] Content scale: " << contentScale
+              << ", font size: " << fontSize << "px" << std::endl;
 
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
