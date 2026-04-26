@@ -61,6 +61,8 @@ public:
 
 	void setRefMotion(Character* character, dart::simulation::WorldPtr world) override;
 
+	Eigen::Vector3d getCycleDistance() const override { return mCycleDistance; }
+
 	std::string getSourceType() const override { return "bvh"; }
 	std::string getLogHeader() const override { return "[BVH]"; }
 
@@ -92,6 +94,7 @@ private:
 	Character *mCharacter;
 
 	Eigen::Isometry3d mRootTransform;
+	Eigen::Vector3d mCycleDistance = Eigen::Vector3d::Zero();
 	double mHeightOffset;
 	double mXOffset;
 };

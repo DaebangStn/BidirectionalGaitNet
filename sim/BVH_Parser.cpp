@@ -89,7 +89,7 @@ Eigen::VectorXd BVH::getPose(int frameIdx)
 
 Eigen::VectorXd BVH::getPose(double phase)
 {
-	if (phase < 0) phase += 1.0;
+	phase = phase - floor(phase);
 
 	int idx = phase * mNumFrame;
 	double idx_f = phase * mNumFrame - idx;
@@ -257,6 +257,17 @@ void BVH::setRefMotion(Character *_character, dart::simulation::WorldPtr _world)
 				mXOffset += mMotion[i][3];
 		}
 		mXOffset /= mMotion.size();
+	}
+
+	{
+		const auto& first = mMotion.front();
+		Eigen::VectorXd nextFirst = first;
+		nextFirst.head(6) = FreeJoint::convertToPositions(
+			mRootTransform * FreeJoint::convertToTransform(first.head(6)));
+
+		mCycleDistance[0] = (nextFirst[3] - first[3]) * 0.1;
+		mCycleDistance[1] = 0.0;
+		mCycleDistance[2] = nextFirst[5] - first[5];
 	}
 }
 

@@ -45,3 +45,18 @@ find_package(yaml-cpp REQUIRED)
 add_executable(yaml_diff yaml_diff.cpp)
 target_link_libraries(yaml_diff yaml-cpp ${CURSES_LIBRARY})
 target_include_directories(yaml_diff PRIVATE ${CURSES_INCLUDE_DIR})
+
+# Headless TorchScript checkpoint player for simulation sanity checks.
+add_executable(headless_ckpt_player
+    headless_ckpt_player.cpp
+    ${CMAKE_SOURCE_DIR}/ppo/PolicyNet.cpp
+)
+target_link_libraries(headless_ckpt_player
+    sim
+    ${TORCH_LIBRARIES}
+)
+target_include_directories(headless_ckpt_player PRIVATE
+    ${CMAKE_SOURCE_DIR}/sim
+    ${CMAKE_SOURCE_DIR}/ppo
+    $ENV{CONDA_PREFIX}/include/eigen3
+)

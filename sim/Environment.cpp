@@ -267,6 +267,16 @@ Environment::Environment(const std::string& filepath)
     mWorld->addSkeleton(mCharacter->getSkeleton());
     mWorld->addSkeleton(mGround);
 
+    // Set high ground friction to prevent foot sliding
+    for (size_t i = 0; i < mGround->getNumBodyNodes(); i++) {
+        auto bn = mGround->getBodyNode(i);
+        for (size_t j = 0; j < bn->getNumShapeNodes(); j++) {
+            auto sn = bn->getShapeNode(j);
+            if (sn->hasDynamicsAspect())
+                sn->getDynamicsAspect()->setFrictionCoeff(100.0);
+        }
+    }
+
     // === Motion Loading ===
     if (env["motion"]) {
         auto motion = env["motion"];
