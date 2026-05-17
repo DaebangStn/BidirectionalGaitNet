@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<!-- Marker set - offset is relative scale (not meter) -->
+<Markers>
+  <marker name="L_IAS"   bn="Pelvis"    offset="  0.973826   0.456934   0.858000"/>
+  <marker name="L_IPS"   bn="Pelvis"    offset="  0.370000   0.456934  -1.558000"/>
+  <marker name="R_IPS"   bn="Pelvis"    offset=" -0.370000   0.456934  -1.558000"/>
+  <marker name="R_IAS"   bn="Pelvis"    offset=" -0.973826   0.456934   0.858000"/>
+  <marker name="L_FTC"   bn="FemurL"    offset="  1.237659   0.854567  -0.059578"/>
+  <marker name="L_FLE"   bn="FemurL"    offset="  0.751391  -0.896963  -0.078977"/>
+  <marker name="L_FME"   bn="FemurL"    offset=" -0.796000  -0.890000   0.216813"/>
+  <marker name="L_FAX"   bn="TibiaL"    offset="  1.200000   0.900000  -0.320000"/>
+  <marker name="L_TTC"   bn="TibiaL"    offset="  0.000000   0.850000   1.000000"/>
+  <marker name="L_FAL"   bn="TibiaL"    offset="  0.875000  -1.060672  -0.123000"/>
+  <marker name="L_TAM"   bn="TibiaL"    offset=" -1.028242  -0.958000   0.453000"/>
+  <marker name="L_FCC"   bn="TalusL"    offset=" -0.072582   0.373494  -1.069620"/>
+  <marker name="L_FM1"   bn="TalusL"    offset=" -1.380000  -0.247000   1.360509"/>
+  <marker name="L_FM2"   bn="TalusL"    offset=" -0.210000   0.373494   1.450000"/>
+  <marker name="L_FM5"   bn="TalusL"    offset="  1.490000  -0.577000   0.981000"/>
+  <marker name="R_FTC"   bn="FemurR"    offset=" -1.237659  -0.854567   0.059578"/>
+  <marker name="R_FLE"   bn="FemurR"    offset=" -0.751391   0.896963   0.078977"/>
+  <marker name="R_FME"   bn="FemurR"    offset="  0.796000   0.890000  -0.216813"/>
+  <marker name="R_FAX"   bn="TibiaR"    offset=" -1.200000  -0.900000   0.320000"/>
+  <marker name="R_TTC"   bn="TibiaR"    offset="  0.000000  -0.850000  -1.000000"/>
+  <marker name="R_FAL"   bn="TibiaR"    offset=" -0.874018   1.060770   0.123565"/>
+  <marker name="R_TAM"   bn="TibiaR"    offset="  1.027152   0.958036  -0.453238"/>
+  <marker name="R_FCC"   bn="TalusR"    offset="  0.072582   0.373494  -1.069620"/>
+  <marker name="R_FM1"   bn="TalusR"    offset="  1.380000  -0.247000   1.360509"/>
+  <marker name="R_FM2"   bn="TalusR"    offset="  0.210000   0.373494   1.450000"/>
+  <marker name="R_FM5"   bn="TalusR"    offset=" -1.490000  -0.577000   0.981000"/>
+  <marker name="CV7"     bn="Neck"      offset="  0.000000  -0.510000  -2.470000"/>
+  <marker name="TV10"    bn="Torso"     offset="  0.000000  -0.150000  -1.000000"/>
+  <marker name="SXS"     bn="Torso"     offset="  0.000000  -0.290000   1.450000"/>
+  <marker name="SJN"     bn="Torso"     offset="  0.000000   1.030000   1.000000"/>
+  <marker name="L_SIA"   bn="Torso"     offset="  0.833000   0.039000  -1.646000"/>
+  <marker name="L_SRS"   bn="Torso"     offset="  0.770000   0.990000  -1.430000"/>
+  <marker name="L_SAA"   bn="Torso"     offset="  1.800000   1.060000  -0.990000"/>
+  <marker name="L_SAE"   bn="Torso"     offset="  1.480000   1.210000   0.050000"/>
+  <marker name="L_HLE"   bn="ArmL"      offset="  0.975000  -0.025000   1.545000"/>
+  <marker name="L_HME"   bn="ArmL"      offset="  0.975000   0.505000  -1.875000"/>
+  <marker name="L_UOA"   bn="ForeArmL"  offset=" -1.106065   1.098082  -0.635114"/>
+  <marker name="L_RSP"   bn="ForeArmL"  offset="  0.986000  -1.199000   0.592174"/>
+  <marker name="L_UHE"   bn="ForeArmL"  offset="  0.948000   0.525600  -0.031996"/>
+  <marker name="L_HM2"   bn="HandL"     offset=" -0.060000   1.730000   0.850000"/>
+  <marker name="L_HM5"   bn="HandL"     offset="  0.500000   0.000000  -1.390000"/>
+  <marker name="R_SIA"   bn="Torso"     offset=" -0.833000   0.039000  -1.646000"/>
+  <marker name="R_SRS"   bn="Torso"     offset=" -0.770000   0.990000  -1.430000"/>
+  <marker name="R_SAA"   bn="Torso"     offset=" -1.800000   1.060000  -0.990000"/>
+  <marker name="R_SAE"   bn="Torso"     offset=" -1.480000   1.210000   0.050000"/>
+  <marker name="R_HLE"   bn="ArmR"      offset=" -0.975000   0.025000  -1.545000"/>
+  <marker name="R_HME"   bn="ArmR"      offset=" -0.975000  -0.505000   1.875000"/>
+  <marker name="R_UOA"   bn="ForeArmR"  offset="  1.106065  -1.098082   0.635114"/>
+  <marker name="R_RSP"   bn="ForeArmR"  offset=" -0.986000   1.199000  -0.592174"/>
+  <marker name="R_UHE"   bn="ForeArmR"  offset=" -0.948000  -0.525600   0.031996"/>
+  <marker name="R_HM2"   bn="HandR"     offset="  0.060000  -1.730000  -0.850000"/>
+  <marker name="R_HM5"   bn="HandR"     offset=" -0.500000  -0.000000   1.390000"/>
+</Markers>

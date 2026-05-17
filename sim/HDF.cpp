@@ -7,6 +7,7 @@
 #include <iostream>
 #include <algorithm>
 #include <sstream>
+#include <string>
 
 using namespace dart::dynamics;
 
@@ -28,17 +29,38 @@ void HDF::loadFromFile(const std::string& filepath)
         // Open HDF5 file
         H5::H5File file(resolved_path, H5F_ACC_RDONLY);
 
-        // Check for flat structure (extracted single-cycle files only)
-        if (!H5Lexists(file.getId(), "/motions", H5P_DEFAULT)) {
-            std::cerr << "[HDF] Error: File must have flat structure with /motions dataset at top level." << std::endl;
-            std::cerr << "[HDF] Use extract_cycle tool to extract single cycles from rollout files." << std::endl;
-            throw std::runtime_error("HDF file does not have required flat structure");
+        int format_version = 0;
+        if (file.attrExists("format_version")) {
+            file.openAttribute("format_version").read(H5::PredType::NATIVE_INT, &format_version);
         }
 
-        // Use flat structure paths
+        // v0/v1 files store motion datasets at the root. pxgym v2 files keep the
+        // DART-order source motion under /original and add derived FPS groups.
         std::string path_motions = "/motions";
         std::string path_phase = "/phase";
         std::string path_time = "/time";
+
+        if (format_version == 2) {
+            path_motions = "/original/motions";
+            path_phase = "/original/phase";
+            path_time = "/original/time";
+        } else if (format_version > 2) {
+            throw std::runtime_error("[HDF] Unsupported format_version=" +
+                                     std::to_string(format_version) +
+                                     " (supported: flat v0/v1 and pxgym v2)");
+        }
+
+        if (!H5Lexists(file.getId(), path_motions.c_str(), H5P_DEFAULT)) {
+            std::cerr << "[HDF] Error: Required motions dataset not found at "
+                      << path_motions << "." << std::endl;
+            if (format_version == 0) {
+                std::cerr << "[HDF] Expected flat HDF structure with /motions, /phase, and /time." << std::endl;
+            } else {
+                std::cerr << "[HDF] Detected format_version=" << format_version
+                          << "; expected datasets under /original." << std::endl;
+            }
+            throw std::runtime_error("HDF file does not have required motion datasets");
+        }
 
         // Load motions dataset
         H5::DataSet dataset_motions = file.openDataSet(path_motions);

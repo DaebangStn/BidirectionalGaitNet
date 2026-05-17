@@ -22,6 +22,7 @@ struct Options {
     int steps = 1800;
     double reset_phase = -1.0;
     bool stochastic = false;
+    bool disable_termination = false;
     fs::path csv_path;
 };
 
@@ -58,6 +59,8 @@ Options parse_args(int argc, char** argv) {
             opt.csv_path = argv[++i];
         } else if (key == "--stochastic") {
             opt.stochastic = true;
+        } else if (key == "--no-terminate") {
+            opt.disable_termination = true;
         } else {
             throw std::runtime_error("Unknown or incomplete argument: " + key);
         }
@@ -113,6 +116,16 @@ int main(int argc, char** argv) {
         std::cout << "[HeadlessCkpt] agent:      " << agent_path << "\n";
 
         Environment env(metadata_path.string());
+
+        const fs::path muscle_path = opt.ckpt_dir / "muscle.pt";
+        if (fs::is_regular_file(muscle_path)) {
+            auto muscle_weights = loadStateDict(muscle_path.string());
+            if (!muscle_weights.empty()) {
+                env.setMuscleNetworkWeight(muscle_weights);
+                std::cout << "[HeadlessCkpt] muscle:     " << muscle_path << "\n";
+            }
+        }
+
         env.setParamDefault();
         env.reset(opt.reset_phase);
 
@@ -151,6 +164,15 @@ int main(int argc, char** argv) {
         for (std::size_t i = 0; i < dof_names.size(); ++i) {
             csv << ",tau_" << i << "_" << dof_names[i];
         }
+        for (std::size_t i = 0; i < dof_names.size(); ++i) {
+            csv << ",qpos_" << i << "_" << dof_names[i];
+        }
+        for (std::size_t i = 0; i < dof_names.size(); ++i) {
+            csv << ",qvel_" << i << "_" << dof_names[i];
+        }
+        for (std::size_t i = 0; i < dof_names.size(); ++i) {
+            csv << ",pdtarget_" << i << "_" << dof_names[i];
+        }
         csv << '\n';
 
         double reward_sum = 0.0;
@@ -178,9 +200,11 @@ int main(int argc, char** argv) {
 
             auto current_skel = env.getCharacter()->getSkeleton();
             const Eigen::VectorXd q = current_skel->getPositions();
+            const Eigen::VectorXd qd = current_skel->getVelocities();
             const Eigen::Vector3d com = current_skel->getCOM();
             const Eigen::Vector3d avg_vel = env.getAvgVelocity();
             const Eigen::VectorXd tau = env.getCachedSPDTorque();
+            const Eigen::VectorXd pd_target = env.getPDTarget();
             const auto& info = env.getInfoMap();
             const bool terminated = env.isTerminated();
             const bool truncated = env.isTruncated();
@@ -217,6 +241,15 @@ int main(int argc, char** argv) {
             for (int i = 0; i < static_cast<int>(dof_names.size()); ++i) {
                 csv << ',' << (i < tau.size() ? tau[i] : std::numeric_limits<double>::quiet_NaN());
             }
+            for (int i = 0; i < static_cast<int>(dof_names.size()); ++i) {
+                csv << ',' << (i < q.size() ? q[i] : std::numeric_limits<double>::quiet_NaN());
+            }
+            for (int i = 0; i < static_cast<int>(dof_names.size()); ++i) {
+                csv << ',' << (i < qd.size() ? qd[i] : std::numeric_limits<double>::quiet_NaN());
+            }
+            for (int i = 0; i < static_cast<int>(dof_names.size()); ++i) {
+                csv << ',' << (i < pd_target.size() ? pd_target[i] : std::numeric_limits<double>::quiet_NaN());
+            }
             csv << '\n';
 
             ++executed_steps;
@@ -225,12 +258,12 @@ int main(int argc, char** argv) {
                 stop_reason = "nonfinite_skeleton";
                 break;
             }
-            if (terminated) {
+            if (!opt.disable_termination && terminated) {
                 auto it = info.find("terminated");
                 stop_reason = it != info.end() ? "terminated" : "terminated";
                 break;
             }
-            if (truncated) {
+            if (!opt.disable_termination && truncated) {
                 stop_reason = "truncated";
                 break;
             }

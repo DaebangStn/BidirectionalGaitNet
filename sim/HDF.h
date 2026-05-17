@@ -27,8 +27,9 @@ struct KinematicsExportData {
  * @brief HDF5 motion format implementation
  *
  * Loads motion data from HDF5 files containing:
- * - Structure: param_N/cycle_M/{motions, phase, time, ...}
- * - "motions": Frame sequence (num_frames × 56 DOF in angle format)
+ * - v0/v1 flat structure: /motions, /phase, /time
+ * - pxgym v2 structure: /original/{motions, phase, time}
+ * - "motions": Frame sequence (num_frames × DOF in DART angle format)
  * - "phase": Phase values for each frame
  * - "time": Time values for each frame
  */

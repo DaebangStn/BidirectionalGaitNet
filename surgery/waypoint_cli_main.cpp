@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <algorithm>
 
 namespace po = boost::program_options;
 using namespace PMuscle;
@@ -77,6 +78,10 @@ int main(int argc, char** argv) {
     int loss_power = 2;
     bool adaptive_sample_weight = false;
     bool multi_dof_joint_sweep = false;
+    int num_parallel = 1;
+    double function_tolerance = 1e-4;
+    double gradient_tolerance = 1e-5;
+    double parameter_tolerance = 1e-5;
 
     po::options_description desc("Waypoint Optimization CLI");
     desc.add_options()
@@ -124,7 +129,15 @@ int main(int argc, char** argv) {
         ("adaptive-sample-weight", po::bool_switch(&adaptive_sample_weight),
          "Use adaptive weighting for sample matching")
         ("multi-dof-joint", po::bool_switch(&multi_dof_joint_sweep),
-         "Sweep all DOFs of best DOF's parent joint for shape energy");
+         "Sweep all DOFs of best DOF's parent joint for shape energy")
+        ("parallel", po::value<int>(&num_parallel)->default_value(1),
+         "Number of waypoint optimization worker threads")
+        ("function-tolerance", po::value<double>(&function_tolerance)->default_value(1e-4),
+         "Convergence tolerance on cost function change")
+        ("gradient-tolerance", po::value<double>(&gradient_tolerance)->default_value(1e-5),
+         "Convergence tolerance on gradient norm")
+        ("parameter-tolerance", po::value<double>(&parameter_tolerance)->default_value(1e-5),
+         "Convergence tolerance on parameter change");
 
     po::variables_map vm;
     try {
@@ -195,7 +208,11 @@ int main(int argc, char** argv) {
                  << " phaseSamples=" << num_phase_samples
                  << " lossPower=" << loss_power
                  << " adaptive=" << adaptive_sample_weight
-                 << " multiDofJoint=" << multi_dof_joint_sweep);
+                 << " multiDofJoint=" << multi_dof_joint_sweep
+                 << " parallel=" << num_parallel
+                 << " ftol=" << function_tolerance
+                 << " gtol=" << gradient_tolerance
+                 << " ptol=" << parameter_tolerance);
     }
 
     // Create subject character
@@ -301,6 +318,10 @@ int main(int argc, char** argv) {
     config.lossPower = loss_power;
     config.adaptiveSampleWeight = adaptive_sample_weight;
     config.multiDofJointSweep = multi_dof_joint_sweep;
+    config.numParallel = std::max(1, num_parallel);
+    config.functionTolerance = function_tolerance;
+    config.gradientTolerance = gradient_tolerance;
+    config.parameterTolerance = parameter_tolerance;
 
     // Run optimization
     LOG_INFO("Running waypoint optimization for " << muscle_names.size() << " muscle(s)...");
