@@ -38,7 +38,7 @@ echo "Cleared rm cache"
 
 # 3. Run prefetcher on login node (creates lock file)
 echo "Prefetching resources..."
-python rm/python/prefetch.py "$ENV_FILE"
+rm-prefetch "$ENV_FILE"
 
 # Check if prefetch succeeded
 if [ $? -ne 0 ]; then

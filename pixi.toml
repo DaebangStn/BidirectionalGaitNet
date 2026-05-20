@@ -71,6 +71,7 @@ cmake = ">=3.24"
 cuda-cudart_linux-64 = "12.*"
 
 [pypi-dependencies]
+gait-resource-manager = { path = "../gait-resource-manager", editable = true }
 bvh = "*"
 click = "==8.0.4"
 c3d = "*"

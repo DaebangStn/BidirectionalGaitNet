@@ -43,8 +43,6 @@
   <marker name="L_UOA_F"   bn="ForeArmL"  offset=" -1.106065   1.098082  -0.635114"/>
   <marker name="L_RSP"     bn="ForeArmL"  offset="  0.986000  -1.199000   0.592174"/>
   <marker name="L_UHE"     bn="ForeArmL"  offset="  0.948000   0.525600  -0.031996"/>
-  <marker name="L_HM2"     bn="HandL"     offset=" -0.060000   1.730000   0.850000"/>
-  <marker name="L_HM5"     bn="HandL"     offset="  0.500000   0.000000  -1.390000"/>
   <marker name="R_SIA"     bn="Torso"     offset=" -0.833000   0.039000  -1.646000"/>
   <marker name="R_SRS"     bn="Torso"     offset=" -0.770000   0.990000  -1.430000"/>
   <marker name="R_SAA"     bn="Torso"     offset=" -1.800000   1.060000  -0.990000"/>
@@ -57,6 +55,4 @@
   <marker name="R_UOA_F"   bn="ForeArmR"  offset="  1.106065  -1.098082   0.635114"/>
   <marker name="R_RSP"     bn="ForeArmR"  offset=" -0.986000   1.199000  -0.592174"/>
   <marker name="R_UHE"     bn="ForeArmR"  offset=" -0.948000  -0.525600   0.031996"/>
-  <marker name="R_HM2"     bn="HandR"     offset="  0.060000  -1.730000  -0.850000"/>
-  <marker name="R_HM5"     bn="HandR"     offset=" -0.500000  -0.000000   1.390000"/>
 </Markers>

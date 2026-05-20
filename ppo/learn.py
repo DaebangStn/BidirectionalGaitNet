@@ -557,25 +557,20 @@ if __name__ == "__main__":
     def fetch_ckpt_file(base_path: str, filename: str) -> str:
         """Fetch checkpoint file, returns local path. Supports @pid: URIs."""
         if base_path.startswith('@pid:'):
-            import sys
-            sys.path.insert(0, str(Path(__file__).parent.parent / "rm/python"))
-            import pyrm
+            from rm import ResourceManager
             rm_config = str(Path(__file__).parent.parent / "data/rm_config.yaml")
-            rm = pyrm.ResourceManager(rm_config)
+            rm = ResourceManager(rm_config)
             uri = f"{base_path}/{filename}"
-            handle = rm.fetch(uri)
-            return handle.local_path()
+            return str(rm.fetch(uri))
         else:
             return str(Path(base_path) / filename)
 
     def ckpt_file_exists(base_path: str, filename: str) -> bool:
         """Check if checkpoint file exists. Supports @pid: URIs."""
         if base_path.startswith('@pid:'):
-            import sys
-            sys.path.insert(0, str(Path(__file__).parent.parent / "rm/python"))
-            import pyrm
+            from rm import ResourceManager
             rm_config = str(Path(__file__).parent.parent / "data/rm_config.yaml")
-            rm = pyrm.ResourceManager(rm_config)
+            rm = ResourceManager(rm_config)
             uri = f"{base_path}/{filename}"
             return rm.exists(uri)
         else:
@@ -693,13 +688,11 @@ if __name__ == "__main__":
         dst_name = f"{section_key}_{Path(uri).name}"
         try:
             if uri.startswith('@pid:'):
-                # Remote resource — fetch via pyrm (uses .tmp/rm_cache)
-                sys.path.insert(0, str(project_root / "rm/python"))
-                import pyrm
+                # Remote resource, fetch via gait-resource-manager cache.
+                from rm import ResourceManager
                 rm_config = str(project_root / "data/rm_config.yaml")
-                rm = pyrm.ResourceManager(rm_config)
-                handle = rm.fetch(uri)
-                shutil.copy2(handle.local_path(), config_dir / dst_name)
+                rm = ResourceManager(rm_config)
+                shutil.copy2(rm.fetch(uri), config_dir / dst_name)
             else:
                 # Local file — strip @ prefix if present
                 file_path = uri[1:] if uri.startswith('@') else uri

@@ -36,7 +36,6 @@ target_link_libraries(c3d_inspect
 )
 
 target_include_directories(c3d_inspect PRIVATE
-    ${CMAKE_SOURCE_DIR}/rm/include
     ${CURSES_INCLUDE_DIR}
 )
 
